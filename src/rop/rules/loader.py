@@ -48,9 +48,7 @@ def _parse_outcome(raw: dict | None) -> ExpectedOutcome:
 
     confidence = raw.get("confidence", 0.0)
     if not isinstance(confidence, (int, float)):
-        raise RuleLoadError(
-            f"Invalid confidence value: {confidence}"
-        )
+        raise RuleLoadError(f"Invalid confidence value: {confidence}")
 
     return ExpectedOutcome(
         template_name=raw.get("template_name"),
@@ -69,15 +67,11 @@ def _parse_rule(raw: dict) -> Rule:
     priority = raw.get("priority", 0)
 
     if not isinstance(priority, int):
-        raise RuleLoadError(
-            f"Rule '{rule_id}' has invalid priority: {priority}"
-        )
+        raise RuleLoadError(f"Rule '{rule_id}' has invalid priority: {priority}")
 
     raw_conditions = raw.get("conditions")
     if not raw_conditions or not isinstance(raw_conditions, list):
-        raise RuleLoadError(
-            f"Rule '{rule_id}' missing or invalid 'conditions'"
-        )
+        raise RuleLoadError(f"Rule '{rule_id}' missing or invalid 'conditions'")
 
     conditions = tuple(_parse_condition(c) for c in raw_conditions)
     expected_outcome = _parse_outcome(raw.get("expected_outcome"))
@@ -130,9 +124,7 @@ def load_rules_from_directory(
 
     if directory is None:
         directory = (
-            Path(__file__).resolve().parent.parent.parent.parent
-            / "knowledge"
-            / "rules"
+            Path(__file__).resolve().parent.parent.parent.parent / "knowledge" / "rules"
         )
     else:
         directory = Path(directory)

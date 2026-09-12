@@ -13,9 +13,7 @@ def _parse_rule(raw: dict) -> HypothesisRule:
     """Parse a raw hypothesis dict into a HypothesisRule."""
     name = raw.get("name")
     if not name or not isinstance(name, str):
-        raise HypothesisRuleLoadError(
-            f"Rule missing or invalid 'name': {raw}"
-        )
+        raise HypothesisRuleLoadError(f"Rule missing or invalid 'name': {raw}")
 
     category = raw.get("category", "General")
     description = raw.get("description", "")

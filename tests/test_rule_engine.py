@@ -29,9 +29,7 @@ def _make_rule(
 
 
 def test_rule_loading_from_yaml_file() -> None:
-    rules = load_rules_from_file(
-        "knowledge/rules/clinical_rules.yaml"
-    )
+    rules = load_rules_from_file("knowledge/rules/clinical_rules.yaml")
 
     assert len(rules) == 4
     rule_ids = {rule.id for rule in rules}

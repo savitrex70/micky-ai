@@ -101,9 +101,7 @@ def test_evidence_requires_valid_type_and_confidence() -> None:
         EvidenceCreate(type="uncertain", confidence=0.5, **values)
 
     with pytest.raises(ValidationError):
-        EvidenceCreate(
-            type=EvidenceType.SUPPORTING, confidence=1.1, **values
-        )
+        EvidenceCreate(type=EvidenceType.SUPPORTING, confidence=1.1, **values)
 
 
 def test_evidence_requires_valid_strength() -> None:

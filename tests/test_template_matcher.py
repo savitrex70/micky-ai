@@ -153,9 +153,7 @@ def test_priority_lower_is_better() -> None:
         category="Test",
         description="Test",
         priority=10,
-        trigger_rules=(
-            TemplateRule(category="Symptom", terms=("chest pain",)),
-        ),
+        trigger_rules=(TemplateRule(category="Symptom", terms=("chest pain",)),),
         required_information=(),
     )
     high_priority = ClinicalTemplate(
@@ -163,9 +161,7 @@ def test_priority_lower_is_better() -> None:
         category="Test",
         description="Test",
         priority=1,
-        trigger_rules=(
-            TemplateRule(category="Symptom", terms=("headache",)),
-        ),
+        trigger_rules=(TemplateRule(category="Symptom", terms=("headache",)),),
         required_information=(),
     )
     templates = (low_priority, high_priority)

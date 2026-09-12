@@ -215,9 +215,7 @@ def test_candidate_generation_with_template_filtering() -> None:
         category="Cardiology",
         description="ACS template",
         priority=1,
-        trigger_rules=(
-            TemplateRule(category="symptom", terms=("chest pain",)),
-        ),
+        trigger_rules=(TemplateRule(category="symptom", terms=("chest pain",)),),
         required_information=("age", "sex"),
     )
 

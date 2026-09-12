@@ -39,9 +39,7 @@ def upgrade() -> None:
             sa.Column("rank", sa.Integer(), nullable=False, server_default="0")
         )
 
-    op.execute(
-        "UPDATE hypotheses SET likelihood_score = likelihood, rank = ranking"
-    )
+    op.execute("UPDATE hypotheses SET likelihood_score = likelihood, rank = ranking")
 
     with op.batch_alter_table("hypotheses") as batch_op:
         batch_op.alter_column("likelihood_score", server_default=None)

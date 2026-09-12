@@ -395,9 +395,7 @@ def list_evidence_by_session(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
 
-    return evidence_service.list_by_session(
-        db, session_id, offset=offset, limit=limit
-    )
+    return evidence_service.list_by_session(db, session_id, offset=offset, limit=limit)
 
 
 @router.get(
@@ -587,11 +585,10 @@ def generate_candidates(
     observations = observation_service.list_by_session(
         db, session_id, offset=0, limit=1000
     )
-    entities = entity_service.list_by_session(
-        db, session_id, offset=0, limit=1000
-    )
+    entities = entity_service.list_by_session(db, session_id, offset=0, limit=1000)
 
     from rop.models import TemplateMatch
+
     latest_match = db.execute(
         select(TemplateMatch)
         .where(TemplateMatch.session_id == session_id)
@@ -602,6 +599,7 @@ def generate_candidates(
     template = None
     if latest_match:
         from rop.templates import load_templates
+
         templates = load_templates()
         template = next(
             (t for t in templates if t.name == latest_match.template_name),
@@ -637,9 +635,7 @@ def evaluate_evidence(
     observations = observation_service.list_by_session(
         db, session_id, offset=0, limit=1000
     )
-    entities = entity_service.list_by_session(
-        db, session_id, offset=0, limit=1000
-    )
+    entities = entity_service.list_by_session(db, session_id, offset=0, limit=1000)
     candidates = candidate_generation_service.list_by_session(
         db, session_id, offset=0, limit=100
     )
@@ -652,6 +648,4 @@ def evaluate_evidence(
         entities=entities,
     )
 
-    return evidence_evaluation_service.group_by_hypothesis(
-        db, session_id, candidates
-    )
+    return evidence_evaluation_service.group_by_hypothesis(db, session_id, candidates)

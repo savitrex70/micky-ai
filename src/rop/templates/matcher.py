@@ -15,9 +15,7 @@ def _normalize(text: str) -> str:
     return text.lower().strip()
 
 
-def _observation_matches_rule(
-    observation: Observation, rule: TemplateRule
-) -> bool:
+def _observation_matches_rule(observation: Observation, rule: TemplateRule) -> bool:
     observation_type = _normalize(observation.type)
     observation_text = _normalize(observation.text)
     category = _normalize(rule.category)

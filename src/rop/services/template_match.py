@@ -66,9 +66,7 @@ class TemplateMatchService:
 
         return self.repository.create(db, record)
 
-    def list_by_session(
-        self, db: object, session_id: object
-    ) -> list[TemplateMatch]:
+    def list_by_session(self, db: object, session_id: object) -> list[TemplateMatch]:
         from uuid import UUID
 
         from sqlalchemy.orm import Session

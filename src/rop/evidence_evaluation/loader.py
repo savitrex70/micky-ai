@@ -17,9 +17,7 @@ def _parse_rule(raw: dict) -> EvidenceRule:
 
     hypothesis = raw.get("hypothesis")
     if not hypothesis or not isinstance(hypothesis, str):
-        raise EvidenceRuleLoadError(
-            f"Rule '{rule_id}' missing or invalid 'hypothesis'"
-        )
+        raise EvidenceRuleLoadError(f"Rule '{rule_id}' missing or invalid 'hypothesis'")
 
     target = raw.get("target", "observation")
 
@@ -37,9 +35,7 @@ def _parse_rule(raw: dict) -> EvidenceRule:
 
     weight = raw.get("weight", 0.5)
     if not isinstance(weight, (int, float)):
-        raise EvidenceRuleLoadError(
-            f"Rule '{rule_id}' has invalid weight: {weight}"
-        )
+        raise EvidenceRuleLoadError(f"Rule '{rule_id}' has invalid weight: {weight}")
 
     confidence = raw.get("confidence", 0.5)
     if not isinstance(confidence, (int, float)):

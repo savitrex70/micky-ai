@@ -103,9 +103,7 @@ class RuleEngine:
             ),
         )
 
-    def _evaluate_rule(
-        self, rule: Rule, data: dict[str, Any]
-    ) -> EvaluationResult:
+    def _evaluate_rule(self, rule: Rule, data: dict[str, Any]) -> EvaluationResult:
         matched_data: dict[str, Any] = {}
         failed_reasons: list[str] = []
 
@@ -115,9 +113,7 @@ class RuleEngine:
             op_func = ops.get(condition.operator)
 
             if op_func is None:
-                failed_reasons.append(
-                    f"Unknown operator: {condition.operator.value}"
-                )
+                failed_reasons.append(f"Unknown operator: {condition.operator.value}")
                 continue
 
             passed = op_func(field_value, condition.value)
@@ -143,9 +139,7 @@ class RuleEngine:
             matched_data=matched_data,
         )
 
-    def select_best(
-        self, data: dict[str, Any]
-    ) -> EvaluationResult | None:
+    def select_best(self, data: dict[str, Any]) -> EvaluationResult | None:
         """Evaluate rules and return the highest-priority passed rule."""
         report = self.evaluate(data)
         passed = report.passed

@@ -52,9 +52,7 @@ class CandidateHypothesisRepository:
         )
         return list(db.scalars(statement).all())
 
-    def get(
-        self, db: Session, candidate_id: UUID
-    ) -> CandidateHypothesis | None:
+    def get(self, db: Session, candidate_id: UUID) -> CandidateHypothesis | None:
         return db.get(CandidateHypothesis, candidate_id)
 
     def delete_by_session(self, db: Session, session_id: UUID) -> None:

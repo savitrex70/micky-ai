@@ -18,15 +18,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("evidence") as batch_op:
-        batch_op.add_column(
-            sa.Column("session_id", sa.Uuid(), nullable=True)
-        )
-        batch_op.add_column(
-            sa.Column("type", sa.String(length=50), nullable=True)
-        )
-        batch_op.add_column(
-            sa.Column("strength", sa.String(length=50), nullable=True)
-        )
+        batch_op.add_column(sa.Column("session_id", sa.Uuid(), nullable=True))
+        batch_op.add_column(sa.Column("type", sa.String(length=50), nullable=True))
+        batch_op.add_column(sa.Column("strength", sa.String(length=50), nullable=True))
         batch_op.add_column(
             sa.Column(
                 "created_at",
@@ -36,9 +30,7 @@ def upgrade() -> None:
             )
         )
 
-    op.execute(
-        "UPDATE evidence SET type = 'unknown', strength = 'moderate'"
-    )
+    op.execute("UPDATE evidence SET type = 'unknown', strength = 'moderate'")
 
     with op.batch_alter_table("evidence") as batch_op:
         batch_op.alter_column("session_id", nullable=False)
@@ -48,9 +40,7 @@ def upgrade() -> None:
         batch_op.drop_column("stance")
         batch_op.drop_column("timestamp")
 
-    op.create_index(
-        "ix_evidence_session_id", "evidence", ["session_id"], unique=False
-    )
+    op.create_index("ix_evidence_session_id", "evidence", ["session_id"], unique=False)
     op.create_foreign_key(
         "fk_evidence_session_id",
         "evidence",

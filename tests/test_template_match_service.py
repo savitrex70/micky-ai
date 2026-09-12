@@ -1,4 +1,3 @@
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -135,9 +134,7 @@ def test_service_lists_matches_by_session() -> None:
             ),
         )
 
-        match = template_match_service.match(
-            db, reasoning_session.id, [], []
-        )
+        match = template_match_service.match(db, reasoning_session.id, [], [])
 
         matches = template_match_service.list_by_session(db, reasoning_session.id)
         assert len(matches) == 1

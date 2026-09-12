@@ -47,9 +47,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["observation_id"], ["observations.id"], ondelete="SET NULL"
         ),
-        sa.ForeignKeyConstraint(
-            ["entity_id"], ["entities.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["entity_id"], ["entities.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -70,7 +68,5 @@ def downgrade() -> None:
     op.drop_index(
         "ix_evaluated_evidence_hypothesis_id", table_name="evaluated_evidence"
     )
-    op.drop_index(
-        "ix_evaluated_evidence_session_id", table_name="evaluated_evidence"
-    )
+    op.drop_index("ix_evaluated_evidence_session_id", table_name="evaluated_evidence")
     op.drop_table("evaluated_evidence")

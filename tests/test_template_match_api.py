@@ -135,8 +135,7 @@ def test_match_template_stores_candidates() -> None:
     data = response.json()
     assert len(data["candidates"]) > 0
     assert any(
-        c["template_name"] == "acute_coronary_syndrome"
-        for c in data["candidates"]
+        c["template_name"] == "acute_coronary_syndrome" for c in data["candidates"]
     )
 
 

@@ -27,9 +27,7 @@ class Entity(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     source: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    session: Mapped[ReasoningSession] = relationship(
-        back_populates="entities"
-    )
+    session: Mapped[ReasoningSession] = relationship(back_populates="entities")
     evaluated_evidence: Mapped[list["EvaluatedEvidence"]] = relationship(
         back_populates="entity",
         cascade="all, delete-orphan",

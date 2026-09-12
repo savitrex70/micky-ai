@@ -452,15 +452,11 @@ def test_reasoning_step_rejects_missing_session() -> None:
     assert updated.json()["rank"] == 2
 
     assert (
-        client.delete(
-            f"/sessions/{session_id}/hypotheses/{hypothesis_id}"
-        ).status_code
+        client.delete(f"/sessions/{session_id}/hypotheses/{hypothesis_id}").status_code
         == 204
     )
     assert (
-        client.get(
-            f"/sessions/{session_id}/hypotheses/{hypothesis_id}"
-        ).status_code
+        client.get(f"/sessions/{session_id}/hypotheses/{hypothesis_id}").status_code
         == 404
     )
 

@@ -31,9 +31,7 @@ class Observation(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    session: Mapped[ReasoningSession] = relationship(
-        back_populates="observations"
-    )
+    session: Mapped[ReasoningSession] = relationship(back_populates="observations")
     evaluated_evidence: Mapped[list["EvaluatedEvidence"]] = relationship(
         back_populates="observation",
         cascade="all, delete-orphan",
