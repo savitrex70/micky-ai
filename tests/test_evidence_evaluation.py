@@ -266,6 +266,166 @@ def test_evaluator_tracks_which_observations_contributed_a_match() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Target isolation (observation-targeted rules vs. entity-targeted rules)
+# ---------------------------------------------------------------------------
+
+
+def test_observation_targeted_rule_does_not_match_entity_only_finding() -> None:
+    """A finding that exists only as an entity must not satisfy an
+    observation-targeted rule, even though ``evaluate_hypothesis`` sees
+    both lists at once. Combining the two into one text blob (the Task
+    020 bug) would let this match; keeping them separate must not.
+    """
+    rule = _rule(
+        target="observation",
+        required_findings=(),
+        supporting_findings=("left arm",),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome",
+        observations=[_observation("Patient reports chest pain")],
+        entities=[_entity("left arm")],
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is False
+    assert results[0].relationship == EvidenceRelationship.NEUTRAL
+    assert results[0].matched_finding_count == 0
+
+
+def test_entity_targeted_rule_does_not_match_observation_only_finding() -> None:
+    """A finding that exists only as an observation must not satisfy an
+    entity-targeted rule.
+    """
+    rule = _rule(
+        target="entity",
+        required_findings=(),
+        supporting_findings=("chest pain",),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome",
+        observations=[_observation("Patient reports chest pain")],
+        entities=[_entity("left arm")],
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is False
+    assert results[0].relationship == EvidenceRelationship.NEUTRAL
+    assert results[0].matched_finding_count == 0
+
+
+def test_observation_targeted_rule_still_matches_across_multiple_observations() -> None:
+    """Target isolation must not break cross-observation reasoning: an
+    observation-targeted rule still needs to see every observation as one
+    combined context, even when unrelated entities are also present in
+    the session.
+    """
+    rule = _rule(
+        target="observation",
+        required_findings=("chest pain", "left arm"),
+        supporting_findings=("chest pain", "left arm"),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome",
+        observations=[
+            _observation("Patient reports chest pain"),
+            _observation("Pain radiates to the left arm"),
+        ],
+        # An unrelated entity is present, but must not be needed (or used)
+        # to satisfy an observation-targeted rule.
+        entities=[_entity("unrelated finding")],
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].relationship == EvidenceRelationship.STRONGLY_SUPPORTS
+    assert results[0].matched_finding_count == 2
+
+
+def test_entity_targeted_rule_still_matches_across_multiple_entities() -> None:
+    """Cross-item reasoning must also hold for entity-targeted rules: a
+    rule requiring two findings can still match when those findings were
+    recorded as two separate entities.
+    """
+    rule = _rule(
+        target="entity",
+        required_findings=("left arm", "jaw"),
+        supporting_findings=("left arm", "jaw"),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome",
+        observations=[_observation("Patient reports chest pain")],
+        entities=[
+            _entity("left arm"),
+            _entity("jaw"),
+        ],
+    )
+
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].relationship == EvidenceRelationship.STRONGLY_SUPPORTS
+    assert results[0].matched_finding_count == 2
+
+
+def test_source_attribution_is_never_mixed_across_target_types() -> None:
+    """Even when an observation and an entity happen to contain the same
+    finding text, an observation-targeted rule's match must only be
+    attributed to observation ids, and an entity-targeted rule's match
+    must only be attributed to entity ids — never both.
+    """
+    observation = _observation("Patient reports chest pain")
+    observation.id = uuid4()
+    entity = _entity("chest pain")
+    entity.id = uuid4()
+
+    observation_rule = _rule(
+        rule_id="obs_rule",
+        target="observation",
+        required_findings=(),
+        supporting_findings=("chest pain",),
+        contradicting_findings=(),
+    )
+    entity_rule = _rule(
+        rule_id="entity_rule",
+        target="entity",
+        required_findings=(),
+        supporting_findings=("chest pain",),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(observation_rule, entity_rule))
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome",
+        observations=[observation],
+        entities=[entity],
+    )
+
+    by_rule_id = {result.rule.rule_id: result for result in results}
+
+    obs_result = by_rule_id["obs_rule"]
+    assert obs_result.passed is True
+    assert set(obs_result.contributing_observation_ids) == {str(observation.id)}
+    assert obs_result.contributing_entity_ids == ()
+
+    entity_result = by_rule_id["entity_rule"]
+    assert entity_result.passed is True
+    assert set(entity_result.contributing_entity_ids) == {str(entity.id)}
+    assert entity_result.contributing_observation_ids == ()
+
+
+# ---------------------------------------------------------------------------
 # Weight and confidence calculation
 # ---------------------------------------------------------------------------
 

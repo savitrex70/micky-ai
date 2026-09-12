@@ -30,12 +30,16 @@ class EvidenceEvaluator:
     """Evaluates a session's observations and entities against evidence rules.
 
     Required, supporting, and contradicting findings are matched against the
-    *combined* text of every observation and entity supplied for a
-    hypothesis, not against each item in isolation. A rule such as
-    "chest pain" + "left arm radiation" can therefore be satisfied even
-    when those two findings were recorded as separate observations,
-    matching how a clinician actually reads a case: as one evidence
-    context, not a sequence of unrelated facts.
+    *combined* text of every item of the type a rule targets — every
+    observation for an observation-targeted rule, every entity for an
+    entity-targeted rule — not against each item in isolation and not
+    across the two types. A rule such as "chest pain" + "diaphoresis" can
+    therefore be satisfied even when those two findings were recorded as
+    separate observations, matching how a clinician actually reads a case:
+    as one evidence context, not a sequence of unrelated facts. An
+    observation-targeted rule is never matched against entity text (or
+    vice versa), so a finding recorded only as an entity cannot silently
+    satisfy a rule that was meant to look at observations.
     """
 
     rules: tuple[EvidenceRule, ...] = field(default_factory=tuple)
@@ -48,18 +52,51 @@ class EvidenceEvaluator:
     ) -> list[EvidenceEvaluationResult]:
         """Evaluate every rule for ``hypothesis_name`` against the full session
         context.
+
+        Each rule is still evaluated against *all* items of the type its
+        ``target`` declares, so required/supporting findings can still be
+        satisfied across multiple observations (or multiple entities) —
+        but an observation-targeted rule is never matched against entity
+        text, and vice versa. Mixing the two would let, for example, a
+        rule looking for "left arm" as an entity match a stray mention of
+        "left arm" phrased as an observation, and would misattribute the
+        match's contributing source in the process.
         """
-        items = [
+        observation_items = [
             _ContextItem(
                 text=observation.text, source_id=_safe_id(observation), is_entity=False
             )
             for observation in observations
-        ] + [
+        ]
+        entity_items = [
             _ContextItem(text=entity.name, source_id=_safe_id(entity), is_entity=True)
             for entity in entities
         ]
         matching_rules = self._find_matching_rules(hypothesis_name)
-        return [self._evaluate_rule(rule, items) for rule in matching_rules]
+        return [
+            self._evaluate_rule(
+                rule,
+                self._items_for_target(rule.target, observation_items, entity_items),
+            )
+            for rule in matching_rules
+        ]
+
+    @staticmethod
+    def _items_for_target(
+        target: str,
+        observation_items: list[_ContextItem],
+        entity_items: list[_ContextItem],
+    ) -> list[_ContextItem]:
+        """Select the context a rule may be matched against, per its target.
+
+        Only ``"observation"`` and ``"entity"`` are valid targets (the
+        loader defaults a missing target to ``"observation"``); an
+        unrecognized value falls back to observation-only rather than
+        silently reintroducing the combined-context bug this fixes.
+        """
+        if _normalize(target) == "entity":
+            return entity_items
+        return observation_items
 
     def evaluate_observation(
         self,
