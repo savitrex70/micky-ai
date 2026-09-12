@@ -4,10 +4,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from rop.candidates.models import CandidateHypothesis
 from rop.evidence_evaluation import EvidenceEvaluator, load_evidence_rules
 from rop.evidence_evaluation.models import EvidenceRule
-from rop.models import Entity, Observation
+from rop.models import CandidateHypothesis, Entity, Observation
 from rop.models.evaluated_evidence import EvaluatedEvidence
 from rop.repositories import EvaluatedEvidenceRepository
 
@@ -54,9 +53,7 @@ class EvidenceEvaluationService:
         evidence_items: list[EvaluatedEvidence] = []
 
         for observation in observations:
-            results = self.evaluator.evaluate_observation(
-                candidate.name, observation
-            )
+            results = self.evaluator.evaluate_observation(candidate.name, observation)
             if results:
                 records = self.repository.create_many(
                     db,
@@ -68,9 +65,7 @@ class EvidenceEvaluationService:
                 evidence_items.extend(records)
 
         for entity in entities:
-            results = self.evaluator.evaluate_entity(
-                candidate.name, entity
-            )
+            results = self.evaluator.evaluate_entity(candidate.name, entity)
             if results:
                 records = self.repository.create_many(
                     db,
@@ -110,31 +105,27 @@ class EvidenceEvaluationService:
         candidate_map = {c.id: c for c in candidates}
         for hypothesis_id, evidence_list in grouped.items():
             candidate = candidate_map.get(hypothesis_id)
-            result.append({
-                "hypothesis_id": str(hypothesis_id),
-                "hypothesis_name": (
-                    candidate.name if candidate else "unknown"
-                ),
-                "evidence": [
-                    {
-                        "id": str(e.id),
-                        "rule_id": e.rule_id,
-                        "relationship": e.relationship,
-                        "weight": e.weight,
-                        "confidence": e.confidence,
-                        "reason": e.reason,
-                        "source": e.source,
-                        "observation_id": (
-                            str(e.observation_id)
-                            if e.observation_id
-                            else None
-                        ),
-                        "entity_id": (
-                            str(e.entity_id) if e.entity_id else None
-                        ),
-                        "created_at": e.created_at.isoformat(),
-                    }
-                    for e in evidence_list
-                ],
-            })
+            result.append(
+                {
+                    "hypothesis_id": str(hypothesis_id),
+                    "hypothesis_name": (candidate.name if candidate else "unknown"),
+                    "evidence": [
+                        {
+                            "id": str(e.id),
+                            "rule_id": e.rule_id,
+                            "relationship": e.relationship,
+                            "weight": e.weight,
+                            "confidence": e.confidence,
+                            "reason": e.reason,
+                            "source": e.source,
+                            "observation_id": (
+                                str(e.observation_id) if e.observation_id else None
+                            ),
+                            "entity_id": (str(e.entity_id) if e.entity_id else None),
+                            "created_at": e.created_at.isoformat(),
+                        }
+                        for e in evidence_list
+                    ],
+                }
+            )
         return result
