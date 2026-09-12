@@ -12,7 +12,13 @@ from rop.repositories import EvaluatedEvidenceRepository
 
 
 class EvidenceEvaluationService:
-    """Evaluate observations and entities against evidence rules."""
+    """Evaluate observations and entities against evidence rules.
+
+    A session's evidence is evaluated against its *combined* observations
+    and entities (see ``EvidenceEvaluator.evaluate_hypothesis``), not one
+    observation at a time — a rule that requires two findings recorded as
+    separate observations can still match.
+    """
 
     def __init__(
         self,
@@ -31,16 +37,31 @@ class EvidenceEvaluationService:
         observations: list[Observation],
         entities: list[Entity],
     ) -> list[EvaluatedEvidence]:
-        self.repository.delete_by_session(db, session_id)
+        """Re-evaluate a session's evidence as a single atomic operation.
 
-        all_evidence: list[EvaluatedEvidence] = []
-        for candidate in candidates:
-            evidence_items = self._evaluate_candidate(
-                db, session_id, candidate, observations, entities
-            )
-            all_evidence.extend(evidence_items)
+        Replacing the previous evidence and writing the new evidence for
+        every candidate happens in one transaction: if evaluating any
+        candidate fails, everything (including the delete of the old
+        evidence) is rolled back, so the session is never left with a
+        partially-evaluated or missing evidence set.
+        """
+        try:
+            self.repository.delete_by_session(db, session_id)
 
-        return all_evidence
+            all_evidence: list[EvaluatedEvidence] = []
+            for candidate in candidates:
+                evidence_items = self._evaluate_candidate(
+                    db, session_id, candidate, observations, entities
+                )
+                all_evidence.extend(evidence_items)
+
+            db.commit()
+            for record in all_evidence:
+                db.refresh(record)
+            return all_evidence
+        except Exception:
+            db.rollback()
+            raise
 
     def _evaluate_candidate(
         self,
@@ -50,33 +71,13 @@ class EvidenceEvaluationService:
         observations: list[Observation],
         entities: list[Entity],
     ) -> list[EvaluatedEvidence]:
-        evidence_items: list[EvaluatedEvidence] = []
+        results = self.evaluator.evaluate_hypothesis(
+            candidate.name, observations, entities
+        )
+        if not results:
+            return []
 
-        for observation in observations:
-            results = self.evaluator.evaluate_observation(candidate.name, observation)
-            if results:
-                records = self.repository.create_many(
-                    db,
-                    session_id,
-                    candidate.id,
-                    results,
-                    observation_id=observation.id,
-                )
-                evidence_items.extend(records)
-
-        for entity in entities:
-            results = self.evaluator.evaluate_entity(candidate.name, entity)
-            if results:
-                records = self.repository.create_many(
-                    db,
-                    session_id,
-                    candidate.id,
-                    results,
-                    entity_id=entity.id,
-                )
-                evidence_items.extend(records)
-
-        return evidence_items
+        return self.repository.create_many(db, session_id, candidate.id, results)
 
     def list_by_session(
         self,
@@ -116,12 +117,20 @@ class EvidenceEvaluationService:
                             "relationship": e.relationship,
                             "weight": e.weight,
                             "confidence": e.confidence,
+                            "matched_finding_count": e.matched_finding_count,
+                            "total_finding_count": e.total_finding_count,
+                            "match_strength": e.match_strength,
+                            "contribution": e.contribution,
                             "reason": e.reason,
                             "source": e.source,
                             "observation_id": (
                                 str(e.observation_id) if e.observation_id else None
                             ),
                             "entity_id": (str(e.entity_id) if e.entity_id else None),
+                            "contributing_observation_ids": (
+                                e.contributing_observation_ids
+                            ),
+                            "contributing_entity_ids": e.contributing_entity_ids,
                             "created_at": e.created_at.isoformat(),
                         }
                         for e in evidence_list

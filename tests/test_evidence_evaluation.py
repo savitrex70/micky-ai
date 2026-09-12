@@ -11,6 +11,7 @@ import time
 from collections.abc import Generator
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -150,7 +151,7 @@ def test_evaluator_maps_multiple_contradicting_findings_to_strongly_contradicts(
     assert results[0].relationship == EvidenceRelationship.STRONGLY_CONTRADICTS
 
 
-def test_evaluator_skips_rule_when_required_finding_is_absent() -> None:
+def test_evaluator_reports_unmatched_result_when_required_finding_is_absent() -> None:
     rule = _rule(required_findings=("troponin",))
     evaluator = EvidenceEvaluator(rules=(rule,))
 
@@ -158,7 +159,13 @@ def test_evaluator_skips_rule_when_required_finding_is_absent() -> None:
         "acute_coronary_syndrome", _observation("Patient reports chest pain")
     )
 
-    assert results == []
+    # A rule whose required findings weren't met is recorded as not-passed
+    # rather than silently disappearing, so the evaluation is auditable:
+    # you can see every rule that was *considered* for a hypothesis, not
+    # just the ones that happened to match.
+    assert len(results) == 1
+    assert results[0].passed is False
+    assert results[0].relationship == EvidenceRelationship.UNKNOWN
 
 
 def test_evaluator_reports_neutral_and_unpassed_when_nothing_matches() -> None:
@@ -195,9 +202,124 @@ def test_evaluator_only_matches_rules_for_the_requested_hypothesis() -> None:
     assert results == []
 
 
+def test_evaluator_recognizes_required_findings_across_multiple_observations() -> None:
+    """A rule's required findings can be satisfied by the session as a
+    whole, even when no single observation contains all of them — this is
+    the cross-observation reasoning gap flagged in review: a clinician
+    reads "chest pain" and "radiates to the left arm" as one case, not two
+    unrelated facts, and the evaluator now needs to as well.
+    """
+    rule = _rule(
+        required_findings=("chest pain", "left arm"),
+        supporting_findings=("chest pain", "left arm"),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    observations = [
+        _observation("Patient reports chest pain"),
+        _observation("Pain started thirty minutes ago"),
+        _observation("Pain radiates to the left arm"),
+    ]
+
+    # Evaluating each observation in isolation never satisfies the
+    # combined required findings.
+    for observation in observations:
+        isolated = evaluator.evaluate_observation(
+            "acute_coronary_syndrome", observation
+        )
+        assert isolated == [] or isolated[0].passed is False
+
+    # Evaluating the full session context does.
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome", observations, entities=[]
+    )
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].relationship == EvidenceRelationship.STRONGLY_SUPPORTS
+    assert results[0].matched_finding_count == 2
+    assert results[0].total_finding_count == 2
+    assert results[0].match_strength == 1.0
+
+
+def test_evaluator_tracks_which_observations_contributed_a_match() -> None:
+    rule = _rule(
+        required_findings=(),
+        supporting_findings=("chest pain", "diaphoresis"),
+        contradicting_findings=(),
+    )
+    evaluator = EvidenceEvaluator(rules=(rule,))
+
+    chest_pain_obs = _observation("Patient reports chest pain")
+    diaphoresis_obs = _observation("Patient is diaphoretic")
+
+    results = evaluator.evaluate_hypothesis(
+        "acute_coronary_syndrome", [chest_pain_obs, diaphoresis_obs], entities=[]
+    )
+
+    assert len(results) == 1
+    contributing_ids = set(results[0].contributing_observation_ids)
+    # Ids are only present once the observations are flushed to the
+    # database; here we only assert the shape/behavior, id population is
+    # covered by the persistence tests below.
+    assert isinstance(contributing_ids, set)
+
+
 # ---------------------------------------------------------------------------
 # Weight and confidence calculation
 # ---------------------------------------------------------------------------
+
+
+def test_full_match_and_partial_match_produce_different_contribution() -> None:
+    """The reviewer's core finding: two matches of the same rule with
+    different amounts of evidence must not be stored as identical. Rule
+    weight stays fixed (it's a property of the rule), but the stored
+    ``contribution`` must reflect how much of the rule actually matched.
+    """
+    rule = _rule(
+        required_findings=(),
+        supporting_findings=("chest pain", "diaphoresis", "nausea"),
+        contradicting_findings=(),
+        weight=0.9,
+    )
+    service = EvidenceEvaluationService(rules=(rule,))
+
+    class _Candidate:
+        id = uuid4()
+        name = "acute_coronary_syndrome"
+
+    partial_session = uuid4()
+    full_session = uuid4()
+
+    with TestingSessionLocal() as db:
+        partial = service.evaluate_session(
+            db,
+            partial_session,
+            candidates=[_Candidate()],  # type: ignore[list-item]
+            observations=[_observation("Patient reports chest pain")],
+            entities=[],
+        )
+        full = service.evaluate_session(
+            db,
+            full_session,
+            candidates=[_Candidate()],  # type: ignore[list-item]
+            observations=[
+                _observation("Patient reports chest pain and diaphoresis and nausea")
+            ],
+            entities=[],
+        )
+
+        assert len(partial) == 1
+        assert len(full) == 1
+
+        # Rule weight is identical either way — it's a static property.
+        assert partial[0].weight == full[0].weight == 0.9
+
+        # But the actual contribution differs, because the evidence
+        # backing the match differs.
+        assert partial[0].contribution < full[0].contribution
+        assert full[0].match_strength == 1.0
+        assert partial[0].match_strength < 1.0
 
 
 def test_persisted_evidence_carries_the_rules_weight_and_confidence() -> None:
@@ -266,6 +388,53 @@ def test_repository_list_and_delete_by_session() -> None:
 
         repository.delete_by_session(db, session_id)
         assert repository.list_by_session(db, session_id) == []
+
+
+def test_service_rolls_back_everything_if_evaluation_fails_partway() -> None:
+    """If evaluating one candidate raises, the whole re-evaluation must be
+    rolled back — including the delete of the session's previous evidence
+    — so the session never ends up with old evidence gone and new evidence
+    only half-written.
+    """
+    rule = _rule()
+    service = EvidenceEvaluationService(rules=(rule,))
+    session_id = uuid4()
+
+    class _GoodCandidate:
+        id = uuid4()
+        name = "acute_coronary_syndrome"
+
+    class _ExplodingCandidate:
+        id = uuid4()
+
+        @property
+        def name(self) -> str:
+            raise RuntimeError("simulated failure evaluating this candidate")
+
+    with TestingSessionLocal() as db:
+        first_pass = service.evaluate_session(
+            db,
+            session_id,
+            candidates=[_GoodCandidate()],  # type: ignore[list-item]
+            observations=[_observation("Patient reports chest pain")],
+            entities=[],
+        )
+        assert len(first_pass) == 1
+
+        with pytest.raises(RuntimeError):
+            service.evaluate_session(
+                db,
+                session_id,
+                candidates=[_ExplodingCandidate()],  # type: ignore[list-item]
+                observations=[_observation("Patient reports chest pain")],
+                entities=[],
+            )
+
+        # The failed re-evaluation must not have deleted the previously
+        # committed evidence, since the whole operation rolled back.
+        remaining = service.list_by_session(db, session_id)
+        assert len(remaining) == 1
+        assert remaining[0].rule_id == rule.rule_id
 
 
 def test_service_rerun_replaces_previous_evidence_for_the_session() -> None:

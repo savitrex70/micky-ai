@@ -18,6 +18,12 @@ class EvaluatedEvidenceRead(BaseModel):
     relationship: str
     weight: float
     confidence: float
+    matched_finding_count: int
+    total_finding_count: int
+    match_strength: float
+    contribution: float
+    contributing_observation_ids: list[str]
+    contributing_entity_ids: list[str]
     reason: str
     source: str
     created_at: datetime

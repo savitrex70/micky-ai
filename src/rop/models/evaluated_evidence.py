@@ -3,9 +3,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     DateTime,
     Float,
     ForeignKey,
+    Integer,
     String,
     Text,
     func,
@@ -50,6 +52,18 @@ class EvaluatedEvidence(Base):
     relationship: Mapped[str] = mapped_column(String(50), nullable=False)
     weight: Mapped[float] = mapped_column(Float, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    matched_finding_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    total_finding_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    match_strength: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    contribution: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    contributing_observation_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    contributing_entity_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
