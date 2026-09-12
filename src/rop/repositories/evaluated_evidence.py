@@ -106,6 +106,21 @@ class EvaluatedEvidenceRepository:
         )
         return list(db.scalars(statement).all())
 
+    def list_all_by_session(
+        self, db: Session, session_id: UUID
+    ) -> list[EvaluatedEvidence]:
+        """Return every evaluated evidence record for a session, unpaginated.
+
+        For callers that must see the complete set (e.g. aggregating a
+        deterministic summary) rather than a page of it — ``list_by_session``
+        defaults to 100 rows, which is the wrong contract when every record
+        has to be counted.
+        """
+        statement = select(EvaluatedEvidence).where(
+            EvaluatedEvidence.session_id == session_id
+        )
+        return list(db.scalars(statement).all())
+
     def list_by_hypothesis(
         self,
         db: Session,

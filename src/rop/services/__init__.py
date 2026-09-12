@@ -3,6 +3,7 @@
 from rop.services.candidate_generation import CandidateGenerationService
 from rop.services.entity import EntityService
 from rop.services.evidence import EvidenceService
+from rop.services.evidence_aggregation import EvidenceAggregationService
 from rop.services.evidence_evaluation import EvidenceEvaluationService
 from rop.services.hypothesis import HypothesisService
 from rop.services.medical_entity_recognition import MedicalEntityRecognitionService
@@ -16,6 +17,7 @@ from rop.services.template_match import TemplateMatchService
 __all__ = [
     "CandidateGenerationService",
     "EntityService",
+    "EvidenceAggregationService",
     "EvidenceEvaluationService",
     "EvidenceService",
     "HypothesisService",

@@ -1,0 +1,878 @@
+diff --git a/src/rop/api/sessions.py b/src/rop/api/sessions.py
+index 33928ba..07d6472 100644
+--- a/src/rop/api/sessions.py
++++ b/src/rop/api/sessions.py
+@@ -20,6 +20,7 @@ from rop.schemas import (
+     CandidateHypothesisRead,
+     EvidenceCreate,
+     EvidenceRead,
++    EvidenceSummaryRead,
+     EvidenceUpdate,
+     HypothesisCreate,
+     HypothesisRead,
+@@ -44,6 +45,7 @@ from rop.schemas.api import (
+ from rop.services import (
+     CandidateGenerationService,
+     EntityService,
++    EvidenceAggregationService,
+     EvidenceEvaluationService,
+     EvidenceService,
+     HypothesisService,
+@@ -67,6 +69,7 @@ evidence_service = EvidenceService()
+ reasoning_step_service = ReasoningStepService()
+ candidate_generation_service = CandidateGenerationService()
+ evidence_evaluation_service = EvidenceEvaluationService()
++evidence_aggregation_service = EvidenceAggregationService()
+ 
+ 
+ @router.post(
+@@ -649,3 +652,31 @@ def evaluate_evidence(
+     )
+ 
+     return evidence_evaluation_service.group_by_hypothesis(db, session_id, candidates)
++
++
++@router.get(
++    "/{session_id}/evidence-summary",
++    response_model=list[EvidenceSummaryRead],
++    status_code=status.HTTP_200_OK,
++)
++def get_evidence_summary(
++    session_id: UUID,
++    db: Session = Depends(get_db),
++) -> list[dict[str, Any]]:
++    """Read-only, deterministic evidence summary per candidate hypothesis.
++
++    Consumes the evidence already persisted by ``/evaluate-evidence``
++    (Task 020) — it does not evaluate evidence itself, so call
++    ``/evaluate-evidence`` first if the session's evidence is stale or
++    has never been evaluated. Never writes to the database.
++    """
++    if session_service.get(db, session_id) is None:
++        raise HTTPException(
++            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
++        )
++
++    candidates = candidate_generation_service.list_by_session(
++        db, session_id, offset=0, limit=100
++    )
++
++    return evidence_aggregation_service.summarize_session(db, session_id, candidates)
+diff --git a/src/rop/repositories/evaluated_evidence.py b/src/rop/repositories/evaluated_evidence.py
+index 052db00..24b2b6e 100644
+--- a/src/rop/repositories/evaluated_evidence.py
++++ b/src/rop/repositories/evaluated_evidence.py
+@@ -106,6 +106,21 @@ class EvaluatedEvidenceRepository:
+         )
+         return list(db.scalars(statement).all())
+ 
++    def list_all_by_session(
++        self, db: Session, session_id: UUID
++    ) -> list[EvaluatedEvidence]:
++        """Return every evaluated evidence record for a session, unpaginated.
++
++        For callers that must see the complete set (e.g. aggregating a
++        deterministic summary) rather than a page of it — ``list_by_session``
++        defaults to 100 rows, which is the wrong contract when every record
++        has to be counted.
++        """
++        statement = select(EvaluatedEvidence).where(
++            EvaluatedEvidence.session_id == session_id
++        )
++        return list(db.scalars(statement).all())
++
+     def list_by_hypothesis(
+         self,
+         db: Session,
+diff --git a/src/rop/schemas/__init__.py b/src/rop/schemas/__init__.py
+index f442477..9d5963c 100644
+--- a/src/rop/schemas/__init__.py
++++ b/src/rop/schemas/__init__.py
+@@ -4,6 +4,7 @@ from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
+ from rop.schemas.entity import EntityCreate, EntityRead, EntityUpdate
+ from rop.schemas.evaluated_evidence import EvaluatedEvidenceRead, EvidenceGroupedRead
+ from rop.schemas.evidence import EvidenceCreate, EvidenceRead, EvidenceUpdate
++from rop.schemas.evidence_summary import EvidenceSummaryRead
+ from rop.schemas.extraction import (
+     ObservationExtractionRequest,
+     ObservationExtractionResponse,
+@@ -32,6 +33,7 @@ __all__ = [
+     "EvaluatedEvidenceRead",
+     "EvidenceCreate",
+     "EvidenceRead",
++    "EvidenceSummaryRead",
+     "EvidenceUpdate",
+     "HypothesisCreate",
+     "HypothesisRead",
+diff --git a/src/rop/schemas/evidence_summary.py b/src/rop/schemas/evidence_summary.py
+new file mode 100644
+index 0000000..3738fe7
+--- /dev/null
++++ b/src/rop/schemas/evidence_summary.py
+@@ -0,0 +1,28 @@
++from uuid import UUID
++
++from pydantic import BaseModel, ConfigDict
++
++
++class EvidenceSummaryRead(BaseModel):
++    """Deterministic evidence summary for one candidate hypothesis.
++
++    A derived view over a hypothesis's already-persisted ``EvaluatedEvidence``
++    records (Task 020) — counts and contribution totals only. Does not
++    evaluate evidence, rank hypotheses, or produce a diagnosis; it exists so
++    a later hypothesis-scoring engine can consume one summary per hypothesis
++    instead of raw evidence rows.
++    """
++
++    model_config = ConfigDict(from_attributes=True)
++
++    hypothesis_id: UUID
++    hypothesis_name: str
++    total_evidence_items: int
++    supporting_evidence_count: int
++    strongly_supporting_evidence_count: int
++    contradicting_evidence_count: int
++    strongly_contradicting_evidence_count: int
++    neutral_or_unknown_count: int
++    total_support_contribution: float
++    total_contradiction_contribution: float
++    net_contribution: float
+diff --git a/src/rop/services/__init__.py b/src/rop/services/__init__.py
+index 7060c04..254d423 100644
+--- a/src/rop/services/__init__.py
++++ b/src/rop/services/__init__.py
+@@ -3,6 +3,7 @@
+ from rop.services.candidate_generation import CandidateGenerationService
+ from rop.services.entity import EntityService
+ from rop.services.evidence import EvidenceService
++from rop.services.evidence_aggregation import EvidenceAggregationService
+ from rop.services.evidence_evaluation import EvidenceEvaluationService
+ from rop.services.hypothesis import HypothesisService
+ from rop.services.medical_entity_recognition import MedicalEntityRecognitionService
+@@ -16,6 +17,7 @@ from rop.services.template_match import TemplateMatchService
+ __all__ = [
+     "CandidateGenerationService",
+     "EntityService",
++    "EvidenceAggregationService",
+     "EvidenceEvaluationService",
+     "EvidenceService",
+     "HypothesisService",
+diff --git a/src/rop/services/evidence_aggregation.py b/src/rop/services/evidence_aggregation.py
+new file mode 100644
+index 0000000..b863083
+--- /dev/null
++++ b/src/rop/services/evidence_aggregation.py
+@@ -0,0 +1,127 @@
++from collections import defaultdict
++from typing import Any
++from uuid import UUID
++
++from sqlalchemy.orm import Session
++
++from rop.evidence_evaluation.models import EvidenceRelationship
++from rop.models import CandidateHypothesis, EvaluatedEvidence
++from rop.repositories import EvaluatedEvidenceRepository
++
++_CONTRIBUTION_PRECISION = 4
++
++_SUPPORTING_RELATIONSHIPS = {
++    EvidenceRelationship.SUPPORTS.value,
++    EvidenceRelationship.STRONGLY_SUPPORTS.value,
++}
++_CONTRADICTING_RELATIONSHIPS = {
++    EvidenceRelationship.CONTRADICTS.value,
++    EvidenceRelationship.STRONGLY_CONTRADICTS.value,
++}
++
++
++class EvidenceAggregationService:
++    """Summarize a session's persisted evidence, per candidate hypothesis.
++
++    This is Task 021: a read-only aggregation layer over the
++    ``EvaluatedEvidence`` records Task 020's ``EvidenceEvaluationService``
++    already evaluated and persisted. It does not re-evaluate evidence,
++    rank hypotheses, or produce a diagnosis — it only reduces each
++    hypothesis's evidence rows to deterministic counts and contribution
++    totals, so a later hypothesis-scoring engine can consume one summary
++    per hypothesis instead of raw evidence records.
++
++    Only hypotheses with at least one persisted evidence record produce a
++    summary, matching how ``EvidenceEvaluationService.group_by_hypothesis``
++    already groups by observed evidence rather than by the full candidate
++    list — a hypothesis with zero evidence has nothing yet to summarize.
++    """
++
++    def __init__(self, repository: EvaluatedEvidenceRepository | None = None) -> None:
++        self.repository = repository or EvaluatedEvidenceRepository()
++
++    def summarize_session(
++        self,
++        db: Session,
++        session_id: UUID,
++        candidates: list[CandidateHypothesis],
++    ) -> list[dict[str, Any]]:
++        all_evidence = self.repository.list_all_by_session(db, session_id)
++
++        grouped: dict[UUID, list[EvaluatedEvidence]] = defaultdict(list)
++        for evidence in all_evidence:
++            grouped[evidence.hypothesis_id].append(evidence)
++
++        candidate_map = {candidate.id: candidate for candidate in candidates}
++
++        return [
++            self._summarize_hypothesis(
++                hypothesis_id=hypothesis_id,
++                hypothesis_name=(
++                    candidate_map[hypothesis_id].name
++                    if hypothesis_id in candidate_map
++                    else "unknown"
++                ),
++                evidence_list=evidence_list,
++            )
++            for hypothesis_id, evidence_list in grouped.items()
++        ]
++
++    @staticmethod
++    def _summarize_hypothesis(
++        hypothesis_id: UUID,
++        hypothesis_name: str,
++        evidence_list: list[EvaluatedEvidence],
++    ) -> dict[str, Any]:
++        supporting_count = 0
++        strongly_supporting_count = 0
++        contradicting_count = 0
++        strongly_contradicting_count = 0
++        neutral_or_unknown_count = 0
++        total_support_contribution = 0.0
++        total_contradiction_contribution = 0.0
++
++        for evidence in evidence_list:
++            relationship = evidence.relationship
++            if relationship == EvidenceRelationship.SUPPORTS.value:
++                supporting_count += 1
++                total_support_contribution += evidence.contribution
++            elif relationship == EvidenceRelationship.STRONGLY_SUPPORTS.value:
++                strongly_supporting_count += 1
++                total_support_contribution += evidence.contribution
++            elif relationship == EvidenceRelationship.CONTRADICTS.value:
++                contradicting_count += 1
++                total_contradiction_contribution += evidence.contribution
++            elif relationship == EvidenceRelationship.STRONGLY_CONTRADICTS.value:
++                strongly_contradicting_count += 1
++                total_contradiction_contribution += evidence.contribution
++            else:
++                # NEUTRAL and UNKNOWN (and any relationship value this
++                # service doesn't recognize) are counted but never
++                # contribute to either side of the net.
++                neutral_or_unknown_count += 1
++
++        total_support_contribution = round(
++            total_support_contribution, _CONTRIBUTION_PRECISION
++        )
++        total_contradiction_contribution = round(
++            total_contradiction_contribution, _CONTRIBUTION_PRECISION
++        )
++        net_contribution = round(
++            total_support_contribution - total_contradiction_contribution,
++            _CONTRIBUTION_PRECISION,
++        )
++
++        return {
++            "hypothesis_id": hypothesis_id,
++            "hypothesis_name": hypothesis_name,
++            "total_evidence_items": len(evidence_list),
++            "supporting_evidence_count": supporting_count,
++            "strongly_supporting_evidence_count": strongly_supporting_count,
++            "contradicting_evidence_count": contradicting_count,
++            "strongly_contradicting_evidence_count": strongly_contradicting_count,
++            "neutral_or_unknown_count": neutral_or_unknown_count,
++            "total_support_contribution": total_support_contribution,
++            "total_contradiction_contribution": total_contradiction_contribution,
++            "net_contribution": net_contribution,
++        }
+diff --git a/tests/test_evidence_aggregation.py b/tests/test_evidence_aggregation.py
+new file mode 100644
+index 0000000..864f012
+--- /dev/null
++++ b/tests/test_evidence_aggregation.py
+@@ -0,0 +1,579 @@
++"""Tests for the Task 021 Evidence Aggregation Service.
++
++Task 021 does not evaluate evidence — it summarizes ``EvaluatedEvidence``
++records already persisted by Task 020's ``EvidenceEvaluationService``. These
++tests persist ``EvaluatedEvidence`` rows directly (bypassing the evaluator
++entirely) so aggregation is exercised independently of how the evidence was
++produced, plus one end-to-end API test that goes through the real
++generate-candidates -> evaluate-evidence -> evidence-summary pipeline.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Generator
++from uuid import UUID, uuid4
++
++from fastapi.testclient import TestClient
++from sqlalchemy import create_engine
++from sqlalchemy.orm import Session, sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from rop.database import Base, get_db
++from rop.evidence_evaluation.models import EvidenceRelationship
++from rop.main import app
++from rop.models import EvaluatedEvidence
++from rop.services.evidence_aggregation import EvidenceAggregationService
++
++engine = create_engine(
++    "sqlite+pysqlite:///:memory:",
++    connect_args={"check_same_thread": False},
++    poolclass=StaticPool,
++)
++Base.metadata.create_all(engine)
++TestingSessionLocal = sessionmaker(bind=engine)
++
++
++def override_get_db() -> Generator[Session, None, None]:
++    with TestingSessionLocal() as db:
++        yield db
++
++
++app.dependency_overrides[get_db] = override_get_db
++client = TestClient(app)
++
++
++class _Candidate:
++    """Minimal stand-in for a CandidateHypothesis: just id and name."""
++
++    def __init__(self, id_: UUID, name: str) -> None:
++        self.id = id_
++        self.name = name
++
++
++def _evidence(
++    session_id: UUID,
++    hypothesis_id: UUID,
++    *,
++    relationship: EvidenceRelationship,
++    contribution: float = 0.5,
++    rule_id: str = "test_rule",
++) -> EvaluatedEvidence:
++    """Build an EvaluatedEvidence row with the fields aggregation reads.
++
++    Bypasses the evaluator/repository.create_many entirely — aggregation
++    only consumes already-persisted rows, so tests can set exactly the
++    relationship/contribution combination they need.
++    """
++    return EvaluatedEvidence(
++        session_id=session_id,
++        hypothesis_id=hypothesis_id,
++        rule_id=rule_id,
++        relationship=relationship.value,
++        weight=0.5,
++        confidence=0.8,
++        matched_finding_count=1,
++        total_finding_count=2,
++        match_strength=0.5,
++        contribution=contribution,
++        contributing_observation_ids=[],
++        contributing_entity_ids=[],
++        reason="test",
++        source="unit_test",
++    )
++
++
++# ---------------------------------------------------------------------------
++# Empty evidence
++# ---------------------------------------------------------------------------
++
++
++def test_session_with_no_evaluated_evidence_returns_empty_summary() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        summaries = service.summarize_session(db, session_id, candidates=[])
++        assert summaries == []
++
++
++def test_hypothesis_with_no_evidence_produces_no_summary_entry() -> None:
++    """A candidate with zero evaluated evidence has nothing to summarize
++    yet, so it must not appear in the results (matching how
++    ``group_by_hypothesis`` already groups by observed evidence, not by
++    the full candidate list).
++    """
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_with_evidence = uuid4()
++    hypothesis_without_evidence = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_with_evidence,
++                relationship=EvidenceRelationship.SUPPORTS,
++            )
++        )
++        db.commit()
++
++        summaries = service.summarize_session(
++            db,
++            session_id,
++            candidates=[
++                _Candidate(hypothesis_with_evidence, "acute_coronary_syndrome"),
++                _Candidate(hypothesis_without_evidence, "pulmonary_embolism"),
++            ],
++        )
++
++        assert len(summaries) == 1
++        assert summaries[0]["hypothesis_id"] == hypothesis_with_evidence
++
++
++# ---------------------------------------------------------------------------
++# Support aggregation
++# ---------------------------------------------------------------------------
++
++
++def test_multiple_supports_records_sum_correctly() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.3,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.2,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["supporting_evidence_count"] == 2
++        assert summary["strongly_supporting_evidence_count"] == 0
++        assert summary["total_support_contribution"] == 0.5
++        assert summary["total_evidence_items"] == 2
++
++
++def test_strongly_supports_is_counted_separately_and_still_supports() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.STRONGLY_SUPPORTS,
++                contribution=0.7,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.2,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["strongly_supporting_evidence_count"] == 1
++        assert summary["supporting_evidence_count"] == 1
++        # Both SUPPORTS and STRONGLY_SUPPORTS feed the same support total.
++        assert summary["total_support_contribution"] == 0.9
++
++
++# ---------------------------------------------------------------------------
++# Contradiction aggregation
++# ---------------------------------------------------------------------------
++
++
++def test_contradicts_and_strongly_contradicts_counted_correctly() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.CONTRADICTS,
++                contribution=0.1,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.STRONGLY_CONTRADICTS,
++                contribution=0.4,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["contradicting_evidence_count"] == 1
++        assert summary["strongly_contradicting_evidence_count"] == 1
++        assert summary["total_contradiction_contribution"] == 0.5
++
++
++# ---------------------------------------------------------------------------
++# Neutral / unknown
++# ---------------------------------------------------------------------------
++
++
++def test_neutral_and_unknown_are_counted_but_contribute_zero() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        # Nonzero contribution values on purpose: they must still be
++        # excluded from both totals purely by relationship type.
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.NEUTRAL,
++                contribution=0.9,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.UNKNOWN,
++                contribution=0.9,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["neutral_or_unknown_count"] == 2
++        assert summary["total_support_contribution"] == 0.0
++        assert summary["total_contradiction_contribution"] == 0.0
++        assert summary["net_contribution"] == 0.0
++        assert summary["total_evidence_items"] == 2
++
++
++# ---------------------------------------------------------------------------
++# Net contribution
++# ---------------------------------------------------------------------------
++
++
++def test_net_contribution_is_support_minus_contradiction() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.STRONGLY_SUPPORTS,
++                contribution=0.8,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.CONTRADICTS,
++                contribution=0.3,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["total_support_contribution"] == 0.8
++        assert summary["total_contradiction_contribution"] == 0.3
++        assert summary["net_contribution"] == 0.5
++
++
++# ---------------------------------------------------------------------------
++# Multiple hypotheses
++# ---------------------------------------------------------------------------
++
++
++def test_evidence_is_grouped_correctly_by_hypothesis() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    acs_id = uuid4()
++    pe_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                acs_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.4,
++                rule_id="acs_rule",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                pe_id,
++                relationship=EvidenceRelationship.CONTRADICTS,
++                contribution=0.6,
++                rule_id="pe_rule",
++            )
++        )
++        db.commit()
++
++        summaries = service.summarize_session(
++            db,
++            session_id,
++            candidates=[
++                _Candidate(acs_id, "acute_coronary_syndrome"),
++                _Candidate(pe_id, "pulmonary_embolism"),
++            ],
++        )
++
++        by_id = {summary["hypothesis_id"]: summary for summary in summaries}
++        assert len(summaries) == 2
++        assert by_id[acs_id]["hypothesis_name"] == "acute_coronary_syndrome"
++        assert by_id[acs_id]["total_support_contribution"] == 0.4
++        assert by_id[pe_id]["hypothesis_name"] == "pulmonary_embolism"
++        assert by_id[pe_id]["total_contradiction_contribution"] == 0.6
++
++
++# ---------------------------------------------------------------------------
++# Precision
++# ---------------------------------------------------------------------------
++
++
++def test_totals_are_rounded_to_four_decimal_places() -> None:
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        # 0.1 + 0.2 is 0.30000000000000004 in raw floating point.
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.1,
++                rule_id="rule_a",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.2,
++                rule_id="rule_b",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["total_support_contribution"] == 0.3
++        assert summary["net_contribution"] == 0.3
++
++
++# ---------------------------------------------------------------------------
++# Duplicate evidence is not silently deduplicated
++# ---------------------------------------------------------------------------
++
++
++def test_duplicate_evidence_records_are_aggregated_as_persisted() -> None:
++    """Two records with the same rule and contribution must both count —
++    aggregation reflects what was persisted, it does not deduplicate.
++    """
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    hypothesis_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.25,
++                rule_id="same_rule",
++            )
++        )
++        db.add(
++            _evidence(
++                session_id,
++                hypothesis_id,
++                relationship=EvidenceRelationship.SUPPORTS,
++                contribution=0.25,
++                rule_id="same_rule",
++            )
++        )
++        db.commit()
++
++        summary = service.summarize_session(
++            db,
++            session_id,
++            candidates=[_Candidate(hypothesis_id, "acute_coronary_syndrome")],
++        )[0]
++
++        assert summary["supporting_evidence_count"] == 2
++        assert summary["total_evidence_items"] == 2
++        assert summary["total_support_contribution"] == 0.5
++
++
++# ---------------------------------------------------------------------------
++# API endpoint
++# ---------------------------------------------------------------------------
++
++
++def _create_session() -> str:
++    response = client.post(
++        "/sessions",
++        json={
++            "status": "created",
++            "domain": "testing",
++            "user_input": "Evidence aggregation test",
++            "current_stage": "initial",
++            "metadata": {"source": "evidence-aggregation-test"},
++        },
++    )
++    assert response.status_code == 201
++    return response.json()["id"]
++
++
++def _add_observation(session_id: str, text: str, type_: str = "symptom") -> None:
++    response = client.post(
++        f"/sessions/{session_id}/observations",
++        json={
++            "text": text,
++            "type": type_,
++            "confidence": 0.9,
++            "source": "unit_test",
++        },
++    )
++    assert response.status_code == 201
++
++
++def test_evidence_summary_endpoint_returns_expected_structure() -> None:
++    session_id = _create_session()
++    _add_observation(session_id, "Patient reports chest pain")
++    _add_observation(session_id, "Pain radiates to left arm")
++
++    generate_response = client.post(f"/sessions/{session_id}/generate-candidates")
++    assert generate_response.status_code == 201
++    assert len(generate_response.json()) > 0
++
++    evaluate_response = client.post(f"/sessions/{session_id}/evaluate-evidence")
++    assert evaluate_response.status_code == 200
++
++    summary_response = client.get(f"/sessions/{session_id}/evidence-summary")
++    assert summary_response.status_code == 200
++
++    summaries = summary_response.json()
++    assert isinstance(summaries, list)
++    assert len(summaries) > 0
++
++    acs_summary = next(
++        (
++            summary
++            for summary in summaries
++            if summary["hypothesis_name"] == "acute_coronary_syndrome"
++        ),
++        None,
++    )
++    assert acs_summary is not None
++    assert acs_summary["total_evidence_items"] > 0
++    assert acs_summary["total_evidence_items"] == (
++        acs_summary["supporting_evidence_count"]
++        + acs_summary["strongly_supporting_evidence_count"]
++        + acs_summary["contradicting_evidence_count"]
++        + acs_summary["strongly_contradicting_evidence_count"]
++        + acs_summary["neutral_or_unknown_count"]
++    )
++    expected_net = round(
++        acs_summary["total_support_contribution"]
++        - acs_summary["total_contradiction_contribution"],
++        4,
++    )
++    assert acs_summary["net_contribution"] == expected_net
++
++    # Read-only: calling it again must not change anything or evaluate.
++    second_response = client.get(f"/sessions/{session_id}/evidence-summary")
++    assert second_response.status_code == 200
++    assert second_response.json() == summaries
++
++
++def test_evidence_summary_endpoint_404_for_unknown_session() -> None:
++    response = client.get(f"/sessions/{uuid4()}/evidence-summary")
++    assert response.status_code == 404
++
++
++def test_evidence_summary_endpoint_empty_list_before_evaluation() -> None:
++    """A session with candidates generated but evidence never evaluated
++    has no EvaluatedEvidence records yet, so the summary is empty.
++    """
++    session_id = _create_session()
++    _add_observation(session_id, "Patient reports chest pain")
++
++    generate_response = client.post(f"/sessions/{session_id}/generate-candidates")
++    assert generate_response.status_code == 201
++
++    response = client.get(f"/sessions/{session_id}/evidence-summary")
++    assert response.status_code == 200
++    assert response.json() == []

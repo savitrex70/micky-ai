@@ -20,6 +20,7 @@ from rop.schemas import (
     CandidateHypothesisRead,
     EvidenceCreate,
     EvidenceRead,
+    EvidenceSummaryRead,
     EvidenceUpdate,
     HypothesisCreate,
     HypothesisRead,
@@ -44,6 +45,7 @@ from rop.schemas.api import (
 from rop.services import (
     CandidateGenerationService,
     EntityService,
+    EvidenceAggregationService,
     EvidenceEvaluationService,
     EvidenceService,
     HypothesisService,
@@ -67,6 +69,7 @@ evidence_service = EvidenceService()
 reasoning_step_service = ReasoningStepService()
 candidate_generation_service = CandidateGenerationService()
 evidence_evaluation_service = EvidenceEvaluationService()
+evidence_aggregation_service = EvidenceAggregationService()
 
 
 @router.post(
@@ -649,3 +652,31 @@ def evaluate_evidence(
     )
 
     return evidence_evaluation_service.group_by_hypothesis(db, session_id, candidates)
+
+
+@router.get(
+    "/{session_id}/evidence-summary",
+    response_model=list[EvidenceSummaryRead],
+    status_code=status.HTTP_200_OK,
+)
+def get_evidence_summary(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Read-only, deterministic evidence summary per candidate hypothesis.
+
+    Consumes the evidence already persisted by ``/evaluate-evidence``
+    (Task 020) — it does not evaluate evidence itself, so call
+    ``/evaluate-evidence`` first if the session's evidence is stale or
+    has never been evaluated. Never writes to the database.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    return evidence_aggregation_service.summarize_session(db, session_id, candidates)
