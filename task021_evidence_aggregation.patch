@@ -160,10 +160,10 @@ index 7060c04..254d423 100644
      "HypothesisService",
 diff --git a/src/rop/services/evidence_aggregation.py b/src/rop/services/evidence_aggregation.py
 new file mode 100644
-index 0000000..b863083
+index 0000000..1d7265c
 --- /dev/null
 +++ b/src/rop/services/evidence_aggregation.py
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,125 @@
 +from collections import defaultdict
 +from typing import Any
 +from uuid import UUID
@@ -197,10 +197,14 @@ index 0000000..b863083
 +    totals, so a later hypothesis-scoring engine can consume one summary
 +    per hypothesis instead of raw evidence records.
 +
-+    Only hypotheses with at least one persisted evidence record produce a
-+    summary, matching how ``EvidenceEvaluationService.group_by_hypothesis``
-+    already groups by observed evidence rather than by the full candidate
-+    list — a hypothesis with zero evidence has nothing yet to summarize.
++    The output is candidate-driven, not evidence-driven: every candidate
++    hypothesis passed in gets exactly one summary, even if it has no
++    evaluated evidence yet, in which case every count and contribution is
++    zero. A hypothesis silently missing from the results would force a
++    scoring engine to guess whether that means zero evidence, missing
++    data, or a bug — "one candidate in, one summary out" removes that
++    ambiguity. A session with no candidates at all still correctly
++    returns an empty list.
 +    """
 +
 +    def __init__(self, repository: EvaluatedEvidenceRepository | None = None) -> None:
@@ -218,19 +222,13 @@ index 0000000..b863083
 +        for evidence in all_evidence:
 +            grouped[evidence.hypothesis_id].append(evidence)
 +
-+        candidate_map = {candidate.id: candidate for candidate in candidates}
-+
 +        return [
 +            self._summarize_hypothesis(
-+                hypothesis_id=hypothesis_id,
-+                hypothesis_name=(
-+                    candidate_map[hypothesis_id].name
-+                    if hypothesis_id in candidate_map
-+                    else "unknown"
-+                ),
-+                evidence_list=evidence_list,
++                hypothesis_id=candidate.id,
++                hypothesis_name=candidate.name,
++                evidence_list=grouped.get(candidate.id, []),
 +            )
-+            for hypothesis_id, evidence_list in grouped.items()
++            for candidate in candidates
 +        ]
 +
 +    @staticmethod
@@ -293,10 +291,10 @@ index 0000000..b863083
 +        }
 diff --git a/tests/test_evidence_aggregation.py b/tests/test_evidence_aggregation.py
 new file mode 100644
-index 0000000..864f012
+index 0000000..c1714aa
 --- /dev/null
 +++ b/tests/test_evidence_aggregation.py
-@@ -0,0 +1,579 @@
+@@ -0,0 +1,637 @@
 +"""Tests for the Task 021 Evidence Aggregation Service.
 +
 +Task 021 does not evaluate evidence — it summarizes ``EvaluatedEvidence``
@@ -305,6 +303,9 @@ index 0000000..864f012
 +entirely) so aggregation is exercised independently of how the evidence was
 +produced, plus one end-to-end API test that goes through the real
 +generate-candidates -> evaluate-evidence -> evidence-summary pipeline.
++
++The output is candidate-driven: every candidate passed in gets exactly one
++summary, including an all-zero summary when it has no evaluated evidence.
 +"""
 +
 +from __future__ import annotations
@@ -395,11 +396,12 @@ index 0000000..864f012
 +        assert summaries == []
 +
 +
-+def test_hypothesis_with_no_evidence_produces_no_summary_entry() -> None:
-+    """A candidate with zero evaluated evidence has nothing to summarize
-+    yet, so it must not appear in the results (matching how
-+    ``group_by_hypothesis`` already groups by observed evidence, not by
-+    the full candidate list).
++def test_hypothesis_with_no_evidence_gets_a_zero_valued_summary() -> None:
++    """A candidate with zero evaluated evidence must still get a summary
++    entry — all zeros — rather than disappearing from the results. A
++    missing entry would force a downstream scoring engine to guess
++    whether that means zero evidence, missing data, or a bug; the
++    contract is one candidate in, one summary out.
 +    """
 +    service = EvidenceAggregationService()
 +    session_id = uuid4()
@@ -421,12 +423,57 @@ index 0000000..864f012
 +            session_id,
 +            candidates=[
 +                _Candidate(hypothesis_with_evidence, "acute_coronary_syndrome"),
-+                _Candidate(hypothesis_without_evidence, "pulmonary_embolism"),
++                _Candidate(hypothesis_without_evidence, "aortic_dissection"),
 +            ],
 +        )
 +
-+        assert len(summaries) == 1
-+        assert summaries[0]["hypothesis_id"] == hypothesis_with_evidence
++        assert len(summaries) == 2
++        by_id = {summary["hypothesis_id"]: summary for summary in summaries}
++
++        with_evidence = by_id[hypothesis_with_evidence]
++        assert with_evidence["total_evidence_items"] == 1
++
++        without_evidence = by_id[hypothesis_without_evidence]
++        assert without_evidence["hypothesis_name"] == "aortic_dissection"
++        assert without_evidence["total_evidence_items"] == 0
++        assert without_evidence["supporting_evidence_count"] == 0
++        assert without_evidence["strongly_supporting_evidence_count"] == 0
++        assert without_evidence["contradicting_evidence_count"] == 0
++        assert without_evidence["strongly_contradicting_evidence_count"] == 0
++        assert without_evidence["neutral_or_unknown_count"] == 0
++        assert without_evidence["total_support_contribution"] == 0.0
++        assert without_evidence["total_contradiction_contribution"] == 0.0
++        assert without_evidence["net_contribution"] == 0.0
++
++
++def test_session_with_candidates_but_no_evidence_returns_zero_valued_summaries() -> (
++    None
++):
++    """Every candidate must appear even when the session has no evaluated
++    evidence at all yet (e.g. candidates were generated but
++    evaluate-evidence was never called).
++    """
++    service = EvidenceAggregationService()
++    session_id = uuid4()
++    acs_id = uuid4()
++    pe_id = uuid4()
++
++    with TestingSessionLocal() as db:
++        summaries = service.summarize_session(
++            db,
++            session_id,
++            candidates=[
++                _Candidate(acs_id, "acute_coronary_syndrome"),
++                _Candidate(pe_id, "pulmonary_embolism"),
++            ],
++        )
++
++        assert len(summaries) == 2
++        for summary in summaries:
++            assert summary["total_evidence_items"] == 0
++            assert summary["total_support_contribution"] == 0.0
++            assert summary["total_contradiction_contribution"] == 0.0
++            assert summary["net_contribution"] == 0.0
 +
 +
 +# ---------------------------------------------------------------------------
@@ -863,16 +910,25 @@ index 0000000..864f012
 +    assert response.status_code == 404
 +
 +
-+def test_evidence_summary_endpoint_empty_list_before_evaluation() -> None:
-+    """A session with candidates generated but evidence never evaluated
-+    has no EvaluatedEvidence records yet, so the summary is empty.
++def test_evidence_summary_endpoint_zero_values_before_evaluation() -> None:
++    """Candidates generated but evidence never evaluated: every candidate
++    must still get a zero-valued summary entry, not be omitted.
 +    """
 +    session_id = _create_session()
 +    _add_observation(session_id, "Patient reports chest pain")
 +
 +    generate_response = client.post(f"/sessions/{session_id}/generate-candidates")
 +    assert generate_response.status_code == 201
++    candidates = generate_response.json()
++    assert len(candidates) > 0
 +
 +    response = client.get(f"/sessions/{session_id}/evidence-summary")
 +    assert response.status_code == 200
-+    assert response.json() == []
++
++    summaries = response.json()
++    assert len(summaries) == len(candidates)
++    for summary in summaries:
++        assert summary["total_evidence_items"] == 0
++        assert summary["total_support_contribution"] == 0.0
++        assert summary["total_contradiction_contribution"] == 0.0
++        assert summary["net_contribution"] == 0.0
