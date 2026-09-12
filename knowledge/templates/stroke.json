@@ -1,0 +1,37 @@
+{
+  "name": "stroke",
+  "category": "Neurology",
+  "description": "Acute stroke assessment template covering ischemic and hemorrhagic stroke.",
+  "priority": 1,
+  "trigger_rules": {
+    "symptom": [
+      "facial droop",
+      "arm weakness",
+      "speech difficulty",
+      "confusion",
+      "sudden numbness",
+      "sudden weakness"
+    ],
+    "body_location": [
+      "face",
+      "arm",
+      "leg",
+      "one side"
+    ],
+    "neurological": [
+      "slurred speech",
+      "difficulty speaking",
+      "vision loss",
+      "balance problems"
+    ]
+  },
+  "required_information": [
+    "age",
+    "sex",
+    "time_of_onset",
+    "blood_pressure",
+    "blood_glucose",
+    "medications",
+    "past_medical_history"
+  ]
+}

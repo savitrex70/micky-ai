@@ -1,0 +1,35 @@
+rules:
+  - rule_id: "acs_chest_pain_obs"
+    hypothesis: "acute_coronary_syndrome"
+    target: "observation"
+    required_findings: ["chest pain"]
+    supporting_findings: ["chest pain", "pressure", "substernal", "diaphoresis", "nausea"]
+    contradicting_findings: ["sharp", "pleuritic", "relieved by position"]
+    weight: 0.9
+    confidence: 0.95
+    reason: >-
+      Chest pain and associated symptoms support acute coronary syndrome.
+      Sharp or pleuritic pain suggests alternative diagnoses.
+    source: "evidence_rules"
+
+  - rule_id: "acs_left_arm_entity"
+    hypothesis: "acute_coronary_syndrome"
+    target: "entity"
+    required_findings: ["left arm"]
+    supporting_findings: ["left arm", "substernal", "jaw", "neck"]
+    contradicting_findings: ["right arm"]
+    weight: 0.4
+    confidence: 0.9
+    reason: "Radiation to left arm, jaw, or neck supports ACS."
+    source: "evidence_rules"
+
+  - rule_id: "acs_shock_obs"
+    hypothesis: "acute_coronary_syndrome"
+    target: "observation"
+    required_findings: []
+    supporting_findings: ["hypotension", "tachycardia", "syncope"]
+    contradicting_findings: []
+    weight: 0.6
+    confidence: 0.85
+    reason: "Hemodynamic instability suggests severe ACS."
+    source: "evidence_rules"

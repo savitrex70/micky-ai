@@ -1,0 +1,33 @@
+rules:
+  - rule_id: "migraine_headache_obs"
+    hypothesis: "migraine"
+    target: "observation"
+    required_findings: ["headache"]
+    supporting_findings: ["throbbing", "unilateral", "photophobia", "phonophobia", "nausea"]
+    contradicting_findings: ["sudden onset", "fever", "progressive"]
+    weight: 0.7
+    confidence: 0.9
+    reason: "Throbbing unilateral headache with photophobia supports migraine."
+    source: "evidence_rules"
+
+  - rule_id: "meningitis_headache_obs"
+    hypothesis: "meningitis"
+    target: "observation"
+    required_findings: ["headache", "fever"]
+    supporting_findings: ["photophobia", "neck stiffness", "confusion", "rash", "fever"]
+    contradicting_findings: ["gradual onset", "no fever", "relieved by medication"]
+    weight: 0.9
+    confidence: 0.95
+    reason: "Headache with fever and neck stiffness strongly suggests meningitis."
+    source: "evidence_rules"
+
+  - rule_id: "tension_headache_obs"
+    hypothesis: "tension_type_headache"
+    target: "observation"
+    required_findings: ["headache"]
+    supporting_findings: ["pressure", "bilateral", "tight band"]
+    contradicting_findings: ["throbbing", "unilateral", "fever", "photophobia"]
+    weight: 0.4
+    confidence: 0.85
+    reason: "Bilateral pressure-like pain supports tension-type headache."
+    source: "evidence_rules"

@@ -1,0 +1,87 @@
+hypotheses:
+  - name: "pulmonary_embolism"
+    category: "Pulmonology"
+    description: "Blood clot in the lungs"
+    required_findings:
+      - "shortness of breath"
+      - "dyspnea"
+    supporting_findings:
+      - "hypoxia"
+      - "tachycardia"
+      - "tachypnea"
+      - "hemoptysis"
+      - "chest pain"
+    contradicting_findings:
+      - "wheezing"
+      - "relieved by bronchodilator"
+      - "known asthma"
+    risk_factors:
+      - "recent surgery"
+      - "cancer"
+      - "pregnancy"
+      - "immobility"
+      - "history of dvt"
+    urgency: "high"
+    base_score: 0.7
+
+  - name: "pneumonia"
+    category: "Pulmonology"
+    description: "Infection of the lung tissue"
+    required_findings:
+      - "shortness of breath"
+    supporting_findings:
+      - "fever"
+      - "cough"
+      - "sputum"
+      - "crackles"
+      - "chest pain"
+    contradicting_findings:
+      - "no fever"
+      - "wheezing"
+    risk_factors:
+      - "recent illness"
+      - "aspiration"
+      - "immunocompromised"
+    urgency: "medium"
+    base_score: 0.55
+
+  - name: "copd_exacerbation"
+    category: "Pulmonology"
+    description: "Chronic obstructive pulmonary disease flare-up"
+    required_findings:
+      - "shortness of breath"
+      - "wheezing"
+    supporting_findings:
+      - "wheezing"
+      - "cough"
+      - "sputum"
+      - "history of copd"
+    contradicting_findings:
+      - "fever"
+      - "no wheezing"
+    risk_factors:
+      - "smoking"
+      - "age > 40"
+      - "history of copd"
+    urgency: "medium"
+    base_score: 0.45
+
+  - name: "asthma_exacerbation"
+    category: "Pulmonology"
+    description: "Acute asthma attack"
+    required_findings:
+      - "shortness of breath"
+      - "wheezing"
+    supporting_findings:
+      - "wheezing"
+      - "relieved by bronchodilator"
+      - "history of asthma"
+    contradicting_findings:
+      - "fever"
+      - "no wheezing"
+    risk_factors:
+      - "history of asthma"
+      - "allergies"
+      - "exercise"
+    urgency: "low"
+    base_score: 0.35

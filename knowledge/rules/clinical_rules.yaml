@@ -1,0 +1,58 @@
+rules:
+  - id: "acs_chest_pain"
+    description: "Chest pain with radiation to left arm is highly suggestive of acute coronary syndrome"
+    priority: 1
+    conditions:
+      - field: "symptoms"
+        operator: "contains"
+        value: "chest pain"
+      - field: "body_location"
+        operator: "contains"
+        value: "left arm"
+    expected_outcome:
+      template_name: "acute_coronary_syndrome"
+      confidence: 0.95
+      metadata:
+        urgency: "high"
+
+  - id: "stroke_fac_droop"
+    description: "Facial droop with arm weakness suggests stroke"
+    priority: 1
+    conditions:
+      - field: "symptoms"
+        operator: "contains"
+        value: "facial droop"
+      - field: "body_location"
+        operator: "contains"
+        value: "arm"
+    expected_outcome:
+      template_name: "stroke"
+      confidence: 0.9
+
+  - id: "pe_shortness_breath"
+    description: "Shortness of breath with tachycardia suggests pulmonary embolism"
+    priority: 2
+    conditions:
+      - field: "symptoms"
+        operator: "contains"
+        value: "shortness of breath"
+      - field: "vital_signs.heart_rate"
+        operator: "greater_than"
+        value: 100
+    expected_outcome:
+      template_name: "pulmonary_embolism"
+      confidence: 0.85
+
+  - id: "diabetes_polyuria"
+    description: "Polyuria with polydipsia suggests diabetes"
+    priority: 3
+    conditions:
+      - field: "symptoms"
+        operator: "contains"
+        value: "polyuria"
+      - field: "symptoms"
+        operator: "contains"
+        value: "polydipsia"
+    expected_outcome:
+      template_name: "diabetes_assessment"
+      confidence: 0.8

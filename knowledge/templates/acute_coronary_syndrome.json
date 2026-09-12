@@ -1,0 +1,33 @@
+{
+  "name": "acute_coronary_syndrome",
+  "category": "Cardiology",
+  "description": "Acute coronary syndrome (ACS) including STEMI, NSTEMI, and unstable angina.",
+  "priority": 1,
+  "trigger_rules": {
+    "symptom": [
+      "chest pain",
+      "pressure chest pain",
+      "chest discomfort",
+      "angina"
+    ],
+    "body_location": [
+      "left arm",
+      "substernal",
+      "jaw",
+      "neck"
+    ],
+    "radiation": [
+      "radiating to left arm",
+      "radiating to jaw",
+      "radiating to neck"
+    ]
+  },
+  "required_information": [
+    "age",
+    "sex",
+    "blood_pressure",
+    "ecg",
+    "troponin",
+    "past_cardiac_history"
+  ]
+}

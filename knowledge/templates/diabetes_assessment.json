@@ -1,0 +1,36 @@
+{
+  "name": "diabetes_assessment",
+  "category": "Endocrinology",
+  "description": "Diabetes mellitus assessment template for hyperglycemia and metabolic evaluation.",
+  "priority": 3,
+  "trigger_rules": {
+    "symptom": [
+      "polyuria",
+      "polydipsia",
+      "polyphagia",
+      "weight loss",
+      "fatigue",
+      "blurred vision"
+    ],
+    "risk_factor": [
+      "obesity",
+      "family history diabetes",
+      "sedentary lifestyle",
+      "gestational diabetes"
+    ],
+    "vital_sign": [
+      "high blood sugar",
+      "elevated glucose",
+      "hyperglycemia"
+    ]
+  },
+  "required_information": [
+    "age",
+    "sex",
+    "bmi",
+    "fasting_glucose",
+    "hba1c",
+    "blood_pressure",
+    "family_history"
+  ]
+}

@@ -1,0 +1,88 @@
+hypotheses:
+  - name: "acute_coronary_syndrome"
+    category: "Cardiology"
+    description: "Acute coronary syndrome including STEMI, NSTEMI, and unstable angina"
+    required_findings:
+      - "chest pain"
+    supporting_findings:
+      - "pressure"
+      - "substernal"
+      - "radiating to left arm"
+      - "diaphoresis"
+      - "nausea"
+    contradicting_findings:
+      - "sharp"
+      - "pleuritic"
+      - "relieved by position"
+      - "relieved by breathing"
+    risk_factors:
+      - "age > 50"
+      - "smoking"
+      - "diabetes"
+      - "family history"
+    urgency: "high"
+    base_score: 0.8
+
+  - name: "aortic_dissection"
+    category: "Cardiology"
+    description: "Tear in the inner lining of the aorta"
+    required_findings:
+      - "chest pain"
+      - "tearing"
+    supporting_findings:
+      - "tearing pain"
+      - "back pain"
+      - "hypertension"
+      - "pulse deficit"
+    contradicting_findings:
+      - "relieved by nitroglycerin"
+      - "relieved by rest"
+    risk_factors:
+      - "age > 40"
+      - "hypertension"
+      - "marfan syndrome"
+      - "bicuspid aortic valve"
+    urgency: "high"
+    base_score: 0.7
+
+  - name: "pericarditis"
+    category: "Cardiology"
+    description: "Inflammation of the sac surrounding the heart"
+    required_findings:
+      - "chest pain"
+    supporting_findings:
+      - "sharp"
+      - "pleuritic"
+      - "relieved by position"
+      - "fever"
+    contradicting_findings:
+      - "pressure"
+      - "radiating to left arm"
+      - "diaphoresis"
+    risk_factors:
+      - "viral illness"
+      - "autoimmune disease"
+    urgency: "medium"
+    base_score: 0.5
+
+  - name: "pulmonary_embolism"
+    category: "Pulmonology"
+    description: "Blood clot in the lungs"
+    required_findings:
+      - "chest pain"
+      - "shortness of breath"
+    supporting_findings:
+      - "hypoxia"
+      - "tachycardia"
+      - "hemoptysis"
+      - "recent immobility"
+    contradicting_findings:
+      - "relieved by bronchodilator"
+      - "wheezing"
+    risk_factors:
+      - "recent surgery"
+      - "cancer"
+      - "pregnancy"
+      - "immobility"
+    urgency: "high"
+    base_score: 0.75
