@@ -4,6 +4,7 @@ from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.entity import EntityCreate, EntityRead, EntityUpdate
 from rop.schemas.evaluated_evidence import EvaluatedEvidenceRead, EvidenceGroupedRead
 from rop.schemas.evidence import EvidenceCreate, EvidenceRead, EvidenceUpdate
+from rop.schemas.evidence_consistency import EvidenceConsistencyRead
 from rop.schemas.evidence_summary import EvidenceSummaryRead
 from rop.schemas.extraction import (
     ObservationExtractionRequest,
@@ -31,6 +32,7 @@ __all__ = [
     "EntityUpdate",
     "EvidenceGroupedRead",
     "EvaluatedEvidenceRead",
+    "EvidenceConsistencyRead",
     "EvidenceCreate",
     "EvidenceRead",
     "EvidenceSummaryRead",

@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    EvidenceConsistencyRead,
     EvidenceCreate,
     EvidenceRead,
     EvidenceSummaryRead,
@@ -684,7 +685,7 @@ def get_evidence_summary(
 
 @router.get(
     "/{session_id}/evidence-analysis",
-    response_model=list[dict[str, Any]],
+    response_model=list[EvidenceConsistencyRead],
     status_code=status.HTTP_200_OK,
 )
 def get_evidence_analysis(
