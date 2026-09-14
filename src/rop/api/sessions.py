@@ -680,3 +680,35 @@ def get_evidence_summary(
     )
 
     return evidence_aggregation_service.summarize_session(db, session_id, candidates)
+
+
+@router.get(
+    "/{session_id}/evidence-analysis",
+    response_model=list[dict[str, Any]],
+    status_code=status.HTTP_200_OK,
+)
+def get_evidence_analysis(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Task 022: read-only evidence consistency/quality analysis.
+
+    Consumes the same persisted ``EvaluatedEvidence`` rows as
+    ``/evidence-summary`` (Task 021), but returns one entry per candidate
+    hypothesis in the session — including candidates with no evidence yet
+    — plus a structural consistency signal (support-only, contradiction-
+    only, mixed, neutral-only, or no evidence) and ratios. Never
+    evaluates evidence or writes to the database.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    return evidence_aggregation_service.analyze_session_consistency(
+        db, session_id, candidates=candidates
+    )
