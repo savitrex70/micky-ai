@@ -6,6 +6,7 @@ from rop.services.evidence import EvidenceService
 from rop.services.evidence_aggregation import EvidenceAggregationService
 from rop.services.evidence_evaluation import EvidenceEvaluationService
 from rop.services.hypothesis import HypothesisService
+from rop.services.hypothesis_scoring import HypothesisScoringService
 from rop.services.medical_entity_recognition import MedicalEntityRecognitionService
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
@@ -20,6 +21,7 @@ __all__ = [
     "EvidenceAggregationService",
     "EvidenceEvaluationService",
     "EvidenceService",
+    "HypothesisScoringService",
     "HypothesisService",
     "MedicalEntityRecognitionService",
     "MissingInformationService",

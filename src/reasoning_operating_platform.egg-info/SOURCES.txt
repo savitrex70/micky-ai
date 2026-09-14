@@ -58,8 +58,11 @@ src/rop/schemas/candidate_hypothesis.py
 src/rop/schemas/entity.py
 src/rop/schemas/evaluated_evidence.py
 src/rop/schemas/evidence.py
+src/rop/schemas/evidence_consistency.py
+src/rop/schemas/evidence_summary.py
 src/rop/schemas/extraction.py
 src/rop/schemas/hypothesis.py
+src/rop/schemas/hypothesis_score.py
 src/rop/schemas/missing_information.py
 src/rop/schemas/observation.py
 src/rop/schemas/reasoning_session.py
@@ -69,8 +72,10 @@ src/rop/services/__init__.py
 src/rop/services/candidate_generation.py
 src/rop/services/entity.py
 src/rop/services/evidence.py
+src/rop/services/evidence_aggregation.py
 src/rop/services/evidence_evaluation.py
 src/rop/services/hypothesis.py
+src/rop/services/hypothesis_scoring.py
 src/rop/services/medical_entity_recognition.py
 src/rop/services/missing_information.py
 src/rop/services/observation.py
@@ -88,9 +93,12 @@ tests/test_config.py
 tests/test_database.py
 tests/test_entity.py
 tests/test_evidence.py
+tests/test_evidence_aggregation.py
+tests/test_evidence_consistency.py
 tests/test_evidence_evaluation.py
 tests/test_health.py
 tests/test_hypothesis.py
+tests/test_hypothesis_scoring.py
 tests/test_medical_entity_recognition.py
 tests/test_missing_information.py
 tests/test_observation.py

@@ -11,6 +11,7 @@ from rop.schemas.extraction import (
     ObservationExtractionResponse,
 )
 from rop.schemas.hypothesis import HypothesisCreate, HypothesisRead, HypothesisUpdate
+from rop.schemas.hypothesis_score import HypothesisScoreRead
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import (
     ObservationCreate,
@@ -39,6 +40,7 @@ __all__ = [
     "EvidenceUpdate",
     "HypothesisCreate",
     "HypothesisRead",
+    "HypothesisScoreRead",
     "HypothesisUpdate",
     "MissingInformationRead",
     "ObservationCreate",

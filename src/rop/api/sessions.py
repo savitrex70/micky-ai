@@ -25,6 +25,7 @@ from rop.schemas import (
     EvidenceUpdate,
     HypothesisCreate,
     HypothesisRead,
+    HypothesisScoreRead,
     HypothesisUpdate,
     MissingInformationRead,
     ObservationCreate,
@@ -49,6 +50,7 @@ from rop.services import (
     EvidenceAggregationService,
     EvidenceEvaluationService,
     EvidenceService,
+    HypothesisScoringService,
     HypothesisService,
     MissingInformationService,
     ObservationExtractionService,
@@ -71,6 +73,7 @@ reasoning_step_service = ReasoningStepService()
 candidate_generation_service = CandidateGenerationService()
 evidence_evaluation_service = EvidenceEvaluationService()
 evidence_aggregation_service = EvidenceAggregationService()
+hypothesis_scoring_service = HypothesisScoringService(evidence_aggregation_service)
 
 
 @router.post(
@@ -713,3 +716,35 @@ def get_evidence_analysis(
     return evidence_aggregation_service.analyze_session_consistency(
         db, session_id, candidates=candidates
     )
+
+
+@router.get(
+    "/{session_id}/hypothesis-scores",
+    response_model=list[HypothesisScoreRead],
+    status_code=status.HTTP_200_OK,
+)
+def get_hypothesis_scores(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Task 023: read-only deterministic hypothesis score per candidate.
+
+    Consumes the same persisted ``EvaluatedEvidence`` rows as
+    ``/evidence-analysis`` (Task 022), via ``EvidenceAggregationService``
+    — it does not evaluate evidence, generate candidates, or write to
+    the database. ``hypothesis_score`` currently equals Task 021's
+    ``net_contribution`` unchanged; this is a scoring foundation, not a
+    ranked differential, a diagnosis, or a probability. Candidates with
+    no persisted evidence still receive a result, scored 0.0 with
+    ``evidence_consistency == "NO_EVIDENCE"``.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    return hypothesis_scoring_service.score_session(db, session_id, candidates)
