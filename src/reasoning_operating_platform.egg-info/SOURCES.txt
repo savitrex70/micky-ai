@@ -98,6 +98,7 @@ tests/test_evidence_consistency.py
 tests/test_evidence_evaluation.py
 tests/test_health.py
 tests/test_hypothesis.py
+tests/test_hypothesis_score_interpretation.py
 tests/test_hypothesis_scoring.py
 tests/test_medical_entity_recognition.py
 tests/test_missing_information.py
