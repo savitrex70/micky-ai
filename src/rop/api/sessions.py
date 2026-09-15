@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DifferentialRankRead,
     EvidenceConsistencyRead,
     EvidenceCreate,
     EvidenceRead,
@@ -46,6 +47,8 @@ from rop.schemas.api import (
 )
 from rop.services import (
     CandidateGenerationService,
+    DifferentialRankingContractError,
+    DifferentialRankingService,
     EntityService,
     EvidenceAggregationService,
     EvidenceEvaluationService,
@@ -75,6 +78,7 @@ candidate_generation_service = CandidateGenerationService()
 evidence_evaluation_service = EvidenceEvaluationService()
 evidence_aggregation_service = EvidenceAggregationService()
 hypothesis_scoring_service = HypothesisScoringService(evidence_aggregation_service)
+differential_ranking_service = DifferentialRankingService(hypothesis_scoring_service)
 
 
 @router.post(
@@ -768,4 +772,55 @@ def get_hypothesis_scores(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal hypothesis-scoring contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/differential",
+    response_model=list[DifferentialRankRead],
+    status_code=status.HTTP_200_OK,
+)
+def get_differential_ranking(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Task 026: read-only differential ranking over Task 025 scores.
+
+    Consumes ``HypothesisScoringService.score_session`` (Task 025)
+    unchanged via ``DifferentialRankingService`` — it does not
+    re-evaluate evidence, recompute contributions, inspect
+    observations/entities, or generate candidates. Candidates are
+    ordered by ``hypothesis_score`` descending, with competition
+    ranking for ties (1, 1, 3 — never dense 1, 1, 2) and a documented
+    deterministic secondary ordering (``hypothesis_name.casefold()``
+    ascending, then ``str(hypothesis_id)`` ascending) that breaks ties
+    for list position only, never for the shared rank. Candidates with
+    no persisted evidence remain in the ranking, scored 0.0 like any
+    other candidate.
+
+    This endpoint answers "given the current deterministic hypothesis
+    scores, what is their relative ordering?" — it never answers
+    "which diagnosis is correct?" It performs no diagnosis selection,
+    winner selection, decision-making, treatment recommendation,
+    probability conversion, or confidence calibration, and it never
+    writes to the database or persists a ranking table; ranking is a
+    derived, read-only view over the current score state.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return differential_ranking_service.rank_session(db, session_id, candidates)
+    except (HypothesisScoreContractError, DifferentialRankingContractError) as exc:
+        # Task 026: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal differential-ranking contract violation",
         ) from exc

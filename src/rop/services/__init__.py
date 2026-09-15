@@ -1,6 +1,10 @@
 """Application services."""
 
 from rop.services.candidate_generation import CandidateGenerationService
+from rop.services.differential_ranking import (
+    DifferentialRankingContractError,
+    DifferentialRankingService,
+)
 from rop.services.entity import EntityService
 from rop.services.evidence import EvidenceService
 from rop.services.evidence_aggregation import EvidenceAggregationService
@@ -20,6 +24,8 @@ from rop.services.template_match import TemplateMatchService
 
 __all__ = [
     "CandidateGenerationService",
+    "DifferentialRankingContractError",
+    "DifferentialRankingService",
     "EntityService",
     "EvidenceAggregationService",
     "EvidenceEvaluationService",
