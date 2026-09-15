@@ -41,6 +41,23 @@ _CONSISTENCY_TO_EVIDENCE_POSITION = {
 }
 
 
+class HypothesisScoreContractError(Exception):
+    """Task 025: an internal architectural regression, not a client error.
+
+    Raised only by ``_validate_score_result`` when a produced score
+    result violates one of the Task 025 contract invariants (see that
+    method's docstring for the full list). This signals a bug in the
+    scoring/aggregation pipeline itself — never a property of the
+    underlying clinical data — so it must never be exposed verbatim to
+    API clients. The API layer catches this and converts it to a
+    generic 500 response.
+    """
+
+    def __init__(self, invariant: str, detail: str) -> None:
+        self.invariant = invariant
+        super().__init__(f"[{invariant}] {detail}")
+
+
 class HypothesisScoringService:
     """Task 023: deterministic hypothesis-scoring foundation.
 
@@ -76,6 +93,16 @@ class HypothesisScoringService:
     ``_determine_evidence_position``) so a later task can replace any
     one of them — most notably the TEMPORARY evidence-coverage
     definition below — without touching the others or the API.
+
+    Task 025 introduces no new scoring formula. It formalizes the
+    Task 023/024 fields above into a single stable contract — the
+    "hypothesis-score contract" — that later ranking/decision layers
+    can consume without understanding Task 020-022's evidence
+    machinery, and adds ``_validate_score_result`` to catch
+    architectural regressions (an inconsistent combination of fields)
+    before a result ever leaves this service. The validator checks
+    mathematical/structural consistency only — it never touches
+    medical correctness, and it never "fixes" a bad value; it raises.
     """
 
     def __init__(
@@ -96,11 +123,21 @@ class HypothesisScoringService:
         ``evidence_consistency == "NO_EVIDENCE"`` — because Task 022's
         ``analyze_session_consistency`` already guarantees exactly one
         entry per candidate. Read-only: never writes to the database.
+
+        Task 025: every result is passed through
+        ``_validate_score_result`` before being returned. This raises
+        ``HypothesisScoreContractError`` on any contract violation
+        rather than returning a silently-inconsistent result — callers
+        (the API layer) are responsible for translating that into a
+        generic error response, never a raw internal exception.
         """
         analyses = self.aggregation_service.analyze_session_consistency(
             db, session_id, candidates=candidates
         )
-        return [self._score_hypothesis(analysis) for analysis in analyses]
+        results = [self._score_hypothesis(analysis) for analysis in analyses]
+        for result in results:
+            self._validate_score_result(result)
+        return results
 
     @staticmethod
     def _calculate_score(net_contribution: float) -> float:
@@ -257,3 +294,160 @@ class HypothesisScoringService:
                 evidence_consistency
             ),
         }
+
+    @staticmethod
+    def _validate_score_result(result: dict[str, Any]) -> None:
+        """Task 025: verify the hypothesis-score contract invariants.
+
+        This is a structural/mathematical consistency check on the
+        already-computed result — it never recomputes a "correct"
+        value and never mutates ``result``. On any violation it raises
+        ``HypothesisScoreContractError`` identifying which invariant
+        failed, so a regression in the scoring/aggregation pipeline is
+        caught immediately instead of silently reaching a client. It
+        does not, and must not, judge medical correctness.
+        """
+        score = result["hypothesis_score"]
+        net = result["net_contribution"]
+        support = result["total_support_contribution"]
+        contradiction = result["total_contradiction_contribution"]
+        direction = result["score_direction"]
+        consistency = result["evidence_consistency"]
+        position = result["evidence_position"]
+        total_evidence = result["total_evidence_items"]
+        has_evidence = result["has_evidence"]
+        has_mixed = result["has_mixed_evidence"]
+        coverage = result["evidence_coverage_ratio"]
+        informative = result["informative_evidence_ratio"]
+        ratio = result["support_to_contradiction_ratio"]
+
+        # 1. Score identity.
+        if round(score, _SCORE_PRECISION) != round(net, _SCORE_PRECISION):
+            raise HypothesisScoreContractError(
+                "SCORE_IDENTITY",
+                f"hypothesis_score ({score}) != net_contribution ({net})",
+            )
+
+        # 2. Score source.
+        if result["score_source"] != SCORE_SOURCE_NET_EVIDENCE_CONTRIBUTION:
+            raise HypothesisScoreContractError(
+                "SCORE_SOURCE",
+                f"unexpected score_source: {result['score_source']!r}",
+            )
+
+        # 3. Score direction.
+        expected_direction = HypothesisScoringService._determine_score_direction(score)
+        if direction != expected_direction:
+            raise HypothesisScoreContractError(
+                "SCORE_DIRECTION",
+                f"score_direction {direction!r} inconsistent with score {score}",
+            )
+
+        # 4. Support/contradiction consistency.
+        if support > contradiction and not score > 0:
+            raise HypothesisScoreContractError(
+                "SUPPORT_CONTRADICTION_CONSISTENCY",
+                "support exceeds contradiction but score is not positive",
+            )
+        if support < contradiction and not score < 0:
+            raise HypothesisScoreContractError(
+                "SUPPORT_CONTRADICTION_CONSISTENCY",
+                "contradiction exceeds support but score is not negative",
+            )
+        if support == contradiction and score != 0:
+            raise HypothesisScoreContractError(
+                "SUPPORT_CONTRADICTION_CONSISTENCY",
+                "support equals contradiction but score is not zero",
+            )
+
+        # 6. Evidence position preservation (derived from evidence
+        # consistency, never from the score).
+        expected_position = HypothesisScoringService._determine_evidence_position(
+            consistency
+        )
+        if position != expected_position:
+            raise HypothesisScoreContractError(
+                "EVIDENCE_POSITION_PRESERVATION",
+                f"evidence_position {position!r} does not match "
+                f"evidence_consistency {consistency!r}",
+            )
+
+        # 7 & 8. Zero-evidence and mixed-zero-score contracts.
+        if total_evidence == 0:
+            if not (
+                score == 0.0
+                and direction == SCORE_DIRECTION_ZERO
+                and consistency == CONSISTENCY_NO_EVIDENCE
+                and position == EVIDENCE_POSITION_UNSUPPORTED
+                and has_evidence is False
+                and has_mixed is False
+                and coverage == 0.0
+                and informative == 0.0
+                and ratio is None
+            ):
+                raise HypothesisScoreContractError(
+                    "ZERO_EVIDENCE_CONTRACT",
+                    "zero-evidence result does not match the required contract",
+                )
+        elif support == contradiction and support > 0:
+            if not (
+                score == 0.0
+                and direction == SCORE_DIRECTION_ZERO
+                and consistency == CONSISTENCY_MIXED
+                and position == EVIDENCE_POSITION_MIXED
+                and has_evidence is True
+                and has_mixed is True
+                and coverage == 1.0
+                and informative > 0
+                and ratio == 1.0
+            ):
+                raise HypothesisScoreContractError(
+                    "MIXED_ZERO_SCORE_CONTRACT",
+                    "mixed equal-contribution result does not match the "
+                    "required contract",
+                )
+
+        # 9. Non-negative structural ratios.
+        if not (0.0 <= coverage <= 1.0):
+            raise HypothesisScoreContractError(
+                "RATIO_BOUNDS", f"evidence_coverage_ratio out of bounds: {coverage}"
+            )
+        if not (0.0 <= informative <= 1.0):
+            raise HypothesisScoreContractError(
+                "RATIO_BOUNDS",
+                f"informative_evidence_ratio out of bounds: {informative}",
+            )
+        if ratio is not None and ratio < 0:
+            raise HypothesisScoreContractError(
+                "RATIO_BOUNDS",
+                f"support_to_contradiction_ratio is negative: {ratio}",
+            )
+        if contradiction == 0 and ratio is not None:
+            raise HypothesisScoreContractError(
+                "RATIO_NULL_BEHAVIOR",
+                "support_to_contradiction_ratio must be null when "
+                "contradiction contribution is zero",
+            )
+
+        # 10. Rounding precision.
+        for field_name in (
+            "hypothesis_score",
+            "net_contribution",
+            "total_support_contribution",
+            "total_contradiction_contribution",
+            "evidence_coverage_ratio",
+            "informative_evidence_ratio",
+        ):
+            value = result[field_name]
+            if round(value, _SCORE_PRECISION) != value:
+                raise HypothesisScoreContractError(
+                    "ROUNDING_PRECISION",
+                    f"{field_name} ({value}) is not rounded to "
+                    f"{_SCORE_PRECISION} decimal places",
+                )
+        if ratio is not None and round(ratio, _SCORE_PRECISION) != ratio:
+            raise HypothesisScoreContractError(
+                "ROUNDING_PRECISION",
+                f"support_to_contradiction_ratio ({ratio}) is not rounded to "
+                f"{_SCORE_PRECISION} decimal places",
+            )

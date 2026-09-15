@@ -50,6 +50,7 @@ from rop.services import (
     EvidenceAggregationService,
     EvidenceEvaluationService,
     EvidenceService,
+    HypothesisScoreContractError,
     HypothesisScoringService,
     HypothesisService,
     MissingInformationService,
@@ -744,6 +745,11 @@ def get_hypothesis_scores(
     ``support_to_contradiction_ratio``, ``evidence_position``) without
     changing the score itself or this endpoint's read-only,
     non-ranking, non-diagnostic contract.
+
+    Task 025 formalizes these fields into a stable scoring contract and
+    validates every result against it before returning. Candidate
+    order is preserved exactly as received — this endpoint never sorts
+    by score, ranks, or compares hypotheses against one another.
     """
     if session_service.get(db, session_id) is None:
         raise HTTPException(
@@ -754,4 +760,12 @@ def get_hypothesis_scores(
         db, session_id, offset=0, limit=100
     )
 
-    return hypothesis_scoring_service.score_session(db, session_id, candidates)
+    try:
+        return hypothesis_scoring_service.score_session(db, session_id, candidates)
+    except HypothesisScoreContractError as exc:
+        # Task 025: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal hypothesis-scoring contract violation",
+        ) from exc
