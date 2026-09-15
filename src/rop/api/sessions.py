@@ -737,6 +737,13 @@ def get_hypothesis_scores(
     ranked differential, a diagnosis, or a probability. Candidates with
     no persisted evidence still receive a result, scored 0.0 with
     ``evidence_consistency == "NO_EVIDENCE"``.
+
+    Task 024 extends the response with a structural interpretation
+    layer (``score_direction``, ``evidence_coverage_ratio`` — TEMPORARY,
+    see the service docstring, ``informative_evidence_ratio``,
+    ``support_to_contradiction_ratio``, ``evidence_position``) without
+    changing the score itself or this endpoint's read-only,
+    non-ranking, non-diagnostic contract.
     """
     if session_service.get(db, session_id) is None:
         raise HTTPException(
