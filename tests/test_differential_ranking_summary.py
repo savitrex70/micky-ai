@@ -352,6 +352,81 @@ def test_validator_rejects_empty_with_non_none_field() -> None:
     assert exc_info.value.invariant == "EMPTY_FIELD_NOT_NONE"
 
 
+def test_validator_rejects_top_rank_not_one() -> None:
+    summary = _summarize([10.0, 8.0, 5.0])
+    summary["top_rank"] = 2  # deliberately wrong
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "TOP_RANK_INVALID"
+
+
+def test_validator_rejects_tied_candidate_count_exceeding_total() -> None:
+    summary = _summarize([10.0, 8.0, 5.0])
+    summary["tied_candidate_count"] = 4  # deliberately > total_candidates (3)
+    summary["has_any_ties"] = (
+        True  # keep this check isolated from HAS_ANY_TIES_MISMATCH
+    )
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "TIED_CANDIDATE_COUNT_BOUNDS"
+
+
+def test_validator_rejects_tie_group_count_exceeding_distinct_groups() -> None:
+    summary = _summarize([10.0, 10.0, 7.0, 7.0, 3.0])
+    summary["tie_group_count"] = 99  # deliberately absurd
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "TIE_GROUP_COUNT_BOUNDS"
+
+
+def test_validator_rejects_distinct_score_groups_inconsistent_with_ties() -> None:
+    # Reviewer-flagged case: tie_group_count says 99 tie groups exist,
+    # but largest_tie_group_size says the biggest group has only 1
+    # member (i.e. no group is actually tied). Even bounding
+    # tie_group_count by distinct_score_groups alone would not catch
+    # every such inconsistency, so this checks the exact structural
+    # identity between tie_group_count, tied_candidate_count, and
+    # distinct_score_groups.
+    summary = _summarize([10.0, 10.0, 7.0])
+    summary["tie_group_count"] = 1  # still <= distinct_score_groups (2)
+    summary["tied_candidate_count"] = 0  # but now inconsistent with it
+    summary["has_any_ties"] = False  # keep isolated from HAS_ANY_TIES_MISMATCH
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "DISTINCT_SCORE_GROUPS_MISMATCH"
+
+
+def test_validator_rejects_largest_tie_group_size_when_no_tie_groups() -> None:
+    summary = _summarize([10.0, 8.0, 5.0])
+    summary["largest_tie_group_size"] = 2  # no tie groups, so must be 1
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "LARGEST_TIE_GROUP_SIZE_MISMATCH"
+
+
+def test_validator_rejects_largest_tie_group_size_below_two_with_ties() -> None:
+    summary = _summarize([10.0, 10.0, 5.0])
+    summary["largest_tie_group_size"] = 1  # a tie group exists but size < 2
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "LARGEST_TIE_GROUP_SIZE_MISMATCH"
+
+
+def test_validator_rejects_largest_tie_group_size_exceeding_tied_count() -> None:
+    summary = _summarize([10.0, 10.0, 7.0, 7.0, 3.0])
+    summary["largest_tie_group_size"] = 5  # exceeds tied_candidate_count (4)
+    with pytest.raises(DifferentialRankingSummaryContractError) as exc_info:
+        DifferentialRankingSummaryService._validate_summary(summary)
+    assert exc_info.value.invariant == "LARGEST_TIE_GROUP_SIZE_MISMATCH"
+
+
+def test_validator_accepts_unequal_tie_sizes_summary() -> None:
+    summary = _summarize([10.0, 10.0, 10.0, 7.0, 7.0, 3.0])
+    # Must not raise — exercises the new checks against a real,
+    # correctly-derived multi-tie-group summary.
+    DifferentialRankingSummaryService._validate_summary(summary)
+
+
 def test_validator_rejects_score_range_mismatch() -> None:
     summary = {
         "total_candidates": 2,

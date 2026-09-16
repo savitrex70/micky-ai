@@ -203,8 +203,13 @@ class DifferentialRankingSummaryService:
         lowest_score = summary["lowest_score"]
         score_range = summary["score_range"]
 
+        distinct_score_groups = summary["distinct_score_groups"]
+        tied_candidate_count = summary["tied_candidate_count"]
+        tie_group_count = summary["tie_group_count"]
+        largest_tie_group_size = summary["largest_tie_group_size"]
+
         if total_candidates > 0:
-            if summary["distinct_score_groups"] < 1:
+            if distinct_score_groups < 1:
                 raise DifferentialRankingSummaryContractError(
                     "DISTINCT_SCORE_GROUPS_BOUNDS",
                     "distinct_score_groups must be >= 1 for a non-empty " "ranking",
@@ -220,6 +225,17 @@ class DifferentialRankingSummaryService:
                         "NON_EMPTY_FIELD_MISSING",
                         f"{field_name} must not be None for a non-empty " "ranking",
                     )
+
+            # Task 026's competition ranking always assigns the first
+            # (highest-scoring) entry rank 1 — this is an exact
+            # property of a valid ranking, not merely a plausible
+            # value, so it is checked directly rather than only for
+            # type/None-ness above.
+            if top_rank != 1:
+                raise DifferentialRankingSummaryContractError(
+                    "TOP_RANK_INVALID",
+                    f"top_rank must be 1 for a non-empty ranking, got {top_rank}",
+                )
 
             if highest_score < lowest_score:
                 raise DifferentialRankingSummaryContractError(
@@ -238,6 +254,61 @@ class DifferentialRankingSummaryService:
                     f"score_range ({score_range}) does not match "
                     f"highest_score - lowest_score ({expected_range})",
                 )
+
+            if tied_candidate_count > total_candidates:
+                raise DifferentialRankingSummaryContractError(
+                    "TIED_CANDIDATE_COUNT_BOUNDS",
+                    "tied_candidate_count must not exceed total_candidates",
+                )
+            if tie_group_count > distinct_score_groups:
+                raise DifferentialRankingSummaryContractError(
+                    "TIE_GROUP_COUNT_BOUNDS",
+                    "tie_group_count must not exceed distinct_score_groups",
+                )
+
+            # Exact structural identity: every distinct score group is
+            # either a tie group (size > 1) or a singleton (size 1).
+            # The singleton groups equal the non-tied candidates, so
+            # distinct_score_groups == tie_group_count + singleton
+            # candidates. This ties tie_group_count and
+            # tied_candidate_count together independently of how each
+            # was derived, catching e.g. a tie_group_count that does
+            # not correspond to any consistent partition of the
+            # candidates.
+            expected_distinct_groups = tie_group_count + (
+                total_candidates - tied_candidate_count
+            )
+            if distinct_score_groups != expected_distinct_groups:
+                raise DifferentialRankingSummaryContractError(
+                    "DISTINCT_SCORE_GROUPS_MISMATCH",
+                    f"distinct_score_groups ({distinct_score_groups}) is "
+                    "inconsistent with tie_group_count "
+                    f"({tie_group_count}) and tied_candidate_count "
+                    f"({tied_candidate_count}); expected "
+                    f"{expected_distinct_groups}",
+                )
+
+            if tie_group_count == 0:
+                if largest_tie_group_size != 1:
+                    raise DifferentialRankingSummaryContractError(
+                        "LARGEST_TIE_GROUP_SIZE_MISMATCH",
+                        "largest_tie_group_size must be 1 when "
+                        "tie_group_count is 0 for a non-empty ranking, "
+                        f"got {largest_tie_group_size}",
+                    )
+            else:
+                if largest_tie_group_size < 2:
+                    raise DifferentialRankingSummaryContractError(
+                        "LARGEST_TIE_GROUP_SIZE_MISMATCH",
+                        "largest_tie_group_size must be >= 2 when "
+                        f"tie_group_count > 0, got {largest_tie_group_size}",
+                    )
+                if largest_tie_group_size > tied_candidate_count:
+                    raise DifferentialRankingSummaryContractError(
+                        "LARGEST_TIE_GROUP_SIZE_MISMATCH",
+                        "largest_tie_group_size must not exceed "
+                        "tied_candidate_count",
+                    )
         else:
             for field_name, value in (
                 ("top_rank", top_rank),
