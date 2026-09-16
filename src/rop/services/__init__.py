@@ -5,6 +5,10 @@ from rop.services.differential_ranking import (
     DifferentialRankingContractError,
     DifferentialRankingService,
 )
+from rop.services.differential_ranking_consistency import (
+    DifferentialRankingConsistencyContractError,
+    DifferentialRankingConsistencyService,
+)
 from rop.services.differential_ranking_summary import (
     DifferentialRankingSummaryContractError,
     DifferentialRankingSummaryService,
@@ -28,6 +32,8 @@ from rop.services.template_match import TemplateMatchService
 
 __all__ = [
     "CandidateGenerationService",
+    "DifferentialRankingConsistencyContractError",
+    "DifferentialRankingConsistencyService",
     "DifferentialRankingContractError",
     "DifferentialRankingService",
     "DifferentialRankingSummaryContractError",

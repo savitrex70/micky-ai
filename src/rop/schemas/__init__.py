@@ -2,6 +2,9 @@
 
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.differential_rank import DifferentialRankRead
+from rop.schemas.differential_ranking_consistency import (
+    DifferentialRankingConsistencyRead,
+)
 from rop.schemas.differential_ranking_summary import DifferentialRankingSummaryRead
 from rop.schemas.entity import EntityCreate, EntityRead, EntityUpdate
 from rop.schemas.evaluated_evidence import EvaluatedEvidenceRead, EvidenceGroupedRead
@@ -31,6 +34,7 @@ from rop.schemas.template_match import TemplateMatchRead
 __all__ = [
     "CandidateHypothesisRead",
     "DifferentialRankRead",
+    "DifferentialRankingConsistencyRead",
     "DifferentialRankingSummaryRead",
     "EntityCreate",
     "EntityRead",

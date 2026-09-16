@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DifferentialRankingConsistencyRead,
     DifferentialRankingSummaryRead,
     DifferentialRankRead,
     EvidenceConsistencyRead,
@@ -48,6 +49,8 @@ from rop.schemas.api import (
 )
 from rop.services import (
     CandidateGenerationService,
+    DifferentialRankingConsistencyContractError,
+    DifferentialRankingConsistencyService,
     DifferentialRankingContractError,
     DifferentialRankingService,
     DifferentialRankingSummaryContractError,
@@ -84,6 +87,9 @@ hypothesis_scoring_service = HypothesisScoringService(evidence_aggregation_servi
 differential_ranking_service = DifferentialRankingService(hypothesis_scoring_service)
 differential_ranking_summary_service = DifferentialRankingSummaryService(
     differential_ranking_service
+)
+differential_ranking_consistency_service = DifferentialRankingConsistencyService(
+    differential_ranking_summary_service
 )
 
 
@@ -893,4 +899,67 @@ def get_differential_ranking_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal differential-ranking-summary contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/differential-consistency",
+    response_model=DifferentialRankingConsistencyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_differential_ranking_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 029: read-only completeness/consistency contract.
+
+    Consumes the Task 027 ranked differential
+    (``DifferentialRankingService``) and the Task 028 structural
+    summary (``DifferentialRankingSummaryService``) unchanged, via
+    ``DifferentialRankingConsistencyService`` — it does not
+    recalculate evidence, scores, ranks, or summary aggregates, and it
+    introduces no second ranking algorithm. It independently
+    re-derives each summary/separation value directly from the ranked
+    entries and reports whether that matches what Tasks 027/028 already
+    produced.
+
+    This endpoint answers "do the ranking, separation metadata, and
+    session summary agree with each other?" — it never answers "which
+    diagnosis is correct?" It performs no winner selection, diagnosis
+    selection, decision-making, treatment recommendation, probability
+    conversion, or confidence calibration, and it never writes to the
+    database or persists a consistency-result table; the result is a
+    derived, read-only view over the current ranked and summarized
+    state. A session with no candidates still returns a fully
+    consistent result rather than an error, since two empty structures
+    trivially agree.
+
+    Does not modify the existing ``GET /sessions/{session_id}/differential``
+    or ``GET /sessions/{session_id}/differential-summary`` behavior or
+    any of their fields — this is an additional derived view.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return differential_ranking_consistency_service.check_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+    ) as exc:
+        # Task 029: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal differential-ranking-consistency contract violation",
         ) from exc
