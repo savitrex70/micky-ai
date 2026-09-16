@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DifferentialRankingSummaryRead,
     DifferentialRankRead,
     EvidenceConsistencyRead,
     EvidenceCreate,
@@ -49,6 +50,8 @@ from rop.services import (
     CandidateGenerationService,
     DifferentialRankingContractError,
     DifferentialRankingService,
+    DifferentialRankingSummaryContractError,
+    DifferentialRankingSummaryService,
     EntityService,
     EvidenceAggregationService,
     EvidenceEvaluationService,
@@ -79,6 +82,9 @@ evidence_evaluation_service = EvidenceEvaluationService()
 evidence_aggregation_service = EvidenceAggregationService()
 hypothesis_scoring_service = HypothesisScoringService(evidence_aggregation_service)
 differential_ranking_service = DifferentialRankingService(hypothesis_scoring_service)
+differential_ranking_summary_service = DifferentialRankingSummaryService(
+    differential_ranking_service
+)
 
 
 @router.post(
@@ -829,4 +835,62 @@ def get_differential_ranking(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal differential-ranking contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/differential-summary",
+    response_model=DifferentialRankingSummaryRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_differential_ranking_summary(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 028: read-only structural summary over the Task 027 ranking.
+
+    Consumes ``DifferentialRankingService.rank_session`` (Tasks
+    026/027) unchanged via ``DifferentialRankingSummaryService`` — it
+    does not re-evaluate evidence, recompute scores, recompute ranks,
+    or duplicate the ranking/tie-separation logic. It aggregates the
+    already-ranked differential into a compact, session-level
+    description of its shape: how many candidates, how many distinct
+    scores, the score range, and how many/how large the tie groups
+    are.
+
+    This endpoint answers "what does the current differential ranking
+    look like structurally?" — it never answers "which diagnosis is
+    correct?" It performs no winner selection, decision-making,
+    treatment recommendation, probability conversion, or confidence
+    calibration, and it never writes to the database or persists a
+    summary table; the summary is a derived, read-only view over the
+    current ranked state. A session with no candidates still returns
+    a fully defined summary rather than an error.
+
+    Does not modify the existing ``GET /sessions/{session_id}/differential``
+    behavior or any of its fields — this is an additional derived view.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return differential_ranking_summary_service.summarize_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+    ) as exc:
+        # Task 028: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal differential-ranking-summary contract violation",
         ) from exc

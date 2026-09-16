@@ -5,6 +5,10 @@ from rop.services.differential_ranking import (
     DifferentialRankingContractError,
     DifferentialRankingService,
 )
+from rop.services.differential_ranking_summary import (
+    DifferentialRankingSummaryContractError,
+    DifferentialRankingSummaryService,
+)
 from rop.services.entity import EntityService
 from rop.services.evidence import EvidenceService
 from rop.services.evidence_aggregation import EvidenceAggregationService
@@ -26,6 +30,8 @@ __all__ = [
     "CandidateGenerationService",
     "DifferentialRankingContractError",
     "DifferentialRankingService",
+    "DifferentialRankingSummaryContractError",
+    "DifferentialRankingSummaryService",
     "EntityService",
     "EvidenceAggregationService",
     "EvidenceEvaluationService",
