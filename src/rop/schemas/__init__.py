@@ -1,6 +1,9 @@
 """Pydantic schemas."""
 
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
+from rop.schemas.differential_decision_readiness import (
+    DifferentialDecisionReadinessRead,
+)
 from rop.schemas.differential_rank import DifferentialRankRead
 from rop.schemas.differential_ranking_consistency import (
     DifferentialRankingConsistencyRead,
@@ -33,6 +36,7 @@ from rop.schemas.template_match import TemplateMatchRead
 
 __all__ = [
     "CandidateHypothesisRead",
+    "DifferentialDecisionReadinessRead",
     "DifferentialRankRead",
     "DifferentialRankingConsistencyRead",
     "DifferentialRankingSummaryRead",

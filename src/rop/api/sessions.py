@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
     DifferentialRankingSummaryRead,
     DifferentialRankRead,
@@ -49,6 +50,8 @@ from rop.schemas.api import (
 )
 from rop.services import (
     CandidateGenerationService,
+    DifferentialDecisionReadinessContractError,
+    DifferentialDecisionReadinessService,
     DifferentialRankingConsistencyContractError,
     DifferentialRankingConsistencyService,
     DifferentialRankingContractError,
@@ -90,6 +93,9 @@ differential_ranking_summary_service = DifferentialRankingSummaryService(
 )
 differential_ranking_consistency_service = DifferentialRankingConsistencyService(
     differential_ranking_summary_service
+)
+differential_decision_readiness_service = DifferentialDecisionReadinessService(
+    differential_ranking_consistency_service
 )
 
 
@@ -962,4 +968,68 @@ def get_differential_ranking_consistency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal differential-ranking-consistency contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/differential-readiness",
+    response_model=DifferentialDecisionReadinessRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_differential_decision_readiness(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 030: read-only structural decision-readiness contract.
+
+    Consumes the Task 027 ranked differential, the Task 028 structural
+    summary, and the Task 029 consistency verdict unchanged, via
+    ``DifferentialDecisionReadinessService`` — it does not recompute a
+    hypothesis score, introduce a second ranking engine, or reinterpret
+    Task 029's verdict.
+
+    This endpoint answers "is the current differential structurally
+    complete and internally consistent enough for a future decision
+    layer to consume?" — it never answers "what decision should be
+    made?" It performs no winner selection, diagnosis selection,
+    probability conversion, confidence calibration, recommendation, or
+    treatment logic; it removes no candidates; and it never writes to
+    the database or persists a readiness table.
+
+    Ties and absent evidence are reported but never suppress
+    ``ready``: an all-tied differential is still a structurally valid
+    differential, and a candidate set may legitimately exist before
+    evidence has been evaluated. An empty differential is valid but not
+    ready — empty is not the same as structurally corrupt.
+
+    Does not modify the behavior or fields of the existing
+    ``/differential``, ``/differential-summary``, or
+    ``/differential-consistency`` endpoints — this is an additional
+    derived view.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return differential_decision_readiness_service.evaluate_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+    ) as exc:
+        # Task 030: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal differential-decision-readiness contract violation",
         ) from exc
