@@ -11,7 +11,28 @@ from sqlalchemy.orm import Session
 
 from rop.models import CandidateHypothesis
 from rop.services.decision_context import DecisionContextService
-from rop.services.evidence_aggregation import CONSISTENCY_NO_EVIDENCE
+from rop.services.evidence_aggregation import (
+    CONSISTENCY_CONTRADICTION_ONLY,
+    CONSISTENCY_MIXED,
+    CONSISTENCY_NO_EVIDENCE,
+)
+
+_CONTRADICTING_EVIDENCE_CONSISTENCY_VALUES = frozenset(
+    {CONSISTENCY_CONTRADICTION_ONLY, CONSISTENCY_MIXED}
+)
+"""Task 022 ``evidence_consistency`` values that mean contradicting
+evidence is present, independent of ``total_contradiction_contribution``.
+
+Task 022 already separates *whether* contradicting evidence exists
+(``has_contradicting_evidence`` / ``contradicting_evidence_count``) from
+*how much* it contributes (``total_contradiction_contribution``):
+contradicting evidence can exist with zero contribution, and zero
+contribution does not imply zero contradicting evidence. The
+``evidence_consistency`` classification (which is derived from the
+count, not the contribution total, and is the field that actually
+survives into the Task 031 decision context) is the correct signal for
+this criterion.
+"""
 
 EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032 = (
     "DECISION_CANDIDATE_EVALUATION_TASK_032"
@@ -344,22 +365,30 @@ class DecisionCandidateEvaluationService:
 
     @staticmethod
     def _evaluate_contradiction(entry: Mapping[str, Any]) -> tuple[bool, str]:
-        if entry.get("evidence_consistency") == CONSISTENCY_NO_EVIDENCE:
+        evidence_consistency = entry.get("evidence_consistency")
+        if evidence_consistency == CONSISTENCY_NO_EVIDENCE:
             # Missing information must never be silently treated as
             # support (i.e. as a confirmed absence of contradiction).
             return False, (
                 "criterion could not be established from the available "
                 "context: no evidence has been evaluated for this candidate"
             )
-        total_contradiction = entry.get("total_contradiction_contribution", 0.0)
-        if total_contradiction > 0:
+        # Task 022 distinguishes whether contradicting evidence exists
+        # from its contribution magnitude: contradicting evidence can
+        # exist with zero contribution, and zero contribution does not
+        # imply zero contradicting evidence. So this criterion is
+        # decided from the evidence-consistency classification, not
+        # from ``total_contradiction_contribution``.
+        if evidence_consistency in _CONTRADICTING_EVIDENCE_CONSISTENCY_VALUES:
             return False, (
-                "contradiction contribution present "
-                f"(total_contradiction_contribution={total_contradiction})"
+                "contradicting evidence is present according to the "
+                "Task 022 evidence-consistency classification "
+                f"(evidence_consistency={evidence_consistency})"
             )
         return True, (
-            "no contradiction contribution recorded among available "
-            f"evidence (total_contradiction_contribution={total_contradiction})"
+            "no contradicting evidence is present according to the "
+            "Task 022 evidence-consistency classification "
+            f"(evidence_consistency={evidence_consistency})"
         )
 
     @staticmethod

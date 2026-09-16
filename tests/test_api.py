@@ -474,3 +474,52 @@ def test_hypothesis_endpoints_reject_missing_session() -> None:
         },
     )
     assert response.status_code == 404
+
+
+def test_decision_candidate_evaluations_evaluates_every_candidate_beyond_one_page() -> (
+    None
+):
+    # Task 032's contract requires every candidate to receive an
+    # evaluation. Regression guard: with more than one page's worth of
+    # persisted candidates, the endpoint must retrieve and evaluate all
+    # of them, not silently truncate to the first page.
+    from rop.models import CandidateHypothesis as CandidateHypothesisModel
+
+    session = create_session()
+    session_id = session["id"]
+
+    # Use the DB session the app is *currently* configured to use
+    # (via its active dependency override) rather than this module's
+    # own ``TestingSessionLocal`` directly: other test modules in the
+    # suite also override ``get_db`` on the same shared ``app``
+    # object, and whichever override was applied last is the one in
+    # effect by the time tests run.
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        candidate_count = 130
+        for i in range(candidate_count):
+            db.add(
+                CandidateHypothesisModel(
+                    session_id=UUID(session_id),
+                    name=f"Candidate {i}",
+                    category="testing",
+                    trigger_reason="seeded for pagination test",
+                    initial_score=float(i),
+                    confidence=0.5,
+                    supporting_observations=[],
+                    contradicting_observations=[],
+                    missing_information=[],
+                )
+            )
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.get(f"/sessions/{session_id}/decision-candidate-evaluations")
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == candidate_count
+    assert {r["hypothesis_name"] for r in results} == {
+        f"Candidate {i}" for i in range(candidate_count)
+    }

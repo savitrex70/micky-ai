@@ -1144,9 +1144,21 @@ def get_decision_candidate_evaluations(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
 
-    candidates = candidate_generation_service.list_by_session(
-        db, session_id, offset=0, limit=100
-    )
+    # Task 032's contract requires every candidate to receive an
+    # evaluation, so every page of candidates must be retrieved — a
+    # single offset=0/limit=100 call would silently drop candidates
+    # beyond the first page for a session with more than 100.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
 
     try:
         return decision_candidate_evaluation_service.evaluate_session(

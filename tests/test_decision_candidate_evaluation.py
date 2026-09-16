@@ -337,7 +337,26 @@ def test_contradiction_present() -> None:
     contradiction = _criterion(results[0], "contradiction")
 
     assert contradiction["satisfied"] is False
-    assert "contradiction contribution present" in contradiction["reason"]
+    assert "contradicting evidence is present" in contradiction["reason"]
+
+
+def test_contradicting_evidence_with_zero_contribution_is_not_satisfied() -> None:
+    # Regression: contradicting evidence can exist with zero
+    # contribution, so the criterion must be decided from
+    # evidence_consistency, not total_contradiction_contribution.
+    entries = [
+        _score_result(
+            hypothesis_name="H1",
+            hypothesis_score=0.0,
+            evidence_consistency=CONSISTENCY_CONTRADICTION_ONLY,
+            total_contradiction_contribution=0.0,
+        ),
+    ]
+    results = _evaluate(entries)
+    contradiction = _criterion(results[0], "contradiction")
+
+    assert contradiction["satisfied"] is False
+    assert "contradicting evidence is present" in contradiction["reason"]
 
 
 def test_missing_information_is_not_support_or_contradiction() -> None:
