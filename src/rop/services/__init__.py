@@ -1,6 +1,10 @@
 """Application services."""
 
 from rop.services.candidate_generation import CandidateGenerationService
+from rop.services.decision_context import (
+    DecisionContextContractError,
+    DecisionContextService,
+)
 from rop.services.differential_decision_readiness import (
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
@@ -36,6 +40,8 @@ from rop.services.template_match import TemplateMatchService
 
 __all__ = [
     "CandidateGenerationService",
+    "DecisionContextContractError",
+    "DecisionContextService",
     "DifferentialDecisionReadinessContractError",
     "DifferentialDecisionReadinessService",
     "DifferentialRankingConsistencyContractError",

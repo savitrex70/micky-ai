@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DecisionContextRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
     DifferentialRankingSummaryRead,
@@ -50,6 +51,8 @@ from rop.schemas.api import (
 )
 from rop.services import (
     CandidateGenerationService,
+    DecisionContextContractError,
+    DecisionContextService,
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
     DifferentialRankingConsistencyContractError,
@@ -96,6 +99,9 @@ differential_ranking_consistency_service = DifferentialRankingConsistencyService
 )
 differential_decision_readiness_service = DifferentialDecisionReadinessService(
     differential_ranking_consistency_service
+)
+decision_context_service = DecisionContextService(
+    differential_decision_readiness_service
 )
 
 
@@ -1032,4 +1038,62 @@ def get_differential_decision_readiness(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal differential-decision-readiness contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-context",
+    response_model=DecisionContextRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_context(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 031: read-only decision-context contract.
+
+    Packages the Task 027 ranked differential, the Task 028 structural
+    summary, the Task 029 consistency result, and the Task 030
+    readiness result into one deterministic object via
+    ``DecisionContextService`` — it duplicates no scoring, ranking,
+    summary, consistency, or readiness logic, and never reaches
+    directly into evidence or observations.
+
+    This is packaging only: it makes no decision, selects no
+    hypothesis, identifies no winner, and calculates no probability or
+    confidence. ``context_available`` means a complete, internally
+    consistent decision-context package has been assembled — not that
+    a decision exists or a diagnosis is known. It never writes to the
+    database, persists nothing, and modifies no candidate or evidence.
+
+    Does not modify the behavior or fields of the existing
+    ``/differential``, ``/differential-summary``,
+    ``/differential-consistency``, or ``/differential-readiness``
+    endpoints — this is an additional derived view over the same
+    underlying pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return decision_context_service.build_for_session(db, session_id, candidates)
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+    ) as exc:
+        # Task 031: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-context contract violation",
         ) from exc
