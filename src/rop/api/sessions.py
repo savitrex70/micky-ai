@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DecisionCandidateEvaluationRead,
     DecisionContextRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
@@ -51,6 +52,8 @@ from rop.schemas.api import (
 )
 from rop.services import (
     CandidateGenerationService,
+    DecisionCandidateEvaluationContractError,
+    DecisionCandidateEvaluationService,
     DecisionContextContractError,
     DecisionContextService,
     DifferentialDecisionReadinessContractError,
@@ -102,6 +105,9 @@ differential_decision_readiness_service = DifferentialDecisionReadinessService(
 )
 decision_context_service = DecisionContextService(
     differential_decision_readiness_service
+)
+decision_candidate_evaluation_service = DecisionCandidateEvaluationService(
+    decision_context_service
 )
 
 
@@ -1096,4 +1102,68 @@ def get_decision_context(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-context contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-candidate-evaluations",
+    response_model=list[DecisionCandidateEvaluationRead],
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_candidate_evaluations(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Task 032: read-only deterministic decision-candidate evaluation contract.
+
+    Consumes the Task 031 ``DecisionContext`` exclusively via
+    ``DecisionCandidateEvaluationService`` — it does not reach directly
+    into evidence, observations, scoring, or ranking services, and
+    duplicates no logic already owned by Tasks 020-031. For every
+    candidate in the context's differential, every declared decision
+    criterion (support, contradiction, evidence coverage, consistency,
+    separation, readiness) is evaluated deterministically against the
+    context's already-validated fields — no LLM, no hidden reasoning,
+    no probabilistic scoring.
+
+    This answers "how does each candidate perform against the defined
+    decision criteria?" — never "which candidate is correct?" There is
+    no winner, selected candidate, decision, diagnosis, probability,
+    confidence, or weighted/utility score anywhere in this response. It
+    never writes to the database, persists nothing, and modifies no
+    candidate, evidence, or upstream contract.
+
+    Does not modify the behavior or fields of the existing
+    ``/differential``, ``/differential-summary``,
+    ``/differential-consistency``, ``/differential-readiness``, or
+    ``/decision-context`` endpoints — this is an additional derived
+    view over the same underlying pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return decision_candidate_evaluation_service.evaluate_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+    ) as exc:
+        # Task 032: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-candidate-evaluation contract violation",
         ) from exc
