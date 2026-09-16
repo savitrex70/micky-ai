@@ -147,6 +147,7 @@ _CONTRACT_FIELDS = {
     "hypothesis_id",
     "hypothesis_name",
     "hypothesis_score",
+    "score_source",
     "score_direction",
     "evidence_consistency",
     "evidence_position",
@@ -573,6 +574,31 @@ def test_api_returns_ranked_differential_with_contract_fields() -> None:
     candidate_ids = {c["id"] for c in generate_response.json()}
     ranked_ids = {entry["hypothesis_id"] for entry in ranked}
     assert ranked_ids == candidate_ids
+
+
+def test_api_differential_response_exposes_score_source() -> None:
+    """Regression: ``score_source`` was carried internally by the
+    ranking service since Task 026 but was missing from
+    ``DifferentialRankRead``, so it never reached the actual HTTP
+    response despite ``_CONTRACT_FIELDS`` claiming full preservation.
+    This asserts the live response, not just the service-level dict.
+    """
+    session_id = _create_session()
+    _add_observation(session_id, "Patient reports chest pain")
+
+    generate_response = client.post(f"/sessions/{session_id}/generate-candidates")
+    assert generate_response.status_code == 201
+
+    evaluate_response = client.post(f"/sessions/{session_id}/evaluate-evidence")
+    assert evaluate_response.status_code == 200
+
+    response = client.get(f"/sessions/{session_id}/differential")
+    assert response.status_code == 200
+    ranked = response.json()
+    assert len(ranked) > 0
+
+    for entry in ranked:
+        assert entry["score_source"] == SCORE_SOURCE_NET_EVIDENCE_CONTRIBUTION
 
 
 def test_api_differential_endpoint_is_read_only() -> None:

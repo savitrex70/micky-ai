@@ -18,7 +18,10 @@ class DifferentialRankRead(BaseModel):
     reordered independently of score.
 
     All Task 025/026 fields are preserved exactly — ranking never
-    alters a score or any of its supporting fields.
+    alters a score or any of its supporting fields. This includes
+    ``score_source`` (originally omitted from this schema in Task 026;
+    corrected here since the ranking service already carried it
+    through internally).
 
     Task 027 adds derived separation metadata describing how this
     candidate's score relates to the others in the same ranking:
@@ -37,6 +40,7 @@ class DifferentialRankRead(BaseModel):
     hypothesis_id: UUID
     hypothesis_name: str
     hypothesis_score: float
+    score_source: str
     score_direction: str
     evidence_consistency: str
     evidence_position: str
