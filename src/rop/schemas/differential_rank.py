@@ -17,9 +17,18 @@ class DifferentialRankRead(BaseModel):
     to the ranking service remains present; none are dropped or
     reordered independently of score.
 
-    All non-``rank`` fields are preserved exactly from the Task 025
-    contract — ranking never alters a score or any of its supporting
-    fields.
+    All Task 025/026 fields are preserved exactly — ranking never
+    alters a score or any of its supporting fields.
+
+    Task 027 adds derived separation metadata describing how this
+    candidate's score relates to the others in the same ranking:
+    ``is_tied``/``tie_group_size`` (whether and how many candidates
+    share this exact normalized score) and
+    ``score_gap_to_next_higher``/``score_gap_to_next_lower`` (the
+    distance to the nearest strictly higher/lower *distinct* score,
+    skipping over tied peers; ``None`` at the top/bottom of the
+    ranking respectively). This is still structural only — not a
+    winner, a probability, or a decision.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -40,3 +49,7 @@ class DifferentialRankRead(BaseModel):
     evidence_coverage_ratio: float
     informative_evidence_ratio: float
     support_to_contradiction_ratio: float | None
+    is_tied: bool
+    tie_group_size: int
+    score_gap_to_next_higher: float | None
+    score_gap_to_next_lower: float | None

@@ -55,6 +55,16 @@ class DifferentialRankingService:
     breaks ties for ordering purposes only, without changing the
     shared rank: ``hypothesis_name.casefold()`` ascending, then
     ``str(hypothesis_id)`` ascending.
+
+    Task 027 extends every ranked entry with derived separation
+    metadata (``is_tied``, ``tie_group_size``,
+    ``score_gap_to_next_higher``, ``score_gap_to_next_lower``) that
+    describes how candidates are separated from one another by score.
+    This is still purely structural: no new scoring formula, no
+    winner, no probability, no decision. See
+    ``_assign_separation_metadata`` for the derivation and
+    ``_validate_separation_metadata`` for the contract it must
+    satisfy.
     """
 
     def __init__(self, scoring_service: HypothesisScoringService | None = None) -> None:
@@ -100,7 +110,10 @@ class DifferentialRankingService:
                 str(result["hypothesis_id"]),
             ),
         )
-        return self._assign_ranks(ordered)
+        ranked = self._assign_ranks(ordered)
+        annotated = self._assign_separation_metadata(ranked)
+        self._validate_separation_metadata(annotated)
+        return annotated
 
     @staticmethod
     def _assign_ranks(ordered: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -136,6 +149,224 @@ class DifferentialRankingService:
             previous_rank = rank
 
         return ranked
+
+    @staticmethod
+    def _assign_separation_metadata(
+        ranked: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Task 027: derive how ranked candidates are separated by score.
+
+        Operates only on ``hypothesis_score`` values already present in
+        ``ranked`` (which must already carry ``rank`` from
+        ``_assign_ranks``) — no evidence, contribution, or score is
+        recomputed here. For each entry adds:
+
+        * ``is_tied`` — ``True`` when another entry shares its exact
+          normalized score.
+        * ``tie_group_size`` — count of entries sharing that exact
+          score (always >= 1; > 1 only when ``is_tied``).
+        * ``score_gap_to_next_higher`` — ``next_higher_distinct_score -
+          this_score``, or ``None`` for the highest distinct score.
+        * ``score_gap_to_next_lower`` — ``this_score -
+          next_lower_distinct_score``, or ``None`` for the lowest
+          distinct score.
+
+        Gaps are computed over *distinct* scores, so tied candidates
+        correctly skip over their own tie group rather than reporting
+        a gap of 0 to a tied peer. Every gap is rounded to Task
+        025/026's four-decimal precision to avoid floating-point
+        artifacts (e.g. ``2.9999999997`` instead of ``3.0``).
+
+        Deterministic by construction: ``distinct_scores`` is built
+        with ``sorted()`` over a set (never relying on set iteration
+        order), and per-score aggregates are built by iterating
+        ``ranked`` in its already-deterministic order.
+        """
+        if not ranked:
+            return []
+
+        distinct_scores = sorted(
+            {entry["hypothesis_score"] for entry in ranked}, reverse=True
+        )
+
+        higher_gap_by_score: dict[float, float | None] = {}
+        lower_gap_by_score: dict[float, float | None] = {}
+        for index, score in enumerate(distinct_scores):
+            next_higher = distinct_scores[index - 1] if index > 0 else None
+            next_lower = (
+                distinct_scores[index + 1] if index < len(distinct_scores) - 1 else None
+            )
+            higher_gap_by_score[score] = (
+                round(next_higher - score, _SCORE_PRECISION)
+                if next_higher is not None
+                else None
+            )
+            lower_gap_by_score[score] = (
+                round(score - next_lower, _SCORE_PRECISION)
+                if next_lower is not None
+                else None
+            )
+
+        tie_group_size_by_score: dict[float, int] = {}
+        for entry in ranked:
+            score = entry["hypothesis_score"]
+            tie_group_size_by_score[score] = tie_group_size_by_score.get(score, 0) + 1
+
+        annotated: list[dict[str, Any]] = []
+        for entry in ranked:
+            score = entry["hypothesis_score"]
+            tie_group_size = tie_group_size_by_score[score]
+            new_entry = dict(entry)
+            new_entry["is_tied"] = tie_group_size > 1
+            new_entry["tie_group_size"] = tie_group_size
+            new_entry["score_gap_to_next_higher"] = higher_gap_by_score[score]
+            new_entry["score_gap_to_next_lower"] = lower_gap_by_score[score]
+            annotated.append(new_entry)
+
+        return annotated
+
+    @staticmethod
+    def _validate_separation_metadata(ranked: list[dict[str, Any]]) -> None:
+        """Task 027: verify the separation-metadata contract invariants.
+
+        Recomputes the expected tie/gap values independently of
+        ``_assign_separation_metadata`` and compares — a structural
+        consistency check on already-computed metadata, exactly like
+        Task 025's ``_validate_score_result``. Never repairs a bad
+        value; raises ``DifferentialRankingContractError`` naming the
+        violated invariant. Checks:
+
+        1. ``is_tied`` is a bool.
+        2. ``tie_group_size >= 1``.
+        3. ``is_tied`` implies ``tie_group_size > 1``, and vice versa
+           (``tie_group_size == 1`` implies ``not is_tied``).
+        4. ``tie_group_size`` matches the actual count of entries
+           sharing that exact score.
+        5. ``score_gap_to_next_higher`` is ``None`` only for the
+           highest distinct score, and matches the recomputed gap
+           otherwise.
+        6. ``score_gap_to_next_lower`` is ``None`` only for the lowest
+           distinct score, and matches the recomputed gap otherwise.
+        7. Every non-null gap is >= 0 and rounded to four-decimal
+           precision.
+        """
+        if not ranked:
+            return
+
+        distinct_scores = sorted(
+            {entry["hypothesis_score"] for entry in ranked}, reverse=True
+        )
+        highest_score = distinct_scores[0]
+        lowest_score = distinct_scores[-1]
+
+        expected_higher_gap: dict[float, float | None] = {}
+        expected_lower_gap: dict[float, float | None] = {}
+        for index, score in enumerate(distinct_scores):
+            next_higher = distinct_scores[index - 1] if index > 0 else None
+            next_lower = (
+                distinct_scores[index + 1] if index < len(distinct_scores) - 1 else None
+            )
+            expected_higher_gap[score] = (
+                round(next_higher - score, _SCORE_PRECISION)
+                if next_higher is not None
+                else None
+            )
+            expected_lower_gap[score] = (
+                round(score - next_lower, _SCORE_PRECISION)
+                if next_lower is not None
+                else None
+            )
+
+        expected_tie_group_size: dict[float, int] = {}
+        for entry in ranked:
+            score = entry["hypothesis_score"]
+            expected_tie_group_size[score] = expected_tie_group_size.get(score, 0) + 1
+
+        for entry in ranked:
+            score = entry["hypothesis_score"]
+            is_tied = entry["is_tied"]
+            tie_group_size = entry["tie_group_size"]
+            gap_higher = entry["score_gap_to_next_higher"]
+            gap_lower = entry["score_gap_to_next_lower"]
+
+            if not isinstance(is_tied, bool):
+                raise DifferentialRankingContractError(
+                    "IS_TIED_TYPE", f"is_tied is not boolean: {is_tied!r}"
+                )
+
+            if tie_group_size < 1:
+                raise DifferentialRankingContractError(
+                    "TIE_GROUP_SIZE_BOUNDS",
+                    f"tie_group_size must be >= 1, got {tie_group_size}",
+                )
+            if is_tied and tie_group_size <= 1:
+                raise DifferentialRankingContractError(
+                    "TIE_GROUP_SIZE_CONSISTENCY",
+                    "is_tied is True but tie_group_size is not > 1",
+                )
+            if not is_tied and tie_group_size != 1:
+                raise DifferentialRankingContractError(
+                    "TIE_GROUP_SIZE_CONSISTENCY",
+                    "is_tied is False but tie_group_size != 1",
+                )
+            if tie_group_size != expected_tie_group_size[score]:
+                raise DifferentialRankingContractError(
+                    "TIE_GROUP_SIZE_MISMATCH",
+                    f"tie_group_size ({tie_group_size}) does not match the "
+                    f"actual number of entries sharing score {score} "
+                    f"({expected_tie_group_size[score]})",
+                )
+
+            # Boundary + independent sign/precision checks come first —
+            # these are structural properties of the value itself and
+            # must hold regardless of whether it also happens to match
+            # the recomputed expectation below.
+            if score == highest_score and gap_higher is not None:
+                raise DifferentialRankingContractError(
+                    "SCORE_GAP_BOUNDARY",
+                    "score_gap_to_next_higher must be None for the "
+                    "highest distinct score",
+                )
+            if score == lowest_score and gap_lower is not None:
+                raise DifferentialRankingContractError(
+                    "SCORE_GAP_BOUNDARY",
+                    "score_gap_to_next_lower must be None for the "
+                    "lowest distinct score",
+                )
+
+            for gap_name, gap_value in (
+                ("score_gap_to_next_higher", gap_higher),
+                ("score_gap_to_next_lower", gap_lower),
+            ):
+                if gap_value is None:
+                    continue
+                if gap_value < 0:
+                    raise DifferentialRankingContractError(
+                        "SCORE_GAP_NEGATIVE",
+                        f"{gap_name} is negative: {gap_value}",
+                    )
+                if round(gap_value, _SCORE_PRECISION) != gap_value:
+                    raise DifferentialRankingContractError(
+                        "ROUNDING_PRECISION",
+                        f"{gap_name} ({gap_value}) is not rounded to "
+                        f"{_SCORE_PRECISION} decimal places",
+                    )
+
+            # Cross-field consistency: the value must also match what
+            # independent recomputation over the distinct-score ladder
+            # produces.
+            if score != highest_score and gap_higher != expected_higher_gap[score]:
+                raise DifferentialRankingContractError(
+                    "SCORE_GAP_MISMATCH",
+                    f"score_gap_to_next_higher ({gap_higher}) does not match "
+                    f"the expected value ({expected_higher_gap[score]})",
+                )
+            if score != lowest_score and gap_lower != expected_lower_gap[score]:
+                raise DifferentialRankingContractError(
+                    "SCORE_GAP_MISMATCH",
+                    f"score_gap_to_next_lower ({gap_lower}) does not match "
+                    f"the expected value ({expected_lower_gap[score]})",
+                )
 
     @staticmethod
     def _validate_ranking_input(score_results: list[dict[str, Any]]) -> None:

@@ -805,6 +805,12 @@ def get_differential_ranking(
     probability conversion, or confidence calibration, and it never
     writes to the database or persists a ranking table; ranking is a
     derived, read-only view over the current score state.
+
+    Task 027 extends each entry with derived separation metadata
+    (``is_tied``, ``tie_group_size``, ``score_gap_to_next_higher``,
+    ``score_gap_to_next_lower``) describing how candidates are
+    separated from one another by score — still purely structural,
+    with no winner, probability, or decision logic added.
     """
     if session_service.get(db, session_id) is None:
         raise HTTPException(
