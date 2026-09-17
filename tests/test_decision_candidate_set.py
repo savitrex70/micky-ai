@@ -661,6 +661,89 @@ def test_rejects_invalid_eligibility_source() -> None:
     assert ei.value.invariant == "INVALID_ELIGIBILITY_SOURCE"
 
 
+def test_rejects_non_list_blocking_conditions() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["blocking_conditions"] = "garbage"
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "BLOCKING_CONDITIONS_TYPE"
+
+
+def test_rejects_invalid_blocking_condition_identifier() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["eligible"] = False
+    broken["blocking_conditions"] = ["NOT_A_REAL_CONDITION"]
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "INVALID_BLOCKING_CONDITION"
+
+
+def test_rejects_duplicate_blocking_conditions() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["eligible"] = False
+    broken["blocking_conditions"] = [
+        "DECISION_NOT_READY",
+        "DECISION_NOT_READY",
+    ]
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "DUPLICATE_BLOCKING_CONDITION"
+
+
+def test_rejects_out_of_order_blocking_conditions() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["eligible"] = False
+    broken["context_available"] = False
+    broken["decision_ready"] = False
+    broken["blocking_conditions"] = [
+        "CONTEXT_UNAVAILABLE",
+        "DECISION_NOT_READY",
+    ]
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "BLOCKING_CONDITIONS_ORDER"
+
+
+def test_rejects_eligible_true_with_blocking_conditions() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["blocking_conditions"] = ["DECISION_NOT_READY"]
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "ELIGIBLE_WITH_BLOCKING_CONDITIONS"
+
+
+def test_rejects_eligible_false_with_empty_blocking_conditions() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    broken["eligible"] = False
+    broken["blocking_conditions"] = []
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "INELIGIBLE_WITHOUT_BLOCKING_CONDITIONS"
+
+
+def test_rejects_eligible_conjunction_mismatch() -> None:
+    context, eligibility = _ready_inputs()
+    broken = copy.deepcopy(eligibility)
+    # eligible says True, but one conjunction term says False, and
+    # blocking_conditions is non-empty so the eligible<->blocking
+    # invariant would also fire -- flip eligible to False and clear
+    # blocking to isolate the conjunction check.
+    broken["eligible"] = True
+    broken["candidate_count_matches"] = False
+    # Make blocking_conditions consistent with eligible=True so the
+    # earlier invariant passes; the conjunction check must then fire.
+    broken["blocking_conditions"] = []
+    with pytest.raises(DecisionCandidateSetContractError) as ei:
+        _candidate_set_service().build(context, broken)
+    assert ei.value.invariant == "ELIGIBLE_CONJUNCTION_MISMATCH"
+
+
 # ---------------------------------------------------------------------------
 # Validator hardening -- tampered output
 # ---------------------------------------------------------------------------

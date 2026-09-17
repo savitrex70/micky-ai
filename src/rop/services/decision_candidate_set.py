@@ -67,6 +67,35 @@ _CANDIDATE_FIELDS = (
     "score_gap_to_next_lower",
 )
 
+# Task 034's fixed blocking-condition identifiers, in their fixed
+# deterministic order. Duplicated here deliberately so this service
+# can validate the upstream contract without importing anything
+# other than the source identifier constant.
+_BLOCKING_CONDITION_ORDER = (
+    "DECISION_NOT_READY",
+    "CONTEXT_UNAVAILABLE",
+    "NO_CANDIDATES",
+    "NO_EVALUATIONS",
+    "CANDIDATE_COVERAGE_INCOMPLETE",
+    "EVALUATION_STRUCTURE_INCONSISTENT",
+    "CRITERIA_INCOMPLETE",
+)
+_VALID_BLOCKING_CONDITIONS = frozenset(_BLOCKING_CONDITION_ORDER)
+
+# Task 034's Section 5 conjunction -- the eight booleans whose AND is
+# the authoritative definition of ``eligible``. ``evaluation_consistent``
+# is exposed as a passthrough field but is not part of this conjunction.
+_ELIGIBILITY_CONJUNCTION_FIELDS = (
+    "decision_ready",
+    "context_available",
+    "has_candidates",
+    "evaluations_available",
+    "all_candidates_evaluated",
+    "all_criteria_evaluated",
+    "candidate_count_matches",
+    "evaluation_structure_consistent",
+)
+
 
 class DecisionCandidateSetContractError(Exception):
     """Task 035: malformed upstream input or an internal derivation bug.
@@ -352,7 +381,63 @@ class DecisionCandidateSetService:
                 "INVALID_ELIGIBILITY_SOURCE",
                 f"eligibility_source is not the Task 034 identifier: {source!r}",
             )
-        return eligibility_result["eligible"]
+
+        blocking_conditions = eligibility_result["blocking_conditions"]
+        if not isinstance(blocking_conditions, list):
+            raise DecisionCandidateSetContractError(
+                "BLOCKING_CONDITIONS_TYPE",
+                "blocking_conditions is not a list: "
+                f"{type(blocking_conditions).__name__}",
+            )
+        for condition in blocking_conditions:
+            if condition not in _VALID_BLOCKING_CONDITIONS:
+                raise DecisionCandidateSetContractError(
+                    "INVALID_BLOCKING_CONDITION",
+                    f"unknown blocking condition: {condition!r}",
+                )
+        if len(blocking_conditions) != len(set(blocking_conditions)):
+            raise DecisionCandidateSetContractError(
+                "DUPLICATE_BLOCKING_CONDITION",
+                f"blocking_conditions contains duplicates: "
+                f"{blocking_conditions!r}",
+            )
+        present_in_order = [
+            condition
+            for condition in _BLOCKING_CONDITION_ORDER
+            if condition in blocking_conditions
+        ]
+        if blocking_conditions != present_in_order:
+            raise DecisionCandidateSetContractError(
+                "BLOCKING_CONDITIONS_ORDER",
+                "blocking_conditions is not in the fixed deterministic "
+                f"order: {blocking_conditions!r}",
+            )
+
+        eligible = eligibility_result["eligible"]
+        if eligible and blocking_conditions:
+            raise DecisionCandidateSetContractError(
+                "ELIGIBLE_WITH_BLOCKING_CONDITIONS",
+                "eligible is True but blocking_conditions is non-empty: "
+                f"{blocking_conditions!r}",
+            )
+        if not eligible and not blocking_conditions:
+            raise DecisionCandidateSetContractError(
+                "INELIGIBLE_WITHOUT_BLOCKING_CONDITIONS",
+                "eligible is False but blocking_conditions is empty",
+            )
+
+        recomputed_eligible = all(
+            eligibility_result[field]
+            for field in _ELIGIBILITY_CONJUNCTION_FIELDS
+        )
+        if eligible != recomputed_eligible:
+            raise DecisionCandidateSetContractError(
+                "ELIGIBLE_CONJUNCTION_MISMATCH",
+                "eligible does not match the recomputed Task 034 conjunction: "
+                f"{eligible!r} != {recomputed_eligible!r}",
+            )
+
+        return eligible
 
     @staticmethod
     def _project_candidate(entry: Mapping[str, Any]) -> dict[str, Any]:
