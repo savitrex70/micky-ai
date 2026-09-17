@@ -19,7 +19,6 @@ from rop.models import (
 from rop.schemas import (
     CandidateHypothesisRead,
     DecisionCandidateEvaluationRead,
-    DecisionCandidateSelectionRead,
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
     DecisionInputEligibilityRead,
@@ -57,8 +56,6 @@ from rop.services import (
     CandidateGenerationService,
     DecisionCandidateEvaluationContractError,
     DecisionCandidateEvaluationService,
-    DecisionCandidateSelectionContractError,
-    DecisionCandidateSelectionService,
     DecisionContextContractError,
     DecisionContextService,
     DecisionEvaluationConsistencyContractError,
@@ -123,9 +120,6 @@ decision_evaluation_consistency_service = DecisionEvaluationConsistencyService(
 )
 decision_input_eligibility_service = DecisionInputEligibilityService(
     decision_evaluation_consistency_service
-)
-decision_candidate_selection_service = DecisionCandidateSelectionService(
-    decision_input_eligibility_service
 )
 
 
@@ -1355,88 +1349,4 @@ def get_decision_input_eligibility(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-input-eligibility contract violation",
-        ) from exc
-
-
-@router.get(
-    "/{session_id}/decision-candidate-selection",
-    response_model=DecisionCandidateSelectionRead,
-    status_code=status.HTTP_200_OK,
-)
-def get_decision_candidate_selection(
-    session_id: UUID,
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """Task 035: read-only structural candidate-selection boundary.
-
-    The narrow forwarding step between Task 034's decision-input
-    eligibility gate and the future decision layer. When Task 034
-    reports the input eligible, every already-established candidate
-    is forwarded in the exact order supplied by the Task 031 decision
-    context's differential; when Task 034 reports it ineligible, no
-    candidate is forwarded. Consumes Task 034's result unchanged via
-    ``DecisionCandidateSelectionService`` -- it does not reach into
-    evidence, observations, entities, hypothesis scores, ranking
-    internals, or repositories, and duplicates no logic already owned
-    by Tasks 020-034.
-
-    Answers "which already-established candidates are structurally
-    allowed to enter the next stage?" -- never "which candidate
-    should be chosen?". There is no winner, best candidate, diagnosis,
-    recommendation, action, probability, confidence, utility,
-    weighted score, expected outcome, or treatment anywhere in this
-    response. It never ranks, scores, breaks ties, applies a score
-    threshold, or removes a candidate for having a lower score. It
-    never writes to the database, persists nothing, and modifies no
-    candidate, evidence, or upstream contract.
-
-    Does not modify the behavior or fields of the existing
-    ``/differential``, ``/differential-summary``,
-    ``/differential-consistency``, ``/differential-readiness``,
-    ``/decision-context``, ``/decision-candidate-evaluations``,
-    ``/decision-evaluation-consistency``, or
-    ``/decision-input-eligibility`` endpoints -- this is an additional
-    derived view over the same underlying pipeline.
-    """
-    if session_service.get(db, session_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
-        )
-
-    # Task 035's contract requires the full candidate set (via the
-    # Task 031 context it consumes), so every page of candidates must
-    # be retrieved -- matching the Task 032/033/034 pagination fix.
-    candidates: list[CandidateHypothesis] = []
-    page_offset = 0
-    page_size = 100
-    while True:
-        page = candidate_generation_service.list_by_session(
-            db, session_id, offset=page_offset, limit=page_size
-        )
-        candidates.extend(page)
-        if len(page) < page_size:
-            break
-        page_offset += page_size
-
-    try:
-        return decision_candidate_selection_service.build_for_session(
-            db, session_id, candidates
-        )
-    except (
-        HypothesisScoreContractError,
-        DifferentialRankingContractError,
-        DifferentialRankingSummaryContractError,
-        DifferentialRankingConsistencyContractError,
-        DifferentialDecisionReadinessContractError,
-        DecisionContextContractError,
-        DecisionCandidateEvaluationContractError,
-        DecisionEvaluationConsistencyContractError,
-        DecisionInputEligibilityContractError,
-        DecisionCandidateSelectionContractError,
-    ) as exc:
-        # Task 035: an internal contract violation, never medical or
-        # client-input error -- never leak the raw exception detail.
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal decision-candidate-selection contract violation",
         ) from exc

@@ -5,10 +5,6 @@ from rop.services.decision_candidate_evaluation import (
     DecisionCandidateEvaluationContractError,
     DecisionCandidateEvaluationService,
 )
-from rop.services.decision_candidate_selection import (
-    DecisionCandidateSelectionContractError,
-    DecisionCandidateSelectionService,
-)
 from rop.services.decision_context import (
     DecisionContextContractError,
     DecisionContextService,
@@ -58,8 +54,6 @@ __all__ = [
     "CandidateGenerationService",
     "DecisionCandidateEvaluationContractError",
     "DecisionCandidateEvaluationService",
-    "DecisionCandidateSelectionContractError",
-    "DecisionCandidateSelectionService",
     "DecisionContextContractError",
     "DecisionContextService",
     "DecisionEvaluationConsistencyContractError",
