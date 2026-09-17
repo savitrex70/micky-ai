@@ -1,6 +1,10 @@
 """Application services."""
 
 from rop.services.candidate_generation import CandidateGenerationService
+from rop.services.decision_candidate_assessment import (
+    DecisionCandidateAssessmentContractError,
+    DecisionCandidateAssessmentService,
+)
 from rop.services.decision_candidate_evaluation import (
     DecisionCandidateEvaluationContractError,
     DecisionCandidateEvaluationService,
@@ -56,6 +60,8 @@ from rop.services.template_match import TemplateMatchService
 
 __all__ = [
     "CandidateGenerationService",
+    "DecisionCandidateAssessmentContractError",
+    "DecisionCandidateAssessmentService",
     "DecisionCandidateEvaluationContractError",
     "DecisionCandidateEvaluationService",
     "DecisionCandidateSetContractError",

@@ -18,6 +18,7 @@ from rop.models import (
 )
 from rop.schemas import (
     CandidateHypothesisRead,
+    DecisionCandidateAssessmentSetRead,
     DecisionCandidateEvaluationRead,
     DecisionCandidateRead,
     DecisionCandidateSetRead,
@@ -57,6 +58,8 @@ from rop.schemas.api import (
 from rop.services import (
     CandidateGenerationService,
     DecisionCandidateEvaluationContractError,
+    DecisionCandidateAssessmentContractError,
+    DecisionCandidateAssessmentService,
     DecisionCandidateEvaluationService,
     DecisionCandidateSetContractError,
     DecisionCandidateSetService,
@@ -127,6 +130,9 @@ decision_input_eligibility_service = DecisionInputEligibilityService(
 )
 decision_candidate_set_service = DecisionCandidateSetService(
     decision_input_eligibility_service
+)
+decision_candidate_assessment_service = DecisionCandidateAssessmentService(
+    decision_candidate_set_service
 )
 
 
@@ -1436,4 +1442,87 @@ def get_decision_candidate_set(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-candidate-set contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-candidate-assessments",
+    response_model=DecisionCandidateAssessmentSetRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_candidate_assessments(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 036: read-only candidate-assessment packaging contract.
+
+    The candidate-assessment package between Task 035's candidate-set
+    handoff and the future decision engine. For every candidate in the
+    Task 035 set, joins the candidate identity, rank, score, tie
+    metadata, and score gaps (verbatim) with the corresponding Task
+    032 evaluation's criteria results and counts (verbatim), under the
+    structural guarantees reported by Task 033. Consumes Task 035,
+    Task 032, and Task 033 unchanged via
+    ``DecisionCandidateAssessmentService`` -- it does not reach into
+    evidence, observations, entities, hypothesis scores, ranking
+    internals, or repositories, and duplicates no logic already owned
+    by Tasks 020-035.
+
+    Answers "what do we know about each already-approved candidate
+    under the established decision criteria?" -- never "which
+    candidate should be chosen?". There is no winner, best candidate,
+    diagnosis, recommendation, action, probability, confidence,
+    utility, weighted score, expected outcome, or treatment anywhere
+    in this response. It never ranks, scores, aggregates criteria
+    into a new score, breaks ties, applies a score threshold, filters,
+    or removes a candidate. It never writes to the database, persists
+    nothing, and modifies no candidate, evidence, or upstream
+    contract.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 036's contract requires the full candidate set (via the
+    # Task 031 context it consumes), so every page of candidates must
+    # be retrieved -- matching the Task 032/033/034/035 pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_candidate_assessment_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+    ) as exc:
+        # Task 036: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-candidate-assessment contract violation",
         ) from exc
