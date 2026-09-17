@@ -229,6 +229,30 @@ def test_empty_session_runs() -> None:
     )
 
 
+def test_empty_session_candidate_generation_stage_is_unavailable() -> None:
+    """When no candidates exist and the GET path does not regenerate,
+    the CANDIDATE_GENERATION stage must report available=False and
+    complete=False, and the run must become incomplete."""
+    sid = _create_session("Task 042 empty generation stage")
+    result = _build_for(sid)
+    by_id = {s["stage_id"]: s for s in result["stages"]}
+    gen = by_id["CANDIDATE_GENERATION"]
+    assert gen["available"] is False
+    assert gen["consistent"] is True
+    assert gen["complete"] is False
+    assert result["run_complete"] is False
+
+
+def test_nonempty_session_candidate_generation_stage_is_available() -> None:
+    sid = _seed_full_session("Task 042 nonempty generation stage")
+    result = _build_for(sid)
+    by_id = {s["stage_id"]: s for s in result["stages"]}
+    gen = by_id["CANDIDATE_GENERATION"]
+    assert gen["available"] is True
+    assert gen["consistent"] is True
+    assert gen["complete"] is True
+
+
 def test_session_with_only_observations() -> None:
     sid = _create_session("Task 042 obs only")
     client.post(
@@ -364,6 +388,18 @@ def test_tamper_negative_candidate_count_rejected() -> None:
     with pytest.raises(ReasoningRunContractError) as ei:
         ReasoningRunService._validate_result(tampered)
     assert ei.value.invariant == "CANDIDATE_COUNT_NEGATIVE"
+
+
+def test_tamper_candidate_generation_available_rejected() -> None:
+    """candidate_generation_available must equal (candidate_count > 0)."""
+    result = _valid_result()
+    tampered = copy.deepcopy(result)
+    # Force count to 0 while keeping the flag as-is.
+    tampered["candidate_count"] = 0
+    tampered["candidate_generation_available"] = True
+    with pytest.raises(ReasoningRunContractError) as ei:
+        ReasoningRunService._validate_result(tampered)
+    assert ei.value.invariant == "CANDIDATE_GENERATION_AVAILABLE_MISMATCH"
 
 
 def test_tamper_run_source_rejected() -> None:

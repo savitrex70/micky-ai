@@ -131,6 +131,24 @@ class ReasoningRunService:
             reasoning_pipeline_service or ReasoningPipelineService()
         )
 
+    @staticmethod
+    def _paginate(fetch_page: Any) -> list[Any]:
+        """Read every page from a paginated list_by_session boundary.
+
+        Uses _STATE_PAGE_SIZE pages and stops when a page is shorter
+        than the page size, matching the pattern already established
+        for candidates.
+        """
+        results: list[Any] = []
+        offset = 0
+        while True:
+            page = fetch_page(offset)
+            results.extend(page)
+            if len(page) < _STATE_PAGE_SIZE:
+                break
+            offset += _STATE_PAGE_SIZE
+        return results
+
     def build_for_session(
         self,
         db: Session,
@@ -148,11 +166,15 @@ class ReasoningRunService:
                 "MISSING_SESSION", "session does not exist"
             )
 
-        observations = self.observation_service.list_by_session(
-            db, session_id, offset=0, limit=_STATE_PAGE_SIZE
+        observations = self._paginate(
+            lambda off: self.observation_service.list_by_session(
+                db, session_id, offset=off, limit=_STATE_PAGE_SIZE
+            )
         )
-        entities = self.entity_service.list_by_session(
-            db, session_id, offset=0, limit=_STATE_PAGE_SIZE
+        entities = self._paginate(
+            lambda off: self.entity_service.list_by_session(
+                db, session_id, offset=off, limit=_STATE_PAGE_SIZE
+            )
         )
         missing_information = (
             self.missing_information_service.list_by_session(db, session_id)
@@ -262,6 +284,7 @@ class ReasoningRunService:
             ) from exc
 
         has_template = len(template_matches) > 0
+        has_candidates = len(candidates) > 0
         pipeline_available = bool(
             pipeline_result.get("available", False)
         )
@@ -317,9 +340,9 @@ class ReasoningRunService:
                 "CANDIDATE_GENERATION",
                 6,
                 STAGE_SOURCE_CANDIDATE_GENERATION,
+                has_candidates,
                 True,
-                True,
-                True,
+                has_candidates,
             ),
             self._make_stage(
                 "REASONING_PIPELINE",
@@ -405,6 +428,18 @@ class ReasoningRunService:
                     field.upper() + "_NEGATIVE",
                     field + " is negative: " + repr(value),
                 )
+
+        # candidate_generation_available must equal (candidate_count > 0).
+        expected_generation_available = result["candidate_count"] > 0
+        if (
+            result["candidate_generation_available"]
+            != expected_generation_available
+        ):
+            raise ReasoningRunContractError(
+                "CANDIDATE_GENERATION_AVAILABLE_MISMATCH",
+                "candidate_generation_available does not match "
+                "candidate_count > 0",
+            )
 
         stages = result["stages"]
         if not isinstance(stages, list):
