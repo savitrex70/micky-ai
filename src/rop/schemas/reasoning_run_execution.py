@@ -50,6 +50,6 @@ class ReasoningRunExecutionRead(BaseModel):
     completed_stage_count: int
     stage_count: int
     stages: list[ReasoningRunExecutionStageRead]
-    reasoning_run: ReasoningRunRead
-    reasoning_run_consistency: ReasoningRunConsistencyRead
+    reasoning_run: ReasoningRunRead | None
+    reasoning_run_consistency: ReasoningRunConsistencyRead | None
     execution_source: str

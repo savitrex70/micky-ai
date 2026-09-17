@@ -11,12 +11,8 @@ from rop.services.evidence_evaluation import EvidenceEvaluationService
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
-from rop.services.reasoning_run import (
-    ReasoningRunContractError,
-    ReasoningRunService,
-)
+from rop.services.reasoning_run import ReasoningRunService
 from rop.services.reasoning_run_consistency import (
-    ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
 )
 from rop.services.reasoning_session import ReasoningSessionService
@@ -30,6 +26,7 @@ OUTCOME_SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
 
 _STATUS_COMPLETED = "COMPLETED"
 _STATUS_FAILED = "FAILED"
+_STATUS_SKIPPED = "SKIPPED"
 
 _EXECUTION_STAGE_IDS = (
     "SESSION_VERIFIED",
@@ -86,13 +83,13 @@ _STATE_PAGE_SIZE = 1000
 
 
 class ReasoningRunExecutionContractError(Exception):
-    """Task 044: a stage of the execution orchestrator failed.
+    """Task 044: an infrastructure or contract failure.
 
-    Raised when a required stage of the orchestrated reasoning
-    workflow fails, when a required session or prerequisite is
-    missing, or when a delegated service returns a result that
-    violates its own contract. It is never converted into a
-    successful-but-empty execution result.
+    Raised only when the session does not exist, or when an
+    unexpected internal error prevents the orchestrator from producing
+    a valid ReasoningRunExecutionRead at all. Stage failures inside
+    the orchestrated workflow are represented as a FAILED execution
+    result (returned normally), not raised.
     """
 
     def __init__(self, invariant: str, detail: str) -> None:
@@ -106,9 +103,9 @@ class ReasoningRunExecutionService:
     The first write-side composition layer. Runs the established
     deterministic reasoning workflow in order by delegating to the
     existing services -- no reasoning, scoring, ranking, or decision
-    logic is reimplemented here. Any stage failure raises an explicit
-    ReasoningRunExecutionContractError; downstream stages never run
-    after a required earlier stage fails.
+    logic is reimplemented here. Stage failures are represented as a
+    FAILED execution result with partial stage status; downstream
+    stages never run after a required earlier stage fails.
     """
 
     def __init__(
@@ -164,145 +161,135 @@ class ReasoningRunExecutionService:
         """Run the deterministic reasoning workflow end-to-end.
 
         Every stage delegates to the established service that owns it.
-        A stage failure raises ReasoningRunExecutionContractError and
-        no further stages run.
+        A stage failure is caught and represented as a FAILED execution
+        result: the failing stage is marked FAILED, subsequent stages
+        are marked SKIPPED, and ``reasoning_run`` /
+        ``reasoning_run_consistency`` stay None. Only a missing session
+        raises ReasoningRunExecutionContractError.
         """
-        # 1. Session verification.
         session = self.reasoning_session_service.get(db, session_id)
         if session is None:
             raise ReasoningRunExecutionContractError(
                 "SESSION_NOT_FOUND", "session does not exist"
             )
 
-        # 2. Observation extraction from the session's user_input.
-        try:
-            self.observation_extraction_service.extract_and_store(
-                db, session_id, session.user_input
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "OBSERVATION_EXTRACTION_FAILED",
-                "observation extraction failed: " + str(exc),
-            ) from exc
+        state: dict[str, Any] = {}
+        completed_ids: list[str] = ["SESSION_VERIFIED"]
+        failed_id: str | None = None
 
-        observations = self._paginate(
+        stages = (
+            ("OBSERVATION_EXTRACTION", self._stage_observations),
+            ("MISSING_INFORMATION", self._stage_missing_information),
+            ("TEMPLATE_MATCHING", self._stage_template_matching),
+            ("CANDIDATE_GENERATION", self._stage_candidate_generation),
+            ("EVIDENCE_EVALUATION", self._stage_evidence_evaluation),
+            ("REASONING_RUN", self._stage_reasoning_run),
+            ("REASONING_RUN_CONSISTENCY",
+                self._stage_reasoning_run_consistency),
+        )
+
+        for stage_id, method in stages:
+            try:
+                method(db, session, session_id, state)
+            except Exception:
+                failed_id = stage_id
+                break
+            completed_ids.append(stage_id)
+
+        return self._build_result(
+            session_id=session_id,
+            completed_ids=completed_ids,
+            failed_id=failed_id,
+            run=state.get("run"),
+            audit=state.get("audit"),
+        )
+
+    # ------------------------------------------------------------------
+    # Stage implementations
+    # ------------------------------------------------------------------
+
+    def _stage_observations(self, db, session, session_id, state):
+        existing = self._paginate(
             lambda off: self.observation_service.list_by_session(
                 db, session_id, offset=off, limit=_STATE_PAGE_SIZE
             )
         )
-        entities = self._paginate(
+        # Reuse existing observation state on repeat execution; only
+        # extract when none exists yet.
+        if not existing:
+            self.observation_extraction_service.extract_and_store(
+                db, session_id, session.user_input
+            )
+        state["observations"] = self._paginate(
+            lambda off: self.observation_service.list_by_session(
+                db, session_id, offset=off, limit=_STATE_PAGE_SIZE
+            )
+        )
+        state["entities"] = self._paginate(
             lambda off: self.entity_service.list_by_session(
                 db, session_id, offset=off, limit=_STATE_PAGE_SIZE
             )
         )
 
-        # 3. Missing-information detection.
-        try:
-            self.missing_information_service.detect_and_store(
-                db, session_id, observations
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "MISSING_INFORMATION_FAILED",
-                "missing-information detection failed: " + str(exc),
-            ) from exc
-
-        # 4. Template matching.
-        try:
-            self.template_match_service.match(
-                db, session_id, observations, entities
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "TEMPLATE_MATCHING_FAILED",
-                "template matching failed: " + str(exc),
-            ) from exc
-
-        template_matches = self.template_match_service.list_by_session(
-            db, session_id
+    def _stage_missing_information(self, db, session, session_id, state):
+        self.missing_information_service.detect_and_store(
+            db, session_id, state["observations"]
         )
 
-        # 5. Candidate generation -- reuses the same template lookup
-        # already established in the /generate-candidates endpoint.
-        from rop.templates import load_templates
-
-        template = None
-        if template_matches:
-            latest = template_matches[-1]
-            templates = load_templates()
-            template = next(
-                (t for t in templates if t.name == latest.template_name),
-                None,
+    def _stage_template_matching(self, db, session, session_id, state):
+        existing = self.template_match_service.list_by_session(
+            db, session_id
+        )
+        # Same idempotency rule as observations -- do not append a
+        # second template match when one already exists.
+        if not existing:
+            self.template_match_service.match(
+                db, session_id, state["observations"], state["entities"]
             )
+        state["template_matches"] = (
+            self.template_match_service.list_by_session(db, session_id)
+        )
 
+    def _stage_candidate_generation(self, db, session, session_id, state):
+        template = self._resolve_template(state.get("template_matches", []))
         missing_information = (
             self.missing_information_service.list_by_session(db, session_id)
         )
-
-        try:
-            self.candidate_generation_service.generate(
-                db=db,
-                session_id=session_id,
-                observations=observations,
-                entities=entities,
-                template=template,
-                missing_information=missing_information,
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "CANDIDATE_GENERATION_FAILED",
-                "candidate generation failed: " + str(exc),
-            ) from exc
-
-        # 6. Evidence evaluation.
-        candidates = self._paginate(
+        self.candidate_generation_service.generate(
+            db=db,
+            session_id=session_id,
+            observations=state["observations"],
+            entities=state["entities"],
+            template=template,
+            missing_information=missing_information,
+        )
+        state["candidates"] = self._paginate(
             lambda off: self.candidate_generation_service.list_by_session(
                 db, session_id, offset=off, limit=_CANDIDATE_PAGE_SIZE
             )
         )
 
-        try:
-            self.evidence_evaluation_service.evaluate_session(
-                db=db,
-                session_id=session_id,
-                candidates=candidates,
-                observations=observations,
-                entities=entities,
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "EVIDENCE_EVALUATION_FAILED",
-                "evidence evaluation failed: " + str(exc),
-            ) from exc
+    def _stage_evidence_evaluation(self, db, session, session_id, state):
+        self.evidence_evaluation_service.evaluate_session(
+            db=db,
+            session_id=session_id,
+            candidates=state["candidates"],
+            observations=state["observations"],
+            entities=state["entities"],
+        )
 
-        # 7. Compose the Task 042 reasoning run.
-        try:
-            run = self.reasoning_run_service.build_for_session(
+    def _stage_reasoning_run(self, db, session, session_id, state):
+        state["run"] = self.reasoning_run_service.build_for_session(
+            db, session_id
+        )
+
+    def _stage_reasoning_run_consistency(
+        self, db, session, session_id, state
+    ):
+        state["audit"] = (
+            self.reasoning_run_consistency_service.build_for_session(
                 db, session_id
             )
-        except ReasoningRunContractError as exc:
-            raise ReasoningRunExecutionContractError(
-                "REASONING_RUN_FAILED",
-                "Task 042 composition failed: " + str(exc),
-            ) from exc
-
-        # 8. Audit the run via Task 043.
-        try:
-            audit = (
-                self.reasoning_run_consistency_service.build_for_session(
-                    db, session_id
-                )
-            )
-        except ReasoningRunConsistencyContractError as exc:
-            raise ReasoningRunExecutionContractError(
-                "REASONING_RUN_CONSISTENCY_FAILED",
-                "Task 043 audit failed: " + str(exc),
-            ) from exc
-
-        return self._build_result(
-            session_id=session_id,
-            run=run,
-            audit=audit,
         )
 
     @staticmethod
@@ -318,36 +305,66 @@ class ReasoningRunExecutionService:
         return results
 
     @staticmethod
+    def _resolve_template(template_matches: list[Any]) -> Any:
+        if not template_matches:
+            return None
+        from rop.templates import load_templates
+
+        latest = template_matches[-1]
+        templates = load_templates()
+        return next(
+            (t for t in templates if t.name == latest.template_name),
+            None,
+        )
+
+    @staticmethod
     def _build_result(
         *,
         session_id: UUID,
-        run: dict[str, Any],
-        audit: dict[str, Any],
+        completed_ids: list[str],
+        failed_id: str | None,
+        run: dict[str, Any] | None,
+        audit: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        stages = [
-            {
-                "stage_id": sid,
-                "stage_order": i + 1,
-                "stage_source": _STAGE_SOURCES[sid],
-                "status": _STATUS_COMPLETED,
-            }
-            for i, sid in enumerate(_EXECUTION_STAGE_IDS)
-        ]
+        completed_set = set(completed_ids)
+        stages = []
+        for i, sid in enumerate(_EXECUTION_STAGE_IDS):
+            if sid in completed_set:
+                status = _STATUS_COMPLETED
+            elif sid == failed_id:
+                status = _STATUS_FAILED
+            else:
+                status = _STATUS_SKIPPED
+            stages.append(
+                {
+                    "stage_id": sid,
+                    "stage_order": i + 1,
+                    "stage_source": _STAGE_SOURCES[sid],
+                    "status": status,
+                }
+            )
         completed_stage_count = sum(
             1 for s in stages if s["status"] == _STATUS_COMPLETED
         )
+        if failed_id is None:
+            outcome = OUTCOME_COMPLETED
+            available = True
+        else:
+            outcome = OUTCOME_FAILED
+            available = False
+        execution_consistent = bool(
+            audit.get("run_consistent", False)
+        ) if audit is not None else False
         result: dict[str, Any] = {
-            "available": True,
-            "outcome": OUTCOME_COMPLETED,
-            "execution_consistent": bool(
-                audit.get("run_consistent", False)
-            ),
+            "available": available,
+            "outcome": outcome,
+            "execution_consistent": execution_consistent,
             "session_id": session_id,
             "completed_stage_count": completed_stage_count,
             "stage_count": len(stages),
             "stages": stages,
-            "reasoning_run": dict(run),
-            "reasoning_run_consistency": dict(audit),
+            "reasoning_run": run,
+            "reasoning_run_consistency": audit,
             "execution_source": REASONING_RUN_EXECUTION_SOURCE_TASK_044,
         }
         ReasoningRunExecutionService._validate_result(result)
@@ -431,8 +448,8 @@ class ReasoningRunExecutionService:
                     )
             if s["stage_id"] in seen_ids:
                 raise ReasoningRunExecutionContractError(
-                    "DUPLICATE_STAGE_ID", "duplicate stage_id: "
-                    + str(s["stage_id"]),
+                    "DUPLICATE_STAGE_ID",
+                    "duplicate stage_id: " + str(s["stage_id"]),
                 )
             seen_ids.add(s["stage_id"])
             if s["stage_order"] != expected_order:
@@ -442,13 +459,19 @@ class ReasoningRunExecutionService:
                     + " != expected " + repr(expected_order),
                 )
             expected_order += 1
-            if s["status"] not in (_STATUS_COMPLETED, _STATUS_FAILED):
+            if s["status"] not in (
+                _STATUS_COMPLETED,
+                _STATUS_FAILED,
+                _STATUS_SKIPPED,
+            ):
                 raise ReasoningRunExecutionContractError(
                     "INVALID_STAGE_STATUS",
                     "stage status is not a known identifier: "
                     + repr(s["status"]),
                 )
-        completed = sum(1 for s in stages if s["status"] == _STATUS_COMPLETED)
+        completed = sum(
+            1 for s in stages if s["status"] == _STATUS_COMPLETED
+        )
         if result["completed_stage_count"] != completed:
             raise ReasoningRunExecutionContractError(
                 "COMPLETED_COUNT_MISMATCH",
@@ -456,18 +479,41 @@ class ReasoningRunExecutionService:
                 + repr(result["completed_stage_count"])
                 + " != actual " + repr(completed),
             )
-        if not isinstance(result["reasoning_run"], dict):
+        # reasoning_run / reasoning_run_consistency are nullable.
+        if result["reasoning_run"] is not None and not isinstance(
+            result["reasoning_run"], dict
+        ):
             raise ReasoningRunExecutionContractError(
                 "REASONING_RUN_TYPE",
-                "reasoning_run is not a dict: "
+                "reasoning_run is not a dict or None: "
                 + type(result["reasoning_run"]).__name__,
             )
-        if not isinstance(result["reasoning_run_consistency"], dict):
+        if result["reasoning_run_consistency"] is not None and not isinstance(
+            result["reasoning_run_consistency"], dict
+        ):
             raise ReasoningRunExecutionContractError(
                 "REASONING_RUN_CONSISTENCY_TYPE",
-                "reasoning_run_consistency is not a dict: "
+                "reasoning_run_consistency is not a dict or None: "
                 + type(result["reasoning_run_consistency"]).__name__,
             )
+        if result["outcome"] == OUTCOME_COMPLETED:
+            if result["reasoning_run"] is None:
+                raise ReasoningRunExecutionContractError(
+                    "COMPLETED_WITHOUT_RUN",
+                    "COMPLETED outcome requires a reasoning_run",
+                )
+            if result["reasoning_run_consistency"] is None:
+                raise ReasoningRunExecutionContractError(
+                    "COMPLETED_WITHOUT_AUDIT",
+                    "COMPLETED outcome requires a "
+                    "reasoning_run_consistency",
+                )
+        if result["outcome"] == OUTCOME_FAILED:
+            if result["available"] is not False:
+                raise ReasoningRunExecutionContractError(
+                    "FAILED_MUST_BE_UNAVAILABLE",
+                    "FAILED outcome requires available=False",
+                )
         if (
             result["execution_source"]
             != REASONING_RUN_EXECUTION_SOURCE_TASK_044

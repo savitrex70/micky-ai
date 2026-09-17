@@ -350,9 +350,15 @@ def test_observation_extraction_failure_propagates(monkeypatch) -> None:
         ObservationExtractionService, "extract_and_store", boom
     )
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError) as ei:
-        _execute(sid)
-    assert ei.value.invariant == "OBSERVATION_EXTRACTION_FAILED"
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    assert result["available"] is False
+    assert result["reasoning_run"] is None
+    assert result["reasoning_run_consistency"] is None
+    by_id = {st["stage_id"]: st for st in result["stages"]}
+    assert by_id["OBSERVATION_EXTRACTION"]["status"] == "FAILED"
+    assert by_id["MISSING_INFORMATION"]["status"] == "SKIPPED"
+    assert by_id["REASONING_RUN"]["status"] == "SKIPPED"
 
 
 def test_missing_information_failure_propagates(monkeypatch) -> None:
@@ -363,9 +369,12 @@ def test_missing_information_failure_propagates(monkeypatch) -> None:
         MissingInformationService, "detect_and_store", boom
     )
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError) as ei:
-        _execute(sid)
-    assert ei.value.invariant == "MISSING_INFORMATION_FAILED"
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    by_id = {st["stage_id"]: st for st in result["stages"]}
+    assert by_id["OBSERVATION_EXTRACTION"]["status"] == "COMPLETED"
+    assert by_id["MISSING_INFORMATION"]["status"] == "FAILED"
+    assert by_id["TEMPLATE_MATCHING"]["status"] == "SKIPPED"
 
 
 def test_template_matching_failure_propagates(monkeypatch) -> None:
@@ -374,9 +383,11 @@ def test_template_matching_failure_propagates(monkeypatch) -> None:
 
     monkeypatch.setattr(TemplateMatchService, "match", boom)
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError) as ei:
-        _execute(sid)
-    assert ei.value.invariant == "TEMPLATE_MATCHING_FAILED"
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    by_id = {st["stage_id"]: st for st in result["stages"]}
+    assert by_id["TEMPLATE_MATCHING"]["status"] == "FAILED"
+    assert by_id["CANDIDATE_GENERATION"]["status"] == "SKIPPED"
 
 
 def test_candidate_generation_failure_propagates(monkeypatch) -> None:
@@ -385,9 +396,11 @@ def test_candidate_generation_failure_propagates(monkeypatch) -> None:
 
     monkeypatch.setattr(CandidateGenerationService, "generate", boom)
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError) as ei:
-        _execute(sid)
-    assert ei.value.invariant == "CANDIDATE_GENERATION_FAILED"
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    by_id = {st["stage_id"]: st for st in result["stages"]}
+    assert by_id["CANDIDATE_GENERATION"]["status"] == "FAILED"
+    assert by_id["EVIDENCE_EVALUATION"]["status"] == "SKIPPED"
 
 
 def test_evidence_evaluation_failure_propagates(monkeypatch) -> None:
@@ -396,9 +409,11 @@ def test_evidence_evaluation_failure_propagates(monkeypatch) -> None:
 
     monkeypatch.setattr(EvidenceEvaluationService, "evaluate_session", boom)
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError) as ei:
-        _execute(sid)
-    assert ei.value.invariant == "EVIDENCE_EVALUATION_FAILED"
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    by_id = {st["stage_id"]: st for st in result["stages"]}
+    assert by_id["EVIDENCE_EVALUATION"]["status"] == "FAILED"
+    assert by_id["REASONING_RUN"]["status"] == "SKIPPED"
 
 
 def test_stage_failure_does_not_produce_fabricated_result(monkeypatch) -> None:
@@ -409,9 +424,12 @@ def test_stage_failure_does_not_produce_fabricated_result(monkeypatch) -> None:
         ObservationExtractionService, "extract_and_store", boom
     )
     sid = _seed_rich_session("Patient reports chest pain")
-    with pytest.raises(ReasoningRunExecutionContractError):
-        _execute(sid)
-    # No ReasoningRunExecutionRead is produced on failure.
+    result = _execute(sid)
+    assert result["outcome"] == OUTCOME_FAILED
+    assert result["available"] is False
+    assert result["reasoning_run"] is None
+    assert result["reasoning_run_consistency"] is None
+    assert result["execution_consistent"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -437,23 +455,19 @@ def test_repeat_execution_does_not_grow_observations() -> None:
     second_count = len(
         client.get(f"/sessions/{sid}/observations").json()
     )
-    # Observation extraction in the existing service appends; Task 044
-    # does not add extra dedup. Growth is expected and consistent with
-    # the existing semantics. We only assert neither run *deletes*
-    # observations.
-    assert second_count >= first_count
+    # Task 044 reuses existing observations on repeat execution rather
+    # than re-invoking the append-only extractor.
+    assert second_count == first_count
 
 
 def test_repeat_execution_does_not_reduce_candidates() -> None:
     sid = _seed_rich_session("Patient reports chest pain")
-    _execute(sid)
-    first = client.get(f"/sessions/{sid}/generate-candidates")
-    # generate-candidates is a POST endpoint, so use the service
-    # directly via the reasoning-run endpoint to count.
-    run1 = client.get(f"/sessions/{sid}/reasoning-run").json()
-    _execute(sid)
-    run2 = client.get(f"/sessions/{sid}/reasoning-run").json()
-    assert run1["stage_count"] == run2["stage_count"]
+    first = _execute(sid)
+    second = _execute(sid)
+    assert first["reasoning_run"]["candidate_count"] == (
+        second["reasoning_run"]["candidate_count"]
+    )
+    assert first["reasoning_run"]["candidate_count"] >= 1
 
 
 # ---------------------------------------------------------------------------
