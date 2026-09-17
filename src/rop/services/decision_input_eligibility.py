@@ -67,6 +67,7 @@ _RESULT_BOOLEAN_FIELDS = (
     "eligible",
     "decision_ready",
     "context_available",
+    "evaluation_consistent",
     "has_candidates",
     "evaluations_available",
     "all_candidates_evaluated",
@@ -200,6 +201,7 @@ class DecisionInputEligibilityService:
         )
         (
             evaluation_count,
+            evaluation_consistent,
             candidate_count_matches,
             all_candidates_evaluated,
             all_criteria_evaluated,
@@ -241,6 +243,7 @@ class DecisionInputEligibilityService:
             "eligible": eligible,
             "decision_ready": decision_ready,
             "context_available": context_available,
+            "evaluation_consistent": evaluation_consistent,
             "has_candidates": has_candidates,
             "evaluations_available": evaluations_available,
             "all_candidates_evaluated": all_candidates_evaluated,
@@ -332,7 +335,7 @@ class DecisionInputEligibilityService:
     @staticmethod
     def _validate_and_extract_consistency(
         consistency_result: Mapping[str, Any] | None,
-    ) -> tuple[int, bool, bool, bool, bool]:
+    ) -> tuple[int, bool, bool, bool, bool, bool]:
         if consistency_result is None:
             raise DecisionInputEligibilityContractError(
                 "MISSING_CONSISTENCY_RESULT", "consistency_result is required"
@@ -363,6 +366,7 @@ class DecisionInputEligibilityService:
             )
 
         boolean_consistency_fields = (
+            "consistent",
             "candidate_count_matches",
             "all_candidates_evaluated",
             "all_criteria_evaluated",
@@ -390,6 +394,7 @@ class DecisionInputEligibilityService:
 
         return (
             evaluation_count,
+            extracted["consistent"],
             extracted["candidate_count_matches"],
             extracted["all_candidates_evaluated"],
             extracted["all_criteria_evaluated"],

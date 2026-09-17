@@ -32,6 +32,7 @@ class DecisionInputEligibilityRead(BaseModel):
     eligible: bool
     decision_ready: bool
     context_available: bool
+    evaluation_consistent: bool
     has_candidates: bool
     evaluations_available: bool
     all_candidates_evaluated: bool

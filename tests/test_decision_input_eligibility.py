@@ -88,6 +88,7 @@ ELIGIBILITY_RESULT_FIELDS = (
     "eligible",
     "decision_ready",
     "context_available",
+    "evaluation_consistent",
     "has_candidates",
     "evaluations_available",
     "all_candidates_evaluated",
@@ -543,6 +544,41 @@ def test_task_033_inconsistent_blocks_eligibility() -> None:
     result = _eligibility_service().build(context, duplicate_id_consistency)
 
     assert result["evaluation_structure_consistent"] is False
+    assert result["eligible"] is False
+    assert (
+        BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
+    )
+
+
+def test_evaluation_consistent_matches_upstream_consistent() -> None:
+    """Section 3 requires ``evaluation_consistent``, taken verbatim
+    from Task 033's ``consistent`` verdict. Task 034 must expose that
+    value, not recompute it or derive it from the sub-flags.
+    """
+    context, consistency_result = _ready_context_and_consistency()
+
+    result = _eligibility_service().build(context, consistency_result)
+
+    assert result["evaluation_consistent"] == consistency_result["consistent"]
+    assert result["evaluation_consistent"] is True
+
+
+def test_evaluation_consistent_reflects_upstream_inconsistency() -> None:
+    """When Task 033 reports ``consistent=False``, Task 034 must reflect
+    that verbatim in ``evaluation_consistent`` -- without inventing a
+    new blocking condition for it (Section 7 lists none).
+    """
+    context, _ = _ready_context_and_consistency()
+    all_evaluations = _candidate_evaluation_service().evaluate(context)
+    expected_ids = [entry["hypothesis_id"] for entry in context["differential"]]
+    mutated = copy.deepcopy(all_evaluations)
+    mutated[0]["criteria"].append(copy.deepcopy(mutated[0]["criteria"][0]))
+    inconsistent = _consistency_service().check(mutated, expected_ids)
+
+    assert inconsistent["consistent"] is False
+    result = _eligibility_service().build(context, inconsistent)
+
+    assert result["evaluation_consistent"] is False
     assert result["eligible"] is False
     assert (
         BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
