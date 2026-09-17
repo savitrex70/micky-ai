@@ -17,6 +17,7 @@ from rop.services.decision_input_bundle import (
 )
 from rop.services.decision_policy import (
     POLICY_SOURCE_DECISION_POLICY_TASK_038,
+    DecisionPolicyContractError,
     DecisionPolicyService,
 )
 
@@ -333,23 +334,17 @@ class DecisionExecutionConsistencyService:
                 "POLICY_TYPE",
                 f"policy is not a mapping: {type(policy).__name__}",
             )
-        for field in _POLICY_REQUIRED_FIELDS:
-            if field not in policy:
-                raise DecisionExecutionConsistencyContractError(
-                    "MISSING_POLICY_FIELD", f"policy has no {field}"
-                )
-        for field in ("policy_id", "policy_version"):
-            if not isinstance(policy[field], str) or not policy[field]:
-                raise DecisionExecutionConsistencyContractError(
-                    f"{field.upper()}_TYPE",
-                    f"{field} is not a non-empty string: {policy[field]!r}",
-                )
-        if policy["policy_source"] != POLICY_SOURCE_DECISION_POLICY_TASK_038:
+        # Reuse Task 038's own validation boundary rather than
+        # partially recreating it -- otherwise a policy such as
+        # {"required_candidate_count": True} would slip through because
+        # True == 1, and non-string policy_name values would pass too.
+        try:
+            DecisionPolicyService._validate_policy(policy)
+        except DecisionPolicyContractError as exc:
             raise DecisionExecutionConsistencyContractError(
-                "INVALID_POLICY_SOURCE",
-                "policy_source is not the Task 038 identifier: "
-                f"{policy['policy_source']!r}",
-            )
+                "INVALID_POLICY_STRUCTURE",
+                f"policy failed the Task 038 contract: {exc}",
+            ) from exc
         for field, required_value in _REQUIRED_POLICY_VALUES.items():
             if policy[field] != required_value:
                 raise DecisionExecutionConsistencyContractError(

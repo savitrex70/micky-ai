@@ -670,11 +670,13 @@ def test_rejects_none_policy() -> None:
 
 
 def test_rejects_invalid_policy_source() -> None:
+    # Task 038's validator now catches the wrong source before Task 040's
+    # default-value check; Task 040 wraps that as INVALID_POLICY_STRUCTURE.
     p = _default_policy()
     p["policy_source"] = "WRONG"
     with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
         _service().build(_bundle([]), p, _exec_no_eligible())
-    assert ei.value.invariant == "INVALID_POLICY_SOURCE"
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
 
 
 def test_rejects_none_execution() -> None:
@@ -865,3 +867,68 @@ def test_api_matches_service_output() -> None:
         db_gen.close()
 
     assert api_result == service_result
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 2: full Task 038 policy validation
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_boolean_required_candidate_count() -> None:
+    """True == 1 in Python, so a partial validator would accept this.
+    Task 038's validator explicitly rejects booleans for this field."""
+    p = _default_policy()
+    p["required_candidate_count"] = True
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
+
+
+def test_rejects_non_string_policy_name() -> None:
+    p = _default_policy()
+    p["policy_name"] = 123
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
+
+
+def test_rejects_empty_policy_name() -> None:
+    p = _default_policy()
+    p["policy_name"] = ""
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
+
+
+def test_rejects_missing_policy_field_via_task038() -> None:
+    p = _default_policy()
+    del p["tie_behavior"]
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
+
+
+def test_rejects_non_bool_boolean_policy_field() -> None:
+    """A non-bool value where Task 038 requires a bool."""
+    p = _default_policy()
+    p["policy_source"] = 1  # not a string
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    assert ei.value.invariant == "INVALID_POLICY_STRUCTURE"
+
+
+def test_rejects_inconsistent_cross_field_policy() -> None:
+    """Task 038 rejects SINGLE_CANDIDATE with a count other than 1.
+    That cross-field invariant is inherited by Task 040's delegation."""
+    p = _default_policy()
+    p["allowed_selection_mode"] = "SINGLE_CANDIDATE"
+    p["required_candidate_count"] = 0
+    with pytest.raises(DecisionExecutionConsistencyContractError) as ei:
+        _service().build(_bundle([]), p, _exec_no_eligible())
+    # The cross-field check fires first inside Task 038, or the default
+    # value check fires first inside Task 040 -- either way it is a
+    # rejection through the Task 038 boundary.
+    assert ei.value.invariant in (
+        "INVALID_POLICY_STRUCTURE",
+        "UNSUPPORTED_POLICY_VALUES",
+    )
