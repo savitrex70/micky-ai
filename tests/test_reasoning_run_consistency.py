@@ -935,3 +935,44 @@ def test_tamper_session_input_available() -> None:
         policy=policy,
     )
     assert "STAGE_SEMANTIC_MISMATCH" in result["consistency_issues"]
+
+
+# ---------------------------------------------------------------------------
+# source_consistency covers all source groups
+# ---------------------------------------------------------------------------
+
+
+def test_tamper_stage_source_flips_source_consistency() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    tampered["stages"][0]["stage_source"] = "WRONG"
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "STAGE_SOURCE_MISMATCH" in result["consistency_issues"]
+    assert result["source_consistency"] is False
+
+
+def test_tamper_pipeline_source_flips_source_consistency() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    tampered["reasoning_pipeline"]["pipeline_source"] = "WRONG"
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "PIPELINE_SOURCE_MISMATCH" in result["consistency_issues"]
+    assert result["source_consistency"] is False

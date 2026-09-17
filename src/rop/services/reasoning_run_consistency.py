@@ -507,7 +507,14 @@ class ReasoningRunConsistencyService:
         ordered_issues.extend(leftovers)
 
         # --- Derive flags ---
-        source_consistency = "RUN_SOURCE_MISMATCH" not in unique_issues
+        source_consistency = not any(
+            i in unique_issues
+            for i in (
+                "RUN_SOURCE_MISMATCH",
+                "STAGE_SOURCE_MISMATCH",
+                "PIPELINE_SOURCE_MISMATCH",
+            )
+        )
 
         stage_structure_consistent = not any(
             i in unique_issues
