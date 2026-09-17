@@ -232,3 +232,36 @@ class DecisionPolicyService:
                 "policy_source is not the Task 038 identifier: "
                 f"{policy['policy_source']!r}",
             )
+
+        # Cross-field invariants. Each selection mode has exactly one
+        # permitted relationship to required_candidate_count, so the
+        # policy is fully auditable and Task 039 has no ambiguity to
+        # resolve.
+        mode = policy["allowed_selection_mode"]
+        count = policy["required_candidate_count"]
+        if mode == SELECTION_MODE_SINGLE_CANDIDATE and count != 1:
+            raise DecisionPolicyContractError(
+                "INCONSISTENT_SELECTION_MODE_AND_COUNT",
+                f"mode {mode!r} requires required_candidate_count == 1, "
+                f"got {count!r}",
+            )
+        if mode == SELECTION_MODE_NO_CANDIDATE and count != 0:
+            raise DecisionPolicyContractError(
+                "INCONSISTENT_SELECTION_MODE_AND_COUNT",
+                f"mode {mode!r} requires required_candidate_count == 0, "
+                f"got {count!r}",
+            )
+        if mode == SELECTION_MODE_MULTIPLE_CANDIDATES and not (
+            count is None or count >= 2
+        ):
+            raise DecisionPolicyContractError(
+                "INCONSISTENT_SELECTION_MODE_AND_COUNT",
+                f"mode {mode!r} requires required_candidate_count to be "
+                f"None or >= 2, got {count!r}",
+            )
+        if mode == SELECTION_MODE_UNRESOLVED and count is not None:
+            raise DecisionPolicyContractError(
+                "INCONSISTENT_SELECTION_MODE_AND_COUNT",
+                f"mode {mode!r} requires required_candidate_count to be "
+                f"None, got {count!r}",
+            )

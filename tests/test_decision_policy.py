@@ -285,7 +285,11 @@ def test_rejects_non_int_required_candidate_count() -> None:
 
 
 def test_accepts_none_required_candidate_count() -> None:
+    # required_candidate_count is only None-permitted when the selection
+    # mode explicitly allows an open count (MULTIPLE_CANDIDATES or
+    # UNRESOLVED). SINGLE_CANDIDATE requires exactly 1.
     p = _valid_policy()
+    p["allowed_selection_mode"] = "UNRESOLVED"
     p["required_candidate_count"] = None
     DecisionPolicyService._validate_policy(p)
 
@@ -507,3 +511,106 @@ def test_api_policy_identical_across_sessions() -> None:
     a = client.get(f"/sessions/{sid_a}/decision-policy").json()
     b = client.get(f"/sessions/{sid_b}/decision-policy").json()
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# Cross-field policy consistency (reviewer round 2)
+# ---------------------------------------------------------------------------
+
+
+def test_valid_single_candidate_with_count_1() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "SINGLE_CANDIDATE"
+    p["required_candidate_count"] = 1
+    DecisionPolicyService._validate_policy(p)
+
+
+def test_valid_no_candidate_with_count_0() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "NO_CANDIDATE"
+    p["required_candidate_count"] = 0
+    DecisionPolicyService._validate_policy(p)
+
+
+def test_valid_multiple_candidates_with_none() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "MULTIPLE_CANDIDATES"
+    p["required_candidate_count"] = None
+    DecisionPolicyService._validate_policy(p)
+
+
+def test_valid_multiple_candidates_with_count_2() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "MULTIPLE_CANDIDATES"
+    p["required_candidate_count"] = 2
+    DecisionPolicyService._validate_policy(p)
+
+
+def test_valid_unresolved_with_none() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "UNRESOLVED"
+    p["required_candidate_count"] = None
+    DecisionPolicyService._validate_policy(p)
+
+
+def test_rejects_single_candidate_with_count_0() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "SINGLE_CANDIDATE"
+    p["required_candidate_count"] = 0
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_single_candidate_with_count_none() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "SINGLE_CANDIDATE"
+    p["required_candidate_count"] = None
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_no_candidate_with_count_1() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "NO_CANDIDATE"
+    p["required_candidate_count"] = 1
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_multiple_candidates_with_count_1() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "MULTIPLE_CANDIDATES"
+    p["required_candidate_count"] = 1
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_multiple_candidates_with_count_0() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "MULTIPLE_CANDIDATES"
+    p["required_candidate_count"] = 0
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_unresolved_with_count_1() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "UNRESOLVED"
+    p["required_candidate_count"] = 1
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
+
+
+def test_rejects_unresolved_with_count_0() -> None:
+    p = _valid_policy()
+    p["allowed_selection_mode"] = "UNRESOLVED"
+    p["required_candidate_count"] = 0
+    with pytest.raises(DecisionPolicyContractError) as ei:
+        DecisionPolicyService._validate_policy(p)
+    assert ei.value.invariant == "INCONSISTENT_SELECTION_MODE_AND_COUNT"
