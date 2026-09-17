@@ -425,7 +425,7 @@ def test_tamper_duplicate_stage_id_rejected() -> None:
     tampered["stages"][1]["stage_id"] = tampered["stages"][0]["stage_id"]
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "DUPLICATE_STAGE_ID"
 
@@ -437,7 +437,7 @@ def test_tamper_stage_order_rejected() -> None:
     tampered["stages"][1]["stage_order"] = 99
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "STAGE_ORDER_MISMATCH"
 
@@ -449,7 +449,7 @@ def test_tamper_stage_count_rejected() -> None:
     tampered["stage_count"] = 99
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "STAGE_COUNT_MISMATCH"
 
@@ -461,7 +461,7 @@ def test_tamper_completed_count_rejected() -> None:
     tampered["completed_stage_count"] = 0
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "COMPLETED_COUNT_MISMATCH"
 
@@ -473,7 +473,7 @@ def test_tamper_pipeline_complete_rejected() -> None:
     tampered["pipeline_complete"] = not tampered["pipeline_complete"]
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "PIPELINE_COMPLETE_MISMATCH"
 
@@ -485,7 +485,7 @@ def test_tamper_pipeline_consistent_rejected() -> None:
     tampered["pipeline_consistent"] = not tampered["pipeline_consistent"]
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "PIPELINE_CONSISTENT_MISMATCH"
 
@@ -497,7 +497,7 @@ def test_tamper_pipeline_source_rejected() -> None:
     tampered["pipeline_source"] = "WRONG"
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
-            tampered, inputs["execution"], inputs["audit"]
+            tampered, inputs["bundle"], inputs["policy"]
         )
     assert ei.value.invariant == "INVALID_PIPELINE_SOURCE"
 
@@ -528,6 +528,47 @@ def test_no_forbidden_fields() -> None:
         assert set(s) == set(STAGE_FIELDS)
         for f in forbidden:
             assert f not in s
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 2: full Task 039 semantic validation
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_semantically_invalid_final_execution() -> None:
+    """An execution with the right basic shape but violating Task 039's
+    semantics must be rejected by Task 041, not merely packaged."""
+    inputs = _valid_inputs()
+    result = _service().build(**inputs)
+    tampered = copy.deepcopy(result)
+    tampered["final_execution"]["outcome"] = "SELECTED"
+    tampered["final_execution"]["selected_candidate"] = None
+    with pytest.raises(ReasoningPipelineContractError) as ei:
+        ReasoningPipelineService._validate_result(
+            tampered, inputs["bundle"], inputs["policy"]
+        )
+    assert ei.value.invariant == "INVALID_FINAL_EXECUTION"
+
+
+def test_rejects_selected_candidate_not_eligible() -> None:
+    """A SELECTED outcome whose selected candidate is not in the
+    eligible set must be rejected by Task 039's validator via Task 041."""
+    inputs = _valid_inputs()
+    result = _service().build(**inputs)
+    if result["final_execution"]["outcome"] != "SELECTED":
+        pytest.skip("seed session did not yield SELECTED")
+    tampered = copy.deepcopy(result)
+    tampered["final_execution"]["selected_candidate"]["hypothesis_id"] = (
+        uuid4()
+    )
+    tampered["final_execution"]["selected_candidate"]["hypothesis_name"] = (
+        "FAKE"
+    )
+    with pytest.raises(ReasoningPipelineContractError) as ei:
+        ReasoningPipelineService._validate_result(
+            tampered, inputs["bundle"], inputs["policy"]
+        )
+    assert ei.value.invariant == "INVALID_FINAL_EXECUTION"
 
 
 # ---------------------------------------------------------------------------
