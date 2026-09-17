@@ -29,6 +29,10 @@ from rop.services.decision_execution import (
     DecisionExecutionContractError,
     DecisionExecutionService,
 )
+from rop.services.decision_execution_consistency import (
+    DecisionExecutionConsistencyContractError,
+    DecisionExecutionConsistencyService,
+)
 from rop.services.decision_input_eligibility import (
     DecisionInputEligibilityContractError,
     DecisionInputEligibilityService,
@@ -84,6 +88,8 @@ __all__ = [
     "DecisionEvaluationConsistencyService",
     "DecisionInputBundleContractError",
     "DecisionInputBundleService",
+    "DecisionExecutionConsistencyContractError",
+    "DecisionExecutionConsistencyService",
     "DecisionExecutionContractError",
     "DecisionExecutionService",
     "DecisionInputEligibilityContractError",

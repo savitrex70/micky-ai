@@ -24,6 +24,7 @@ from rop.schemas import (
     DecisionCandidateSetRead,
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
+    DecisionExecutionConsistencyRead,
     DecisionExecutionRead,
     DecisionInputBundleRead,
     DecisionPolicyRead,
@@ -72,6 +73,8 @@ from rop.services import (
     DecisionEvaluationConsistencyService,
     DecisionInputBundleContractError,
     DecisionInputBundleService,
+    DecisionExecutionConsistencyContractError,
+    DecisionExecutionConsistencyService,
     DecisionExecutionContractError,
     DecisionExecutionService,
     DecisionInputEligibilityContractError,
@@ -151,6 +154,11 @@ decision_policy_service = DecisionPolicyService(decision_input_bundle_service)
 decision_execution_service = DecisionExecutionService(
     decision_input_bundle_service,
     decision_policy_service,
+)
+decision_execution_consistency_service = DecisionExecutionConsistencyService(
+    decision_input_bundle_service,
+    decision_policy_service,
+    decision_execution_service,
 )
 
 
@@ -1774,4 +1782,85 @@ def get_decision_execution(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-execution contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-execution-consistency",
+    response_model=DecisionExecutionConsistencyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_execution_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 040: read-only consistency/audit of a Task 039 execution result.
+
+    Independently re-derives the expected eligible candidate set and
+    expected outcome from the Task 037 decision-input bundle and Task
+    038 policy, then compares them field by field against the Task 039
+    execution result. This is an audit contract only -- it does not
+    select a candidate, rerank, rescore, or alter the execution result.
+    It returns six independent consistency flags plus a deterministic
+    ordered list of machine-readable consistency_issues. There is no
+    winner, recommendation, diagnosis, treatment, action, probability,
+    confidence, utility, or expected-outcome field anywhere in the
+    response.
+
+    Normal valid execution outcomes -- including INPUT_UNAVAILABLE and
+    INPUT_INCONSISTENT -- are audited successfully; the audit's own
+    ``available`` flag reflects whether the audit could run, not
+    whether the execution was able to select a candidate.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 040's boundary requires the full candidate set (via the
+    # Task 037 bundle it delegates through), so every page of
+    # candidates must be retrieved -- matching the established
+    # pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_execution_consistency_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+        DecisionInputBundleContractError,
+        DecisionPolicyContractError,
+        DecisionExecutionContractError,
+        DecisionExecutionConsistencyContractError,
+    ) as exc:
+        # Task 040: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-execution-consistency contract violation",
         ) from exc
