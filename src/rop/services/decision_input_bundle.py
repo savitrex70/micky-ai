@@ -329,6 +329,19 @@ class DecisionInputBundleService:
                 "ASSESSMENT_ORDER_NOT_PRESERVED",
                 "assessment_set.candidate_order_preserved must be True",
             )
+        if assessment_set["available"]:
+            if not assessment_set["evaluation_coverage_complete"]:
+                raise DecisionInputBundleContractError(
+                    "ASSESSMENT_AVAILABILITY_INCONSISTENT",
+                    "assessment_set.available is True but "
+                    "evaluation_coverage_complete is False",
+                )
+            if not assessment_set["assessment_structure_consistent"]:
+                raise DecisionInputBundleContractError(
+                    "ASSESSMENT_AVAILABILITY_INCONSISTENT",
+                    "assessment_set.available is True but "
+                    "assessment_structure_consistent is False",
+                )
         return assessment_set
 
     @staticmethod

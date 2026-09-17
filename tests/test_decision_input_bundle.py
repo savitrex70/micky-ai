@@ -863,3 +863,26 @@ def _json_safe(result: dict[str, Any]) -> dict[str, Any]:
             ],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Task 036 availability-consistency (reviewer round 2)
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_assessment_available_with_incomplete_coverage() -> None:
+    cs, aset = _ready_bundle()
+    broken = copy.deepcopy(aset)
+    broken["evaluation_coverage_complete"] = False
+    with pytest.raises(DecisionInputBundleContractError) as ei:
+        _bundle_service().build(cs, broken)
+    assert ei.value.invariant == "ASSESSMENT_AVAILABILITY_INCONSISTENT"
+
+
+def test_rejects_assessment_available_with_inconsistent_structure() -> None:
+    cs, aset = _ready_bundle()
+    broken = copy.deepcopy(aset)
+    broken["assessment_structure_consistent"] = False
+    with pytest.raises(DecisionInputBundleContractError) as ei:
+        _bundle_service().build(cs, broken)
+    assert ei.value.invariant == "ASSESSMENT_AVAILABILITY_INCONSISTENT"
