@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from rop.models import CandidateHypothesis
 from rop.services.decision_input_bundle import (
     INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037,
+    DecisionInputBundleContractError,
     DecisionInputBundleService,
 )
 from rop.services.decision_policy import (
@@ -241,6 +242,21 @@ class DecisionExecutionService:
                 "ASSESSMENTS_TYPE",
                 "assessment_set.assessments is not a list",
             )
+
+        # Reuse Task 037's own validation boundary rather than
+        # duplicating its rules. Any failure there means the supplied
+        # bundle is not a valid Task 037 result and must not be
+        # executed against.
+        try:
+            DecisionInputBundleService._validate_candidate_set(cs)
+            DecisionInputBundleService._validate_assessment_set(aset)
+            DecisionInputBundleService._check_alignment(cs, aset)
+        except DecisionInputBundleContractError as exc:
+            raise DecisionExecutionContractError(
+                "INVALID_BUNDLE_STRUCTURE",
+                "supplied bundle failed the Task 037 contract: "
+                f"{exc}",
+            ) from exc
         return bundle
 
     @staticmethod
@@ -321,7 +337,9 @@ class DecisionExecutionService:
                     )
                 if c["required"] and not c["satisfied"]:
                     all_required_satisfied = False
-                    break
+                    # Do not break: continue validating the remaining
+                    # criteria so a malformed criterion later in the
+                    # assessment is still detected.
             if all_required_satisfied:
                 eligible.append(a)
         return eligible

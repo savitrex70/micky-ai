@@ -489,12 +489,15 @@ def test_rejects_unsupported_required_criteria_behavior() -> None:
 
 
 def test_rejects_malformed_assessment() -> None:
+    # Task 037's own validator catches a non-mapping assessment before
+    # Task 039's eligibility computation runs; the Task 039 layer wraps
+    # that as INVALID_BUNDLE_STRUCTURE.
     a = _assessment(uuid4(), "H1", 1, 10.0, _all_required_satisfied())
     b = _bundle([a])
     b["assessment_set"]["assessments"][0] = "not-a-mapping"
     with pytest.raises(DecisionExecutionContractError) as ei:
         _service().build(b, _default_policy())
-    assert ei.value.invariant == "MALFORMED_ASSESSMENT"
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
 
 
 def test_rejects_missing_criteria() -> None:
@@ -705,3 +708,138 @@ def _json_safe(result: dict[str, Any]) -> dict[str, Any]:
             str(hid) for hid in result["eligible_candidate_ids"]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 2: Task 037 input validation boundary
+# ---------------------------------------------------------------------------
+
+
+def _one_valid_bundle() -> dict[str, Any]:
+    h1 = uuid4()
+    a = _assessment(h1, "H1", 1, 10.0, _all_required_satisfied())
+    return _bundle([a])
+
+
+def test_rejects_candidate_assessment_id_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessments"][0]["hypothesis_id"] = uuid4()
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_name_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessments"][0]["hypothesis_name"] = "WRONG"
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_rank_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessments"][0]["rank"] = 99
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_score_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessments"][0]["score"] = 999.0
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_is_tied_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["candidate_set"]["candidates"][0]["is_tied"] = True
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_tie_group_size_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["candidate_set"]["candidates"][0]["tie_group_size"] = 5
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_gap_higher_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["candidate_set"]["candidates"][0]["score_gap_to_next_higher"] = 1.0
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_candidate_assessment_gap_lower_mismatch() -> None:
+    b = _one_valid_bundle()
+    b["candidate_set"]["candidates"][0]["score_gap_to_next_lower"] = 1.0
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_wrong_nested_candidate_set_source() -> None:
+    b = _one_valid_bundle()
+    b["candidate_set"]["candidate_set_source"] = "WRONG"
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_wrong_nested_assessment_set_source() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessment_source"] = "WRONG"
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_reordered_assessments() -> None:
+    h1, h2 = uuid4(), uuid4()
+    a1 = _assessment(h1, "A", 1, 10.0, _all_required_satisfied())
+    a2 = _assessment(h2, "B", 2, 5.0, _all_required_satisfied())
+    b = _bundle([a1, a2])
+    b["assessment_set"]["assessments"] = [a2, a1]
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_nested_assessment_available_with_inconsistent_flags() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["assessment_structure_consistent"] = False
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_rejects_nested_assessment_available_with_incomplete_coverage() -> None:
+    b = _one_valid_bundle()
+    b["assessment_set"]["evaluation_coverage_complete"] = False
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+def test_cannot_select_from_candidate_assessment_mismatch() -> None:
+    """Regression: the exact case from the reviewer -- candidate H1 in
+    the candidate set but assessment H2 in the assessment set. Task 039
+    must reject the bundle rather than select H2."""
+    h1, h2 = uuid4(), uuid4()
+    a1 = _assessment(h1, "H1", 1, 10.0, _all_required_satisfied())
+    b = _bundle([a1])
+    # Swap the assessment's identity so it no longer matches its
+    # corresponding candidate. Without the Task 037 validation boundary
+    # this would silently reach the selection stage.
+    b["assessment_set"]["assessments"][0]["hypothesis_id"] = h2
+    b["assessment_set"]["assessments"][0]["hypothesis_name"] = "H2"
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
