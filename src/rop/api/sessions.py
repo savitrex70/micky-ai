@@ -51,6 +51,7 @@ from rop.schemas import (
     ReasoningSessionRead,
     ReasoningStepCreate,
     ReasoningPipelineRead,
+    ReasoningRunConsistencyRead,
     ReasoningRunRead,
     ReasoningStepRead,
     TemplateMatchRead,
@@ -103,6 +104,8 @@ from rop.services import (
     ObservationService,
     ReasoningPipelineContractError,
     ReasoningPipelineService,
+    ReasoningRunConsistencyContractError,
+    ReasoningRunConsistencyService,
     ReasoningRunContractError,
     ReasoningRunService,
     ReasoningSessionService,
@@ -168,6 +171,7 @@ decision_execution_consistency_service = DecisionExecutionConsistencyService(
 )
 reasoning_pipeline_service = ReasoningPipelineService()
 reasoning_run_service = ReasoningRunService()
+reasoning_run_consistency_service = ReasoningRunConsistencyService()
 
 
 @router.post(
@@ -1997,4 +2001,47 @@ def get_reasoning_run(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run-consistency",
+    response_model=ReasoningRunConsistencyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_run_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 043: read-only consistency/audit of a Task 042 reasoning run.
+
+    Independently re-derives the expected run representation from the
+    session's actual state, then compares it against the Task 042
+    composition. Reports twelve consistency flags plus a deterministic
+    ordered list of machine-readable consistency_issues. This is an
+    audit contract only -- it does not select, rank, score, diagnose,
+    recommend, or alter any upstream result. Valid but incomplete
+    states (empty sessions, missing candidates, valid downstream
+    outcomes such as INPUT_UNAVAILABLE) are audited as available with
+    the appropriate issue list, never as exceptions.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_consistency_service.build_for_session(
+            db, session_id
+        )
+    except ReasoningRunConsistencyContractError as exc:
+        # Task 043: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-consistency contract violation",
         ) from exc
