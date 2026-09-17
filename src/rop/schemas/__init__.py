@@ -9,6 +9,7 @@ from rop.schemas.decision_context import DecisionContextRead
 from rop.schemas.decision_evaluation_consistency import (
     DecisionEvaluationConsistencyRead,
 )
+from rop.schemas.decision_input_eligibility import DecisionInputEligibilityRead
 from rop.schemas.differential_decision_readiness import (
     DifferentialDecisionReadinessRead,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "DecisionContextRead",
     "DecisionEvaluationCriterionResultRead",
     "DecisionEvaluationConsistencyRead",
+    "DecisionInputEligibilityRead",
     "DifferentialDecisionReadinessRead",
     "DifferentialRankRead",
     "DifferentialRankingConsistencyRead",

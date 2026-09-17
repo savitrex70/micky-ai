@@ -21,6 +21,7 @@ from rop.schemas import (
     DecisionCandidateEvaluationRead,
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
+    DecisionInputEligibilityRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
     DifferentialRankingSummaryRead,
@@ -59,6 +60,8 @@ from rop.services import (
     DecisionContextService,
     DecisionEvaluationConsistencyContractError,
     DecisionEvaluationConsistencyService,
+    DecisionInputEligibilityContractError,
+    DecisionInputEligibilityService,
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
     DifferentialRankingConsistencyContractError,
@@ -114,6 +117,9 @@ decision_candidate_evaluation_service = DecisionCandidateEvaluationService(
 )
 decision_evaluation_consistency_service = DecisionEvaluationConsistencyService(
     decision_candidate_evaluation_service
+)
+decision_input_eligibility_service = DecisionInputEligibilityService(
+    decision_evaluation_consistency_service
 )
 
 
@@ -1263,4 +1269,84 @@ def get_decision_evaluation_consistency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-evaluation-consistency contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-input-eligibility",
+    response_model=DecisionInputEligibilityRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_input_eligibility(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 034: read-only decision-input eligibility contract.
+
+    The final gate between decision preparation and the future
+    decision engine. Combines the Task 030 readiness result (via
+    Task 031), the Task 031 decision context, and the Task 033
+    evaluation-consistency result (built over Task 032's candidate
+    evaluations) into one deterministic eligibility verdict via
+    ``DecisionInputEligibilityService`` -- it does not reach directly
+    into evidence, observations, entities, hypothesis scores, ranking
+    internals, or repositories, and duplicates no logic already owned
+    by Tasks 020-033.
+
+    Answers "is the current decision input structurally valid and
+    sufficiently prepared to enter the future decision engine?" --
+    never "which candidate should be chosen?". There is no winner,
+    best candidate, diagnosis, recommendation, action, probability,
+    confidence, utility, weighted score, expected outcome, or
+    treatment anywhere in this response. It never writes to the
+    database, persists nothing, and modifies no candidate, evidence,
+    or upstream contract.
+
+    Does not modify the behavior or fields of the existing
+    ``/differential``, ``/differential-summary``,
+    ``/differential-consistency``, ``/differential-readiness``,
+    ``/decision-context``, ``/decision-candidate-evaluations``, or
+    ``/decision-evaluation-consistency`` endpoints -- this is an
+    additional derived view over the same underlying pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 034's contract requires the full candidate set (via the
+    # Task 031 context it consumes), so every page of candidates must
+    # be retrieved -- matching the Task 032/033 pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_input_eligibility_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+    ) as exc:
+        # Task 034: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-input-eligibility contract violation",
         ) from exc
