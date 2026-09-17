@@ -479,6 +479,25 @@ class ReasoningRunExecutionService:
                 + repr(result["completed_stage_count"])
                 + " != actual " + repr(completed),
             )
+        # Stage IDs must match the declared Task 044 stage list in
+        # exact order, and each stage_source must match its canonical
+        # _STAGE_SOURCES entry.
+        actual_ids = tuple(s["stage_id"] for s in stages)
+        if actual_ids != _EXECUTION_STAGE_IDS:
+            raise ReasoningRunExecutionContractError(
+                "STAGE_IDS_MISMATCH",
+                "stage_ids " + repr(actual_ids)
+                + " != declared " + repr(_EXECUTION_STAGE_IDS),
+            )
+        for s in stages:
+            expected_source = _STAGE_SOURCES.get(s["stage_id"])
+            if s["stage_source"] != expected_source:
+                raise ReasoningRunExecutionContractError(
+                    "STAGE_SOURCE_MISMATCH",
+                    "stage_id " + repr(s["stage_id"])
+                    + " has stage_source " + repr(s["stage_source"])
+                    + ", expected " + repr(expected_source),
+                )
         # reasoning_run / reasoning_run_consistency are nullable.
         if result["reasoning_run"] is not None and not isinstance(
             result["reasoning_run"], dict

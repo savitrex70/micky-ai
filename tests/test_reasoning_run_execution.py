@@ -648,3 +648,31 @@ def test_does_not_reimplement_policy() -> None:
     src = inspect.getsource(mod)
     assert "DecisionPolicy" not in src
     assert "required_candidate_count" not in src
+
+
+# ---------------------------------------------------------------------------
+# Validator: stage identity and source
+# ---------------------------------------------------------------------------
+
+
+def _valid_result_for_validation() -> dict[str, Any]:
+    sid = _seed_rich_session("Patient reports chest pain")
+    return _execute(sid)
+
+
+def test_validator_rejects_wrong_stage_id() -> None:
+    result = _valid_result_for_validation()
+    tampered = copy.deepcopy(result)
+    tampered["stages"][0]["stage_id"] = "WHATEVER"
+    with pytest.raises(ReasoningRunExecutionContractError) as ei:
+        ReasoningRunExecutionService._validate_result(tampered)
+    assert ei.value.invariant == "STAGE_IDS_MISMATCH"
+
+
+def test_validator_rejects_wrong_stage_source() -> None:
+    result = _valid_result_for_validation()
+    tampered = copy.deepcopy(result)
+    tampered["stages"][0]["stage_source"] = "WRONG"
+    with pytest.raises(ReasoningRunExecutionContractError) as ei:
+        ReasoningRunExecutionService._validate_result(tampered)
+    assert ei.value.invariant == "STAGE_SOURCE_MISMATCH"
