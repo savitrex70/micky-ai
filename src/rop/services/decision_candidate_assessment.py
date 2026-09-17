@@ -7,8 +7,14 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from rop.models import CandidateHypothesis
+from rop.services.decision_candidate_evaluation import (
+    EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032,
+)
 from rop.services.decision_candidate_set import (
     DecisionCandidateSetService,
+)
+from rop.services.decision_evaluation_consistency import (
+    CONSISTENCY_SOURCE_DECISION_EVALUATION_CONSISTENCY_TASK_033,
 )
 
 ASSESSMENT_SOURCE_DECISION_CANDIDATE_ASSESSMENT_TASK_036 = (
@@ -478,11 +484,23 @@ class DecisionCandidateAssessmentService:
                     f"evaluation_complete is not boolean: "
                     f"{entry['evaluation_complete']!r}",
                 )
+            derived_counts = (
+                DecisionCandidateAssessmentService._derive_counts(criteria)
+            )
+            for count_field, derived_value in derived_counts.items():
+                declared_value = entry[count_field]
+                if declared_value != derived_value:
+                    raise DecisionCandidateAssessmentContractError(
+                        "DECLARED_COUNT_MISMATCH",
+                        f"{count_field} declared as {declared_value} but "
+                        f"derived from criteria as {derived_value}",
+                    )
             src = entry["evaluation_source"]
-            if not isinstance(src, str) or not src:
+            if src != EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032:
                 raise DecisionCandidateAssessmentContractError(
                     "INVALID_EVALUATION_SOURCE",
-                    f"evaluation_source is not a non-empty string: {src!r}",
+                    "evaluation_source is not the Task 032 identifier: "
+                    f"{src!r}",
                 )
             by_id[hid] = entry
         return by_id
@@ -527,10 +545,11 @@ class DecisionCandidateAssessmentService:
                     f"{count_field} is negative: {value!r}",
                 )
         source = consistency_result["consistency_source"]
-        if not isinstance(source, str) or not source:
+        if source != CONSISTENCY_SOURCE_DECISION_EVALUATION_CONSISTENCY_TASK_033:
             raise DecisionCandidateAssessmentContractError(
                 "INVALID_CONSISTENCY_SOURCE",
-                f"consistency_source is not a non-empty string: {source!r}",
+                "consistency_source is not the Task 033 identifier: "
+                f"{source!r}",
             )
         coverage_complete = (
             consistency_result["all_candidates_evaluated"]
@@ -544,10 +563,40 @@ class DecisionCandidateAssessmentService:
         )
 
     @staticmethod
+    def _derive_counts(
+        criteria: list[Mapping[str, Any]],
+    ) -> dict[str, int]:
+        """Derive the five structural criterion counts from the criteria list.
+
+        Task 036 owns this derivation per its spec. The declared upstream
+        counts are validated against this derivation during input
+        validation, never trusted blindly.
+        """
+        criterion_count = len(criteria)
+        criteria_satisfied = sum(1 for c in criteria if c["satisfied"])
+        criteria_unsatisfied = sum(1 for c in criteria if not c["satisfied"])
+        required_satisfied = sum(
+            1 for c in criteria if c["required"] and c["satisfied"]
+        )
+        required_unsatisfied = sum(
+            1 for c in criteria if c["required"] and not c["satisfied"]
+        )
+        return {
+            "criterion_count": criterion_count,
+            "criteria_satisfied": criteria_satisfied,
+            "criteria_unsatisfied": criteria_unsatisfied,
+            "required_criteria_satisfied": required_satisfied,
+            "required_criteria_unsatisfied": required_unsatisfied,
+        }
+
+    @staticmethod
     def _join(
         candidate: Mapping[str, Any],
         evaluation: Mapping[str, Any],
     ) -> dict[str, Any]:
+        counts = DecisionCandidateAssessmentService._derive_counts(
+            evaluation["criteria"]
+        )
         return {
             "hypothesis_id": candidate["hypothesis_id"],
             "hypothesis_name": candidate["hypothesis_name"],
@@ -567,14 +616,12 @@ class DecisionCandidateAssessmentService:
                 }
                 for c in evaluation["criteria"]
             ],
-            "criterion_count": evaluation["criterion_count"],
-            "criteria_satisfied": evaluation["criteria_satisfied"],
-            "criteria_unsatisfied": evaluation["criteria_unsatisfied"],
-            "required_criteria_satisfied": (
-                evaluation["required_criteria_satisfied"]
-            ),
+            "criterion_count": counts["criterion_count"],
+            "criteria_satisfied": counts["criteria_satisfied"],
+            "criteria_unsatisfied": counts["criteria_unsatisfied"],
+            "required_criteria_satisfied": counts["required_criteria_satisfied"],
             "required_criteria_unsatisfied": (
-                evaluation["required_criteria_unsatisfied"]
+                counts["required_criteria_unsatisfied"]
             ),
             "evaluation_complete": evaluation["evaluation_complete"],
             "assessment_source": (

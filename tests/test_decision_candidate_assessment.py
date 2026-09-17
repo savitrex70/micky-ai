@@ -658,6 +658,24 @@ def test_rejects_invalid_evaluation_source() -> None:
     assert ei.value.invariant == "INVALID_EVALUATION_SOURCE"
 
 
+def test_rejects_wrong_but_nonempty_evaluation_source() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["evaluation_source"] = "DECISION_SOMETHING_ELSE_TASK_999"
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "INVALID_EVALUATION_SOURCE"
+
+
+def test_rejects_wrong_but_nonempty_consistency_source() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(co)
+    broken["consistency_source"] = "DECISION_SOMETHING_ELSE_TASK_999"
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, ev, broken)
+    assert ei.value.invariant == "INVALID_CONSISTENCY_SOURCE"
+
+
 # ---------------------------------------------------------------------------
 # Contract failures -- Task 033 consistency
 # ---------------------------------------------------------------------------
@@ -1101,3 +1119,72 @@ def _json_safe(result: dict[str, Any]) -> dict[str, Any]:
             for a in result["assessments"]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Count derivation (new spec: Task 036 owns the derivation)
+# ---------------------------------------------------------------------------
+
+
+def test_counts_derived_match_declared_for_valid_chain() -> None:
+    cs, ev, co, _ = _ready_chain()
+    result = _assessment_service().build(cs, ev, co)
+    ev_by_id = {e["hypothesis_id"]: e for e in ev}
+    for a in result["assessments"]:
+        u = ev_by_id[a["hypothesis_id"]]
+        assert a["criterion_count"] == u["criterion_count"]
+        assert a["criteria_satisfied"] == u["criteria_satisfied"]
+        assert a["criteria_unsatisfied"] == u["criteria_unsatisfied"]
+        assert (
+            a["required_criteria_satisfied"]
+            == u["required_criteria_satisfied"]
+        )
+        assert (
+            a["required_criteria_unsatisfied"]
+            == u["required_criteria_unsatisfied"]
+        )
+
+
+def test_rejects_declared_criterion_count_mismatch() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["criterion_count"] = 99
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
+
+
+def test_rejects_declared_satisfied_count_mismatch() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["criteria_satisfied"] = 99
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
+
+
+def test_rejects_declared_unsatisfied_count_mismatch() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["criteria_unsatisfied"] = 99
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
+
+
+def test_rejects_declared_required_satisfied_mismatch() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["required_criteria_satisfied"] = 99
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
+
+
+def test_rejects_declared_required_unsatisfied_mismatch() -> None:
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["required_criteria_unsatisfied"] = 99
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
