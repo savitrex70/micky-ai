@@ -523,3 +523,49 @@ def test_decision_candidate_evaluations_evaluates_every_candidate_beyond_one_pag
     assert {r["hypothesis_name"] for r in results} == {
         f"Candidate {i}" for i in range(candidate_count)
     }
+
+
+def test_decision_evaluation_consistency_covers_every_candidate_beyond_one_page() -> (
+    None
+):
+    # Task 033's contract requires every candidate's evaluation to be
+    # checked for structural consistency. Regression guard: with more
+    # than one page's worth of persisted candidates, the endpoint must
+    # retrieve and check all of them, not silently truncate to the
+    # first page (mirrors Task 032's own pagination fix above).
+    from rop.models import CandidateHypothesis as CandidateHypothesisModel
+
+    session = create_session()
+    session_id = session["id"]
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        candidate_count = 130
+        for i in range(candidate_count):
+            db.add(
+                CandidateHypothesisModel(
+                    session_id=UUID(session_id),
+                    name=f"Candidate {i}",
+                    category="testing",
+                    trigger_reason="seeded for pagination test",
+                    initial_score=float(i),
+                    confidence=0.5,
+                    supporting_observations=[],
+                    contradicting_observations=[],
+                    missing_information=[],
+                )
+            )
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.get(f"/sessions/{session_id}/decision-evaluation-consistency")
+    assert response.status_code == 200
+    result = response.json()
+    assert result["evaluation_count"] == candidate_count
+    assert result["expected_candidate_count"] == candidate_count
+    assert result["candidate_count_matches"] is True
+    assert result["all_candidates_evaluated"] is True
+    assert result["has_missing_candidate_evaluation"] is False
+    assert result["consistent"] is True
