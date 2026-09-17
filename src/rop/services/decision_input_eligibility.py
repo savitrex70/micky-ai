@@ -255,7 +255,7 @@ class DecisionInputEligibilityService:
                 ELIGIBILITY_SOURCE_DECISION_INPUT_ELIGIBILITY_TASK_034
             ),
         }
-        self._validate_result(result)
+        self._validate_result(result, consistency_result["consistent"])
         return result
 
     # ------------------------------------------------------------------
@@ -406,18 +406,32 @@ class DecisionInputEligibilityService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _validate_result(result: dict[str, Any]) -> None:
+    def _validate_result(
+        result: dict[str, Any],
+        upstream_evaluation_consistent: bool,
+    ) -> None:
         """Verify the assembled result invariants before returning it.
 
         This exists to catch a defect in this service's own derivation
         logic, never to second-guess or repair a legitimate eligibility
-        finding it just computed.
+        finding it just computed. ``upstream_evaluation_consistent`` is
+        the raw Task 033 ``consistent`` value that this task passes
+        through as ``evaluation_consistent``; the validator re-checks
+        that the result carries it verbatim.
         """
         for field in _RESULT_BOOLEAN_FIELDS:
             if not isinstance(result[field], bool):
                 raise DecisionInputEligibilityContractError(
                     "RESULT_FIELD_TYPE", f"{field} is not boolean: {result[field]!r}"
                 )
+
+        if result["evaluation_consistent"] != upstream_evaluation_consistent:
+            raise DecisionInputEligibilityContractError(
+                "EVALUATION_CONSISTENT_MISMATCH",
+                "evaluation_consistent does not match the upstream Task 033 "
+                f"consistent value: {result['evaluation_consistent']!r} != "
+                f"{upstream_evaluation_consistent!r}",
+            )
 
         blocking_conditions = result["blocking_conditions"]
         if not isinstance(blocking_conditions, list):
@@ -459,6 +473,23 @@ class DecisionInputEligibilityService:
             raise DecisionInputEligibilityContractError(
                 "INELIGIBLE_WITHOUT_BLOCKING_CONDITIONS",
                 "eligible is False but blocking_conditions is empty",
+            )
+
+        recomputed_eligible = (
+            result["decision_ready"]
+            and result["context_available"]
+            and result["has_candidates"]
+            and result["evaluations_available"]
+            and result["all_candidates_evaluated"]
+            and result["all_criteria_evaluated"]
+            and result["candidate_count_matches"]
+            and result["evaluation_structure_consistent"]
+        )
+        if result["eligible"] != recomputed_eligible:
+            raise DecisionInputEligibilityContractError(
+                "ELIGIBLE_CONJUNCTION_MISMATCH",
+                "eligible does not match the recomputed conjunction: "
+                f"{result['eligible']!r} != {recomputed_eligible!r}",
             )
 
         if (

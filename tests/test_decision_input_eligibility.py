@@ -647,7 +647,9 @@ def test_invalid_blocking_condition_identifier_rejected() -> None:
     corrupted["blocking_conditions"] = ["NOT_A_REAL_CONDITION"]
 
     with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
-        DecisionInputEligibilityService._validate_result(corrupted)
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
     assert exc_info.value.invariant == "INVALID_BLOCKING_CONDITION"
 
 
@@ -658,7 +660,9 @@ def test_condition_present_while_eligible_true_rejected() -> None:
     corrupted["eligible"] = True
 
     with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
-        DecisionInputEligibilityService._validate_result(corrupted)
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
     assert exc_info.value.invariant == "ELIGIBLE_WITH_BLOCKING_CONDITIONS"
 
 
@@ -669,7 +673,9 @@ def test_eligible_false_with_empty_blocking_conditions_rejected() -> None:
     corrupted["eligible"] = False
 
     with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
-        DecisionInputEligibilityService._validate_result(corrupted)
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
     assert exc_info.value.invariant == "INELIGIBLE_WITHOUT_BLOCKING_CONDITIONS"
 
 
@@ -694,8 +700,45 @@ def test_blocking_conditions_out_of_order_rejected() -> None:
     corrupted["decision_ready"] = False
 
     with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
-        DecisionInputEligibilityService._validate_result(corrupted)
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
     assert exc_info.value.invariant == "BLOCKING_CONDITIONS_ORDER"
+
+
+def test_tampered_evaluation_consistent_is_rejected() -> None:
+    """A result whose ``evaluation_consistent`` does not match the
+    upstream Task 033 ``consistent`` value must be rejected, even when
+    every other field is otherwise coherent.
+    """
+    context, consistency_result = _ready_context_and_consistency()
+    result = _eligibility_service().build(context, consistency_result)
+    corrupted = copy.deepcopy(result)
+    corrupted["evaluation_consistent"] = not consistency_result["consistent"]
+
+    with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
+    assert exc_info.value.invariant == "EVALUATION_CONSISTENT_MISMATCH"
+
+
+def test_tampered_eligible_value_is_rejected() -> None:
+    """A result whose ``eligible`` flag does not match the recomputed
+    conjunction of its own boolean fields must be rejected, even when
+    the eligible<->blocking_conditions invariant is satisfied.
+    """
+    context, consistency_result = _ready_context_and_consistency()
+    result = _eligibility_service().build(context, consistency_result)
+    corrupted = copy.deepcopy(result)
+    corrupted["eligible"] = False
+    corrupted["blocking_conditions"] = [BLOCKING_NO_CANDIDATES]
+
+    with pytest.raises(DecisionInputEligibilityContractError) as exc_info:
+        DecisionInputEligibilityService._validate_result(
+            corrupted, consistency_result["consistent"]
+        )
+    assert exc_info.value.invariant == "ELIGIBLE_CONJUNCTION_MISMATCH"
 
 
 # ---------------------------------------------------------------------------
