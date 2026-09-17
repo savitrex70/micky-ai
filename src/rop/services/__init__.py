@@ -29,6 +29,10 @@ from rop.services.decision_input_eligibility import (
     DecisionInputEligibilityContractError,
     DecisionInputEligibilityService,
 )
+from rop.services.decision_policy import (
+    DecisionPolicyContractError,
+    DecisionPolicyService,
+)
 from rop.services.differential_decision_readiness import (
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
@@ -78,6 +82,8 @@ __all__ = [
     "DecisionInputBundleService",
     "DecisionInputEligibilityContractError",
     "DecisionInputEligibilityService",
+    "DecisionPolicyContractError",
+    "DecisionPolicyService",
     "DifferentialDecisionReadinessContractError",
     "DifferentialDecisionReadinessService",
     "DifferentialRankingConsistencyContractError",

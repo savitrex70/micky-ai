@@ -25,6 +25,7 @@ from rop.schemas import (
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
     DecisionInputBundleRead,
+    DecisionPolicyRead,
     DecisionInputEligibilityRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
@@ -72,6 +73,8 @@ from rop.services import (
     DecisionInputBundleService,
     DecisionInputEligibilityContractError,
     DecisionInputEligibilityService,
+    DecisionPolicyContractError,
+    DecisionPolicyService,
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
     DifferentialRankingConsistencyContractError,
@@ -141,6 +144,7 @@ decision_input_bundle_service = DecisionInputBundleService(
     decision_candidate_set_service,
     decision_candidate_assessment_service,
 )
+decision_policy_service = DecisionPolicyService(decision_input_bundle_service)
 
 
 @router.post(
@@ -1612,4 +1616,78 @@ def get_decision_input_bundle(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-input-bundle contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-policy",
+    response_model=DecisionPolicyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_policy(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 038: read-only decision policy contract.
+
+    The explicit policy a future decision-execution layer is permitted
+    to apply to the Task 037 decision-input bundle. This endpoint
+    returns the policy contract only -- it does not execute the policy,
+    select a candidate, rank or rerank candidates, break ties, or
+    produce any decision, diagnosis, recommendation, action, or
+    probability. The policy itself is session-independent: the same
+    deterministic contract is returned for any session whose Task 037
+    boundary is reachable, and reaching that boundary is verified by
+    delegating to ``DecisionInputBundleService`` rather than walking
+    Tasks 031-036 directly.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 038's boundary requires the full candidate set (via the
+    # Task 037 bundle it delegates through), so every page of
+    # candidates must be retrieved -- matching the established
+    # pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_policy_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+        DecisionInputBundleContractError,
+        DecisionPolicyContractError,
+    ) as exc:
+        # Task 038: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-policy contract violation",
         ) from exc

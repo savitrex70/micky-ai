@@ -16,6 +16,7 @@ from rop.schemas.decision_candidate_set import (
 )
 from rop.schemas.decision_context import DecisionContextRead
 from rop.schemas.decision_input_bundle import DecisionInputBundleRead
+from rop.schemas.decision_policy import DecisionPolicyRead
 from rop.schemas.decision_evaluation_consistency import (
     DecisionEvaluationConsistencyRead,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "DecisionContextRead",
     "DecisionCriterionAssessmentRead",
     "DecisionInputBundleRead",
+    "DecisionPolicyRead",
     "DecisionEvaluationCriterionResultRead",
     "DecisionEvaluationConsistencyRead",
     "DecisionInputEligibilityRead",
