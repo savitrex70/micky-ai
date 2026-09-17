@@ -74,6 +74,10 @@ from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
 )
+from rop.services.reasoning_run import (
+    ReasoningRunContractError,
+    ReasoningRunService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -121,6 +125,8 @@ __all__ = [
     "ObservationExtractionService",
     "ReasoningPipelineContractError",
     "ReasoningPipelineService",
+    "ReasoningRunContractError",
+    "ReasoningRunService",
     "ReasoningSessionService",
     "ReasoningStepService",
     "TemplateMatchService",

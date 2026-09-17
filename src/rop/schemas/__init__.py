@@ -62,6 +62,10 @@ from rop.schemas.reasoning_pipeline import (
     ReasoningPipelineRead,
     ReasoningPipelineStageRead,
 )
+from rop.schemas.reasoning_run import (
+    ReasoningRunRead,
+    ReasoningRunStageRead,
+)
 from rop.schemas.reasoning_step import ReasoningStepCreate, ReasoningStepRead
 from rop.schemas.template_match import TemplateMatchRead
 
@@ -108,6 +112,8 @@ __all__ = [
     "ObservationUpdate",
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
+    "ReasoningRunRead",
+    "ReasoningRunStageRead",
     "ReasoningSessionCreate",
     "ReasoningSessionRead",
     "ReasoningSessionUpdate",

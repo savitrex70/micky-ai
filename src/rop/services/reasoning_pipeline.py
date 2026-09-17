@@ -170,19 +170,21 @@ class ReasoningPipelineService:
             )
         )
 
-    def build_for_session(
+    def build_for_session_with_inputs(
         self,
         db: Session,
         session_id: UUID,
         candidates: list[CandidateHypothesis],
-    ) -> dict[str, Any]:
-        """Walk the established chain exactly once, then compose.
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Walk the established chain once, returning intermediates.
+
+        Returns ``(pipeline_result, bundle, policy)``. Downstream
+        composition layers (e.g. Task 042) can use the bundle and policy
+        to invoke Task 041's own full ``_validate_result`` boundary
+        against a nested pipeline result without re-walking the chain.
 
         Each call below invokes the owning stage's own established
-        service method -- no algorithm is reimplemented here. Capturing
-        the intermediate results is what lets Task 041 expose a
-        stage-by-stage view; no existing single boundary returns them
-        all at once.
+        service method -- no algorithm is reimplemented here.
         """
         context = self.decision_context_service.build_for_session(
             db, session_id, candidates
@@ -211,7 +213,7 @@ class ReasoningPipelineService:
         audit = self.decision_execution_consistency_service.build(
             bundle, policy, execution
         )
-        return self.build(
+        result = self.build(
             context=context,
             evaluations=evaluations,
             consistency=consistency,
@@ -223,6 +225,23 @@ class ReasoningPipelineService:
             execution=execution,
             audit=audit,
         )
+        return result, dict(bundle), dict(policy)
+
+    def build_for_session(
+        self,
+        db: Session,
+        session_id: UUID,
+        candidates: list[CandidateHypothesis],
+    ) -> dict[str, Any]:
+        """Return only the composed pipeline result.
+
+        Convenience wrapper around ``build_for_session_with_inputs`` for
+        callers that do not need the intermediate bundle/policy.
+        """
+        result, _, _ = self.build_for_session_with_inputs(
+            db, session_id, candidates
+        )
+        return result
 
 
     def build(
