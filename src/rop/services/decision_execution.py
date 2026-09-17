@@ -156,13 +156,18 @@ class DecisionExecutionService:
         policy_id = policy["policy_id"]
         policy_version = policy["policy_version"]
 
-        if not bundle["available"]:
-            return self._make_unavailable_result(
-                OUTCOME_INPUT_UNAVAILABLE, policy_id, policy_version
-            )
+        # Structural inconsistency is checked first: Task 037 folds
+        # input_structure_consistent into its `available` field, so
+        # checking availability first would mask the inconsistent case
+        # entirely. The distinction between "unavailable" and
+        # "inconsistent" must survive to the execution outcome.
         if not bundle["input_structure_consistent"]:
             return self._make_unavailable_result(
                 OUTCOME_INPUT_INCONSISTENT, policy_id, policy_version
+            )
+        if not bundle["available"]:
+            return self._make_unavailable_result(
+                OUTCOME_INPUT_UNAVAILABLE, policy_id, policy_version
             )
 
         assessments = bundle["assessment_set"]["assessments"]
@@ -251,6 +256,7 @@ class DecisionExecutionService:
             DecisionInputBundleService._validate_candidate_set(cs)
             DecisionInputBundleService._validate_assessment_set(aset)
             DecisionInputBundleService._check_alignment(cs, aset)
+            DecisionInputBundleService._validate_result(bundle, cs, aset)
         except DecisionInputBundleContractError as exc:
             raise DecisionExecutionContractError(
                 "INVALID_BUNDLE_STRUCTURE",

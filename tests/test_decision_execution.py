@@ -351,9 +351,13 @@ def test_unavailable_bundle_returns_input_unavailable() -> None:
 
 
 def test_inconsistent_bundle_returns_input_inconsistent() -> None:
+    # Task 037 folds input_structure_consistent into available, so the
+    # only validly-shaped bundle with structure=False also has
+    # available=False. Task 039 must classify it as INPUT_INCONSISTENT
+    # (not INPUT_UNAVAILABLE) by checking structure first.
     a = _assessment(uuid4(), "H1", 1, 10.0, _all_required_satisfied())
     result = _service().build(
-        _bundle([a], consistent=False), _default_policy()
+        _bundle([a], available=False, consistent=False), _default_policy()
     )
     assert result["outcome"] == OUTCOME_INPUT_INCONSISTENT
     assert result["available"] is False
@@ -840,6 +844,37 @@ def test_cannot_select_from_candidate_assessment_mismatch() -> None:
     # this would silently reach the selection stage.
     b["assessment_set"]["assessments"][0]["hypothesis_id"] = h2
     b["assessment_set"]["assessments"][0]["hypothesis_name"] = "H2"
+    with pytest.raises(DecisionExecutionContractError) as ei:
+        _service().build(b, _default_policy())
+    assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 3: precedence and final Task 037 boundary
+# ---------------------------------------------------------------------------
+
+
+def test_inconsistent_takes_precedence_over_unavailable() -> None:
+    """A validly-shaped Task 037 bundle with available=False AND
+    input_structure_consistent=False must produce INPUT_INCONSISTENT,
+    not INPUT_UNAVAILABLE. Task 039 must preserve the semantic
+    distinction."""
+    a = _assessment(uuid4(), "H1", 1, 10.0, _all_required_satisfied())
+    b = _bundle([a], available=False, consistent=False)
+    result = _service().build(b, _default_policy())
+    assert result["outcome"] == OUTCOME_INPUT_INCONSISTENT
+    assert result["available"] is False
+
+
+def test_rejects_bundle_with_top_level_contradiction() -> None:
+    """Task 037's final _validate_result is now delegated to, so a
+    bundle whose top-level `available` contradicts its nested
+    availability flags is rejected as INVALID_BUNDLE_STRUCTURE."""
+    a = _assessment(uuid4(), "H1", 1, 10.0, _all_required_satisfied())
+    b = _bundle([a])
+    # Force an internally contradictory top-level flag while leaving
+    # the nested contracts valid: available=True but structure=False.
+    b["input_structure_consistent"] = False
     with pytest.raises(DecisionExecutionContractError) as ei:
         _service().build(b, _default_policy())
     assert ei.value.invariant == "INVALID_BUNDLE_STRUCTURE"
