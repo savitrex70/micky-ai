@@ -64,3 +64,18 @@ def test_extraction_service_stores_observations_on_session() -> None:
         assert len(observations) == 6
         assert {observation.session_id for observation in observations} == {session.id}
         assert db.query(ReasoningSession).one().observations == observations
+
+def test_extractor_handles_symptom_without_severity() -> None:
+    """Regression: a symptom that matches without an optional severity
+    prefix (e.g. plain "chest pain") must not crash the extractor. The
+    _SYMPTOM_PATTERN's severity group is optional, so match.group must
+    be None-checked before calling .strip()."""
+    from rop.extraction import ObservationExtractor
+
+    observations = ObservationExtractor().extract("Patient reports chest pain")
+    symptom_values = [o.text for o in observations if o.type == "symptom"]
+    assert "Symptom = Chest pain" in symptom_values
+    # And no severity observation is produced for this input.
+    severity_values = [o.text for o in observations if o.type == "severity"]
+    assert severity_values == []
+

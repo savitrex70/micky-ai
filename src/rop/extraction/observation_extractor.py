@@ -86,7 +86,8 @@ class ObservationExtractor:
 
         symptom = self._SYMPTOM_VALUES[match.group("symptom").lower()]
         observations = [ExtractedObservation(f"Symptom = {symptom}", "symptom", 0.95)]
-        severity = match.group("severity").strip().lower()
+        severity_raw = match.group("severity")
+        severity = severity_raw.strip().lower() if severity_raw else ""
         if severity:
             normalized_severity = self._SEVERITY_VALUES[severity]
             observations.append(
