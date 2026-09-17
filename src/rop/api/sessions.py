@@ -20,6 +20,7 @@ from rop.schemas import (
     CandidateHypothesisRead,
     DecisionCandidateEvaluationRead,
     DecisionContextRead,
+    DecisionEvaluationConsistencyRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
     DifferentialRankingSummaryRead,
@@ -56,6 +57,8 @@ from rop.services import (
     DecisionCandidateEvaluationService,
     DecisionContextContractError,
     DecisionContextService,
+    DecisionEvaluationConsistencyContractError,
+    DecisionEvaluationConsistencyService,
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
     DifferentialRankingConsistencyContractError,
@@ -108,6 +111,9 @@ decision_context_service = DecisionContextService(
 )
 decision_candidate_evaluation_service = DecisionCandidateEvaluationService(
     decision_context_service
+)
+decision_evaluation_consistency_service = DecisionEvaluationConsistencyService(
+    decision_candidate_evaluation_service
 )
 
 
@@ -1178,4 +1184,70 @@ def get_decision_candidate_evaluations(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-candidate-evaluation contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-evaluation-consistency",
+    response_model=DecisionEvaluationConsistencyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_evaluation_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 033: read-only structural consistency/coverage over Task 032.
+
+    Consumes only the output of ``DecisionCandidateEvaluationService``
+    (Task 032) via ``DecisionEvaluationConsistencyService`` — it does
+    not reach into evidence, evidence aggregation, scoring, ranking,
+    ranking summary, ranking consistency, readiness, observations,
+    entities, hypotheses, or database evidence records, and
+    duplicates no logic already owned by Tasks 020-032.
+
+    Answers "are the candidate evaluations complete, structurally
+    consistent, and fully comparable across the current decision
+    context?" — never "which candidate should be chosen?". There is
+    no winner, selected candidate, decision, diagnosis, probability,
+    confidence, or weighted/utility score anywhere in this response.
+    Every structural fact is independently recalculated from the
+    evaluations themselves rather than trusted from Task 032's own
+    summary fields. Read-only throughout: nothing is persisted, and
+    no input is mutated.
+
+    Does not modify the behavior or fields of the existing
+    ``/differential``, ``/differential-summary``,
+    ``/differential-consistency``, ``/differential-readiness``,
+    ``/decision-context``, or ``/decision-candidate-evaluations``
+    endpoints — this is an additional derived view over the same
+    underlying pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    candidates = candidate_generation_service.list_by_session(
+        db, session_id, offset=0, limit=100
+    )
+
+    try:
+        return decision_evaluation_consistency_service.check_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+    ) as exc:
+        # Task 033: an internal contract violation, never medical or
+        # client-input error — never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-evaluation-consistency contract violation",
         ) from exc

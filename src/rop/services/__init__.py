@@ -9,6 +9,10 @@ from rop.services.decision_context import (
     DecisionContextContractError,
     DecisionContextService,
 )
+from rop.services.decision_evaluation_consistency import (
+    DecisionEvaluationConsistencyContractError,
+    DecisionEvaluationConsistencyService,
+)
 from rop.services.differential_decision_readiness import (
     DifferentialDecisionReadinessContractError,
     DifferentialDecisionReadinessService,
@@ -48,6 +52,8 @@ __all__ = [
     "DecisionCandidateEvaluationService",
     "DecisionContextContractError",
     "DecisionContextService",
+    "DecisionEvaluationConsistencyContractError",
+    "DecisionEvaluationConsistencyService",
     "DifferentialDecisionReadinessContractError",
     "DifferentialDecisionReadinessService",
     "DifferentialRankingConsistencyContractError",
