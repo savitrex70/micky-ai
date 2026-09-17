@@ -101,6 +101,7 @@ _ISSUE_ORDER = (
     "STAGE_MISSING",
     "STAGE_SOURCE_MISMATCH",
     "STAGE_FIELD_MISSING",
+    "STAGE_SEMANTIC_MISMATCH",
     "CANDIDATE_COUNT_MISMATCH",
     "CANDIDATE_GENERATION_AVAILABILITY_MISMATCH",
     "CANDIDATE_GENERATION_STAGE_MISMATCH",
@@ -114,6 +115,16 @@ _ISSUE_ORDER = (
 
 _CANDIDATE_PAGE_SIZE = 100
 _STATE_PAGE_SIZE = 1000
+
+# Fixed semantic triples for stages whose Task 042 contract is
+# invariant: available / consistent / complete are always the same
+# regardless of session state.
+_FIXED_STAGE_TRIPLES = {
+    "SESSION_INPUT": (True, True, True),
+    "OBSERVATIONS": (True, True, True),
+    "ENTITIES": (True, True, True),
+    "MISSING_INFORMATION": (True, True, True),
+}
 
 # Fields the audit needs on the Task 042 run in order to run at all.
 # Missing any of these means the run is too malformed to audit.
@@ -376,6 +387,39 @@ class ReasoningRunConsistencyService:
                         issues.append("STAGE_FIELD_MISSING")
             stage_by_id[sid] = stage
 
+        # --- Fixed-stage semantic triple checks ---
+        # Every fixed stage must carry its invariant available /
+        # consistent / complete triple. Tampered stage flags are
+        # reported as STAGE_SEMANTIC_MISMATCH rather than silently
+        # accepted because only the stage_id happened to be right.
+        for fixed_id, expected_triple in _FIXED_STAGE_TRIPLES.items():
+            fixed_stage = stage_by_id.get(fixed_id)
+            if fixed_stage is None:
+                continue
+            exp_avail, exp_cons, exp_complete = expected_triple
+            if (
+                fixed_stage.get("available") != exp_avail
+                or fixed_stage.get("consistent") != exp_cons
+                or fixed_stage.get("complete") != exp_complete
+            ):
+                if "STAGE_SEMANTIC_MISMATCH" not in issues:
+                    issues.append("STAGE_SEMANTIC_MISMATCH")
+
+        # --- TEMPLATE_CONTEXT semantic triple ---
+        # available reflects actual template presence; consistent and
+        # complete are invariantly True per Task 042's approved
+        # semantics.
+        tmpl_stage = stage_by_id.get("TEMPLATE_CONTEXT")
+        if tmpl_stage is None:
+            issues.append("TEMPLATE_STAGE_MISMATCH")
+        else:
+            if (
+                tmpl_stage.get("available") != actual_template_present
+                or tmpl_stage.get("consistent") is not True
+                or tmpl_stage.get("complete") is not True
+            ):
+                issues.append("TEMPLATE_STAGE_MISMATCH")
+
         if run.get("stage_count") != len(stages):
             issues.append("STAGE_COUNT_MISMATCH")
         if len(stages) != len(_EXPECTED_STAGE_IDS):
@@ -408,16 +452,6 @@ class ReasoningRunConsistencyService:
                 or gen_stage.get("consistent") is not True
             ):
                 issues.append("CANDIDATE_GENERATION_STAGE_MISMATCH")
-
-        # --- TEMPLATE_CONTEXT stage check ---
-        tmpl_stage = stage_by_id.get("TEMPLATE_CONTEXT")
-        if tmpl_stage is None:
-            issues.append("TEMPLATE_STAGE_MISMATCH")
-        else:
-            # Per Task 042 approved semantics: available reflects
-            # actual template presence; complete is always True.
-            if tmpl_stage.get("available") != actual_template_present:
-                issues.append("TEMPLATE_STAGE_MISMATCH")
 
         # --- Nested pipeline checks ---
         # Reuse Task 041's own full validator via the bundle/policy
@@ -484,6 +518,7 @@ class ReasoningRunConsistencyService:
                 "STAGE_MISSING",
                 "STAGE_SOURCE_MISMATCH",
                 "STAGE_FIELD_MISSING",
+                "STAGE_SEMANTIC_MISMATCH",
             )
         )
 

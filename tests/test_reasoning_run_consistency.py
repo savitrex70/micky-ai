@@ -810,3 +810,128 @@ def test_deep_pipeline_tamper_selected_missing() -> None:
         policy=policy,
     )
     assert "PIPELINE_STRUCTURE_INCONSISTENT" in result["consistency_issues"]
+
+
+# ---------------------------------------------------------------------------
+# Fixed-stage semantic triple tamper
+# ---------------------------------------------------------------------------
+
+
+def _stage_index(run: dict[str, Any], stage_id: str) -> int:
+    for i, stage in enumerate(run["stages"]):
+        if stage["stage_id"] == stage_id:
+            return i
+    raise AssertionError("stage not found: " + stage_id)
+
+
+def test_tamper_observations_consistent() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "OBSERVATIONS")
+    tampered["stages"][idx]["consistent"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "STAGE_SEMANTIC_MISMATCH" in result["consistency_issues"]
+    assert result["stage_structure_consistent"] is False
+    assert result["run_consistent"] is False
+
+
+def test_tamper_entities_complete() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "ENTITIES")
+    tampered["stages"][idx]["complete"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "STAGE_SEMANTIC_MISMATCH" in result["consistency_issues"]
+    assert result["stage_structure_consistent"] is False
+
+
+def test_tamper_missing_information_available() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "MISSING_INFORMATION")
+    tampered["stages"][idx]["available"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "STAGE_SEMANTIC_MISMATCH" in result["consistency_issues"]
+
+
+def test_tamper_template_context_consistent() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "TEMPLATE_CONTEXT")
+    tampered["stages"][idx]["consistent"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "TEMPLATE_STAGE_MISMATCH" in result["consistency_issues"]
+    assert result["template_context_consistent"] is False
+
+
+def test_tamper_template_context_complete() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "TEMPLATE_CONTEXT")
+    tampered["stages"][idx]["complete"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "TEMPLATE_STAGE_MISMATCH" in result["consistency_issues"]
+    assert result["template_context_consistent"] is False
+
+
+def test_tamper_session_input_available() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "SESSION_INPUT")
+    tampered["stages"][idx]["available"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert "STAGE_SEMANTIC_MISMATCH" in result["consistency_issues"]
