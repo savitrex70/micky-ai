@@ -52,6 +52,7 @@ from rop.schemas import (
     ReasoningStepCreate,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
+    ReasoningRunExecutionRead,
     ReasoningRunRead,
     ReasoningStepRead,
     TemplateMatchRead,
@@ -107,6 +108,8 @@ from rop.services import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
     ReasoningRunContractError,
+    ReasoningRunExecutionContractError,
+    ReasoningRunExecutionService,
     ReasoningRunService,
     ReasoningSessionService,
     ReasoningStepService,
@@ -172,6 +175,7 @@ decision_execution_consistency_service = DecisionExecutionConsistencyService(
 reasoning_pipeline_service = ReasoningPipelineService()
 reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
+reasoning_run_execution_service = ReasoningRunExecutionService()
 
 
 @router.post(
@@ -2044,4 +2048,52 @@ def get_reasoning_run_consistency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-consistency contract violation",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/reasoning-run/execute",
+    response_model=ReasoningRunExecutionRead,
+    status_code=status.HTTP_200_OK,
+)
+def execute_reasoning_run(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 044: write-side reasoning-run execution orchestrator.
+
+    Runs the established deterministic reasoning workflow end-to-end
+    by delegating to the existing services in the correct order:
+    session verification, observation extraction, missing-information
+    detection, template matching, candidate generation, evidence
+    evaluation, Task 042 run composition, and Task 043 run
+    consistency audit. This is the first write-side layer; it uses
+    the existing persistence boundaries and never invents reasoning
+    of its own.
+
+    ``reasoning_run`` and ``reasoning_run_consistency`` are the exact
+    canonical outputs of Tasks 042 and 043. A failed stage raises an
+    internal contract error (500) and no further stages run; the
+    exception is never converted into a fabricated successful result.
+
+    The existing GET endpoints
+    (``/sessions/{id}/reasoning-run`` and
+    ``/sessions/{id}/reasoning-run-consistency``) remain read-only and
+    are not affected by this endpoint.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_execution_service.execute_for_session(
+            db, session_id
+        )
+    except ReasoningRunExecutionContractError as exc:
+        # Task 044: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-execution contract violation",
         ) from exc

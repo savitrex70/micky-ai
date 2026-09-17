@@ -82,6 +82,10 @@ from rop.services.reasoning_run_consistency import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
 )
+from rop.services.reasoning_run_execution import (
+    ReasoningRunExecutionContractError,
+    ReasoningRunExecutionService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -131,6 +135,8 @@ __all__ = [
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",
     "ReasoningRunConsistencyService",
+    "ReasoningRunExecutionContractError",
+    "ReasoningRunExecutionService",
     "ReasoningRunContractError",
     "ReasoningRunService",
     "ReasoningSessionService",
