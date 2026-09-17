@@ -1188,3 +1188,183 @@ def test_rejects_declared_required_unsatisfied_mismatch() -> None:
     with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
         _assessment_service().build(cs, broken, co)
     assert ei.value.invariant == "DECLARED_COUNT_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 2: orchestration delegation, name cross-check,
+# upstream metadata propagation
+# ---------------------------------------------------------------------------
+
+
+def test_build_for_session_delegates_to_task035(monkeypatch) -> None:
+    """Task 036 must call Task 035's orchestration method, not re-walk
+    the chain itself."""
+    from rop.services.decision_candidate_set import DecisionCandidateSetService
+
+    calls = {"n": 0}
+    original = DecisionCandidateSetService.build_for_session_with_inputs
+
+    def spy(self, db, session_id, candidates):
+        calls["n"] += 1
+        return original(self, db, session_id, candidates)
+
+    monkeypatch.setattr(
+        DecisionCandidateSetService,
+        "build_for_session_with_inputs",
+        spy,
+    )
+
+    sid = _seed_session("Task 036 delegation")
+    session_uuid = UUID(sid)
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        from rop.services.candidate_generation import CandidateGenerationService
+
+        candidates = CandidateGenerationService().list_by_session(
+            db, session_uuid, offset=0, limit=100
+        )
+        result = _assessment_service().build_for_session(
+            db, session_uuid, candidates
+        )
+    finally:
+        db_gen.close()
+
+    assert calls["n"] == 1
+    assert result["available"] is True
+
+
+def test_rejects_evaluation_name_mismatch() -> None:
+    """Task 032's hypothesis_name must match Task 035's for the same
+    hypothesis_id -- conflicting names are malformed upstream data."""
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["hypothesis_name"] = "WRONG_NAME"
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "EVALUATION_NAME_MISMATCH"
+
+
+def test_upstream_order_preserved_false_propagates() -> None:
+    """If Task 035 reports candidate_order_preserved=False, Task 036
+    must propagate that value rather than hard-coding True."""
+    cs, ev, co, _ = _ready_chain()
+    broken_cs = copy.deepcopy(cs)
+    broken_cs["candidate_order_preserved"] = False
+    result = _assessment_service().build(broken_cs, ev, co)
+
+    assert result["candidate_order_preserved"] is False
+    assert result["available"] is False
+    assert result["assessments"] == []
+
+
+def test_upstream_set_complete_false_blocks_available() -> None:
+    """If Task 035 reports candidate_set_complete=False but still claims
+    available=True, Task 036 must not override the flag to produce a
+    falsely complete assessment set."""
+    cs, ev, co, _ = _ready_chain()
+    broken_cs = copy.deepcopy(cs)
+    broken_cs["candidate_set_complete"] = False
+    result = _assessment_service().build(broken_cs, ev, co)
+
+    assert result["available"] is False
+    assert result["assessments"] == []
+
+
+def test_tamper_order_preserved_rejected() -> None:
+    result, cs, ev, co = _valid_result()
+    c = copy.deepcopy(result)
+    c["candidate_order_preserved"] = not c["candidate_order_preserved"]
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        DecisionCandidateAssessmentService._validate_result(c, cs, ev, co)
+    assert ei.value.invariant == "ORDER_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round 2: orchestration delegation, name cross-check,
+# upstream metadata propagation
+# ---------------------------------------------------------------------------
+
+
+def test_build_for_session_delegates_to_task035(monkeypatch) -> None:
+    """Task 036 must call Task 035's orchestration method, not re-walk
+    the chain itself."""
+    from rop.services.decision_candidate_set import DecisionCandidateSetService
+
+    calls = {"n": 0}
+    original = DecisionCandidateSetService.build_for_session_with_inputs
+
+    def spy(self, db, session_id, candidates):
+        calls["n"] += 1
+        return original(self, db, session_id, candidates)
+
+    monkeypatch.setattr(
+        DecisionCandidateSetService,
+        "build_for_session_with_inputs",
+        spy,
+    )
+
+    sid = _seed_session("Task 036 delegation")
+    session_uuid = UUID(sid)
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        from rop.services.candidate_generation import CandidateGenerationService
+
+        candidates = CandidateGenerationService().list_by_session(
+            db, session_uuid, offset=0, limit=100
+        )
+        result = _assessment_service().build_for_session(
+            db, session_uuid, candidates
+        )
+    finally:
+        db_gen.close()
+
+    assert calls["n"] == 1
+    assert result["available"] is True
+
+
+def test_rejects_evaluation_name_mismatch() -> None:
+    """Task 032's hypothesis_name must match Task 035's for the same
+    hypothesis_id -- conflicting names are malformed upstream data."""
+    cs, ev, co, _ = _ready_chain()
+    broken = copy.deepcopy(ev)
+    broken[0]["hypothesis_name"] = "WRONG_NAME"
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        _assessment_service().build(cs, broken, co)
+    assert ei.value.invariant == "EVALUATION_NAME_MISMATCH"
+
+
+def test_upstream_order_preserved_false_propagates() -> None:
+    """If Task 035 reports candidate_order_preserved=False, Task 036
+    must propagate that value rather than hard-coding True."""
+    cs, ev, co, _ = _ready_chain()
+    broken_cs = copy.deepcopy(cs)
+    broken_cs["candidate_order_preserved"] = False
+    result = _assessment_service().build(broken_cs, ev, co)
+
+    assert result["candidate_order_preserved"] is False
+    assert result["available"] is False
+    assert result["assessments"] == []
+
+
+def test_upstream_set_complete_false_blocks_available() -> None:
+    """If Task 035 reports candidate_set_complete=False but still claims
+    available=True, Task 036 must not override the flag to produce a
+    falsely complete assessment set."""
+    cs, ev, co, _ = _ready_chain()
+    broken_cs = copy.deepcopy(cs)
+    broken_cs["candidate_set_complete"] = False
+    result = _assessment_service().build(broken_cs, ev, co)
+
+    assert result["available"] is False
+    assert result["assessments"] == []
+
+
+def test_tamper_order_preserved_rejected() -> None:
+    result, cs, ev, co = _valid_result()
+    c = copy.deepcopy(result)
+    c["candidate_order_preserved"] = not c["candidate_order_preserved"]
+    with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
+        DecisionCandidateAssessmentService._validate_result(c, cs, ev, co)
+    assert ei.value.invariant == "ORDER_MISMATCH"

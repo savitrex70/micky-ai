@@ -134,13 +134,17 @@ class DecisionCandidateSetService:
             or DecisionInputEligibilityService()
         )
 
-    def build_for_session(
+    def build_for_session_with_inputs(
         self,
         db: Session,
         session_id: UUID,
         candidates: list[CandidateHypothesis],
-    ) -> dict[str, Any]:
-        """Walk the established chain once, then delegate to ``build``.
+    ) -> tuple[
+        dict[str, Any],
+        list[dict[str, Any]],
+        dict[str, Any],
+    ]:
+        """Walk the established chain once and return the intermediates.
 
         Builds the Task 031 context exactly once -- the same
         single-build pattern already established at the Task
@@ -167,7 +171,25 @@ class DecisionCandidateSetService:
             evaluations, expected_candidate_ids
         )
         eligibility_result = eligibility_service.build(context, consistency_result)
-        return self.build(context, eligibility_result)
+        candidate_set = self.build(context, eligibility_result)
+        return candidate_set, evaluations, consistency_result
+
+    def build_for_session(
+        self,
+        db: Session,
+        session_id: UUID,
+        candidates: list[CandidateHypothesis],
+    ) -> dict[str, Any]:
+        """Return only the candidate set.
+
+        Convenience wrapper around ``build_for_session_with_inputs`` for
+        existing callers (e.g. the Task 035 API endpoint) that do not
+        need the intermediate evaluations/consistency result.
+        """
+        candidate_set, _, _ = self.build_for_session_with_inputs(
+            db, session_id, candidates
+        )
+        return candidate_set
 
     def build(
         self,

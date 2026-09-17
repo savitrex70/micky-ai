@@ -137,37 +137,20 @@ class DecisionCandidateAssessmentService:
         session_id: UUID,
         candidates: list[CandidateHypothesis],
     ) -> dict[str, Any]:
-        """Walk the established chain once, then delegate to ``build``.
+        """Delegate the upstream chain to Task 035, then join.
 
-        Builds the Task 031 context exactly once, evaluates candidates
-        via Task 032, checks consistency via Task 033, derives
-        eligibility via Task 034, packages the candidate set via Task
-        035, then joins the candidate set with the evaluations under
-        the consistency verdict in this service's ``build``. No
-        duplicate pipeline.
+        Task 035 owns the orchestration of Tasks 031-035. This service
+        asks Task 035's ``build_for_session_with_inputs`` for the full
+        pipeline output (candidate set plus the evaluations and
+        consistency result that Task 035 already computed) and then
+        joins them -- it does not re-walk the chain or reach into
+        Task 031/032/033/034 services directly.
         """
-        candidate_set_service = self.decision_candidate_set_service
-        eligibility_service = (
-            candidate_set_service.decision_input_eligibility_service
+        candidate_set, evaluations, consistency_result = (
+            self.decision_candidate_set_service.build_for_session_with_inputs(
+                db, session_id, candidates
+            )
         )
-        consistency_service = (
-            eligibility_service.decision_evaluation_consistency_service
-        )
-        candidate_evaluation_service = (
-            consistency_service.decision_candidate_evaluation_service
-        )
-        context_service = candidate_evaluation_service.decision_context_service
-
-        context = context_service.build_for_session(db, session_id, candidates)
-        evaluations = candidate_evaluation_service.evaluate(context)
-        expected_candidate_ids = [
-            entry["hypothesis_id"] for entry in context["differential"]
-        ]
-        consistency_result = consistency_service.check(
-            evaluations, expected_candidate_ids
-        )
-        eligibility_result = eligibility_service.build(context, consistency_result)
-        candidate_set = candidate_set_service.build(context, eligibility_result)
         return self.build(candidate_set, evaluations, consistency_result)
 
     def build(
@@ -192,10 +175,31 @@ class DecisionCandidateAssessmentService:
             criteria_complete,
         ) = self._validate_and_extract_consistency(consistency_result)
 
+        upstream_order_preserved = candidate_set["candidate_order_preserved"]
+        upstream_set_complete = candidate_set["candidate_set_complete"]
+
+        # Task 032's hypothesis_name must agree with Task 035's for the
+        # same hypothesis_id -- conflicting names are malformed upstream
+        # data, not something to silently drop.
+        for candidate in candidates:
+            hid = candidate["hypothesis_id"]
+            eval_entry = evals_by_id.get(hid)
+            if eval_entry is None:
+                continue
+            if eval_entry["hypothesis_name"] != candidate["hypothesis_name"]:
+                raise DecisionCandidateAssessmentContractError(
+                    "EVALUATION_NAME_MISMATCH",
+                    f"candidate {hid}: Task 035 name "
+                    f"{candidate['hypothesis_name']!r} != Task 032 name "
+                    f"{eval_entry['hypothesis_name']!r}",
+                )
+
         evaluation_coverage_complete = coverage_complete
         assessment_structure_consistent = consistent
         available = (
             candidate_available
+            and upstream_order_preserved
+            and upstream_set_complete
             and evaluation_coverage_complete
             and assessment_structure_consistent
             and criteria_complete
@@ -224,7 +228,7 @@ class DecisionCandidateAssessmentService:
             "available": available,
             "candidate_count": len(assessments),
             "assessments": assessments,
-            "candidate_order_preserved": True,
+            "candidate_order_preserved": upstream_order_preserved,
             "evaluation_coverage_complete": evaluation_coverage_complete,
             "assessment_structure_consistent": assessment_structure_consistent,
             "assessment_source": (
@@ -667,13 +671,20 @@ class DecisionCandidateAssessmentService:
                 "RESULT_COUNT_MISMATCH",
                 f"count {count} != assessments length {len(assessments)}",
             )
-        if result["candidate_order_preserved"] is not True:
+        if (
+            result["candidate_order_preserved"]
+            != candidate_set["candidate_order_preserved"]
+        ):
             raise DecisionCandidateAssessmentContractError(
-                "ORDER_NOT_PRESERVED",
-                "candidate_order_preserved must be True",
+                "ORDER_MISMATCH",
+                "candidate_order_preserved does not match upstream "
+                f"Task 035: {result['candidate_order_preserved']!r} != "
+                f"{candidate_set['candidate_order_preserved']!r}",
             )
         if result["available"] is not (
             candidate_set["available"]
+            and candidate_set["candidate_order_preserved"]
+            and candidate_set["candidate_set_complete"]
             and result["evaluation_coverage_complete"]
             and result["assessment_structure_consistent"]
             and consistency_result["all_criteria_evaluated"]
