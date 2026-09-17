@@ -125,12 +125,18 @@ def _get_run_and_state(
     list[Any],
     list[Any],
     list[Any],
+    dict[str, Any],
+    dict[str, Any],
 ]:
     session_uuid = UUID(session_id)
     db_gen = app.dependency_overrides[get_db]()
     db = next(db_gen)
     try:
-        run = ReasoningRunService().build_for_session(db, session_uuid)
+        run, bundle, policy = (
+            ReasoningRunService().build_for_session_with_inputs(
+                db, session_uuid
+            )
+        )
         obs = ObservationService().list_by_session(
             db, session_uuid, offset=0, limit=1000
         )
@@ -142,7 +148,7 @@ def _get_run_and_state(
         cands = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        return run, obs, ent, mi, tm, cands
+        return run, obs, ent, mi, tm, cands, bundle, policy
     finally:
         db_gen.close()
 
@@ -234,7 +240,7 @@ def test_empty_session_input_unavailable_preserved() -> None:
 
 def test_candidate_count_mismatch_detected() -> None:
     sid = _seed_full_session("Task 043 candidate count mismatch")
-    run, obs, ent, mi, tm, cands = _get_run_and_state(sid)
+    run, obs, ent, mi, tm, cands, bundle, policy = _get_run_and_state(sid)
     tampered = copy.deepcopy(run)
     tampered["candidate_count"] = 99
     tampered["candidate_generation_available"] = True
@@ -245,6 +251,8 @@ def test_candidate_count_mismatch_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "CANDIDATE_COUNT_MISMATCH" in result["consistency_issues"]
     assert result["candidate_count_consistent"] is False
@@ -252,7 +260,7 @@ def test_candidate_count_mismatch_detected() -> None:
 
 def test_candidate_generation_availability_mismatch_detected() -> None:
     sid = _seed_full_session("Task 043 gen availability mismatch")
-    run, obs, ent, mi, tm, cands = _get_run_and_state(sid)
+    run, obs, ent, mi, tm, cands, bundle, policy = _get_run_and_state(sid)
     tampered = copy.deepcopy(run)
     # Force zero candidates in state.
     result = _service().build(
@@ -262,6 +270,8 @@ def test_candidate_generation_availability_mismatch_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=[],
+        bundle=bundle,
+        policy=policy,
     )
     assert (
         "CANDIDATE_GENERATION_AVAILABILITY_MISMATCH"
@@ -271,7 +281,7 @@ def test_candidate_generation_availability_mismatch_detected() -> None:
 
 def test_candidate_generation_stage_mismatch_detected() -> None:
     sid = _seed_full_session("Task 043 gen stage mismatch")
-    run, obs, ent, mi, tm, cands = _get_run_and_state(sid)
+    run, obs, ent, mi, tm, cands, bundle, policy = _get_run_and_state(sid)
     # Run says CANDIDATE_GENERATION available/complete; state says empty.
     result = _service().build(
         run=run,
@@ -280,6 +290,8 @@ def test_candidate_generation_stage_mismatch_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=[],
+        bundle=bundle,
+        policy=policy,
     )
     assert "CANDIDATE_GENERATION_STAGE_MISMATCH" in result["consistency_issues"]
 
@@ -304,7 +316,7 @@ def test_template_absent_stage_consistent() -> None:
 
 def test_template_stage_mismatch_detected() -> None:
     sid = _seed_full_session("Task 043 template mismatch")
-    run, obs, ent, mi, tm, cands = _get_run_and_state(sid)
+    run, obs, ent, mi, tm, cands, bundle, policy = _get_run_and_state(sid)
     # Fabricate a non-empty template list while run reports none.
     fake_templates = [object()]
     result = _service().build(
@@ -314,6 +326,8 @@ def test_template_stage_mismatch_detected() -> None:
         missing_information=mi,
         template_matches=fake_templates,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "TEMPLATE_STAGE_MISMATCH" in result["consistency_issues"]
     assert result["template_context_consistent"] is False
@@ -357,14 +371,21 @@ def test_downstream_input_unavailable_is_auditable() -> None:
 
 
 def _valid_run_and_state() -> tuple[
-    dict[str, Any], list[Any], list[Any], list[Any], list[Any], list[Any]
+    dict[str, Any],
+    list[Any],
+    list[Any],
+    list[Any],
+    list[Any],
+    list[Any],
+    dict[str, Any],
+    dict[str, Any],
 ]:
     sid = _seed_full_session("Task 043 raw inputs")
     return _get_run_and_state(sid)
 
 
 def test_tamper_run_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["run_source"] = "WRONG"
     result = _service().build(
@@ -374,13 +395,15 @@ def test_tamper_run_source_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "RUN_SOURCE_MISMATCH" in result["consistency_issues"]
     assert result["source_consistency"] is False
 
 
 def test_tamper_stage_order_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["stages"][1]["stage_order"] = 99
     result = _service().build(
@@ -390,13 +413,15 @@ def test_tamper_stage_order_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "STAGE_ORDER_MISMATCH" in result["consistency_issues"]
     assert result["stage_structure_consistent"] is False
 
 
 def test_tamper_duplicate_stage_id_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["stages"][1]["stage_id"] = tampered["stages"][0]["stage_id"]
     result = _service().build(
@@ -406,12 +431,14 @@ def test_tamper_duplicate_stage_id_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "DUPLICATE_STAGE_ID" in result["consistency_issues"]
 
 
 def test_tamper_stage_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["stages"][0]["stage_source"] = "WRONG"
     result = _service().build(
@@ -421,12 +448,14 @@ def test_tamper_stage_source_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "STAGE_SOURCE_MISMATCH" in result["consistency_issues"]
 
 
 def test_tamper_stage_count_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["stage_count"] = 99
     result = _service().build(
@@ -436,12 +465,14 @@ def test_tamper_stage_count_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "STAGE_COUNT_MISMATCH" in result["consistency_issues"]
 
 
 def test_tamper_missing_stage_field_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     del tampered["stages"][0]["available"]
     result = _service().build(
@@ -451,6 +482,8 @@ def test_tamper_missing_stage_field_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "STAGE_FIELD_MISSING" in result["consistency_issues"]
 
@@ -461,7 +494,7 @@ def test_tamper_missing_stage_field_detected() -> None:
 
 
 def test_tamper_pipeline_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["reasoning_pipeline"]["pipeline_source"] = "WRONG"
     result = _service().build(
@@ -471,13 +504,15 @@ def test_tamper_pipeline_source_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "PIPELINE_SOURCE_MISMATCH" in result["consistency_issues"]
     assert result["pipeline_consistent"] is False
 
 
 def test_tamper_pipeline_structure_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["reasoning_pipeline"]["pipeline_consistent"] = "yes"
     result = _service().build(
@@ -487,6 +522,8 @@ def test_tamper_pipeline_structure_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "PIPELINE_STRUCTURE_INCONSISTENT" in result["consistency_issues"]
 
@@ -497,7 +534,7 @@ def test_tamper_pipeline_structure_detected() -> None:
 
 
 def test_tamper_run_complete_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["run_complete"] = not tampered["run_complete"]
     result = _service().build(
@@ -507,12 +544,14 @@ def test_tamper_run_complete_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "RUN_COMPLETE_MISMATCH" in result["consistency_issues"]
 
 
 def test_tamper_run_consistent_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["run_consistent"] = not tampered["run_consistent"]
     result = _service().build(
@@ -522,12 +561,14 @@ def test_tamper_run_consistent_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "RUN_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_tamper_completed_stage_count_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["completed_stage_count"] = 0
     result = _service().build(
@@ -537,6 +578,8 @@ def test_tamper_completed_stage_count_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "COMPLETED_STAGE_COUNT_MISMATCH" in result["consistency_issues"]
 
@@ -555,6 +598,8 @@ def test_rejects_malformed_task042_run() -> None:
             missing_information=[],
             template_matches=[],
             candidates=[],
+            bundle={},
+            policy={},
         )
     assert ei.value.invariant == "INVALID_REASONING_RUN"
 
@@ -568,6 +613,8 @@ def test_rejects_none_run() -> None:
             missing_information=[],
             template_matches=[],
             candidates=[],
+            bundle={},
+            policy={},
         )
     assert ei.value.invariant == "MISSING_RUN"
 
@@ -594,7 +641,7 @@ def test_deterministic() -> None:
 
 
 def test_does_not_mutate_inputs() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     run_before = copy.deepcopy(run)
     obs_before = list(obs)
     ent_before = list(ent)
@@ -609,6 +656,8 @@ def test_does_not_mutate_inputs() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
 
     assert run == run_before
@@ -719,114 +768,15 @@ def test_api_matches_service_output() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _valid_run_and_state() -> tuple[
-    dict[str, Any], list[Any], list[Any], list[Any], list[Any], list[Any]
-]:
-    sid = _seed_full_session("Task 043 raw inputs")
-    return _get_run_and_state(sid)
-
-
-def test_tamper_run_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["run_source"] = "WRONG"
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "RUN_SOURCE_MISMATCH" in result["consistency_issues"]
-    assert result["source_consistency"] is False
-
-
-def test_tamper_stage_order_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["stages"][1]["stage_order"] = 99
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "STAGE_ORDER_MISMATCH" in result["consistency_issues"]
-    assert result["stage_structure_consistent"] is False
-
-
-def test_tamper_duplicate_stage_id_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["stages"][1]["stage_id"] = tampered["stages"][0]["stage_id"]
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "DUPLICATE_STAGE_ID" in result["consistency_issues"]
-
-
-def test_tamper_stage_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["stages"][0]["stage_source"] = "WRONG"
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "STAGE_SOURCE_MISMATCH" in result["consistency_issues"]
-
-
-def test_tamper_stage_count_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["stage_count"] = 99
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "STAGE_COUNT_MISMATCH" in result["consistency_issues"]
-
-
-def test_tamper_missing_stage_field_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    del tampered["stages"][0]["available"]
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "STAGE_FIELD_MISSING" in result["consistency_issues"]
-
-
 # ---------------------------------------------------------------------------
-# Pipeline tampering
+# Deep pipeline tamper (nested Task 041 contract)
 # ---------------------------------------------------------------------------
 
 
-def test_tamper_pipeline_source_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+def test_deep_pipeline_tamper_detected() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
-    tampered["reasoning_pipeline"]["pipeline_source"] = "WRONG"
+    tampered["reasoning_pipeline"]["final_execution"]["outcome"] = "GARBAGE"
     result = _service().build(
         run=tampered,
         observations=obs,
@@ -834,35 +784,21 @@ def test_tamper_pipeline_source_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
-    )
-    assert "PIPELINE_SOURCE_MISMATCH" in result["consistency_issues"]
-    assert result["pipeline_consistent"] is False
-
-
-def test_tamper_pipeline_structure_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["reasoning_pipeline"]["pipeline_consistent"] = "yes"
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
     assert "PIPELINE_STRUCTURE_INCONSISTENT" in result["consistency_issues"]
+    assert result["pipeline_consistent"] is False
+    assert result["run_consistent"] is False
 
 
-# ---------------------------------------------------------------------------
-# Run-level flag tampering
-# ---------------------------------------------------------------------------
-
-
-def test_tamper_run_complete_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
+def test_deep_pipeline_tamper_selected_missing() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
-    tampered["run_complete"] = not tampered["run_complete"]
+    tampered["reasoning_pipeline"]["final_execution"]["outcome"] = "SELECTED"
+    tampered["reasoning_pipeline"]["final_execution"]["selected_candidate"] = (
+        None
+    )
     result = _service().build(
         run=tampered,
         observations=obs,
@@ -870,208 +806,7 @@ def test_tamper_run_complete_detected() -> None:
         missing_information=mi,
         template_matches=tm,
         candidates=cands,
+        bundle=bundle,
+        policy=policy,
     )
-    assert "RUN_COMPLETE_MISMATCH" in result["consistency_issues"]
-
-
-def test_tamper_run_consistent_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["run_consistent"] = not tampered["run_consistent"]
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "RUN_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-
-
-def test_tamper_completed_stage_count_detected() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    tampered = copy.deepcopy(run)
-    tampered["completed_stage_count"] = 0
-    result = _service().build(
-        run=tampered,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-    assert "COMPLETED_STAGE_COUNT_MISMATCH" in result["consistency_issues"]
-
-
-# ---------------------------------------------------------------------------
-# Nested Task 042 malformed
-# ---------------------------------------------------------------------------
-
-
-def test_rejects_malformed_task042_run() -> None:
-    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
-        _service().build(
-            run={"available": True},
-            observations=[],
-            entities=[],
-            missing_information=[],
-            template_matches=[],
-            candidates=[],
-        )
-    assert ei.value.invariant == "INVALID_REASONING_RUN"
-
-
-def test_rejects_none_run() -> None:
-    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
-        _service().build(
-            run=None,
-            observations=[],
-            entities=[],
-            missing_information=[],
-            template_matches=[],
-            candidates=[],
-        )
-    assert ei.value.invariant == "MISSING_RUN"
-
-
-def test_rejects_missing_session() -> None:
-    db_gen = app.dependency_overrides[get_db]()
-    db = next(db_gen)
-    try:
-        with pytest.raises(ReasoningRunConsistencyContractError) as ei:
-            _service().build_for_session(db, uuid4())
-        assert ei.value.invariant == "MISSING_SESSION"
-    finally:
-        db_gen.close()
-
-
-# ---------------------------------------------------------------------------
-# Determinism / no mutation
-# ---------------------------------------------------------------------------
-
-
-def test_deterministic() -> None:
-    sid = _seed_full_session("Task 043 deterministic")
-    assert _build_audit(sid) == _build_audit(sid)
-
-
-def test_does_not_mutate_inputs() -> None:
-    run, obs, ent, mi, tm, cands = _valid_run_and_state()
-    run_before = copy.deepcopy(run)
-    obs_before = list(obs)
-    ent_before = list(ent)
-    mi_before = list(mi)
-    tm_before = list(tm)
-    cands_before = list(cands)
-
-    _service().build(
-        run=run,
-        observations=obs,
-        entities=ent,
-        missing_information=mi,
-        template_matches=tm,
-        candidates=cands,
-    )
-
-    assert run == run_before
-    assert obs == obs_before
-    assert ent == ent_before
-    assert mi == mi_before
-    assert tm == tm_before
-    assert cands == cands_before
-
-
-# ---------------------------------------------------------------------------
-# No-decision regression
-# ---------------------------------------------------------------------------
-
-
-def test_no_forbidden_fields() -> None:
-    sid = _seed_full_session("Task 043 no forbidden")
-    result = _build_audit(sid)
-    forbidden = (
-        "winner",
-        "recommendation",
-        "diagnosis",
-        "treatment",
-        "action",
-        "probability",
-        "confidence",
-        "utility",
-        "expected_outcome",
-    )
-    assert set(result) == set(RESULT_FIELDS)
-    for f in forbidden:
-        assert f not in result
-
-
-# ---------------------------------------------------------------------------
-# Read-only guarantee
-# ---------------------------------------------------------------------------
-
-
-def test_get_does_not_regenerate_candidates() -> None:
-    sid = _seed_full_session("Task 043 read-only")
-    first = client.get(f"/sessions/{sid}/reasoning-run-consistency").json()
-    for _ in range(3):
-        r = client.get(f"/sessions/{sid}/reasoning-run-consistency")
-        assert r.status_code == 200
-        assert r.json() == first
-
-
-# ---------------------------------------------------------------------------
-# API
-# ---------------------------------------------------------------------------
-
-
-def test_api_valid() -> None:
-    sid = _seed_full_session("Task 043 API valid")
-    r = client.get(f"/sessions/{sid}/reasoning-run-consistency")
-    assert r.status_code == 200
-    payload = r.json()
-    assert set(payload) == set(RESULT_FIELDS)
-    assert payload["available"] is True
-    assert (
-        payload["run_consistency_source"]
-        == REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
-    )
-
-
-def test_api_empty_session() -> None:
-    sid = _create_session("Task 043 API empty")
-    r = client.get(f"/sessions/{sid}/reasoning-run-consistency")
-    assert r.status_code == 200
-    payload = r.json()
-    assert payload["available"] is True
-    assert payload["run_consistent"] is True
-
-
-def test_api_missing_session_returns_404() -> None:
-    r = client.get(f"/sessions/{uuid4()}/reasoning-run-consistency")
-    assert r.status_code == 404
-
-
-def test_api_is_deterministic() -> None:
-    sid = _seed_full_session("Task 043 api deterministic")
-    first = client.get(f"/sessions/{sid}/reasoning-run-consistency").json()
-    second = client.get(f"/sessions/{sid}/reasoning-run-consistency").json()
-    assert first == second
-
-
-def test_api_is_read_only() -> None:
-    sid = _seed_full_session("Task 043 api read-only")
-    before = client.get(f"/sessions/{sid}/reasoning-run").json()
-    r = client.get(f"/sessions/{sid}/reasoning-run-consistency")
-    assert r.status_code == 200
-    after = client.get(f"/sessions/{sid}/reasoning-run").json()
-    assert after == before
-
-
-def test_api_matches_service_output() -> None:
-    sid = _seed_full_session("Task 043 api agreement")
-    api_result = client.get(
-        f"/sessions/{sid}/reasoning-run-consistency"
-    ).json()
-    service_result = _build_audit(sid)
-    assert api_result == service_result
+    assert "PIPELINE_STRUCTURE_INCONSISTENT" in result["consistency_issues"]

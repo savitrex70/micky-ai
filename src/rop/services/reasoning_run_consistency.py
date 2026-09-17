@@ -10,6 +10,10 @@ from rop.services.candidate_generation import CandidateGenerationService
 from rop.services.entity import EntityService
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
+from rop.services.reasoning_pipeline import (
+    ReasoningPipelineContractError,
+    ReasoningPipelineService,
+)
 from rop.services.reasoning_run import (
     REASONING_RUN_SOURCE_TASK_042,
     ReasoningRunContractError,
@@ -206,7 +210,11 @@ class ReasoningRunConsistencyService:
             )
 
         try:
-            run = self.reasoning_run_service.build_for_session(db, session_id)
+            run, bundle, policy = (
+                self.reasoning_run_service.build_for_session_with_inputs(
+                    db, session_id
+                )
+            )
         except ReasoningRunContractError as exc:
             raise ReasoningRunConsistencyContractError(
                 "INVALID_REASONING_RUN",
@@ -251,6 +259,8 @@ class ReasoningRunConsistencyService:
             missing_information=missing_information,
             template_matches=template_matches,
             candidates=candidates,
+            bundle=bundle,
+            policy=policy,
         )
 
 
@@ -263,6 +273,8 @@ class ReasoningRunConsistencyService:
         missing_information: list[Any] | None = None,
         template_matches: list[Any] | None = None,
         candidates: list[Any] | None = None,
+        bundle: Mapping[str, Any] | None = None,
+        policy: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Audit the Task 042 run against actual state. Pure.
 
@@ -291,6 +303,16 @@ class ReasoningRunConsistencyService:
                     name.upper() + "_TYPE",
                     name + " is not a list: " + type(value).__name__,
                 )
+        if not isinstance(bundle, Mapping):
+            raise ReasoningRunConsistencyContractError(
+                "BUNDLE_TYPE",
+                "bundle is not a mapping: " + type(bundle).__name__,
+            )
+        if not isinstance(policy, Mapping):
+            raise ReasoningRunConsistencyContractError(
+                "POLICY_TYPE",
+                "policy is not a mapping: " + type(policy).__name__,
+            )
 
         # Lightweight precondition: the run must be shaped enough to
         # audit at all. Task 043's own audit checks (below) are what
@@ -398,18 +420,28 @@ class ReasoningRunConsistencyService:
                 issues.append("TEMPLATE_STAGE_MISMATCH")
 
         # --- Nested pipeline checks ---
+        # Reuse Task 041's own full validator via the bundle/policy
+        # intermediates that Task 042 now returns alongside the run.
+        # Deep structural mismatches (e.g. a malformed nested
+        # final_execution) are reported as PIPELINE_STRUCTURE_INCONSISTENT
+        # rather than raising, so the audit still returns an available
+        # result with an explicit issue list.
         pipeline = run.get("reasoning_pipeline")
         if not isinstance(pipeline, Mapping):
             issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
         else:
             if pipeline.get("pipeline_source") != "REASONING_PIPELINE_TASK_041":
                 issues.append("PIPELINE_SOURCE_MISMATCH")
-            if not isinstance(pipeline.get("pipeline_consistent"), bool):
-                issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
-            if not isinstance(pipeline.get("pipeline_complete"), bool):
-                issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
-            if not isinstance(pipeline.get("stages"), list):
-                issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
+            try:
+                ReasoningPipelineService._validate_result(
+                    dict(pipeline), bundle, policy
+                )
+            except ReasoningPipelineContractError:
+                if "PIPELINE_STRUCTURE_INCONSISTENT" not in issues:
+                    issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
+            except Exception:
+                if "PIPELINE_STRUCTURE_INCONSISTENT" not in issues:
+                    issues.append("PIPELINE_STRUCTURE_INCONSISTENT")
 
         # --- Metadata / run-level flag checks ---
         expected_completed = sum(

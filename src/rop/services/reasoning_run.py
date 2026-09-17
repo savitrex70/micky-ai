@@ -149,12 +149,17 @@ class ReasoningRunService:
             offset += _STATE_PAGE_SIZE
         return results
 
-    def build_for_session(
+    def build_for_session_with_inputs(
         self,
         db: Session,
         session_id: UUID,
-    ) -> dict[str, Any]:
-        """Read session state, consume existing candidates, run Task 041.
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Read state, compose run, and return the intermediates.
+
+        Returns ``(run_result, pipeline_bundle, pipeline_policy)``.
+        Downstream audit layers (e.g. Task 043) can use the bundle and
+        policy to re-validate the nested Task 041 pipeline against its
+        own full validator without re-walking the chain.
 
         Read-only throughout: candidates are only listed, never
         regenerated. If the session does not exist,
@@ -203,7 +208,7 @@ class ReasoningRunService:
             )
         )
 
-        return self.build(
+        result = self.build(
             session=session,
             observations=observations,
             entities=entities,
@@ -214,6 +219,22 @@ class ReasoningRunService:
             bundle=bundle,
             policy=policy,
         )
+        return result, dict(bundle), dict(policy)
+
+    def build_for_session(
+        self,
+        db: Session,
+        session_id: UUID,
+    ) -> dict[str, Any]:
+        """Return only the composed run.
+
+        Convenience wrapper around ``build_for_session_with_inputs`` for
+        callers that do not need the intermediate bundle/policy.
+        """
+        result, _, _ = self.build_for_session_with_inputs(
+            db, session_id
+        )
+        return result
 
 
     def build(
