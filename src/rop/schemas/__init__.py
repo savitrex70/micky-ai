@@ -5,6 +5,10 @@ from rop.schemas.decision_candidate_evaluation import (
     DecisionCandidateEvaluationRead,
     DecisionEvaluationCriterionResultRead,
 )
+from rop.schemas.decision_candidate_set import (
+    DecisionCandidateRead,
+    DecisionCandidateSetRead,
+)
 from rop.schemas.decision_context import DecisionContextRead
 from rop.schemas.decision_evaluation_consistency import (
     DecisionEvaluationConsistencyRead,
@@ -46,6 +50,8 @@ from rop.schemas.template_match import TemplateMatchRead
 __all__ = [
     "CandidateHypothesisRead",
     "DecisionCandidateEvaluationRead",
+    "DecisionCandidateRead",
+    "DecisionCandidateSetRead",
     "DecisionContextRead",
     "DecisionEvaluationCriterionResultRead",
     "DecisionEvaluationConsistencyRead",
