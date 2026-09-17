@@ -976,3 +976,84 @@ def test_tamper_pipeline_source_flips_source_consistency() -> None:
     )
     assert "PIPELINE_SOURCE_MISMATCH" in result["consistency_issues"]
     assert result["source_consistency"] is False
+
+
+# ---------------------------------------------------------------------------
+# Per-stage flags reflect stage semantic triple
+# ---------------------------------------------------------------------------
+
+
+def test_observations_flag_reflects_semantic_mismatch() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "OBSERVATIONS")
+    tampered["stages"][idx]["consistent"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert result["observations_consistent"] is False
+    assert result["run_consistent"] is False
+
+
+def test_entities_flag_reflects_semantic_mismatch() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "ENTITIES")
+    tampered["stages"][idx]["complete"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert result["entities_consistent"] is False
+    assert result["run_consistent"] is False
+
+
+def test_missing_information_flag_reflects_semantic_mismatch() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "MISSING_INFORMATION")
+    tampered["stages"][idx]["available"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert result["missing_information_consistent"] is False
+    assert result["run_consistent"] is False
+
+
+def test_session_flag_reflects_semantic_mismatch() -> None:
+    run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
+    tampered = copy.deepcopy(run)
+    idx = _stage_index(tampered, "SESSION_INPUT")
+    tampered["stages"][idx]["available"] = False
+    result = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert result["session_consistent"] is False
+    assert result["run_consistent"] is False

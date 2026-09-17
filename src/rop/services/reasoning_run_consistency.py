@@ -555,20 +555,29 @@ class ReasoningRunConsistencyService:
             and "COMPLETED_STAGE_COUNT_MISMATCH" not in unique_issues
         )
 
-        # Session, observations, entities, missing-information stages are
-        # structural only: their presence and source were checked above.
-        session_consistent = True
-        observations_consistent = (
-            "OBSERVATIONS" in stage_by_id
-            and "STAGE_MISSING" not in unique_issues
-        )
-        entities_consistent = (
-            "ENTITIES" in stage_by_id
-            and "STAGE_MISSING" not in unique_issues
-        )
-        missing_information_consistent = (
-            "MISSING_INFORMATION" in stage_by_id
-            and "STAGE_MISSING" not in unique_issues
+        # Each fixed-stage flag reflects that stage's full expected
+        # semantic triple -- not merely its presence in the stage list.
+        # A tampered flag on any fixed stage flips its dedicated field
+        # to False, so a detailed audit field cannot misleadingly
+        # report consistency while STAGE_SEMANTIC_MISMATCH is present.
+        def _stage_triple_ok(stage_id: str) -> bool:
+            expected = _FIXED_STAGE_TRIPLES.get(stage_id)
+            if expected is None:
+                return stage_id in stage_by_id
+            stage = stage_by_id.get(stage_id)
+            if stage is None:
+                return False
+            return (
+                stage.get("available") == expected[0]
+                and stage.get("consistent") == expected[1]
+                and stage.get("complete") == expected[2]
+            )
+
+        session_consistent = _stage_triple_ok("SESSION_INPUT")
+        observations_consistent = _stage_triple_ok("OBSERVATIONS")
+        entities_consistent = _stage_triple_ok("ENTITIES")
+        missing_information_consistent = _stage_triple_ok(
+            "MISSING_INFORMATION"
         )
 
         run_consistent = not ordered_issues
