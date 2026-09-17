@@ -461,7 +461,7 @@ class ReasoningPipelineService:
             "final_execution_consistency": dict(audit),
             "pipeline_source": PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041,
         }
-        self._validate_result(result, execution, audit)
+        self._validate_result(result, bundle, policy)
         return result
 
 
@@ -496,8 +496,8 @@ class ReasoningPipelineService:
     @staticmethod
     def _validate_result(
         result: dict[str, Any],
-        execution: Mapping[str, Any],
-        audit: Mapping[str, Any],
+        bundle: Mapping[str, Any],
+        policy: Mapping[str, Any],
     ) -> None:
         for field in _RESULT_FIELDS:
             if field not in result:
@@ -614,30 +614,41 @@ class ReasoningPipelineService:
                 + repr(result["pipeline_source"]),
             )
 
-        # Reuse Task 040's execution validator (which itself re-validates
-        # Task 039's structure) for final_execution. Task 039's own
-        # _validate_result needs the full upstream chain
-        # (bundle/policy/assessments/eligible), so we use the lighter
-        # boundary that Task 040 already established for exactly this
-        # purpose.
+        # Reuse Task 039's own full semantic validator for
+        # final_execution. A lightweight shape check is not enough:
+        # Task 041 must reject an execution whose basic shape is valid
+        # but whose fields violate Task 039's contract (e.g. SELECTED
+        # with no selected_candidate, or a selected candidate that is
+        # not in the eligible set). Task 039's _validate_result and
+        # _compute_eligible are instance methods, so we build the same
+        # service instance Task 041 already composes.
         try:
-            DecisionExecutionConsistencyService._validate_execution(
-                result["final_execution"]
+            execution_service = DecisionExecutionService()
+            assessments = bundle["assessment_set"]["assessments"]
+            eligible = execution_service._compute_eligible(assessments)
+            execution_service._validate_result(
+                result["final_execution"],
+                bundle,
+                policy,
+                assessments,
+                eligible,
             )
+        except ReasoningPipelineContractError:
+            raise
         except Exception as exc:
             raise ReasoningPipelineContractError(
                 "INVALID_FINAL_EXECUTION",
-                "final_execution failed its own validator: " + str(exc),
+                "final_execution failed the Task 039 validator: "
+                + str(exc),
             ) from exc
 
         # Reuse Task 040's output validator for final_execution_consistency.
-        # (Task 040's _validate_execution validates Task 039's shape, not
-        # Task 040's own output shape -- so only _validate_result applies
-        # to the audit result here.)
         try:
             DecisionExecutionConsistencyService._validate_result(
                 result["final_execution_consistency"]
             )
+        except ReasoningPipelineContractError:
+            raise
         except Exception as exc:
             raise ReasoningPipelineContractError(
                 "INVALID_FINAL_AUDIT",
