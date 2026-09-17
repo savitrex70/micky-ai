@@ -24,6 +24,7 @@ from rop.schemas import (
     DecisionCandidateSetRead,
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
+    DecisionExecutionRead,
     DecisionInputBundleRead,
     DecisionPolicyRead,
     DecisionInputEligibilityRead,
@@ -71,6 +72,8 @@ from rop.services import (
     DecisionEvaluationConsistencyService,
     DecisionInputBundleContractError,
     DecisionInputBundleService,
+    DecisionExecutionContractError,
+    DecisionExecutionService,
     DecisionInputEligibilityContractError,
     DecisionInputEligibilityService,
     DecisionPolicyContractError,
@@ -145,6 +148,10 @@ decision_input_bundle_service = DecisionInputBundleService(
     decision_candidate_assessment_service,
 )
 decision_policy_service = DecisionPolicyService(decision_input_bundle_service)
+decision_execution_service = DecisionExecutionService(
+    decision_input_bundle_service,
+    decision_policy_service,
+)
 
 
 @router.post(
@@ -1690,4 +1697,81 @@ def get_decision_policy(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-policy contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-execution",
+    response_model=DecisionExecutionRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_execution(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 039: read-only decision-policy execution contract.
+
+    The first boundary at which a candidate may be selected. Consumes
+    the Task 037 decision-input bundle and the Task 038 policy through
+    their established service boundaries, evaluates eligibility from
+    the existing Task 036 criterion results using required criteria
+    only, and returns one of a fixed set of outcome identifiers. It
+    introduces no new scoring, ranking, evidence interpretation, or
+    domain-specific reasoning: eligibility is required-criteria-only,
+    the highest eligible rank decides, and a tie at the highest
+    eligible rank returns UNRESOLVED rather than applying any implicit
+    tie-breaker. There is no probability, confidence, utility,
+    recommendation, diagnosis, treatment, action, or expected-outcome
+    field anywhere in this response.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 039's boundary requires the full candidate set (via the
+    # Task 037 bundle it delegates through), so every page of
+    # candidates must be retrieved -- matching the established
+    # pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_execution_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+        DecisionInputBundleContractError,
+        DecisionPolicyContractError,
+        DecisionExecutionContractError,
+    ) as exc:
+        # Task 039: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-execution contract violation",
         ) from exc
