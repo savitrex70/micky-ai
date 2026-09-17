@@ -70,6 +70,10 @@ from rop.services.medical_entity_recognition import MedicalEntityRecognitionServ
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
+from rop.services.reasoning_pipeline import (
+    ReasoningPipelineContractError,
+    ReasoningPipelineService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -115,6 +119,8 @@ __all__ = [
     "MissingInformationService",
     "ObservationService",
     "ObservationExtractionService",
+    "ReasoningPipelineContractError",
+    "ReasoningPipelineService",
     "ReasoningSessionService",
     "ReasoningStepService",
     "TemplateMatchService",

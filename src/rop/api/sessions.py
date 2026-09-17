@@ -50,6 +50,7 @@ from rop.schemas import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
+    ReasoningPipelineRead,
     ReasoningStepRead,
     TemplateMatchRead,
 )
@@ -99,6 +100,8 @@ from rop.services import (
     MissingInformationService,
     ObservationExtractionService,
     ObservationService,
+    ReasoningPipelineContractError,
+    ReasoningPipelineService,
     ReasoningSessionService,
     ReasoningStepService,
     TemplateMatchService,
@@ -160,6 +163,7 @@ decision_execution_consistency_service = DecisionExecutionConsistencyService(
     decision_policy_service,
     decision_execution_service,
 )
+reasoning_pipeline_service = ReasoningPipelineService()
 
 
 @router.post(
@@ -1863,4 +1867,84 @@ def get_decision_execution_consistency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-execution-consistency contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-pipeline",
+    response_model=ReasoningPipelineRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_pipeline(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 041: read-only end-to-end reasoning pipeline composition.
+
+    Composes the established decision-pipeline stages (Tasks 031-040)
+    into one coherent, inspectable end-to-end run. Reuses only the
+    already-approved service boundaries via
+    ``ReasoningPipelineService`` -- it introduces no new reasoning, no
+    re-selection, no policy override, and no mutation of any upstream
+    result. ``final_execution`` and ``final_execution_consistency`` are
+    the exact canonical outputs of Tasks 039 and 040.
+
+    Valid downstream outcomes such as INPUT_UNAVAILABLE and
+    INPUT_INCONSISTENT remain visible through ``final_execution`` and
+    do not make the pipeline composition itself unavailable. There is
+    no winner, recommendation, diagnosis, treatment, action,
+    probability, confidence, utility, or expected-outcome field
+    anywhere in this response.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional composed view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 041's composition requires the full candidate set, so every
+    # page of candidates must be retrieved -- matching the established
+    # pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return reasoning_pipeline_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+        DecisionInputBundleContractError,
+        DecisionPolicyContractError,
+        DecisionExecutionContractError,
+        DecisionExecutionConsistencyContractError,
+        ReasoningPipelineContractError,
+    ) as exc:
+        # Task 041: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-pipeline contract violation",
         ) from exc
