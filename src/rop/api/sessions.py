@@ -24,6 +24,7 @@ from rop.schemas import (
     DecisionCandidateSetRead,
     DecisionContextRead,
     DecisionEvaluationConsistencyRead,
+    DecisionInputBundleRead,
     DecisionInputEligibilityRead,
     DifferentialDecisionReadinessRead,
     DifferentialRankingConsistencyRead,
@@ -67,6 +68,8 @@ from rop.services import (
     DecisionContextService,
     DecisionEvaluationConsistencyContractError,
     DecisionEvaluationConsistencyService,
+    DecisionInputBundleContractError,
+    DecisionInputBundleService,
     DecisionInputEligibilityContractError,
     DecisionInputEligibilityService,
     DifferentialDecisionReadinessContractError,
@@ -133,6 +136,10 @@ decision_candidate_set_service = DecisionCandidateSetService(
 )
 decision_candidate_assessment_service = DecisionCandidateAssessmentService(
     decision_candidate_set_service
+)
+decision_input_bundle_service = DecisionInputBundleService(
+    decision_candidate_set_service,
+    decision_candidate_assessment_service,
 )
 
 
@@ -1525,4 +1532,84 @@ def get_decision_candidate_assessments(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal decision-candidate-assessment contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/decision-input-bundle",
+    response_model=DecisionInputBundleRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_decision_input_bundle(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 037: read-only decision-input bundle contract.
+
+    The final audited input package before the future decision layer.
+    Packages the Task 035 candidate set and the Task 036 assessment set
+    into one cross-validated structure, verifying that both refer to
+    the same candidate sequence, in the same order, with matching
+    identity and metadata. Consumes Task 035 and Task 036 unchanged via
+    ``DecisionInputBundleService`` -- it does not reach into evidence,
+    observations, entities, hypothesis scores, ranking internals, or
+    repositories, does not walk Tasks 031-034 itself, and duplicates no
+    logic already owned by Tasks 020-036.
+
+    Answers "are the audited candidate set and the audited candidate
+    assessments a single consistent package?" -- never "which candidate
+    should be chosen?". There is no winner, best candidate, diagnosis,
+    recommendation, action, probability, confidence, utility, weighted
+    score, expected outcome, or treatment anywhere in this response. It
+    never reranks, rescores, filters, deduplicates, reorders, or
+    silently repairs either upstream structure. It never writes to the
+    database, persists nothing, and modifies no upstream contract.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional derived view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    # Task 037's contract requires the full candidate set, so every page
+    # of candidates must be retrieved -- matching the Task
+    # 032/033/034/035/036 pagination fix.
+    candidates: list[CandidateHypothesis] = []
+    page_offset = 0
+    page_size = 100
+    while True:
+        page = candidate_generation_service.list_by_session(
+            db, session_id, offset=page_offset, limit=page_size
+        )
+        candidates.extend(page)
+        if len(page) < page_size:
+            break
+        page_offset += page_size
+
+    try:
+        return decision_input_bundle_service.build_for_session(
+            db, session_id, candidates
+        )
+    except (
+        HypothesisScoreContractError,
+        DifferentialRankingContractError,
+        DifferentialRankingSummaryContractError,
+        DifferentialRankingConsistencyContractError,
+        DifferentialDecisionReadinessContractError,
+        DecisionContextContractError,
+        DecisionCandidateEvaluationContractError,
+        DecisionEvaluationConsistencyContractError,
+        DecisionInputEligibilityContractError,
+        DecisionCandidateSetContractError,
+        DecisionCandidateAssessmentContractError,
+        DecisionInputBundleContractError,
+    ) as exc:
+        # Task 037: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal decision-input-bundle contract violation",
         ) from exc
