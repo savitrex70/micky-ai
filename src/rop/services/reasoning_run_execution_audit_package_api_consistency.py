@@ -161,8 +161,10 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         if sid is None:
             issues.append("SESSION_ID_INVALID")
 
-        # Method check.
-        if not isinstance(method, str) or method.upper() != _EXPECTED_METHOD:
+        # Method check: the Task 050 contract requires exactly "POST".
+        # No case normalization -- "post", "Post", and "pOsT" are all
+        # invalid HTTP method representations of the contract.
+        if method != _EXPECTED_METHOD:
             issues.append("INVALID_METHOD")
 
         # Path check.

@@ -560,3 +560,61 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
+# ---------------------------------------------------------------------------
+# Round 2: exact method case sensitivity
+# ---------------------------------------------------------------------------
+
+
+def test_method_post_uppercase_is_consistent() -> None:
+    sid, _, path, status, body = _real_api_response()
+    result = _service().build(
+        session_id=sid,
+        method="POST",
+        path=path,
+        status_code=status,
+        response_body=body,
+    )
+    assert result["method_consistent"] is True
+    assert "INVALID_METHOD" not in result["consistency_issues"]
+
+
+def test_method_lowercase_post_is_invalid() -> None:
+    sid, _, path, status, body = _real_api_response()
+    result = _service().build(
+        session_id=sid,
+        method="post",
+        path=path,
+        status_code=status,
+        response_body=body,
+    )
+    assert result["method_consistent"] is False
+    assert "INVALID_METHOD" in result["consistency_issues"]
+    assert result["api_consistent"] is False
+
+
+def test_method_titlecase_post_is_invalid() -> None:
+    sid, _, path, status, body = _real_api_response()
+    result = _service().build(
+        session_id=sid,
+        method="Post",
+        path=path,
+        status_code=status,
+        response_body=body,
+    )
+    assert result["method_consistent"] is False
+    assert "INVALID_METHOD" in result["consistency_issues"]
+
+
+def test_method_mixedcase_post_is_invalid() -> None:
+    sid, _, path, status, body = _real_api_response()
+    result = _service().build(
+        session_id=sid,
+        method="pOsT",
+        path=path,
+        status_code=status,
+        response_body=body,
+    )
+    assert result["method_consistent"] is False
+    assert "INVALID_METHOD" in result["consistency_issues"]
+
