@@ -36,12 +36,26 @@ _RESULT_BOOLEAN_FIELDS = ("available", "bundle_consistent")
 class ReasoningRunExecutionBundleContractError(Exception):
     """Task 046: the bundle could not be assembled into a valid contract.
 
-    Raised when the Task 044 execution result or the Task 045 audit
-    result is not shaped like its own established contract, when
-    session identity disagrees, when a fixed source identifier is
-    wrong, or when the two nested contracts disagree about whether the
-    execution was consistent. A valid FAILED execution is not itself a
-    bundle failure -- that is a valid bundle.
+    Raised only when:
+
+    - the Task 044 execution result is not shaped like its own contract,
+    - the Task 045 audit result is not shaped like its own contract,
+    - session identity or a fixed source identifier disagrees, or
+    - the Task 045 audit itself is unavailable or internally invalid.
+
+    Note that ``execution.execution_consistent`` (Task 044) and
+    ``execution_consistency.execution_consistent`` (Task 045) have
+    different meanings and are intentionally NOT required to be equal:
+
+    - Task 044's value answers whether the underlying reasoning run
+      was consistent.
+    - Task 045's value answers whether the Task 044 execution contract
+      itself was internally consistent.
+
+    A valid FAILED execution, or a valid execution whose underlying
+    reasoning run is legitimately inconsistent, is therefore a valid
+    Task 046 bundle: both nested contracts are well-formed, and the
+    bundle reports ``bundle_consistent = execution_consistency.execution_consistent``.
     """
 
     def __init__(self, invariant: str, detail: str) -> None:
@@ -293,6 +307,22 @@ class ReasoningRunExecutionBundleService:
                 "INVALID_EXECUTION_CONSISTENCY",
                 "nested audit failed its own validator: " + str(exc),
             ) from exc
+        # Audit availability and session consistency, mirrored from
+        # build() so a manually supplied malformed bundle cannot
+        # bypass them.
+        if result["execution_consistency"].get("available") is not True:
+            raise ReasoningRunExecutionBundleContractError(
+                "AUDIT_UNAVAILABLE",
+                "execution_consistency.available is not True",
+            )
+        if (
+            result["execution_consistency"].get("session_consistent")
+            is not True
+        ):
+            raise ReasoningRunExecutionBundleContractError(
+                "SESSION_CONSISTENCY_FALSE",
+                "execution_consistency.session_consistent is not True",
+            )
         # Bundle consistency relationship.
         expected = bool(
             result["execution_consistency"].get(

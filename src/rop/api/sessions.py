@@ -2122,11 +2122,18 @@ def execute_reasoning_run_audited(
     does not add persistence. ``execution`` and ``execution_consistency``
     are the exact canonical outputs of their owners.
 
-    A valid FAILED execution is not itself a bundle failure -- Task 045
-    audits it as structurally consistent, and Task 046 returns an
-    available bundle with ``bundle_consistent=True``. Only a genuine
-    contract mismatch (identity, source, or audit-vs-execution
-    disagreement) raises an internal error.
+    Note that ``execution.execution_consistent`` (Task 044) and
+    ``execution_consistency.execution_consistent`` (Task 045) have
+    different meanings and are intentionally NOT required to be equal.
+    Task 044's value is whether the underlying reasoning run was
+    consistent; Task 045's value is whether the Task 044 execution
+    contract itself was internally consistent. A valid FAILED
+    execution, or a valid execution whose underlying reasoning run is
+    legitimately inconsistent, is therefore still a valid bundle:
+    ``bundle_consistent`` simply mirrors the Task 045 audit result.
+    Only a genuine structural contract failure (invalid nested
+    contract, mismatched session/source identity, or an unavailable
+    audit) raises an internal error.
 
     Does not modify the behavior or fields of any existing endpoint --
     this is an additional composed view over the same underlying

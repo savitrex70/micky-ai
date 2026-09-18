@@ -322,37 +322,46 @@ def test_bundle_rejects_wrong_audit_source() -> None:
 
 
 def test_bundle_inconsistent_when_audit_reports_inconsistent() -> None:
-    """If Task 045 legitimately reports execution_consistent=False, the
-    bundle is still available but bundle_consistent=False."""
+    """When Task 045 legitimately reports execution_consistent=False,
+    the bundle is still available but bundle_consistent=False.
+
+    To get a valid Task 045 audit with execution_consistent=False, we
+    need an execution whose Task 044 validator accepts it but Task 045
+    flags a mismatch. Task 044 only checks top-level fields and that
+    the nested run is a dict; it does not delegate to Task 042's own
+    validator. Task 045 does. So tampering the nested Task 042
+    run_source produces an execution Task 044 accepts but Task 045
+    legitimately flags.
+    """
     sid = _create_session("Patient reports chest pain")
-    # Force a FAILED execution, then tamper the audit so its
-    # execution_consistent flag is False.
-    from rop.services.observation_extraction import (
-        ObservationExtractionService,
-    )
+    r = client.post(f"/sessions/{sid}/reasoning-run/execute")
+    assert r.status_code == 200
+    execution = r.json()
 
-    original = ObservationExtractionService.extract_and_store
+    # Tamper the nested Task 042 run_source. Task 044's validator does
+    # not inspect the nested run's source; Task 045's does.
+    execution["reasoning_run"]["run_source"] = "WRONG"
 
-    def boom(self, db, session_id, text):
-        raise RuntimeError("forced")
-
-    ObservationExtractionService.extract_and_store = boom
-    try:
-        r = client.post(f"/sessions/{sid}/reasoning-run/execute")
-        execution = r.json()
-    finally:
-        ObservationExtractionService.extract_and_store = original
     audit = ReasoningRunExecutionConsistencyService().build(
         execution=execution
     )
-    # Valid FAILED audit -- consistent
-    assert audit["execution_consistent"] is True
+    # Task 045 audit is valid and available, but reports inconsistency.
+    assert audit["available"] is True
+    assert audit["execution_consistent"] is False
+    assert audit["consistency_issues"] != []
+
     bundle = _service().build(
         session_id=UUID(sid),
         execution=execution,
         execution_consistency=audit,
     )
-    assert bundle["bundle_consistent"] is True
+    # The bundle itself is available/valid; only bundle_consistent
+    # reflects the audit's verdict.
+    assert bundle["available"] is True
+    assert bundle["bundle_consistent"] is False
+    assert bundle["bundle_consistent"] == (
+        bundle["execution_consistency"]["execution_consistent"]
+    )
 
 
 # ---------------------------------------------------------------------------
