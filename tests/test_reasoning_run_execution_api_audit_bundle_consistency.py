@@ -569,3 +569,79 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
+# ---------------------------------------------------------------------------
+# Round 2: fingerprint-computation failure is a provenance failure
+# ---------------------------------------------------------------------------
+
+
+def test_fingerprint_compute_failure_is_provenance_failure(
+    monkeypatch,
+) -> None:
+    """If the independent fingerprint computation raises, Task 054 must
+    record AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED, set
+    package_audit_provenance_consistent=False, and set
+    bundle_consistent=False. Failure to produce the proof must never
+    count as a passing provenance check.
+
+    Note: the bundle is built BEFORE the monkeypatch is installed, so
+    Task 052's own build path is unaffected; only Task 054's
+    independent recomputation uses the failing double.
+    """
+    from rop.services.reasoning_run_execution_api_audit_package_consistency import (
+        ReasoningRunExecutionApiAuditPackageConsistencyService,
+    )
+
+    bundle = _valid_bundle()
+    before = copy.deepcopy(bundle)
+
+    def boom(package):
+        raise RuntimeError("forced fingerprint failure")
+
+    monkeypatch.setattr(
+        ReasoningRunExecutionApiAuditPackageConsistencyService,
+        "_package_fingerprint",
+        staticmethod(boom),
+    )
+
+    result = _service().build(bundle=bundle)
+
+    assert (
+        "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
+        in result["consistency_issues"]
+    )
+    assert result["package_audit_provenance_consistent"] is False
+    assert result["bundle_consistent"] is False
+    # Input is not mutated.
+    assert bundle == before
+
+
+def test_fingerprint_compute_failure_does_not_cascade_into_mismatch(
+    monkeypatch,
+) -> None:
+    """When computation fails, only the COMPUTE_FAILED issue should
+    appear -- not also a spurious MISMATCH."""
+    from rop.services.reasoning_run_execution_api_audit_package_consistency import (
+        ReasoningRunExecutionApiAuditPackageConsistencyService,
+    )
+
+    bundle = _valid_bundle()
+
+    def boom(package):
+        raise RuntimeError("forced")
+
+    monkeypatch.setattr(
+        ReasoningRunExecutionApiAuditPackageConsistencyService,
+        "_package_fingerprint",
+        staticmethod(boom),
+    )
+
+    result = _service().build(bundle=bundle)
+    assert (
+        "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
+        not in result["consistency_issues"]
+    )
+    assert result["consistency_issues"] == [
+        "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
+    ]
+

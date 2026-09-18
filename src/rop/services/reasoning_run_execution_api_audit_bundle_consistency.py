@@ -87,6 +87,7 @@ _ISSUE_ORDER = (
     "PATH_MISMATCH",
     "STATUS_MISMATCH",
     "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
+    "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
     "BUNDLE_RELATIONSHIP_MISMATCH",
     "RESPONSE_PACKAGE_SOURCE_MISMATCH",
     "PACKAGE_AUDIT_SOURCE_MISMATCH",
@@ -271,21 +272,26 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             isinstance(api_audit_package, Mapping)
             and isinstance(api_audit_package_consistency, Mapping)
         ):
+            # Failure to compute the proof is itself a provenance
+            # failure. It must never be silently converted to a
+            # skip-the-check that leaves the flag True.
             try:
                 expected_fingerprint = (
                     ReasoningRunExecutionApiAuditPackageConsistencyService
                     ._package_fingerprint(api_audit_package)
                 )
             except Exception:
-                expected_fingerprint = None
-            if (
-                expected_fingerprint is not None
-                and api_audit_package_consistency.get(
-                    "audited_package_fingerprint"
+                issues.append(
+                    "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
                 )
-                != expected_fingerprint
-            ):
-                issues.append("AUDITED_PACKAGE_FINGERPRINT_MISMATCH")
+            else:
+                if (
+                    api_audit_package_consistency.get(
+                        "audited_package_fingerprint"
+                    )
+                    != expected_fingerprint
+                ):
+                    issues.append("AUDITED_PACKAGE_FINGERPRINT_MISMATCH")
 
         # --- Bundle relationship ---
         # bundle.bundle_consistent must equal
@@ -350,8 +356,12 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
         nested_package_audit_consistent = (
             "NESTED_PACKAGE_AUDIT_MISMATCH" not in unique_issues
         )
-        package_audit_provenance_consistent = (
-            "AUDITED_PACKAGE_FINGERPRINT_MISMATCH" not in unique_issues
+        package_audit_provenance_consistent = not any(
+            i in unique_issues
+            for i in (
+                "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
+                "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
+            )
         )
         bundle_relationship_consistent = (
             "BUNDLE_RELATIONSHIP_MISMATCH" not in unique_issues
