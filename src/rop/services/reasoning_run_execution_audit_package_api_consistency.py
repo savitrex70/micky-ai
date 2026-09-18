@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -45,6 +47,11 @@ _RESULT_REQUIRED_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "api_consistency_source",
+    "audited_session_id",
+    "audited_method",
+    "audited_path",
+    "audited_status_code",
+    "audited_response_fingerprint",
 )
 
 _RESULT_BOOLEAN_FIELDS = (
@@ -218,6 +225,28 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         ):
             issues.append("PACKAGE_SOURCE_MISMATCH")
 
+        # Provenance: bind the audit to the exact inputs it audited.
+        raw_session_id_for_provenance = session_id
+        if isinstance(raw_session_id_for_provenance, UUID):
+            audited_session_id = str(raw_session_id_for_provenance)
+        elif isinstance(raw_session_id_for_provenance, str):
+            audited_session_id = raw_session_id_for_provenance
+        else:
+            audited_session_id = None
+
+        audited_method = method if isinstance(method, str) else None
+        audited_path = path if isinstance(path, str) else None
+        audited_status_code = (
+            status_code
+            if isinstance(status_code, int)
+            and not isinstance(status_code, bool)
+            else None
+        )
+        audited_response_fingerprint = (
+            ReasoningRunExecutionAuditPackageApiConsistencyService
+            ._response_fingerprint(response_body)
+        )
+
         # Deterministic ordering, dedupe.
         unique_issues = set(issues)
         ordered_issues = [i for i in _ISSUE_ORDER if i in unique_issues]
@@ -270,9 +299,56 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
             "api_consistency_source": (
                 REASONING_RUN_EXECUTION_AUDIT_PACKAGE_API_CONSISTENCY_SOURCE_TASK_050
             ),
+            "audited_session_id": audited_session_id,
+            "audited_method": audited_method,
+            "audited_path": audited_path,
+            "audited_status_code": audited_status_code,
+            "audited_response_fingerprint": audited_response_fingerprint,
         }
         self._validate_result(result)
         return result
+
+    @staticmethod
+    def _canonicalize(value: Any) -> Any:
+        """Return a deterministic, JSON-serializable canonical form.
+
+        UUIDs become strings so in-process UUID representations and
+        JSON string representations of the same response body hash
+        identically. Mapping keys are sorted.
+        """
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(k): ReasoningRunExecutionAuditPackageApiConsistencyService
+                ._canonicalize(v)
+                for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+            }
+        if isinstance(value, list):
+            return [
+                ReasoningRunExecutionAuditPackageApiConsistencyService
+                ._canonicalize(item)
+                for item in value
+            ]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _response_fingerprint(response_body: Mapping[str, Any]) -> str:
+        """Return a deterministic SHA-256 hex digest of the response body.
+
+        Stable across repeated identical inputs and across UUID-vs-string
+        representations of the same logical response.
+        """
+        canonical = (
+            ReasoningRunExecutionAuditPackageApiConsistencyService
+            ._canonicalize(response_body)
+        )
+        payload = json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _validate_result(result: dict[str, Any]) -> None:
@@ -326,4 +402,26 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
             raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
                 "API_CONSISTENT_MISMATCH",
                 "api_consistent does not match consistency_issues",
+            )
+        # Provenance field types (all nullable).
+        for field in (
+            "audited_session_id",
+            "audited_method",
+            "audited_path",
+            "audited_response_fingerprint",
+        ):
+            value = result[field]
+            if value is not None and not isinstance(value, str):
+                raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
+                    field.upper() + "_TYPE",
+                    field + " is not a string or None: " + repr(value),
+                )
+        raw_status = result["audited_status_code"]
+        if raw_status is not None and (
+            not isinstance(raw_status, int) or isinstance(raw_status, bool)
+        ):
+            raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
+                "AUDITED_STATUS_CODE_TYPE",
+                "audited_status_code is not an int or None: "
+                + repr(raw_status),
             )

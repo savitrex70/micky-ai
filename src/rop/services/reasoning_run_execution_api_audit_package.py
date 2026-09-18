@@ -259,6 +259,56 @@ class ReasoningRunExecutionApiAuditPackageService:
                 "api_consistency.status_consistent is not True",
             )
 
+        # Provenance: the audit must have been produced from this exact
+        # session, method, path, status code, and response body. This
+        # catches the stale-audit case where a valid Task 050 result
+        # from one response is paired with a different valid response.
+        audited_session_id = api_consistency.get("audited_session_id")
+        if audited_session_id != str(sid):
+            raise ReasoningRunExecutionApiAuditPackageContractError(
+                "SESSION_ID_MISMATCH",
+                "api_consistency.audited_session_id does not match the "
+                "supplied session_id: "
+                + repr(audited_session_id),
+            )
+        audited_method = api_consistency.get("audited_method")
+        if audited_method != method:
+            raise ReasoningRunExecutionApiAuditPackageContractError(
+                "INVALID_METHOD",
+                "api_consistency.audited_method does not match the "
+                "supplied method: "
+                + repr(audited_method),
+            )
+        audited_path = api_consistency.get("audited_path")
+        if audited_path != path:
+            raise ReasoningRunExecutionApiAuditPackageContractError(
+                "INVALID_PATH",
+                "api_consistency.audited_path does not match the "
+                "supplied path: "
+                + repr(audited_path),
+            )
+        audited_status_code = api_consistency.get("audited_status_code")
+        if audited_status_code != status_code:
+            raise ReasoningRunExecutionApiAuditPackageContractError(
+                "INVALID_STATUS",
+                "api_consistency.audited_status_code does not match the "
+                "supplied status_code: "
+                + repr(audited_status_code),
+            )
+        expected_fingerprint = (
+            ReasoningRunExecutionAuditPackageApiConsistencyService
+            ._response_fingerprint(response)
+        )
+        audited_fingerprint = api_consistency.get(
+            "audited_response_fingerprint"
+        )
+        if audited_fingerprint != expected_fingerprint:
+            raise ReasoningRunExecutionApiAuditPackageContractError(
+                "RESPONSE_MISMATCH",
+                "api_consistency.audited_response_fingerprint does not "
+                "match the supplied response body",
+            )
+
         # Package consistency derives only from Task 050's api_consistent.
         expected_package_consistent = bool(
             api_consistency.get("api_consistent", False)

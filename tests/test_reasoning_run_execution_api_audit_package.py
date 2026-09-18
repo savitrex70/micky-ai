@@ -514,3 +514,84 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
+# ---------------------------------------------------------------------------
+# Provenance binding (reviewer round 2)
+# ---------------------------------------------------------------------------
+
+
+def test_stale_audit_from_other_response_rejected() -> None:
+    """Valid Response A + valid audit for A + different valid Response B
+    -> Task 051 must reject the mismatch."""
+    # Build Response A and its audit.
+    sid_a_str = _create_session("Patient reports chest pain")
+    sid_a = UUID(sid_a_str)
+    path_a = f"/sessions/{sid_a_str}/reasoning-run/execute-fully-audited"
+    r_a = client.post(path_a)
+    assert r_a.status_code == 200
+    body_a = r_a.json()
+    audit_a = ReasoningRunExecutionAuditPackageApiConsistencyService().build(
+        session_id=sid_a,
+        method="POST",
+        path=path_a,
+        status_code=200,
+        response_body=body_a,
+    )
+
+    # Build a *different* valid Response B (different session).
+    sid_b_str = _create_session("Patient reports different symptoms")
+    sid_b = UUID(sid_b_str)
+    path_b = f"/sessions/{sid_b_str}/reasoning-run/execute-fully-audited"
+    r_b = client.post(path_b)
+    assert r_b.status_code == 200
+    body_b = r_b.json()
+
+    # Pair B's response with A's audit -- must be rejected.
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageContractError
+    ) as ei:
+        _service().build(
+            session_id=sid_b,
+            method="POST",
+            path=path_b,
+            status_code=200,
+            response=body_b,
+            api_consistency=audit_a,
+        )
+    # The first mismatch caught will be the session id.
+    assert ei.value.invariant in (
+        "SESSION_ID_MISMATCH",
+        "RESPONSE_MISMATCH",
+        "INVALID_PATH",
+    )
+
+
+def test_tampered_fingerprint_rejected() -> None:
+    """If the audit's response fingerprint doesn't match the supplied
+    response, Task 051 rejects."""
+    sid, method, path, status, body, audit = _real_response_and_audit()
+    tampered = copy.deepcopy(audit)
+    tampered["audited_response_fingerprint"] = "0" * 64
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageContractError
+    ) as ei:
+        _service().build(
+            session_id=sid,
+            method=method,
+            path=path,
+            status_code=status,
+            response=body,
+            api_consistency=tampered,
+        )
+    assert ei.value.invariant == "RESPONSE_MISMATCH"
+
+
+def test_audit_provenance_fields_present() -> None:
+    sid, method, path, status, body, audit = _real_response_and_audit()
+    assert audit["audited_session_id"] == str(sid)
+    assert audit["audited_method"] == "POST"
+    assert audit["audited_path"] == path
+    assert audit["audited_status_code"] == 200
+    assert isinstance(audit["audited_response_fingerprint"], str)
+    assert len(audit["audited_response_fingerprint"]) == 64
+

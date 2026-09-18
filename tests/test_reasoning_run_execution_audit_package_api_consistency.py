@@ -36,6 +36,11 @@ RESULT_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "api_consistency_source",
+    "audited_session_id",
+    "audited_method",
+    "audited_path",
+    "audited_status_code",
+    "audited_response_fingerprint",
 )
 
 

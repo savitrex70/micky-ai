@@ -33,3 +33,13 @@ class ReasoningRunExecutionAuditPackageApiConsistencyRead(BaseModel):
     metadata_consistent: bool
     consistency_issues: list[str]
     api_consistency_source: str
+
+    # Provenance: binds the audit to the exact HTTP metadata and
+    # response body it audited. Enables downstream composition layers
+    # (e.g. Task 051) to verify that a supplied audit corresponds to
+    # the supplied response without re-invoking Task 050.
+    audited_session_id: str | None
+    audited_method: str | None
+    audited_path: str | None
+    audited_status_code: int | None
+    audited_response_fingerprint: str | None
