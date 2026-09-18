@@ -29,7 +29,7 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers"
+addopts = "--strict-config --strict-markers -m 'not ollama_smoke'"
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [

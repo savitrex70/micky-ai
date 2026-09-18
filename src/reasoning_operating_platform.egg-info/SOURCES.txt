@@ -10,6 +10,7 @@ src/rop/config.py
 src/rop/database.py
 src/rop/logging_config.py
 src/rop/main.py
+src/rop/prompts.py
 src/rop/api/__init__.py
 src/rop/api/sessions.py
 src/rop/candidates/__init__.py
@@ -77,6 +78,7 @@ src/rop/schemas/evidence_summary.py
 src/rop/schemas/extraction.py
 src/rop/schemas/hypothesis.py
 src/rop/schemas/hypothesis_score.py
+src/rop/schemas/llm_reasoning.py
 src/rop/schemas/missing_information.py
 src/rop/schemas/observation.py
 src/rop/schemas/reasoning_context.py
@@ -119,10 +121,13 @@ src/rop/services/evidence_aggregation.py
 src/rop/services/evidence_evaluation.py
 src/rop/services/hypothesis.py
 src/rop/services/hypothesis_scoring.py
+src/rop/services/llm_reasoning.py
+src/rop/services/llm_reasoning_provider.py
 src/rop/services/medical_entity_recognition.py
 src/rop/services/missing_information.py
 src/rop/services/observation.py
 src/rop/services/observation_extraction.py
+src/rop/services/ollama_reasoning_provider.py
 src/rop/services/reasoning_context.py
 src/rop/services/reasoning_context_consistency.py
 src/rop/services/reasoning_pipeline.py
@@ -174,6 +179,8 @@ tests/test_hypothesis.py
 tests/test_hypothesis_score_contract.py
 tests/test_hypothesis_score_interpretation.py
 tests/test_hypothesis_scoring.py
+tests/test_llm_reasoning.py
+tests/test_llm_reasoning_ollama_smoke.py
 tests/test_medical_entity_recognition.py
 tests/test_missing_information.py
 tests/test_observation.py

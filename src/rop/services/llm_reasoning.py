@@ -144,8 +144,16 @@ class LLMReasoningService:
                 db, session_id
             )
         except ReasoningContextContractError as exc:
+            # Distinguish "the session/input does not exist" from
+            # "the upstream state is malformed or inconsistent" so a
+            # broken session state is not silently classified as
+            # merely absent.
+            if exc.invariant == "SESSION_NOT_FOUND":
+                outcome = _OUTCOME_INPUT_UNAVAILABLE
+            else:
+                outcome = _OUTCOME_INPUT_INCONSISTENT
             raise LLMReasoningContractError(
-                _OUTCOME_INPUT_UNAVAILABLE,
+                outcome,
                 "Task 055 context could not be produced: " + str(exc),
             ) from exc
         return self.build(context=context)
@@ -352,7 +360,11 @@ class LLMReasoningService:
             ]
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
-        return str(value)
+        raise LLMReasoningContractError(
+            _OUTCOME_INPUT_INCONSISTENT,
+            "unsupported value in context during serialization: "
+            + type(value).__name__,
+        )
 
     @staticmethod
     def _fingerprint(serialized: Mapping[str, Any]) -> str:
@@ -413,10 +425,15 @@ class LLMReasoningService:
                         "supplied context: " + str(mid),
                     )
 
-        if seen_candidates != candidate_ids:
-            missing = candidate_ids - seen_candidates
+        expected_order = [c.id for c in context["candidate_state"]]
+        actual_order = [a.candidate_id for a in assessments]
+        if actual_order != expected_order:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                "proposal does not assess every supplied candidate; "
-                "missing: " + ", ".join(str(x) for x in sorted(missing)),
+                "candidate_assessments do not match the supplied "
+                "candidate_state order (expected "
+                + ", ".join(str(x) for x in expected_order)
+                + "; got "
+                + ", ".join(str(x) for x in actual_order)
+                + ")",
             )

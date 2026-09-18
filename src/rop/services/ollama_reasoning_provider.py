@@ -42,16 +42,20 @@ class OllamaReasoningProvider:
             if model_name is not None
             else settings.ollama_reasoning_model
         )
-        if not resolved_model:
-            raise LLMReasoningProviderError(
-                "OLLAMA_REASONING_MODEL is not configured"
-            )
-        self.model_name = resolved_model
+        # Configuration is validated lazily at call time so that a
+        # raw provider exception never escapes construction. The Task
+        # 057 service maps the failure to MODEL_UNAVAILABLE when it
+        # calls generate_reasoning.
+        self.model_name = resolved_model or ""
         self._timeout = timeout_seconds
 
     def generate_reasoning(
         self, request: LLMReasoningRequest
     ) -> LLMReasoningProviderResponse:
+        if not self.model_name:
+            raise LLMReasoningProviderError(
+                "OLLAMA_REASONING_MODEL is not configured"
+            )
         body = {
             "model": self.model_name,
             "stream": False,

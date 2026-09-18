@@ -553,3 +553,140 @@ def test_does_not_mutate_context() -> None:
     assert list(ctx["reasoning_pipeline"].keys()) == pipeline_keys
     assert list(ctx["reasoning_run_consistency"].keys()) == audit_keys
 
+# ---------------------------------------------------------------------------
+# Task 057 follow-up: blocker-fix regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_task055_session_not_found_maps_to_input_unavailable() -> None:
+    from rop.services.reasoning_context import (
+        ReasoningContextContractError,
+    )
+
+    class BoomContext:
+        def build_for_session(self, *_a, **_k):
+            raise ReasoningContextContractError(
+                "SESSION_NOT_FOUND", "session does not exist"
+            )
+
+    provider = FakeProvider(response_text="")
+    service = LLMReasoningService(
+        reasoning_context_service=BoomContext(),  # type: ignore[arg-type]
+        provider=provider,
+    )
+    with pytest.raises(LLMReasoningContractError) as ei:
+        service.build_for_session(db=None, session_id=uuid4())  # type: ignore[arg-type]
+    assert ei.value.invariant == "INPUT_UNAVAILABLE"
+    assert provider.calls == 0
+
+
+def test_task055_malformed_state_maps_to_input_inconsistent() -> None:
+    from rop.services.reasoning_context import (
+        ReasoningContextContractError,
+    )
+
+    class BoomContext:
+        def build_for_session(self, *_a, **_k):
+            raise ReasoningContextContractError(
+                "INVALID_REASONING_RUN", "bad nested structure"
+            )
+
+    provider = FakeProvider(response_text="")
+    service = LLMReasoningService(
+        reasoning_context_service=BoomContext(),  # type: ignore[arg-type]
+        provider=provider,
+    )
+    with pytest.raises(LLMReasoningContractError) as ei:
+        service.build_for_session(db=None, session_id=uuid4())  # type: ignore[arg-type]
+    assert ei.value.invariant == "INPUT_INCONSISTENT"
+    assert provider.calls == 0
+
+
+def test_reordered_candidate_assessments_rejected() -> None:
+    ctx = _valid_context()
+    if len(ctx["candidate_state"]) < 2:
+        pytest.skip("seed session produced only one candidate")
+    output = json.loads(_valid_model_output(ctx))
+    output["candidate_assessments"] = list(
+        reversed(output["candidate_assessments"])
+    )
+    provider = FakeProvider(response_text=json.dumps(output))
+    with pytest.raises(LLMReasoningContractError) as ei:
+        _service_with(provider).build(context=ctx)
+    assert ei.value.invariant == "MODEL_OUTPUT_INCONSISTENT"
+
+
+def test_to_json_safe_rejects_unsupported_value() -> None:
+    with pytest.raises(LLMReasoningContractError) as ei:
+        LLMReasoningService._to_json_safe(object())
+    assert ei.value.invariant == "INPUT_INCONSISTENT"
+
+
+def test_to_json_safe_accepts_supported_values() -> None:
+    assert LLMReasoningService._to_json_safe("x") == "x"
+    assert LLMReasoningService._to_json_safe(1) == 1
+    assert LLMReasoningService._to_json_safe(1.5) == 1.5
+    assert LLMReasoningService._to_json_safe(True) is True
+    assert LLMReasoningService._to_json_safe(None) is None
+    u = uuid4()
+    assert LLMReasoningService._to_json_safe(u) == str(u)
+    assert LLMReasoningService._to_json_safe({"a": [u]}) == {
+        "a": [str(u)]
+    }
+
+
+def test_ollama_provider_construction_does_not_raise_without_model() -> None:
+    from rop.services.ollama_reasoning_provider import (
+        OllamaReasoningProvider,
+    )
+
+    provider = OllamaReasoningProvider(model_name="")
+    assert provider.model_name == ""
+
+
+def test_ollama_provider_generate_raises_without_model() -> None:
+    from rop.services.llm_reasoning_provider import (
+        LLMReasoningProviderError,
+        LLMReasoningRequest,
+    )
+    from rop.services.ollama_reasoning_provider import (
+        OllamaReasoningProvider,
+    )
+
+    provider = OllamaReasoningProvider(model_name="")
+    request = LLMReasoningRequest(
+        payload={}, context_fingerprint="0" * 64
+    )
+    with pytest.raises(LLMReasoningProviderError):
+        provider.generate_reasoning(request)
+
+
+def test_ollama_provider_without_model_maps_to_model_unavailable() -> None:
+    from rop.services.ollama_reasoning_provider import (
+        OllamaReasoningProvider,
+    )
+
+    ctx = _valid_context()
+    provider = OllamaReasoningProvider(model_name="")
+    service = LLMReasoningService(provider=provider)
+    with pytest.raises(LLMReasoningContractError) as ei:
+        service.build(context=ctx)
+    assert ei.value.invariant == "MODEL_UNAVAILABLE"
+
+
+def test_pyproject_excludes_ollama_smoke_by_default() -> None:
+    import tomllib
+    from pathlib import Path
+
+    pyproject_path = (
+        Path(__file__).resolve().parent.parent / "pyproject.toml"
+    )
+    with pyproject_path.open("rb") as f:
+        data = tomllib.load(f)
+    ini = data["tool"]["pytest"]["ini_options"]
+    addopts = ini["addopts"]
+    assert "-m" in addopts
+    assert "not ollama_smoke" in addopts
+    markers = ini["markers"]
+    assert any("ollama_smoke" in m for m in markers)
+
