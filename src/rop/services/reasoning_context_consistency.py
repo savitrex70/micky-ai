@@ -75,6 +75,7 @@ _ISSUE_ORDER = (
     "INVALID_CONTEXT_SOURCE",
     "INVALID_NESTED_REASONING_RUN",
     "INVALID_NESTED_REASONING_RUN_CONSISTENCY",
+    "AUDIT_PROVENANCE_CHECK_UNAVAILABLE",
     "AUDIT_PROVENANCE_COMPUTE_FAILED",
     "AUDIT_PROVENANCE_MISMATCH",
     "CANDIDATE_COUNT_MISMATCH",
@@ -160,6 +161,7 @@ class ReasoningContextConsistencyService:
 
         # --- Nested Task 042 ---
         reasoning_pipeline = context.get("reasoning_pipeline")
+        pipeline_valid = False
         if not isinstance(reasoning_pipeline, Mapping):
             _add("INVALID_REASONING_PIPELINE_TYPE")
             _add("INVALID_NESTED_REASONING_RUN")
@@ -168,11 +170,13 @@ class ReasoningContextConsistencyService:
                 ReasoningRunService._validate_result(
                     dict(reasoning_pipeline)
                 )
+                pipeline_valid = True
             except Exception:
                 _add("INVALID_NESTED_REASONING_RUN")
 
         # --- Nested Task 043 ---
         reasoning_run_consistency = context.get("reasoning_run_consistency")
+        audit_valid = False
         if not isinstance(reasoning_run_consistency, Mapping):
             _add("INVALID_REASONING_RUN_CONSISTENCY_TYPE")
             _add("INVALID_NESTED_REASONING_RUN_CONSISTENCY")
@@ -181,13 +185,17 @@ class ReasoningContextConsistencyService:
                 ReasoningRunConsistencyService._validate_result(
                     dict(reasoning_run_consistency)
                 )
+                audit_valid = True
             except Exception:
                 _add("INVALID_NESTED_REASONING_RUN_CONSISTENCY")
 
-        # --- Provenance (recompute fingerprint from the supplied run) ---
-        if isinstance(reasoning_pipeline, Mapping) and isinstance(
-            reasoning_run_consistency, Mapping
-        ):
+        # --- Provenance ---
+        # Provenance can only be True when BOTH nested contracts are
+        # structurally valid. If the check cannot be performed, the
+        # dedicated flag must be False, never silently True.
+        if not pipeline_valid or not audit_valid:
+            _add("AUDIT_PROVENANCE_CHECK_UNAVAILABLE")
+        else:
             try:
                 expected_fingerprint = (
                     ReasoningRunConsistencyService._run_fingerprint(
@@ -203,15 +211,28 @@ class ReasoningContextConsistencyService:
                 if actual_fingerprint != expected_fingerprint:
                     _add("AUDIT_PROVENANCE_MISMATCH")
 
-        # --- Candidate count relationship ---
-        candidate_state = context.get("candidate_state")
-        if isinstance(reasoning_pipeline, Mapping) and isinstance(
-            candidate_state, list
+        # --- Candidate-state relationship ---
+        # A missing or non-list candidate_state means the relationship
+        # cannot be checked, so both dedicated flags must be False.
+        candidate_state_present = "candidate_state" in context
+        candidate_state_is_list = isinstance(
+            context.get("candidate_state"), list
+        )
+        candidate_state_consistent = (
+            candidate_state_present and candidate_state_is_list
+        )
+        candidate_count_consistent = False
+        if candidate_state_consistent and isinstance(
+            reasoning_pipeline, Mapping
         ):
+            pipeline_count = reasoning_pipeline.get("candidate_count")
             if (
-                reasoning_pipeline.get("candidate_count")
-                != len(candidate_state)
+                isinstance(pipeline_count, int)
+                and not isinstance(pipeline_count, bool)
+                and pipeline_count == len(context["candidate_state"])
             ):
+                candidate_count_consistent = True
+            else:
                 _add("CANDIDATE_COUNT_MISMATCH")
 
         # --- Deterministic ordering, dedupe, append unknowns sorted ---
@@ -220,22 +241,16 @@ class ReasoningContextConsistencyService:
         leftovers = sorted(unique - set(_ISSUE_ORDER))
         ordered.extend(leftovers)
 
-        candidate_state_consistent = (
-            "INVALID_CANDIDATE_STATE" not in unique
-        )
-        candidate_count_consistent = (
-            "CANDIDATE_COUNT_MISMATCH" not in unique
-        )
         session_consistent = "INVALID_SESSION_ID" not in unique
-        nested_reasoning_run_consistent = (
-            "INVALID_NESTED_REASONING_RUN" not in unique
-        )
-        nested_reasoning_run_audit_consistent = (
-            "INVALID_NESTED_REASONING_RUN_CONSISTENCY" not in unique
-        )
-        audit_provenance_consistent = (
-            "AUDIT_PROVENANCE_MISMATCH" not in unique
-            and "AUDIT_PROVENANCE_COMPUTE_FAILED" not in unique
+        nested_reasoning_run_consistent = pipeline_valid
+        nested_reasoning_run_audit_consistent = audit_valid
+        audit_provenance_consistent = not any(
+            issue in unique
+            for issue in (
+                "AUDIT_PROVENANCE_CHECK_UNAVAILABLE",
+                "AUDIT_PROVENANCE_COMPUTE_FAILED",
+                "AUDIT_PROVENANCE_MISMATCH",
+            )
         )
         source_consistency = "INVALID_CONTEXT_SOURCE" not in unique
         metadata_consistent = (

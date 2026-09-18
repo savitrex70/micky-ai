@@ -641,3 +641,108 @@ def test_no_llm_or_decision_logic() -> None:
         assert not _re.search(pattern, code), token
     for token in substring_tokens:
         assert token not in code, token
+
+# ---------------------------------------------------------------------------
+# Blocker fixes: unperformed checks must not be reported as passing
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_unavailable_when_audit_missing() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    del broken["reasoning_run_consistency"]
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+    assert result["context_consistent"] is False
+
+
+def test_provenance_unavailable_when_audit_non_mapping() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["reasoning_run_consistency"] = "not-a-mapping"
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+
+
+def test_provenance_unavailable_when_audit_invalid() -> None:
+    ctx = _valid_context()
+    broken = copy.deepcopy(ctx)
+    del broken["reasoning_run_consistency"]["run_consistency_source"]
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+
+
+def test_provenance_unavailable_when_run_missing() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    del broken["reasoning_pipeline"]
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+
+
+def test_provenance_unavailable_when_run_non_mapping() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["reasoning_pipeline"] = "not-a-mapping"
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+
+
+def test_provenance_unavailable_when_run_invalid() -> None:
+    ctx = _valid_context()
+    broken = copy.deepcopy(ctx)
+    del broken["reasoning_pipeline"]["run_source"]
+    result = _service().build(context=broken)
+    assert (
+        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
+        in result["consistency_issues"]
+    )
+    assert result["audit_provenance_consistent"] is False
+
+
+def test_missing_candidate_state_flags_false() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    del broken["candidate_state"]
+    result = _service().build(context=broken)
+    assert result["candidate_state_consistent"] is False
+    assert result["candidate_count_consistent"] is False
+    assert result["context_consistent"] is False
+
+
+def test_non_list_candidate_state_flags_false() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["candidate_state"] = "not-a-list"
+    result = _service().build(context=broken)
+    assert result["candidate_state_consistent"] is False
+    assert result["candidate_count_consistent"] is False
+    assert result["context_consistent"] is False
+
+
+def test_valid_candidate_state_flags_true() -> None:
+    ctx = _valid_context()
+    result = _service().build(context=ctx)
+    assert result["candidate_state_consistent"] is True
+    assert result["candidate_count_consistent"] is True
+
