@@ -520,8 +520,10 @@ def test_api_execute_matches_service_output() -> None:
     # Candidate generation deletes and recreates candidates on each
     # call, so two separate executions produce different candidate
     # UUIDs. Compare structure with UUIDs replaced by a placeholder.
-    assert _strip_uuids(api_result) == _strip_uuids(
-        _json_safe(service_result)
+    assert _strip_uuids(
+        _strip_run_fingerprint(api_result)
+    ) == _strip_uuids(
+        _strip_run_fingerprint(_json_safe(service_result))
     )
 
 
@@ -529,6 +531,26 @@ _UUID_RE = __import__("re").compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     __import__("re").I,
 )
+
+
+def _strip_run_fingerprint(obj: object) -> object:
+    """Recursively drop ``audited_run_fingerprint`` from any dict.
+
+    Two separate executions of the same session produce different
+    candidate UUIDs, which cascade into different Task 042 runs and
+    therefore different fingerprints. The fingerprint is provenance
+    data -- its value is expected to differ between calls -- so it is
+    not part of the structural contract this test asserts.
+    """
+    if isinstance(obj, dict):
+        return {
+            k: _strip_run_fingerprint(v)
+            for k, v in obj.items()
+            if k != "audited_run_fingerprint"
+        }
+    if isinstance(obj, list):
+        return [_strip_run_fingerprint(x) for x in obj]
+    return obj
 
 
 def _strip_uuids(obj):

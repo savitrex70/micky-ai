@@ -32,3 +32,9 @@ class ReasoningRunConsistencyRead(BaseModel):
     metadata_consistency: bool
     consistency_issues: list[str]
     run_consistency_source: str
+
+    # Provenance: SHA-256 hex digest of the canonicalized Task 042 run
+    # this audit was produced from. Enables downstream layers (e.g.
+    # Task 055) to prove that this audit corresponds to the exact run
+    # being packaged, without re-invoking Task 043.
+    audited_run_fingerprint: str

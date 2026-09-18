@@ -158,9 +158,13 @@ class ReasoningContextService:
             ),
             _CANDIDATE_PAGE_SIZE,
         )
+        # Build Task 042 exactly once and reuse its intermediates so
+        # Task 043 audits the exact run being packaged, rather than
+        # independently rebuilding a second Task 042 run.
         try:
-            run = self.reasoning_run_service.build_for_session(
-                db, session_id
+            run, bundle, policy = (
+                self.reasoning_run_service
+                .build_for_session_with_inputs(db, session_id)
             )
         except ReasoningRunContractError as exc:
             raise ReasoningContextContractError(
@@ -168,10 +172,15 @@ class ReasoningContextService:
                 "Task 042 composition failed: " + str(exc),
             ) from exc
         try:
-            audit = (
-                self.reasoning_run_consistency_service.build_for_session(
-                    db, session_id
-                )
+            audit = self.reasoning_run_consistency_service.build(
+                run=run,
+                observations=observations,
+                entities=entities,
+                missing_information=missing_information,
+                template_matches=template_matches,
+                candidates=candidates,
+                bundle=bundle,
+                policy=policy,
             )
         except ReasoningRunConsistencyContractError as exc:
             raise ReasoningContextContractError(
@@ -262,6 +271,32 @@ class ReasoningContextService:
                 "INVALID_REASONING_RUN_CONSISTENCY",
                 "Task 043 audit failed its own validator: " + str(exc),
             ) from exc
+
+        # Prove the Task 043 audit corresponds to this exact Task 042
+        # run. Recompute the run fingerprint with Task 043's own
+        # staticmethod (delegated, not reimplemented) and require an
+        # exact match against the audit's provenance field.
+        try:
+            expected_fingerprint = (
+                ReasoningRunConsistencyService._run_fingerprint(
+                    reasoning_run
+                )
+            )
+        except Exception as exc:
+            raise ReasoningContextContractError(
+                "AUDIT_RUN_FINGERPRINT_COMPUTE_FAILED",
+                "could not compute the Task 042 run fingerprint: "
+                + str(exc),
+            ) from exc
+        if (
+            reasoning_run_consistency.get("audited_run_fingerprint")
+            != expected_fingerprint
+        ):
+            raise ReasoningContextContractError(
+                "AUDIT_RUN_MISMATCH",
+                "reasoning_run_consistency.audited_run_fingerprint does "
+                "not match the supplied Task 042 run",
+            )
 
         available = bool(reasoning_run.get("available")) and bool(
             reasoning_run_consistency.get("available")

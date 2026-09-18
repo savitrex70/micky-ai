@@ -226,9 +226,23 @@ def _valid_pure_inputs() -> dict[str, Any]:
         cands = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        run = ReasoningRunService().build_for_session(db, session_uuid)
-        audit = ReasoningRunConsistencyService().build_for_session(
-            db, session_uuid
+        # Build Task 042 exactly once and reuse its intermediates so
+        # Task 043 audits the exact run being packaged, not a second
+        # independently-rebuilt run.
+        run, bundle, policy = (
+            ReasoningRunService().build_for_session_with_inputs(
+                db, session_uuid
+            )
+        )
+        audit = ReasoningRunConsistencyService().build(
+            run=run,
+            observations=obs,
+            entities=ent,
+            missing_information=mi,
+            template_matches=tm,
+            candidates=cands,
+            bundle=bundle,
+            policy=policy,
         )
     finally:
         db_gen.close()
@@ -462,3 +476,145 @@ def test_no_llm_or_decision_logic() -> None:
         assert not _re.search(pattern, code), token
     for token in substring_tokens:
         assert token not in code, token
+
+
+# ---------------------------------------------------------------------------
+# Audit-to-run binding (Task 055 blocker fix)
+# ---------------------------------------------------------------------------
+
+
+def _raw_inputs_for(session_id: str) -> dict[str, Any]:
+    """Fetch every raw input for a session without any binding assumptions."""
+    session_uuid = UUID(session_id)
+    db_gen = app.dependency_overrides[get_db]()
+    db = next(db_gen)
+    try:
+        from rop.services.candidate_generation import (
+            CandidateGenerationService,
+        )
+        from rop.services.entity import EntityService
+        from rop.services.missing_information import (
+            MissingInformationService,
+        )
+        from rop.services.observation import ObservationService
+        from rop.services.template_match import TemplateMatchService
+
+        obs = ObservationService().list_by_session(
+            db, session_uuid, offset=0, limit=1000
+        )
+        ent = EntityService().list_by_session(
+            db, session_uuid, offset=0, limit=1000
+        )
+        mi = MissingInformationService().list_by_session(db, session_uuid)
+        tm = TemplateMatchService().list_by_session(db, session_uuid)
+        cands = CandidateGenerationService().list_by_session(
+            db, session_uuid, offset=0, limit=100
+        )
+        run, bundle, policy = (
+            ReasoningRunService().build_for_session_with_inputs(
+                db, session_uuid
+            )
+        )
+    finally:
+        db_gen.close()
+    return {
+        "session_id": session_uuid,
+        "observations": obs,
+        "entities": ent,
+        "missing_information": mi,
+        "template_context": tm,
+        "candidate_state": cands,
+        "run": run,
+        "bundle": bundle,
+        "policy": policy,
+    }
+
+
+def test_context_accepts_matching_audit() -> None:
+    """The canonical case: Task 042 run and Task 043 audit produced
+    from the same chain must package cleanly."""
+    inputs = _valid_pure_inputs()
+    ctx = _service().build(**inputs)
+    assert ctx["available"] is True
+    assert ctx["context_consistent"] is True
+
+
+def test_context_rejects_stale_audit_from_other_run() -> None:
+    """A valid Task 043 audit from session B must not be pairable with
+    session A's Task 042 run, even though both are individually valid."""
+    inputs = _valid_pure_inputs()
+
+    other = _raw_inputs_for(_seed_full_session("Task 055 other session"))
+    other_audit = ReasoningRunConsistencyService().build(
+        run=other["run"],
+        observations=other["observations"],
+        entities=other["entities"],
+        missing_information=other["missing_information"],
+        template_matches=other["template_context"],
+        candidates=other["candidate_state"],
+        bundle=other["bundle"],
+        policy=other["policy"],
+    )
+
+    inputs["reasoning_run_consistency"] = other_audit
+    with pytest.raises(ReasoningContextContractError) as ei:
+        _service().build(**inputs)
+    assert ei.value.invariant == "AUDIT_RUN_MISMATCH"
+
+
+def test_context_rejects_tampered_fingerprint() -> None:
+    """A fingerprint that does not match the supplied Task 042 run must
+    raise AUDIT_RUN_MISMATCH -- this proves the check is a real
+    relationship, not a tautology."""
+    inputs = _valid_pure_inputs()
+    tampered = copy.deepcopy(inputs["reasoning_run_consistency"])
+    tampered["audited_run_fingerprint"] = "0" * 64
+    inputs["reasoning_run_consistency"] = tampered
+    with pytest.raises(ReasoningContextContractError) as ei:
+        _service().build(**inputs)
+    assert ei.value.invariant == "AUDIT_RUN_MISMATCH"
+
+
+def test_available_when_audit_reports_inconsistency() -> None:
+    """An internally inconsistent reasoning run must still be packable.
+    Task 055 must not conflate the audit's verdict on the run with its
+    own package consistency."""
+    raw = _raw_inputs_for(_seed_full_session("Task 055 inconsistent run"))
+
+    # Tamper a fixed-stage flag and the corresponding run-level flag,
+    # keeping the run internally self-consistent so its own validator
+    # still accepts it -- but making it inconsistent relative to the
+    # actual session state (which Task 043 will detect).
+    tampered = copy.deepcopy(raw["run"])
+    for stage in tampered["stages"]:
+        if stage["stage_id"] == "OBSERVATIONS":
+            stage["consistent"] = False
+            break
+    tampered["run_consistent"] = False
+
+    audit = ReasoningRunConsistencyService().build(
+        run=tampered,
+        observations=raw["observations"],
+        entities=raw["entities"],
+        missing_information=raw["missing_information"],
+        template_matches=raw["template_context"],
+        candidates=raw["candidate_state"],
+        bundle=raw["bundle"],
+        policy=raw["policy"],
+    )
+    assert audit["run_consistent"] is False
+
+    ctx = _service().build(
+        session_id=raw["session_id"],
+        observations=raw["observations"],
+        entities=raw["entities"],
+        missing_information=raw["missing_information"],
+        template_context=raw["template_context"],
+        candidate_state=raw["candidate_state"],
+        reasoning_run=tampered,
+        reasoning_run_consistency=audit,
+    )
+    assert ctx["available"] is True
+    assert ctx["context_consistent"] is True
+    assert ctx["reasoning_run_consistency"]["run_consistent"] is False
+

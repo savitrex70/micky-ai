@@ -65,6 +65,7 @@ RESULT_FIELDS = (
     "metadata_consistency",
     "consistency_issues",
     "run_consistency_source",
+    "audited_run_fingerprint",
 )
 
 
@@ -1057,3 +1058,58 @@ def test_session_flag_reflects_semantic_mismatch() -> None:
     )
     assert result["session_consistent"] is False
     assert result["run_consistent"] is False
+
+# ---------------------------------------------------------------------------
+# Round 4: audited_run_fingerprint provenance
+# ---------------------------------------------------------------------------
+
+
+def test_audited_run_fingerprint_present() -> None:
+    sid = _seed_full_session("Task 043 fingerprint present")
+    audit = _build_audit(sid)
+    fp = audit["audited_run_fingerprint"]
+    assert isinstance(fp, str)
+    assert len(fp) == 64
+    assert all(c in "0123456789abcdef" for c in fp)
+
+
+def test_audited_run_fingerprint_deterministic() -> None:
+    sid = _seed_full_session("Task 043 fingerprint deterministic")
+    a = _build_audit(sid)
+    b = _build_audit(sid)
+    assert a["audited_run_fingerprint"] == b["audited_run_fingerprint"]
+
+
+def test_audited_run_fingerprint_changes_when_run_changes() -> None:
+    """The fingerprint is a function of the Task 042 run. Passing two
+    different runs to the same audit input set must produce different
+    fingerprints."""
+    sid = _seed_full_session("Task 043 fingerprint changes")
+    run, obs, ent, mi, tm, cands, bundle, policy = _get_run_and_state(sid)
+    audit1 = _service().build(
+        run=run,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    tampered = copy.deepcopy(run)
+    tampered["candidate_count"] = tampered["candidate_count"] + 1
+    audit2 = _service().build(
+        run=tampered,
+        observations=obs,
+        entities=ent,
+        missing_information=mi,
+        template_matches=tm,
+        candidates=cands,
+        bundle=bundle,
+        policy=policy,
+    )
+    assert (
+        audit1["audited_run_fingerprint"]
+        != audit2["audited_run_fingerprint"]
+    )
+

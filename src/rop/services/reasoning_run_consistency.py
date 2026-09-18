@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -26,6 +29,8 @@ REASONING_RUN_CONSISTENCY_SOURCE_TASK_043 = (
     "REASONING_RUN_CONSISTENCY_TASK_043"
 )
 """Fixed structural-contract identifier for Task 043 results."""
+
+_RUN_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _EXPECTED_STAGE_IDS = (
     "SESSION_INPUT",
@@ -73,6 +78,7 @@ _RESULT_REQUIRED_FIELDS = (
     "metadata_consistency",
     "consistency_issues",
     "run_consistency_source",
+    "audited_run_fingerprint",
 )
 
 _RESULT_BOOLEAN_FIELDS = (
@@ -582,6 +588,17 @@ class ReasoningRunConsistencyService:
 
         run_consistent = not ordered_issues
 
+        try:
+            audited_run_fingerprint = (
+                ReasoningRunConsistencyService._run_fingerprint(run)
+            )
+        except Exception as exc:
+            raise ReasoningRunConsistencyContractError(
+                "AUDITED_RUN_FINGERPRINT_COMPUTE_FAILED",
+                "could not compute the audited run fingerprint: "
+                + str(exc),
+            ) from exc
+
         result: dict[str, Any] = {
             "available": True,
             "run_consistent": run_consistent,
@@ -601,9 +618,39 @@ class ReasoningRunConsistencyService:
             "run_consistency_source": (
                 REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
             ),
+            "audited_run_fingerprint": audited_run_fingerprint,
         }
         self._validate_result(result)
         return result
+
+    @staticmethod
+    def _canonicalize(value: Any) -> Any:
+        """Return a deterministic, JSON-serializable canonical form."""
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(k):
+                    ReasoningRunConsistencyService._canonicalize(v)
+                for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+            }
+        if isinstance(value, list):
+            return [
+                ReasoningRunConsistencyService._canonicalize(item)
+                for item in value
+            ]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _run_fingerprint(run: Mapping[str, Any]) -> str:
+        """SHA-256 hex digest of the canonicalized Task 042 run."""
+        canonical = ReasoningRunConsistencyService._canonicalize(run)
+        payload = json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _validate_result(result: dict[str, Any]) -> None:
