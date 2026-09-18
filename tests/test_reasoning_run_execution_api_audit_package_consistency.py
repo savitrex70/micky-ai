@@ -57,6 +57,7 @@ RESULT_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "package_consistency_source",
+    "audited_package_fingerprint",
 )
 
 
@@ -559,4 +560,64 @@ def test_wrong_status_code_both_sides() -> None:
     result = _service().build(package=tampered)
     assert "STATUS_CODE_INVALID" in result["consistency_issues"]
     assert result["status_consistent"] is False
+
+# ---------------------------------------------------------------------------
+# Round 3: audited_package_fingerprint provenance
+# ---------------------------------------------------------------------------
+
+
+def test_audited_package_fingerprint_present() -> None:
+    package = _valid_package()
+    result = _service().build(package=package)
+    fp = result["audited_package_fingerprint"]
+    assert isinstance(fp, str)
+    assert len(fp) == 64
+    assert all(c in "0123456789abcdef" for c in fp)
+
+
+def test_audited_package_fingerprint_deterministic() -> None:
+    package = _valid_package()
+    a = _service().build(package=package)
+    b = _service().build(package=package)
+    assert (
+        a["audited_package_fingerprint"]
+        == b["audited_package_fingerprint"]
+    )
+
+
+def test_audited_package_fingerprint_differs_for_different_packages() -> None:
+    pkg_a = _valid_package()
+    pkg_b = _valid_package()
+    a = _service().build(package=pkg_a)
+    b = _service().build(package=pkg_b)
+    assert (
+        a["audited_package_fingerprint"]
+        != b["audited_package_fingerprint"]
+    )
+
+
+def test_audited_package_fingerprint_changes_when_package_tampered() -> None:
+    package = _valid_package()
+    a = _service().build(package=package)
+    tampered = copy.deepcopy(package)
+    tampered["method"] = "post"
+    b = _service().build(package=tampered)
+    assert (
+        a["audited_package_fingerprint"]
+        != b["audited_package_fingerprint"]
+    )
+
+
+def test_audited_package_fingerprint_malformed_rejected() -> None:
+    package = _valid_package()
+    result = _service().build(package=package)
+    tampered = copy.deepcopy(result)
+    tampered["audited_package_fingerprint"] = "not-a-hex-digest"
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageConsistencyContractError
+    ) as ei:
+        ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
+            tampered
+        )
+    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
 

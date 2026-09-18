@@ -42,3 +42,10 @@ class ReasoningRunExecutionApiAuditPackageConsistencyRead(BaseModel):
     metadata_consistent: bool
     consistency_issues: list[str]
     package_consistency_source: str
+
+    # Provenance: binds the audit to the exact Task 051 package it
+    # audited. A SHA-256 hex digest of the canonicalized package.
+    # Enables downstream composition layers (e.g. Task 053) to verify
+    # that a supplied audit corresponds to the supplied package
+    # without re-invoking Task 052's build().
+    audited_package_fingerprint: str | None

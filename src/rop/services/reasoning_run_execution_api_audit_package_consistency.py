@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -21,6 +23,8 @@ from rop.services.reasoning_run_execution_audit_package_api_consistency import (
 REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_CONSISTENCY_SOURCE_TASK_052 = (
     "REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_CONSISTENCY_TASK_052"
 )
+
+_PACKAGE_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _PACKAGE_REQUIRED_FIELDS = (
     "available",
@@ -55,6 +59,7 @@ _RESULT_REQUIRED_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "package_consistency_source",
+    "audited_package_fingerprint",
 )
 
 _RESULT_BOOLEAN_FIELDS = (
@@ -401,6 +406,14 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             )
         )
 
+        try:
+            audited_package_fingerprint = (
+                ReasoningRunExecutionApiAuditPackageConsistencyService
+                ._package_fingerprint(package)
+            )
+        except Exception:
+            audited_package_fingerprint = None
+
         result: dict[str, Any] = {
             "available": True,
             "package_consistent": not ordered_issues,
@@ -422,9 +435,44 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             "package_consistency_source": (
                 REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_CONSISTENCY_SOURCE_TASK_052
             ),
+            "audited_package_fingerprint": audited_package_fingerprint,
         }
         self._validate_result(result)
         return result
+
+    @staticmethod
+    def _canonicalize(value: Any) -> Any:
+        """Return a deterministic, JSON-serializable canonical form."""
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(k):
+                    ReasoningRunExecutionApiAuditPackageConsistencyService
+                    ._canonicalize(v)
+                for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+            }
+        if isinstance(value, list):
+            return [
+                ReasoningRunExecutionApiAuditPackageConsistencyService
+                ._canonicalize(item)
+                for item in value
+            ]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _package_fingerprint(package: Mapping[str, Any]) -> str:
+        """Return a SHA-256 hex digest of the canonicalized package."""
+        canonical = (
+            ReasoningRunExecutionApiAuditPackageConsistencyService
+            ._canonicalize(package)
+        )
+        payload = json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _validate_result(result: dict[str, Any]) -> None:
@@ -480,3 +528,13 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 "PACKAGE_CONSISTENT_MISMATCH",
                 "package_consistent does not match consistency_issues",
             )
+        fp = result["audited_package_fingerprint"]
+        if fp is not None:
+            if not isinstance(fp, str) or not (
+                _PACKAGE_FINGERPRINT_HEX_RE.match(fp)
+            ):
+                raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
+                    "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
+                    "audited_package_fingerprint is not a 64-char hex "
+                    "string: " + repr(fp),
+                )

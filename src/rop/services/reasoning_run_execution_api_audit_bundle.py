@@ -219,6 +219,24 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "api_audit_package_consistency.available is not True",
             )
 
+        # Provenance: the Task 052 audit must have been produced from
+        # this exact Task 051 package. Recompute the fingerprint with
+        # Task 052's own staticmethod (delegated, not reimplemented)
+        # and require an exact match.
+        expected_fingerprint = (
+            ReasoningRunExecutionApiAuditPackageConsistencyService
+            ._package_fingerprint(api_audit_package)
+        )
+        audited_fingerprint = api_audit_package_consistency.get(
+            "audited_package_fingerprint"
+        )
+        if audited_fingerprint != expected_fingerprint:
+            raise ReasoningRunExecutionApiAuditBundleContractError(
+                "AUDIT_PACKAGE_FINGERPRINT_MISMATCH",
+                "api_audit_package_consistency.audited_package_fingerprint "
+                "does not match the supplied Task 051 package",
+            )
+
         # Sources.
         if (
             api_audit_package.get("package_source")
