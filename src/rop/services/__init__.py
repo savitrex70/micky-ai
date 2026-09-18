@@ -78,6 +78,10 @@ from rop.services.reasoning_context_consistency import (
     ReasoningContextConsistencyContractError,
     ReasoningContextConsistencyService,
 )
+from rop.services.reasoning_handoff import (
+    ReasoningHandoffContractError,
+    ReasoningHandoffService,
+)
 from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -179,6 +183,8 @@ __all__ = [
     "ReasoningContextConsistencyService",
     "ReasoningContextContractError",
     "ReasoningContextService",
+    "ReasoningHandoffContractError",
+    "ReasoningHandoffService",
     "ReasoningPipelineContractError",
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",

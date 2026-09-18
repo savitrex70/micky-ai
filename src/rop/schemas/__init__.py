@@ -62,6 +62,7 @@ from rop.schemas.reasoning_context import ReasoningContextRead
 from rop.schemas.reasoning_context_consistency import (
     ReasoningContextConsistencyRead,
 )
+from rop.schemas.reasoning_handoff import ReasoningHandoffRead
 from rop.schemas.reasoning_pipeline import (
     ReasoningPipelineRead,
     ReasoningPipelineStageRead,
@@ -150,6 +151,7 @@ __all__ = [
     "ObservationUpdate",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
+    "ReasoningHandoffRead",
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
     "ReasoningRunConsistencyRead",
