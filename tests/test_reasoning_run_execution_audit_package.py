@@ -404,27 +404,46 @@ def test_task046_called_exactly_once(monkeypatch) -> None:
 
 
 def test_exact_bundle_passed_to_task047(monkeypatch) -> None:
+    """Task 048 must pass the exact object Task 046 returns into Task 047.
+
+    package["execution_bundle"] is a defensive copy made when
+    assembling the package -- so identity must be verified against the
+    object Task 046 actually returned, not against the package's copy.
+    """
+    from rop.services.reasoning_run_execution_bundle import (
+        ReasoningRunExecutionBundleService,
+    )
     from rop.services.reasoning_run_execution_bundle_consistency import (
         ReasoningRunExecutionBundleConsistencyService,
     )
 
     captured: dict[str, Any] = {}
-    original = ReasoningRunExecutionBundleConsistencyService.build
 
-    def spy(self, *, bundle=None):
-        captured["bundle"] = bundle
-        return original(self, bundle=bundle)
+    orig_046 = ReasoningRunExecutionBundleService.build_for_session
+
+    def spy_046(self, db, session_id):
+        result = orig_046(self, db, session_id)
+        captured["046_return"] = result
+        return result
+
+    orig_047 = ReasoningRunExecutionBundleConsistencyService.build
+
+    def spy_047(self, *, bundle=None):
+        captured["047_input"] = bundle
+        return orig_047(self, bundle=bundle)
 
     monkeypatch.setattr(
-        ReasoningRunExecutionBundleConsistencyService, "build", spy
+        ReasoningRunExecutionBundleService, "build_for_session", spy_046
+    )
+    monkeypatch.setattr(
+        ReasoningRunExecutionBundleConsistencyService, "build", spy_047
     )
 
     sid = _create_session("Patient reports chest pain")
-    package = _package_via_service(sid)
+    _package_via_service(sid)
 
-    # The bundle passed to Task 047 is the exact one embedded in the
-    # package (deep-equal).
-    assert captured["bundle"] == package["execution_bundle"]
+    # Task 047 received the exact same object Task 046 returned.
+    assert captured["047_input"] is captured["046_return"]
 
 
 # ---------------------------------------------------------------------------
@@ -506,3 +525,30 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
+def test_no_task047_reimplementation() -> None:
+    """Task 048 must not reimplement Task 047's audit logic -- it must
+    delegate to Task 047's own build() and validator."""
+    src = inspect.getsource(mod)
+    # Task 048 must not re-implement the audit rules itself. We check
+    # for the presence of Task 047's own service being imported (used)
+    # and the absence of the audit's core structural identifiers being
+    # recomputed inline.
+    assert "ReasoningRunExecutionBundleConsistencyService" in src
+    # The Task 047 audit issue identifiers must NOT appear in Task 048.
+    # Use word-boundary matching so Task 048's own identifiers
+    # (e.g. BUNDLE_AUDIT_UNAVAILABLE) don't accidentally match.
+    import re as _re
+
+    for forbidden in (
+        "NESTED_EXECUTION_MISMATCH",
+        "NESTED_EXECUTION_AUDIT_MISMATCH",
+        "BUNDLE_RELATIONSHIP_MISMATCH",
+        "EXECUTION_SOURCE_MISMATCH",
+        "EXECUTION_AUDIT_SOURCE_MISMATCH",
+        "BUNDLE_SOURCE_MISMATCH",
+        "AUDIT_UNAVAILABLE",
+    ):
+        pattern = r"\b" + _re.escape(forbidden) + r"\b"
+        assert not _re.search(pattern, src), forbidden
+
