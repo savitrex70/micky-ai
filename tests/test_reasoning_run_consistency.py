@@ -1113,3 +1113,82 @@ def test_audited_run_fingerprint_changes_when_run_changes() -> None:
         != audit2["audited_run_fingerprint"]
     )
 
+# ---------------------------------------------------------------------------
+# audited_run_fingerprint format validation
+# ---------------------------------------------------------------------------
+
+
+def _valid_audit() -> dict[str, Any]:
+    sid = _seed_full_session("Task 043 fingerprint format")
+    return _build_audit(sid)
+
+
+def test_fingerprint_valid_lowercase_sha256_accepted() -> None:
+    audit = _valid_audit()
+    # Should already pass; call the validator directly to prove it.
+    ReasoningRunConsistencyService._validate_result(dict(audit))
+
+
+def test_fingerprint_missing_rejected() -> None:
+    audit = _valid_audit()
+    del audit["audited_run_fingerprint"]
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "MISSING_RESULT_FIELD"
+
+
+def test_fingerprint_none_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = None
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_TYPE"
+
+
+def test_fingerprint_non_string_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = 12345
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_TYPE"
+
+
+def test_fingerprint_empty_string_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = ""
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
+
+
+def test_fingerprint_too_short_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = "a" * 63
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
+
+
+def test_fingerprint_too_long_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = "a" * 65
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
+
+
+def test_fingerprint_uppercase_hex_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = "A" * 64
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
+
+
+def test_fingerprint_non_hex_chars_rejected() -> None:
+    audit = _valid_audit()
+    audit["audited_run_fingerprint"] = "g" * 64
+    with pytest.raises(ReasoningRunConsistencyContractError) as ei:
+        ReasoningRunConsistencyService._validate_result(audit)
+    assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
+

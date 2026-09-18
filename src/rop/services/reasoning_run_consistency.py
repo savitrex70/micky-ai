@@ -700,6 +700,19 @@ class ReasoningRunConsistencyService:
                 "run_consistency_source is not the Task 043 identifier: "
                 + repr(result["run_consistency_source"]),
             )
+        fingerprint = result["audited_run_fingerprint"]
+        if not isinstance(fingerprint, str):
+            raise ReasoningRunConsistencyContractError(
+                "AUDITED_RUN_FINGERPRINT_TYPE",
+                "audited_run_fingerprint is not a string: "
+                + repr(fingerprint),
+            )
+        if not _RUN_FINGERPRINT_HEX_RE.fullmatch(fingerprint):
+            raise ReasoningRunConsistencyContractError(
+                "AUDITED_RUN_FINGERPRINT_FORMAT",
+                "audited_run_fingerprint is not a 64-character lowercase "
+                "hexadecimal SHA-256 digest: " + repr(fingerprint),
+            )
         # run_consistent must equal (no issues).
         if result["run_consistent"] != (len(issues) == 0):
             raise ReasoningRunConsistencyContractError(
