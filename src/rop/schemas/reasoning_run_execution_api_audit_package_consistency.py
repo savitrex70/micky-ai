@@ -48,4 +48,4 @@ class ReasoningRunExecutionApiAuditPackageConsistencyRead(BaseModel):
     # Enables downstream composition layers (e.g. Task 053) to verify
     # that a supplied audit corresponds to the supplied package
     # without re-invoking Task 052's build().
-    audited_package_fingerprint: str | None
+    audited_package_fingerprint: str

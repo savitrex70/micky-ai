@@ -565,54 +565,73 @@ def test_wrong_status_code_both_sides() -> None:
 # Round 3: audited_package_fingerprint provenance
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Round 4: fingerprint mandatory (reviewer round 3)
+# ---------------------------------------------------------------------------
 
-def test_audited_package_fingerprint_present() -> None:
+
+def test_audited_package_fingerprint_none_rejected() -> None:
+    package = _valid_package()
+    result = _service().build(package=package)
+    tampered = copy.deepcopy(result)
+    tampered["audited_package_fingerprint"] = None
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageConsistencyContractError
+    ) as ei:
+        ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
+            tampered
+        )
+    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
+
+
+def test_audited_package_fingerprint_missing_rejected() -> None:
+    package = _valid_package()
+    result = _service().build(package=package)
+    tampered = copy.deepcopy(result)
+    del tampered["audited_package_fingerprint"]
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageConsistencyContractError
+    ) as ei:
+        ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
+            tampered
+        )
+    assert ei.value.invariant == "MISSING_RESULT_FIELD"
+
+
+def test_audited_package_fingerprint_valid_hex_accepted() -> None:
     package = _valid_package()
     result = _service().build(package=package)
     fp = result["audited_package_fingerprint"]
     assert isinstance(fp, str)
     assert len(fp) == 64
-    assert all(c in "0123456789abcdef" for c in fp)
-
-
-def test_audited_package_fingerprint_deterministic() -> None:
-    package = _valid_package()
-    a = _service().build(package=package)
-    b = _service().build(package=package)
-    assert (
-        a["audited_package_fingerprint"]
-        == b["audited_package_fingerprint"]
+    assert fp == fp.lower()
+    # The existing build path validates without raising.
+    ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
+        result
     )
 
 
-def test_audited_package_fingerprint_differs_for_different_packages() -> None:
-    pkg_a = _valid_package()
-    pkg_b = _valid_package()
-    a = _service().build(package=pkg_a)
-    b = _service().build(package=pkg_b)
-    assert (
-        a["audited_package_fingerprint"]
-        != b["audited_package_fingerprint"]
-    )
-
-
-def test_audited_package_fingerprint_changes_when_package_tampered() -> None:
-    package = _valid_package()
-    a = _service().build(package=package)
-    tampered = copy.deepcopy(package)
-    tampered["method"] = "post"
-    b = _service().build(package=tampered)
-    assert (
-        a["audited_package_fingerprint"]
-        != b["audited_package_fingerprint"]
-    )
-
-
-def test_audited_package_fingerprint_malformed_rejected() -> None:
+def test_audited_package_fingerprint_non_hex_rejected() -> None:
     package = _valid_package()
     result = _service().build(package=package)
     tampered = copy.deepcopy(result)
-    tampered["audited_package_fingerprint"] = "not-a-hex-digest"
+    tampered["audited_package_fingerprint"] = "z" * 64
+    with pytest.raises(
+        ReasoningRunExecutionApiAuditPackageConsistencyContractError
+    ) as ei:
+        ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
+            tampered
+        )
+    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
+
+
+def test_audited_package_fingerprint_uppercase_rejected() -> None:
+    package = _valid_package()
+    result = _service().build(package=package)
+    tampered = copy.deepcopy(result)
+    tampered["audited_package_fingerprint"] = (
+        tampered["audited_package_fingerprint"].upper()
+    )
     with pytest.raises(
         ReasoningRunExecutionApiAuditPackageConsistencyContractError
     ) as ei:

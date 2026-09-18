@@ -411,8 +411,12 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 ReasoningRunExecutionApiAuditPackageConsistencyService
                 ._package_fingerprint(package)
             )
-        except Exception:
-            audited_package_fingerprint = None
+        except Exception as exc:
+            raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
+                "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
+                "could not compute the audited package fingerprint: "
+                + str(exc),
+            ) from exc
 
         result: dict[str, Any] = {
             "available": True,
@@ -529,12 +533,11 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 "package_consistent does not match consistency_issues",
             )
         fp = result["audited_package_fingerprint"]
-        if fp is not None:
-            if not isinstance(fp, str) or not (
-                _PACKAGE_FINGERPRINT_HEX_RE.match(fp)
-            ):
-                raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
-                    "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
-                    "audited_package_fingerprint is not a 64-char hex "
-                    "string: " + repr(fp),
-                )
+        if not isinstance(fp, str) or not (
+            _PACKAGE_FINGERPRINT_HEX_RE.match(fp)
+        ):
+            raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
+                "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
+                "audited_package_fingerprint is not a 64-char lowercase "
+                "hex string: " + repr(fp),
+            )
