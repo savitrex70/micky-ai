@@ -52,6 +52,7 @@ from rop.schemas import (
     ReasoningStepCreate,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
+    ReasoningRunExecutionAuditPackageRead,
     ReasoningRunExecutionBundleRead,
     ReasoningRunExecutionConsistencyRead,
     ReasoningRunExecutionRead,
@@ -110,6 +111,8 @@ from rop.services import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
     ReasoningRunContractError,
+    ReasoningRunExecutionAuditPackageContractError,
+    ReasoningRunExecutionAuditPackageService,
     ReasoningRunExecutionBundleContractError,
     ReasoningRunExecutionBundleService,
     ReasoningRunExecutionContractError,
@@ -181,6 +184,9 @@ reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
 reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
+reasoning_run_execution_audit_package_service = (
+    ReasoningRunExecutionAuditPackageService()
+)
 
 
 @router.post(
@@ -2154,4 +2160,48 @@ def execute_reasoning_run_audited(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-execution-bundle contract violation",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/reasoning-run/execute-fully-audited",
+    response_model=ReasoningRunExecutionAuditPackageRead,
+    status_code=status.HTTP_200_OK,
+)
+def execute_reasoning_run_fully_audited(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 049: expose the Task 048 fully audited execution package.
+
+    Thin API boundary only. Delegates exclusively to Task 048's
+    ``build_for_session`` and returns its result unchanged -- it does
+    not invoke Tasks 044/045/046/047 directly, does not reconstruct
+    the package, and does not alter any nested output.
+
+    A valid FAILED Task 044 execution still produces a valid 200
+    response: Task 048 faithfully packages the execution + audit and
+    its own ``package_consistent`` reflects whether the Task 047 audit
+    found the Task 046 bundle contract internally consistent.
+
+    Does not modify the behavior or fields of any existing endpoint.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_execution_audit_package_service.build_for_session(
+            db, session_id
+        )
+    except ReasoningRunExecutionAuditPackageContractError as exc:
+        # Task 049: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Internal reasoning-run-execution-audit-package "
+                "contract violation"
+            ),
         ) from exc
