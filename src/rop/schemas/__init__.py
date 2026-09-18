@@ -79,6 +79,9 @@ from rop.schemas.reasoning_run_execution_bundle import (
 from rop.schemas.reasoning_run_execution_audit_package import (
     ReasoningRunExecutionAuditPackageRead,
 )
+from rop.schemas.reasoning_run_execution_audit_package_api_consistency import (
+    ReasoningRunExecutionAuditPackageApiConsistencyRead,
+)
 from rop.schemas.reasoning_run_execution_bundle_consistency import (
     ReasoningRunExecutionBundleConsistencyRead,
 )
@@ -132,6 +135,7 @@ __all__ = [
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
     "ReasoningRunConsistencyRead",
+    "ReasoningRunExecutionAuditPackageApiConsistencyRead",
     "ReasoningRunExecutionAuditPackageRead",
     "ReasoningRunExecutionBundleConsistencyRead",
     "ReasoningRunExecutionBundleRead",
