@@ -481,3 +481,82 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
+# ---------------------------------------------------------------------------
+# Round 2: exact route + nested Task 050 flag checks
+# ---------------------------------------------------------------------------
+
+
+def test_wrong_task049_path() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["path"] = "/wrong/path"
+    # Keep provenance matching so PATH_INVALID is the specific hit.
+    tampered["api_consistency"]["audited_path"] = "/wrong/path"
+    result = _service().build(package=tampered)
+    assert "PATH_INVALID" in result["consistency_issues"]
+    assert result["path_consistent"] is False
+
+
+def test_api_consistency_available_false() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"]["available"] = False
+    result = _service().build(package=tampered)
+    assert (
+        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
+    )
+    assert result["nested_api_consistency_consistent"] is False
+
+
+def test_api_consistency_session_consistent_false() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"]["session_consistent"] = False
+    result = _service().build(package=tampered)
+    assert (
+        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
+    )
+
+
+def test_api_consistency_method_consistent_false() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"]["method_consistent"] = False
+    result = _service().build(package=tampered)
+    assert (
+        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
+    )
+
+
+def test_api_consistency_path_consistent_false() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"]["path_consistent"] = False
+    result = _service().build(package=tampered)
+    assert (
+        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
+    )
+
+
+def test_api_consistency_status_consistent_false() -> None:
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"]["status_consistent"] = False
+    result = _service().build(package=tampered)
+    assert (
+        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
+    )
+
+
+def test_wrong_status_code_both_sides() -> None:
+    """status_code=500 with matching audited_status_code=500 must still
+    be flagged, since the Task 049 route is exactly 200."""
+    package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["status_code"] = 500
+    tampered["api_consistency"]["audited_status_code"] = 500
+    result = _service().build(package=tampered)
+    assert "STATUS_CODE_INVALID" in result["consistency_issues"]
+    assert result["status_consistent"] is False
+

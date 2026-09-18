@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
 from rop.services.reasoning_run_execution_api_audit_package import (
     REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_SOURCE_TASK_051,
+    ReasoningRunExecutionApiAuditPackageService,
 )
 from rop.services.reasoning_run_execution_audit_package import (
     REASONING_RUN_EXECUTION_AUDIT_PACKAGE_SOURCE_TASK_048,
@@ -30,6 +32,12 @@ _PACKAGE_REQUIRED_FIELDS = (
     "response",
     "api_consistency",
     "package_source",
+)
+
+_EXPECTED_STATUS_CODE = 200
+_PATH_PATTERN = re.compile(
+    r"^/sessions/(?P<session_id>[^/]+)"
+    r"/reasoning-run/execute-fully-audited$"
 )
 
 _RESULT_REQUIRED_FIELDS = (
@@ -84,6 +92,7 @@ _ISSUE_ORDER = (
     "API_CONSISTENCY_SOURCE_MISMATCH",
     "PACKAGE_SOURCE_MISMATCH",
     "PACKAGE_CONSISTENCY_SOURCE_MISMATCH",
+    "PACKAGE_CONTRACT_MISMATCH",
 )
 
 
@@ -177,14 +186,31 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             issues.append("METHOD_INVALID")
 
         path = package.get("path")
-        if not isinstance(path, str) or not path:
+        if not isinstance(path, str):
             issues.append("PATH_INVALID")
+        else:
+            path_match = _PATH_PATTERN.match(path)
+            if path_match is None:
+                issues.append("PATH_INVALID")
+            else:
+                path_sid = _coerce_session_id(
+                    path_match.group("session_id")
+                )
+                if path_sid is None:
+                    issues.append("SESSION_ID_INVALID")
+                elif (
+                    package_session_id is not None
+                    and path_sid != package_session_id
+                ):
+                    issues.append("SESSION_ID_MISMATCH")
 
         status_code = package.get("status_code")
         if (
             not isinstance(status_code, int)
             or isinstance(status_code, bool)
         ):
+            issues.append("STATUS_CODE_INVALID")
+        elif status_code != _EXPECTED_STATUS_CODE:
             issues.append("STATUS_CODE_INVALID")
 
         # --- Nested Task 048 response ---
@@ -215,6 +241,22 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 api_consistency_valid = True
             except Exception:
                 issues.append("NESTED_API_CONSISTENCY_MISMATCH")
+
+        # --- Nested Task 050 semantic flags ---
+        # The Task 050 validator does not guarantee these relationships,
+        # so Task 052 checks them explicitly. Any of the five core
+        # semantic flags being false means the nested audit itself
+        # reports the response as problematic.
+        if api_consistency_valid:
+            for flag in (
+                "available",
+                "session_consistent",
+                "method_consistent",
+                "path_consistent",
+                "status_consistent",
+            ):
+                if api_consistency.get(flag) is not True:
+                    issues.append("NESTED_API_CONSISTENCY_MISMATCH")
 
         # --- Session consistency ---
         # str(package.session_id) == str(response.session_id).
@@ -291,6 +333,20 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             != REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_SOURCE_TASK_051
         ):
             issues.append("PACKAGE_SOURCE_MISMATCH")
+
+        # --- Task 051 contract fallback ---
+        # Belt-and-suspenders: run Task 051's own validator on a
+        # normalized copy. If it fails AND no specific issue above
+        # already explains why, report PACKAGE_CONTRACT_MISMATCH, so
+        # Task 052 cannot silently accept something Task 051 itself
+        # would reject.
+        if not issues:
+            try:
+                ReasoningRunExecutionApiAuditPackageService._validate_result(
+                    _deep_normalize_session_ids(package)
+                )
+            except Exception:
+                issues.append("PACKAGE_CONTRACT_MISMATCH")
 
         # --- Deterministic ordering, dedupe ---
         unique_issues = set(issues)
