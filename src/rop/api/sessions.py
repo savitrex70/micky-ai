@@ -52,6 +52,8 @@ from rop.schemas import (
     ReasoningStepCreate,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
+    ReasoningRunExecutionBundleRead,
+    ReasoningRunExecutionConsistencyRead,
     ReasoningRunExecutionRead,
     ReasoningRunRead,
     ReasoningStepRead,
@@ -108,6 +110,8 @@ from rop.services import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
     ReasoningRunContractError,
+    ReasoningRunExecutionBundleContractError,
+    ReasoningRunExecutionBundleService,
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,
     ReasoningRunService,
@@ -176,6 +180,7 @@ reasoning_pipeline_service = ReasoningPipelineService()
 reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
+reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
 
 
 @router.post(
@@ -2096,4 +2101,50 @@ def execute_reasoning_run(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-execution contract violation",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/reasoning-run/execute-audited",
+    response_model=ReasoningRunExecutionBundleRead,
+    status_code=status.HTTP_200_OK,
+)
+def execute_reasoning_run_audited(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 046: execution + independent audit, in one bundle.
+
+    Delegates execution to Task 044 and audits the exact returned
+    execution result through Task 045, then assembles and validates
+    one bundle. This is a composition contract only: it does not
+    execute the reasoning workflow itself, does not audit itself, and
+    does not add persistence. ``execution`` and ``execution_consistency``
+    are the exact canonical outputs of their owners.
+
+    A valid FAILED execution is not itself a bundle failure -- Task 045
+    audits it as structurally consistent, and Task 046 returns an
+    available bundle with ``bundle_consistent=True``. Only a genuine
+    contract mismatch (identity, source, or audit-vs-execution
+    disagreement) raises an internal error.
+
+    Does not modify the behavior or fields of any existing endpoint --
+    this is an additional composed view over the same underlying
+    pipeline.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_execution_bundle_service.build_for_session(
+            db, session_id
+        )
+    except ReasoningRunExecutionBundleContractError as exc:
+        # Task 046: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-execution-bundle contract violation",
         ) from exc
