@@ -81,6 +81,12 @@ _STAGE_REQUIRED_FIELDS = (
 _CANDIDATE_PAGE_SIZE = 100
 _STATE_PAGE_SIZE = 1000
 
+# Public aliases for downstream audit layers (e.g. Task 045) that must
+# treat Task 044 as the source of truth for stage identity and sources
+# rather than copying divergent values.
+EXECUTION_STAGE_IDS = _EXECUTION_STAGE_IDS
+EXECUTION_STAGE_SOURCES = _STAGE_SOURCES
+
 
 class ReasoningRunExecutionContractError(Exception):
     """Task 044: an infrastructure or contract failure.

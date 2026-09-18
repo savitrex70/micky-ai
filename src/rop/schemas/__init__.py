@@ -73,6 +73,9 @@ from rop.schemas.reasoning_run_execution import (
     ReasoningRunExecutionRead,
     ReasoningRunExecutionStageRead,
 )
+from rop.schemas.reasoning_run_execution_consistency import (
+    ReasoningRunExecutionConsistencyRead,
+)
 from rop.schemas.reasoning_step import ReasoningStepCreate, ReasoningStepRead
 from rop.schemas.template_match import TemplateMatchRead
 
@@ -120,6 +123,7 @@ __all__ = [
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
     "ReasoningRunConsistencyRead",
+    "ReasoningRunExecutionConsistencyRead",
     "ReasoningRunExecutionRead",
     "ReasoningRunExecutionStageRead",
     "ReasoningRunRead",
