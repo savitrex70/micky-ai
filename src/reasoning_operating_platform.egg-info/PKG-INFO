@@ -5,13 +5,13 @@ Summary: Production foundation for the Reasoning Operating Platform.
 Requires-Python: <3.13,>=3.12
 Requires-Dist: alembic<2.0,>=1.13
 Requires-Dist: fastapi<1.0,>=0.115
+Requires-Dist: httpx<1.0,>=0.27
 Requires-Dist: pydantic-settings<3.0,>=2.6
 Requires-Dist: psycopg[binary]<4.0,>=3.2
 Requires-Dist: sqlalchemy<3.0,>=2.0
 Requires-Dist: uvicorn[standard]<1.0,>=0.32
 Provides-Extra: dev
 Requires-Dist: black<25.0,>=24.10; extra == "dev"
-Requires-Dist: httpx<1.0,>=0.27; extra == "dev"
 Requires-Dist: pytest<9.0,>=8.3; extra == "dev"
 Requires-Dist: pytest-cov<7.0,>=6.0; extra == "dev"
 Requires-Dist: ruff<1.0,>=0.8; extra == "dev"

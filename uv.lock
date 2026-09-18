@@ -464,6 +464,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
@@ -473,7 +474,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "black" },
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -484,7 +484,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13,<2.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.10,<25.0" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1.0" },
+    { name = "httpx", specifier = ">=0.27,<1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4.0" },
     { name = "pydantic-settings", specifier = ">=2.6,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9.0" },

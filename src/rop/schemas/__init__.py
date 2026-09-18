@@ -53,6 +53,10 @@ from rop.schemas.observation import (
     ObservationRead,
     ObservationUpdate,
 )
+from rop.schemas.llm_reasoning import (
+    LLMReasoningProposalRead,
+    ReasoningCandidateAssessmentRead,
+)
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -148,6 +152,8 @@ __all__ = [
     "ObservationExtractionResponse",
     "ObservationRead",
     "ObservationUpdate",
+    "LLMReasoningProposalRead",
+    "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
     "ReasoningPipelineRead",
