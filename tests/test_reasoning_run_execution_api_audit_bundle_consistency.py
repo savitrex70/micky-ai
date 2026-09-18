@@ -645,3 +645,50 @@ def test_fingerprint_compute_failure_does_not_cascade_into_mismatch(
         "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
     ]
 
+# ---------------------------------------------------------------------------
+# Round 3: provenance flag is False whenever the check cannot be performed
+# ---------------------------------------------------------------------------
+
+
+def test_missing_task051_package_flips_provenance_flag() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["api_audit_package"] = None
+    result = _service().build(bundle=tampered)
+    assert "PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    assert result["package_audit_provenance_consistent"] is False
+    assert result["bundle_consistent"] is False
+
+
+def test_missing_task052_audit_flips_provenance_flag() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["api_audit_package_consistency"] = None
+    result = _service().build(bundle=tampered)
+    assert "PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    assert result["package_audit_provenance_consistent"] is False
+
+
+def test_non_mapping_task051_package_flips_provenance_flag() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["api_audit_package"] = "not-a-mapping"
+    result = _service().build(bundle=tampered)
+    assert "PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    assert result["package_audit_provenance_consistent"] is False
+
+
+def test_non_mapping_task052_audit_flips_provenance_flag() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["api_audit_package_consistency"] = "not-a-mapping"
+    result = _service().build(bundle=tampered)
+    assert "PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    assert result["package_audit_provenance_consistent"] is False
+
+
+def test_valid_bundle_provenance_flag_true() -> None:
+    bundle = _valid_bundle()
+    result = _service().build(bundle=bundle)
+    assert result["package_audit_provenance_consistent"] is True
+

@@ -88,6 +88,7 @@ _ISSUE_ORDER = (
     "STATUS_MISMATCH",
     "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
     "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
+    "PROVENANCE_CHECK_UNAVAILABLE",
     "BUNDLE_RELATIONSHIP_MISMATCH",
     "RESPONSE_PACKAGE_SOURCE_MISMATCH",
     "PACKAGE_AUDIT_SOURCE_MISMATCH",
@@ -268,10 +269,14 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
                 issues.append("NESTED_PACKAGE_AUDIT_MISMATCH")
 
         # --- Provenance: recompute Task 051 package fingerprint ---
-        if (
-            isinstance(api_audit_package, Mapping)
-            and isinstance(api_audit_package_consistency, Mapping)
+        if not isinstance(api_audit_package, Mapping) or not isinstance(
+            api_audit_package_consistency, Mapping
         ):
+            # Without both nested objects, the provenance check cannot
+            # be performed. It must be reported explicitly so the
+            # dedicated flag never reads True when no proof exists.
+            issues.append("PROVENANCE_CHECK_UNAVAILABLE")
+        else:
             # Failure to compute the proof is itself a provenance
             # failure. It must never be silently converted to a
             # skip-the-check that leaves the flag True.
@@ -361,6 +366,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             for i in (
                 "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
                 "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
+                "PROVENANCE_CHECK_UNAVAILABLE",
             )
         )
         bundle_relationship_consistent = (
