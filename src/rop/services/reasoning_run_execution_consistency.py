@@ -261,8 +261,10 @@ class ReasoningRunExecutionConsistencyService:
                 issues.append("OUTCOME_MISMATCH")
             if execution.get("reasoning_run") is None:
                 issues.append("OUTCOME_MISMATCH")
+                issues.append("NESTED_REASONING_RUN_MISMATCH")
             if execution.get("reasoning_run_consistency") is None:
                 issues.append("OUTCOME_MISMATCH")
+                issues.append("NESTED_REASONING_RUN_AUDIT_MISMATCH")
         elif outcome == OUTCOME_FAILED:
             if available is not False:
                 issues.append("AVAILABILITY_MISMATCH")
@@ -361,7 +363,13 @@ class ReasoningRunExecutionConsistencyService:
 
         # --- Derive flags ---
         session_consistent = "SESSION_ID_INVALID" not in unique_issues
-        outcome_consistent = "OUTCOME_MISMATCH" not in unique_issues
+        outcome_consistent = not any(
+            i in unique_issues
+            for i in (
+                "OUTCOME_MISMATCH",
+                "INVALID_EXECUTION_OUTCOME",
+            )
+        )
         availability_consistent = "AVAILABILITY_MISMATCH" not in unique_issues
         stage_structure_consistent = (
             "STAGE_STRUCTURE_MISMATCH" not in unique_issues
@@ -387,12 +395,30 @@ class ReasoningRunExecutionConsistencyService:
                 "COMPLETED_STAGE_COUNT_MISMATCH",
             )
         )
-        source_consistency = not any(
-            i in unique_issues
-            for i in (
-                "STAGE_SOURCE_MISMATCH",
-                "EXECUTION_SOURCE_MISMATCH",
+        # Nested source checks are independent of the issues list: a
+        # wrong nested source produces NESTED_REASONING_RUN_MISMATCH
+        # (or the audit equivalent), but source_consistency must
+        # additionally reflect the source check directly, not rely on
+        # the general-purpose nested mismatch flag.
+        _nested_run_source_bad = (
+            isinstance(nested_run, Mapping)
+            and nested_run.get("run_source") != REASONING_RUN_SOURCE_TASK_042
+        )
+        _nested_audit_source_bad = (
+            isinstance(nested_audit, Mapping)
+            and nested_audit.get("run_consistency_source")
+            != REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
+        )
+        source_consistency = (
+            not any(
+                i in unique_issues
+                for i in (
+                    "STAGE_SOURCE_MISMATCH",
+                    "EXECUTION_SOURCE_MISMATCH",
+                )
             )
+            and not _nested_run_source_bad
+            and not _nested_audit_source_bad
         )
 
         result: dict[str, Any] = {

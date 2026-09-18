@@ -559,3 +559,159 @@ def test_valid_execution_with_inconsistent_run_audit() -> None:
     # Either way, execution_consistent must reflect the nested audit
     # run_consistent (False).
     assert result["execution_consistent"] is False
+
+
+# ---------------------------------------------------------------------------
+# Round 2 fixes: source_consistency, outcome_consistent, nested flags,
+# real failed-stage coverage
+# ---------------------------------------------------------------------------
+
+
+def test_source_consistency_false_on_wrong_task042_source() -> None:
+    execution = _make_valid_execution()
+    tampered = copy.deepcopy(execution)
+    tampered["reasoning_run"]["run_source"] = "WRONG"
+    result = _service().build(execution=tampered)
+    assert result["source_consistency"] is False
+
+
+def test_source_consistency_false_on_wrong_task043_source() -> None:
+    execution = _make_valid_execution()
+    tampered = copy.deepcopy(execution)
+    tampered["reasoning_run_consistency"]["run_consistency_source"] = "WRONG"
+    result = _service().build(execution=tampered)
+    assert result["source_consistency"] is False
+
+
+def test_outcome_consistent_false_on_invalid_outcome() -> None:
+    execution = _make_valid_execution()
+    tampered = copy.deepcopy(execution)
+    tampered["outcome"] = "NONSENSE"
+    result = _service().build(execution=tampered)
+    assert "INVALID_EXECUTION_OUTCOME" in result["consistency_issues"]
+    assert result["outcome_consistent"] is False
+
+
+def test_missing_nested_run_flips_flag_on_completed() -> None:
+    execution = _make_valid_execution()
+    tampered = copy.deepcopy(execution)
+    tampered["reasoning_run"] = None
+    result = _service().build(execution=tampered)
+    assert result["nested_reasoning_run_consistent"] is False
+
+
+def test_missing_nested_audit_flips_flag_on_completed() -> None:
+    execution = _make_valid_execution()
+    tampered = copy.deepcopy(execution)
+    tampered["reasoning_run_consistency"] = None
+    result = _service().build(execution=tampered)
+    assert result["nested_reasoning_run_audit_consistent"] is False
+
+
+# ---------------------------------------------------------------------------
+# Real failed-stage coverage: force Task 044 to fail at each stage
+# ---------------------------------------------------------------------------
+
+
+def _force_failure(
+    monkeypatch,
+    stage_id: str,
+) -> None:
+    """Monkeypatch the service that owns the given stage to raise."""
+    from rop.services.candidate_generation import CandidateGenerationService
+    from rop.services.evidence_evaluation import EvidenceEvaluationService
+    from rop.services.missing_information import MissingInformationService
+    from rop.services.observation_extraction import (
+        ObservationExtractionService,
+    )
+    from rop.services.reasoning_run import ReasoningRunService
+    from rop.services.reasoning_run_consistency import (
+        ReasoningRunConsistencyService,
+    )
+    from rop.services.template_match import TemplateMatchService
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("forced failure at " + stage_id)
+
+    if stage_id == "OBSERVATION_EXTRACTION":
+        monkeypatch.setattr(
+            ObservationExtractionService, "extract_and_store", boom
+        )
+    elif stage_id == "MISSING_INFORMATION":
+        monkeypatch.setattr(
+            MissingInformationService, "detect_and_store", boom
+        )
+    elif stage_id == "TEMPLATE_MATCHING":
+        monkeypatch.setattr(TemplateMatchService, "match", boom)
+    elif stage_id == "CANDIDATE_GENERATION":
+        monkeypatch.setattr(CandidateGenerationService, "generate", boom)
+    elif stage_id == "EVIDENCE_EVALUATION":
+        monkeypatch.setattr(
+            EvidenceEvaluationService, "evaluate_session", boom
+        )
+    elif stage_id == "REASONING_RUN":
+        monkeypatch.setattr(
+            ReasoningRunService, "build_for_session", boom
+        )
+    elif stage_id == "REASONING_RUN_CONSISTENCY":
+        monkeypatch.setattr(
+            ReasoningRunConsistencyService, "build_for_session", boom
+        )
+    else:
+        raise AssertionError("unknown stage_id: " + stage_id)
+
+
+_FAILING_STAGES = (
+    "OBSERVATION_EXTRACTION",
+    "MISSING_INFORMATION",
+    "TEMPLATE_MATCHING",
+    "CANDIDATE_GENERATION",
+    "EVIDENCE_EVALUATION",
+    "REASONING_RUN",
+    "REASONING_RUN_CONSISTENCY",
+)
+
+
+@pytest.mark.parametrize("failing_stage", _FAILING_STAGES)
+def test_real_failed_execution_each_stage(
+    monkeypatch, failing_stage
+) -> None:
+    """Force Task 044 to fail at each stage after SESSION_VERIFIED.
+    The resulting FAILED execution must audit as structurally
+    consistent."""
+    _force_failure(monkeypatch, failing_stage)
+
+    sid = _create_session("Patient reports chest pain")
+    execution = _execute_via_api(sid)
+
+    # Task 044 produced a valid FAILED execution.
+    assert execution["outcome"] == "FAILED"
+    assert execution["available"] is False
+    assert execution["reasoning_run"] is None
+    assert execution["reasoning_run_consistency"] is None
+    assert execution["execution_consistent"] is False
+
+    failing_index = execution["stages"].index(
+        next(
+            s
+            for s in execution["stages"]
+            if s["stage_id"] == failing_stage
+        )
+    )
+    failed_count = sum(
+        1 for s in execution["stages"] if s["status"] == "FAILED"
+    )
+    assert failed_count == 1
+    for i, s in enumerate(execution["stages"]):
+        if i < failing_index:
+            assert s["status"] == "COMPLETED", (failing_stage, s)
+        elif i == failing_index:
+            assert s["status"] == "FAILED"
+        else:
+            assert s["status"] == "SKIPPED", (failing_stage, s)
+
+    # Task 045 audits the FAILED execution as structurally consistent.
+    result = _service().build(execution=execution)
+    assert result["available"] is True
+    assert result["execution_consistent"] is True
+    assert result["consistency_issues"] == []

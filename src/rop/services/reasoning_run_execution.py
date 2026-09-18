@@ -358,6 +358,12 @@ class ReasoningRunExecutionService:
         else:
             outcome = OUTCOME_FAILED
             available = False
+            # Per the Task 044 FAILED contract, both nested results
+            # must be absent on any stage failure -- including when a
+            # later stage failed after the reasoning run was already
+            # composed earlier in the same execution.
+            run = None
+            audit = None
         execution_consistent = bool(
             audit.get("run_consistent", False)
         ) if audit is not None else False
