@@ -70,6 +70,10 @@ from rop.services.medical_entity_recognition import MedicalEntityRecognitionServ
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
+from rop.services.reasoning_context import (
+    ReasoningContextContractError,
+    ReasoningContextService,
+)
 from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -167,6 +171,8 @@ __all__ = [
     "MissingInformationService",
     "ObservationService",
     "ObservationExtractionService",
+    "ReasoningContextContractError",
+    "ReasoningContextService",
     "ReasoningPipelineContractError",
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",
