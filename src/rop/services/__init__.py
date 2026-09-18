@@ -74,6 +74,10 @@ from rop.services.reasoning_context import (
     ReasoningContextContractError,
     ReasoningContextService,
 )
+from rop.services.reasoning_context_consistency import (
+    ReasoningContextConsistencyContractError,
+    ReasoningContextConsistencyService,
+)
 from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -171,6 +175,8 @@ __all__ = [
     "MissingInformationService",
     "ObservationService",
     "ObservationExtractionService",
+    "ReasoningContextConsistencyContractError",
+    "ReasoningContextConsistencyService",
     "ReasoningContextContractError",
     "ReasoningContextService",
     "ReasoningPipelineContractError",

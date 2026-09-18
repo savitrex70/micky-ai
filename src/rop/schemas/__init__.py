@@ -59,6 +59,9 @@ from rop.schemas.reasoning_session import (
     ReasoningSessionUpdate,
 )
 from rop.schemas.reasoning_context import ReasoningContextRead
+from rop.schemas.reasoning_context_consistency import (
+    ReasoningContextConsistencyRead,
+)
 from rop.schemas.reasoning_pipeline import (
     ReasoningPipelineRead,
     ReasoningPipelineStageRead,
@@ -145,6 +148,7 @@ __all__ = [
     "ObservationExtractionResponse",
     "ObservationRead",
     "ObservationUpdate",
+    "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
