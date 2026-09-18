@@ -102,6 +102,10 @@ from rop.services.reasoning_run_execution_api_audit_bundle import (
     ReasoningRunExecutionApiAuditBundleContractError,
     ReasoningRunExecutionApiAuditBundleService,
 )
+from rop.services.reasoning_run_execution_api_audit_bundle_consistency import (
+    ReasoningRunExecutionApiAuditBundleConsistencyContractError,
+    ReasoningRunExecutionApiAuditBundleConsistencyService,
+)
 from rop.services.reasoning_run_execution_audit_package import (
     ReasoningRunExecutionAuditPackageContractError,
     ReasoningRunExecutionAuditPackageService,
@@ -167,6 +171,8 @@ __all__ = [
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",
     "ReasoningRunConsistencyService",
+    "ReasoningRunExecutionApiAuditBundleConsistencyContractError",
+    "ReasoningRunExecutionApiAuditBundleConsistencyService",
     "ReasoningRunExecutionApiAuditBundleContractError",
     "ReasoningRunExecutionApiAuditBundleService",
     "ReasoningRunExecutionApiAuditPackageConsistencyContractError",
