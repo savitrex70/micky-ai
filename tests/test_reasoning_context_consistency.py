@@ -427,24 +427,9 @@ def test_issue_ordering_is_deterministic() -> None:
     )
 
 
-_FIXED_ISSUE_ORDER = (
-    "MISSING_CONTEXT_FIELD",
-    "CONTEXT_NOT_AVAILABLE",
-    "INVALID_SESSION_ID",
-    "INVALID_OBSERVATIONS",
-    "INVALID_ENTITIES",
-    "INVALID_MISSING_INFORMATION",
-    "INVALID_TEMPLATE_CONTEXT",
-    "INVALID_CANDIDATE_STATE",
-    "INVALID_REASONING_PIPELINE_TYPE",
-    "INVALID_REASONING_RUN_CONSISTENCY_TYPE",
-    "INVALID_CONTEXT_SOURCE",
-    "INVALID_NESTED_REASONING_RUN",
-    "INVALID_NESTED_REASONING_RUN_CONSISTENCY",
-    "AUDIT_PROVENANCE_COMPUTE_FAILED",
-    "AUDIT_PROVENANCE_MISMATCH",
-    "CANDIDATE_COUNT_MISMATCH",
-)
+# Read the issue order directly from the service so the test cannot
+# drift when new issues are added.
+_FIXED_ISSUE_ORDER = mod._ISSUE_ORDER
 
 
 def _issue_rank(issue: str) -> int:
@@ -745,4 +730,185 @@ def test_valid_candidate_state_flags_true() -> None:
     result = _service().build(context=ctx)
     assert result["candidate_state_consistent"] is True
     assert result["candidate_count_consistent"] is True
+
+# ---------------------------------------------------------------------------
+# Per-element contract validation
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_observation_item_reported() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["observations"] = [{"missing": "all required fields"}]
+    result = _service().build(context=broken)
+    assert "INVALID_OBSERVATION_ITEM" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_malformed_entity_item_reported() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["entities"] = [{"missing": "all required fields"}]
+    result = _service().build(context=broken)
+    assert "INVALID_ENTITY_ITEM" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_malformed_missing_information_item_reported() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["missing_information"] = [{"missing": "all required fields"}]
+    result = _service().build(context=broken)
+    assert (
+        "INVALID_MISSING_INFORMATION_ITEM" in result["consistency_issues"]
+    )
+    assert result["context_consistent"] is False
+
+
+def test_malformed_template_match_item_reported() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["template_context"] = [{"missing": "all required fields"}]
+    result = _service().build(context=broken)
+    assert "INVALID_TEMPLATE_MATCH_ITEM" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_malformed_candidate_item_reported() -> None:
+    ctx = _valid_context()
+    broken = dict(ctx)
+    broken["candidate_state"] = [{"missing": "all required fields"}]
+    result = _service().build(context=broken)
+    assert "INVALID_CANDIDATE_ITEM" in result["consistency_issues"]
+    assert result["candidate_state_consistent"] is False
+    assert result["candidate_count_consistent"] is False
+    assert result["context_consistent"] is False
+
+
+def test_observation_from_other_session_reported() -> None:
+    ctx = _valid_context()
+    fake = {
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),  # different session
+        "text": "x",
+        "type": "symptom",
+        "confidence": 0.5,
+        "source": "unit_test",
+        "timestamp": "2026-01-01T00:00:00",
+    }
+    broken = dict(ctx)
+    broken["observations"] = list(ctx["observations"]) + [fake]
+    result = _service().build(context=broken)
+    assert "OBSERVATION_SESSION_MISMATCH" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_entity_from_other_session_reported() -> None:
+    ctx = _valid_context()
+    fake = {
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "name": "x",
+        "category": "y",
+        "confidence": 0.5,
+        "source": "unit_test",
+    }
+    broken = dict(ctx)
+    broken["entities"] = list(ctx["entities"]) + [fake]
+    result = _service().build(context=broken)
+    assert "ENTITY_SESSION_MISMATCH" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_missing_information_from_other_session_reported() -> None:
+    ctx = _valid_context()
+    fake = {
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "template": "x",
+        "item": "y",
+        "created_at": "2026-01-01T00:00:00",
+    }
+    broken = dict(ctx)
+    broken["missing_information"] = list(ctx["missing_information"]) + [fake]
+    result = _service().build(context=broken)
+    assert (
+        "MISSING_INFORMATION_SESSION_MISMATCH"
+        in result["consistency_issues"]
+    )
+    assert result["context_consistent"] is False
+
+
+def test_template_match_from_other_session_reported() -> None:
+    ctx = _valid_context()
+    fake = {
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "template_name": "x",
+        "confidence": 0.5,
+        "matched_observations": [],
+        "matched_entities": [],
+        "reason": "test",
+        "candidates": [],
+        "created_at": "2026-01-01T00:00:00",
+    }
+    broken = dict(ctx)
+    broken["template_context"] = list(ctx["template_context"]) + [fake]
+    result = _service().build(context=broken)
+    assert "TEMPLATE_MATCH_SESSION_MISMATCH" in result["consistency_issues"]
+    assert result["context_consistent"] is False
+
+
+def test_candidate_from_other_session_reported() -> None:
+    ctx = _valid_context()
+    fake = {
+        "id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "name": "x",
+        "category": "y",
+        "trigger_reason": "test",
+        "initial_score": 1.0,
+        "confidence": 0.5,
+        "supporting_observations": [],
+        "contradicting_observations": [],
+        "missing_information": [],
+        "status": "pending",
+        "created_at": "2026-01-01T00:00:00",
+    }
+    broken = dict(ctx)
+    broken["candidate_state"] = list(ctx["candidate_state"]) + [fake]
+    result = _service().build(context=broken)
+    assert "CANDIDATE_SESSION_MISMATCH" in result["consistency_issues"]
+    assert result["candidate_state_consistent"] is False
+    assert result["candidate_count_consistent"] is False
+    assert result["context_consistent"] is False
+
+
+def test_valid_items_from_correct_session_remain_valid() -> None:
+    ctx = _valid_context()
+    result = _service().build(context=ctx)
+    for issue in (
+        "INVALID_OBSERVATION_ITEM",
+        "OBSERVATION_SESSION_MISMATCH",
+        "INVALID_ENTITY_ITEM",
+        "ENTITY_SESSION_MISMATCH",
+        "INVALID_MISSING_INFORMATION_ITEM",
+        "MISSING_INFORMATION_SESSION_MISMATCH",
+        "INVALID_TEMPLATE_MATCH_ITEM",
+        "TEMPLATE_MATCH_SESSION_MISMATCH",
+        "INVALID_CANDIDATE_ITEM",
+        "CANDIDATE_SESSION_MISMATCH",
+    ):
+        assert issue not in result["consistency_issues"], issue
+    assert result["candidate_state_consistent"] is True
+    assert result["context_consistent"] is True
+
+
+def test_element_validation_does_not_mutate_inputs() -> None:
+    ctx = _valid_context()
+    obs_ids_before = [id(x) for x in ctx["observations"]]
+    cand_ids_before = [id(x) for x in ctx["candidate_state"]]
+    _service().build(context=ctx)
+    assert [id(x) for x in ctx["observations"]] == obs_ids_before
+    assert [id(x) for x in ctx["candidate_state"]] == cand_ids_before
 

@@ -4,6 +4,11 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
+from rop.schemas.entity import EntityRead
+from rop.schemas.missing_information import MissingInformationRead
+from rop.schemas.observation import ObservationRead
+from rop.schemas.template_match import TemplateMatchRead
 from rop.services.reasoning_run import (
     ReasoningRunService,
 )
@@ -66,10 +71,20 @@ _ISSUE_ORDER = (
     "CONTEXT_NOT_AVAILABLE",
     "INVALID_SESSION_ID",
     "INVALID_OBSERVATIONS",
+    "INVALID_OBSERVATION_ITEM",
+    "OBSERVATION_SESSION_MISMATCH",
     "INVALID_ENTITIES",
+    "INVALID_ENTITY_ITEM",
+    "ENTITY_SESSION_MISMATCH",
     "INVALID_MISSING_INFORMATION",
+    "INVALID_MISSING_INFORMATION_ITEM",
+    "MISSING_INFORMATION_SESSION_MISMATCH",
     "INVALID_TEMPLATE_CONTEXT",
+    "INVALID_TEMPLATE_MATCH_ITEM",
+    "TEMPLATE_MATCH_SESSION_MISMATCH",
     "INVALID_CANDIDATE_STATE",
+    "INVALID_CANDIDATE_ITEM",
+    "CANDIDATE_SESSION_MISMATCH",
     "INVALID_REASONING_PIPELINE_TYPE",
     "INVALID_REASONING_RUN_CONSISTENCY_TYPE",
     "INVALID_CONTEXT_SOURCE",
@@ -87,6 +102,43 @@ _LIST_FIELD_ISSUES = (
     ("missing_information", "INVALID_MISSING_INFORMATION"),
     ("template_context", "INVALID_TEMPLATE_CONTEXT"),
     ("candidate_state", "INVALID_CANDIDATE_STATE"),
+)
+
+# Typed-collection contracts from Task 055's schema. Each list element
+# is validated against its Pydantic Read model (reused, not
+# duplicated), and where the model carries session_id, that value must
+# match the context's session_id.
+_ELEMENT_SCHEMAS = (
+    (
+        "observations",
+        ObservationRead,
+        "INVALID_OBSERVATION_ITEM",
+        "OBSERVATION_SESSION_MISMATCH",
+    ),
+    (
+        "entities",
+        EntityRead,
+        "INVALID_ENTITY_ITEM",
+        "ENTITY_SESSION_MISMATCH",
+    ),
+    (
+        "missing_information",
+        MissingInformationRead,
+        "INVALID_MISSING_INFORMATION_ITEM",
+        "MISSING_INFORMATION_SESSION_MISMATCH",
+    ),
+    (
+        "template_context",
+        TemplateMatchRead,
+        "INVALID_TEMPLATE_MATCH_ITEM",
+        "TEMPLATE_MATCH_SESSION_MISMATCH",
+    ),
+    (
+        "candidate_state",
+        CandidateHypothesisRead,
+        "INVALID_CANDIDATE_ITEM",
+        "CANDIDATE_SESSION_MISMATCH",
+    ),
 )
 
 
@@ -155,6 +207,36 @@ class ReasoningContextConsistencyService:
             if field in context and not isinstance(context[field], list):
                 _add(issue)
 
+        # --- Per-element contract validation ---
+        # Each list is typed (list[SomeRead]). Validate every element
+        # against its schema and, where the schema carries session_id,
+        # verify it belongs to this context's session. Missing or
+        # non-list values were already reported above; skip them here
+        # so we don't double-report.
+        context_session_id = context.get("session_id")
+        candidate_items_ok = True
+        for (
+            field_name,
+            schema_cls,
+            invalid_issue,
+            mismatch_issue,
+        ) in _ELEMENT_SCHEMAS:
+            value = context.get(field_name)
+            if not isinstance(value, list):
+                continue
+            for item in value:
+                try:
+                    validated = schema_cls.model_validate(item)
+                except Exception:
+                    _add(invalid_issue)
+                    if field_name == "candidate_state":
+                        candidate_items_ok = False
+                    continue
+                if validated.session_id != context_session_id:
+                    _add(mismatch_issue)
+                    if field_name == "candidate_state":
+                        candidate_items_ok = False
+
         # --- Context source ---
         if context.get("context_source") != _EXPECTED_CONTEXT_SOURCE:
             _add("INVALID_CONTEXT_SOURCE")
@@ -219,7 +301,9 @@ class ReasoningContextConsistencyService:
             context.get("candidate_state"), list
         )
         candidate_state_consistent = (
-            candidate_state_present and candidate_state_is_list
+            candidate_state_present
+            and candidate_state_is_list
+            and candidate_items_ok
         )
         candidate_count_consistent = False
         if candidate_state_consistent and isinstance(
