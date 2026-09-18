@@ -9,8 +9,10 @@ database, no external dependencies.
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 from collections.abc import Generator
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -131,7 +133,8 @@ def test_valid_handoff_shape_and_flags() -> None:
 def test_valid_handoff_session_matches_context() -> None:
     context, audit = _valid_inputs()
     result = _service().build(reasoning_context=context, context_consistency=audit)
-    assert result["session_id"] == str(context["session_id"])
+    assert result["session_id"] == context["session_id"]
+    assert isinstance(result["session_id"], UUID)
 
 
 def test_valid_handoff_preserves_sources() -> None:
@@ -473,3 +476,92 @@ def test_service_has_no_provider_constructor_argument() -> None:
         assert "provider" not in lowered
         assert "model" not in lowered
         assert "client" not in lowered
+
+
+# ---------------------------------------------------------------------------
+# Task 057 follow-up: audit availability / session / relationship / typed
+# ---------------------------------------------------------------------------
+
+
+def test_audit_unavailable_rejected() -> None:
+    context, audit = _valid_inputs()
+    broken = copy.deepcopy(audit)
+    broken["available"] = False
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service().build(reasoning_context=context, context_consistency=broken)
+    assert ei.value.invariant == "AUDIT_UNAVAILABLE"
+
+
+def test_audit_session_inconsistent_rejected() -> None:
+    context, audit = _valid_inputs()
+    broken = copy.deepcopy(audit)
+    broken["session_consistent"] = False
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service().build(reasoning_context=context, context_consistency=broken)
+    assert ei.value.invariant == "AUDIT_SESSION_INCONSISTENT"
+
+
+def test_handoff_consistency_relationship_enforced() -> None:
+    context, audit = _valid_inputs()
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    tampered = dict(result)
+    tampered["handoff_consistent"] = not tampered["handoff_consistent"]
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        ReasoningHandoffService._validate_result(tampered)
+    assert ei.value.invariant == "HANDOFF_CONSISTENCY_MISMATCH"
+
+
+def test_tampered_handoff_source_rejected() -> None:
+    context, audit = _valid_inputs()
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    tampered = dict(result)
+    tampered["handoff_source"] = "SOMETHING_ELSE"
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        ReasoningHandoffService._validate_result(tampered)
+    assert ei.value.invariant == "INVALID_HANDOFF_SOURCE"
+
+
+def test_nested_uuids_not_stringified() -> None:
+    context, audit = _valid_inputs()
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    assert isinstance(result["session_id"], UUID)
+    candidates = result["reasoning_context"].get("candidate_state", [])
+    if candidates:
+        assert isinstance(candidates[0]["id"], UUID)
+    observations = result["reasoning_context"].get("observations", [])
+    if observations:
+        assert isinstance(observations[0]["id"], UUID)
+
+
+def test_nested_datetimes_not_stringified() -> None:
+    context, audit = _valid_inputs()
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    observations = result["reasoning_context"].get("observations", [])
+    if observations:
+        assert isinstance(observations[0]["timestamp"], datetime)
+
+
+def test_missing_result_field_rejected() -> None:
+    context, audit = _valid_inputs()
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    tampered = dict(result)
+    del tampered["handoff_source"]
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        ReasoningHandoffService._validate_result(tampered)
+    assert ei.value.invariant == "MISSING_RESULT_FIELD"
+
+
+def test_audit_reports_context_inconsistency_is_valid_not_raised() -> None:
+    """An audit that is available and session-consistent but reports
+    the *context* as inconsistent is a legitimate audited state --
+    not an error. Result carries handoff_consistent=False."""
+    tampered_context = _context_with_cross_session_candidate()
+    audit = ReasoningContextConsistencyService().build(context=tampered_context)
+    assert audit["available"] is True
+    assert audit["session_consistent"] is True
+    assert audit["context_consistent"] is False
+    result = _service().build(
+        reasoning_context=tampered_context, context_consistency=audit
+    )
+    assert result["handoff_consistent"] is False
+    assert result["available"] is True
