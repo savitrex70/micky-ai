@@ -195,11 +195,19 @@ class ReasoningRunExecutionBundleConsistencyService:
         # execution.execution_consistent against
         # execution_consistency.execution_consistent -- those are
         # deliberately different fields.
-        if isinstance(execution_consistency, Mapping):
-            expected_bundle_consistent = bool(
-                execution_consistency.get("execution_consistent", False)
+        #
+        # If the nested audit is missing or its execution_consistent
+        # field cannot be read, the relationship cannot be verified --
+        # that is a relationship failure, not a pass.
+        if not isinstance(execution_consistency, Mapping):
+            issues.append("BUNDLE_RELATIONSHIP_MISMATCH")
+        else:
+            raw_audit_consistent = execution_consistency.get(
+                "execution_consistent"
             )
-            if bundle.get("bundle_consistent") != expected_bundle_consistent:
+            if not isinstance(raw_audit_consistent, bool):
+                issues.append("BUNDLE_RELATIONSHIP_MISMATCH")
+            elif bundle.get("bundle_consistent") != raw_audit_consistent:
                 issues.append("BUNDLE_RELATIONSHIP_MISMATCH")
 
         # Audit availability.
@@ -255,12 +263,19 @@ class ReasoningRunExecutionBundleConsistencyService:
                 "BUNDLE_SOURCE_MISMATCH",
             )
         )
+        # metadata_consistent reflects every structural relationship
+        # the audit actually verified: bundle shape, session identity,
+        # and both nested contracts.
         metadata_consistent = not any(
             i in unique_issues
             for i in (
                 "MISSING_BUNDLE_FIELD",
                 "INVALID_BUNDLE_AVAILABLE",
                 "BUNDLE_AVAILABILITY_MISMATCH",
+                "SESSION_ID_INVALID",
+                "SESSION_ID_MISMATCH",
+                "NESTED_EXECUTION_MISMATCH",
+                "NESTED_EXECUTION_AUDIT_MISMATCH",
             )
         )
 

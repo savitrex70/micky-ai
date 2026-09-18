@@ -444,3 +444,73 @@ def test_no_decision_or_llm_logic() -> None:
         "rag",
     ):
         assert forbidden not in src.lower()
+
+
+# ---------------------------------------------------------------------------
+# Round 2: metadata_consistent and bundle_relationship_consistent must
+# reflect their underlying structural relationships
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_consistent_false_on_session_mismatch() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["execution"]["session_id"] = str(uuid4())
+    result = _service().build(bundle=tampered)
+    assert result["metadata_consistent"] is False
+    assert result["session_consistent"] is False
+
+
+def test_metadata_consistent_false_on_missing_execution() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["execution"] = None
+    result = _service().build(bundle=tampered)
+    assert result["metadata_consistent"] is False
+
+
+def test_metadata_consistent_false_on_missing_audit() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["execution_consistency"] = None
+    result = _service().build(bundle=tampered)
+    assert result["metadata_consistent"] is False
+
+
+def test_metadata_consistent_false_on_invalid_bundle_available() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["available"] = False
+    result = _service().build(bundle=tampered)
+    assert result["metadata_consistent"] is False
+
+
+def test_bundle_relationship_consistent_false_when_audit_missing() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    tampered["execution_consistency"] = None
+    result = _service().build(bundle=tampered)
+    assert result["bundle_relationship_consistent"] is False
+    assert "BUNDLE_RELATIONSHIP_MISMATCH" in result["consistency_issues"]
+
+
+def test_bundle_relationship_consistent_false_when_audit_consistent_not_bool() -> None:
+    bundle = _valid_bundle()
+    tampered = copy.deepcopy(bundle)
+    # Force the nested execution_consistent field to be non-bool so the
+    # relationship cannot be checked.
+    tampered["execution_consistency"]["execution_consistent"] = "yes"
+    result = _service().build(bundle=tampered)
+    assert result["bundle_relationship_consistent"] is False
+
+
+def test_bundle_relationship_consistent_true_for_valid_bundle() -> None:
+    bundle = _valid_bundle()
+    result = _service().build(bundle=bundle)
+    assert result["bundle_relationship_consistent"] is True
+
+
+def test_metadata_consistent_true_for_valid_bundle() -> None:
+    bundle = _valid_bundle()
+    result = _service().build(bundle=bundle)
+    assert result["metadata_consistent"] is True
