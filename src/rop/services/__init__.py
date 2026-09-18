@@ -90,10 +90,6 @@ from rop.services.reasoning_run_execution_bundle import (
     ReasoningRunExecutionBundleContractError,
     ReasoningRunExecutionBundleService,
 )
-from rop.services.reasoning_run_execution_bundle import (
-    ReasoningRunExecutionBundleContractError,
-    ReasoningRunExecutionBundleService,
-)
 from rop.services.reasoning_run_execution_consistency import (
     ReasoningRunExecutionConsistencyContractError,
     ReasoningRunExecutionConsistencyService,
@@ -147,8 +143,6 @@ __all__ = [
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",
     "ReasoningRunConsistencyService",
-    "ReasoningRunExecutionBundleContractError",
-    "ReasoningRunExecutionBundleService",
     "ReasoningRunExecutionBundleContractError",
     "ReasoningRunExecutionBundleService",
     "ReasoningRunExecutionConsistencyContractError",
