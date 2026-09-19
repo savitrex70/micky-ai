@@ -173,6 +173,31 @@ class ReasoningHandoffService:
                 "context_consistency.session_consistent must be True",
             )
 
+        # Provenance: the Task 056 audit must have been produced from
+        # the exact Task 055 context supplied here. Recompute the
+        # fingerprint with Task 056\'s own canonical helper (delegated,
+        # not reimplemented) and require an exact match.
+        try:
+            expected_fingerprint = (
+                ReasoningContextConsistencyService._context_fingerprint(
+                    reasoning_context
+                )
+            )
+        except Exception as exc:
+            raise ReasoningHandoffContractError(
+                "AUDIT_CONTEXT_FINGERPRINT_COMPUTE_FAILED",
+                "could not compute the Task 055 context fingerprint: " + str(exc),
+            ) from exc
+        if (
+            context_consistency.get("audited_context_fingerprint")
+            != expected_fingerprint
+        ):
+            raise ReasoningHandoffContractError(
+                "AUDIT_CONTEXT_FINGERPRINT_MISMATCH",
+                "the Task 056 audit does not correspond to the "
+                "supplied Task 055 context",
+            )
+
         # Typed nested projection: validate the supplied structures
         # against their own Read schemas so the handoff carries typed
         # Task 055 and Task 056 results. No .model_dump(mode="json")
@@ -291,4 +316,27 @@ class ReasoningHandoffService:
                 "HANDOFF_CONSISTENCY_MISMATCH",
                 "handoff_consistent does not match "
                 "context_consistency.context_consistent",
+            )
+        # Provenance: the nested audit must have been produced from the
+        # exact nested context. This mirrors the check in build(), so a
+        # tampered final result cannot bypass it.
+        try:
+            expected_fingerprint = (
+                ReasoningContextConsistencyService._context_fingerprint(
+                    reasoning_context
+                )
+            )
+        except Exception as exc:
+            raise ReasoningHandoffContractError(
+                "AUDIT_CONTEXT_FINGERPRINT_COMPUTE_FAILED",
+                "could not compute the Task 055 context fingerprint: " + str(exc),
+            ) from exc
+        if (
+            context_consistency.get("audited_context_fingerprint")
+            != expected_fingerprint
+        ):
+            raise ReasoningHandoffContractError(
+                "AUDIT_CONTEXT_FINGERPRINT_MISMATCH",
+                "the Task 056 audit does not correspond to the "
+                "supplied Task 055 context",
             )

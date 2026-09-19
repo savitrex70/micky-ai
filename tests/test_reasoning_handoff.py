@@ -565,3 +565,97 @@ def test_audit_reports_context_inconsistency_is_valid_not_raised() -> None:
     )
     assert result["handoff_consistent"] is False
     assert result["available"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 058: Task 055 <-> Task 056 provenance enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_accepts_matching_provenance() -> None:
+    context, audit = _valid_inputs("Task 058 matching provenance")
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    assert result["available"] is True
+    assert result["handoff_consistent"] is True
+
+
+def test_handoff_rejects_stale_audit_from_other_context() -> None:
+    """Context A + Audit B where fp(A) != audited_context_fingerprint(B)
+    must be rejected even when both are individually valid."""
+    ctx_a, _ = _valid_inputs("Task 058 stale context A")
+    _, audit_b = _valid_inputs("Task 058 stale audit B")
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service().build(reasoning_context=ctx_a, context_consistency=audit_b)
+    assert ei.value.invariant == "AUDIT_CONTEXT_FINGERPRINT_MISMATCH"
+
+
+def test_handoff_rejects_tampered_fingerprint() -> None:
+    context, audit = _valid_inputs("Task 058 tampered fingerprint")
+    original = audit["audited_context_fingerprint"]
+    tampered = copy.deepcopy(audit)
+    tampered["audited_context_fingerprint"] = (
+        "0" * 64 if original != "0" * 64 else "1" * 64
+    )
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service().build(reasoning_context=context, context_consistency=tampered)
+    assert ei.value.invariant == "AUDIT_CONTEXT_FINGERPRINT_MISMATCH"
+
+
+def test_handoff_rejects_context_mutated_after_audit() -> None:
+    context, audit = _valid_inputs("Task 058 mutate after audit")
+    tampered_ctx = dict(context)
+    tampered_ctx["candidate_state"] = list(context["candidate_state"]) + [
+        {
+            "id": str(uuid4()),
+            "session_id": str(context["session_id"]),
+            "name": "injected",
+            "category": "test",
+            "trigger_reason": "test",
+            "initial_score": 1.0,
+            "confidence": 0.5,
+            "supporting_observations": [],
+            "contradicting_observations": [],
+            "missing_information": [],
+            "status": "pending",
+            "created_at": "2026-01-01T00:00:00",
+        }
+    ]
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service().build(reasoning_context=tampered_ctx, context_consistency=audit)
+    assert ei.value.invariant == "AUDIT_CONTEXT_FINGERPRINT_MISMATCH"
+
+
+def test_handoff_validate_result_enforces_provenance() -> None:
+    context, audit = _valid_inputs("Task 058 validate result provenance")
+    result = _service().build(reasoning_context=context, context_consistency=audit)
+    tampered = copy.deepcopy(result)
+    original = tampered["context_consistency"]["audited_context_fingerprint"]
+    tampered["context_consistency"]["audited_context_fingerprint"] = (
+        "0" * 64 if original != "0" * 64 else "1" * 64
+    )
+    with pytest.raises(ReasoningHandoffContractError) as ei:
+        _service()._validate_result(tampered)
+    assert ei.value.invariant == "AUDIT_CONTEXT_FINGERPRINT_MISMATCH"
+
+
+def test_handoff_preserves_audited_inconsistency() -> None:
+    """Even with the new provenance check, a valid Task 056 audit that
+    reports the context as inconsistent is still packageable."""
+    tampered_context = _context_with_cross_session_candidate()
+    audit = ReasoningContextConsistencyService().build(context=tampered_context)
+    assert audit["available"] is True
+    assert audit["session_consistent"] is True
+    assert audit["context_consistent"] is False
+    result = _service().build(
+        reasoning_context=tampered_context, context_consistency=audit
+    )
+    assert result["available"] is True
+    assert result["handoff_consistent"] is False
+
+
+def test_handoff_provenance_deterministic() -> None:
+    context, audit = _valid_inputs("Task 058 provenance determinism")
+    service = _service()
+    first = service.build(reasoning_context=context, context_consistency=audit)
+    second = service.build(reasoning_context=context, context_consistency=audit)
+    assert first == second

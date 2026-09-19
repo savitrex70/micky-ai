@@ -34,3 +34,11 @@ class ReasoningContextConsistencyRead(BaseModel):
     metadata_consistent: bool
     consistency_issues: list[str]
     context_consistency_source: str
+
+    # Provenance: SHA-256 hex digest of the exact Task 055 reasoning
+    # context this audit was produced from. Enables downstream layers
+    # (e.g. Task 057) to prove this audit corresponds to the exact
+    # context being packaged. Provenance only -- it is not a medical
+    # correctness score, a reasoning-quality score, or a model
+    # confidence value.
+    audited_context_fingerprint: str
