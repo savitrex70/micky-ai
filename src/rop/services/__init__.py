@@ -21,10 +21,6 @@ from rop.services.decision_evaluation_consistency import (
     DecisionEvaluationConsistencyContractError,
     DecisionEvaluationConsistencyService,
 )
-from rop.services.decision_input_bundle import (
-    DecisionInputBundleContractError,
-    DecisionInputBundleService,
-)
 from rop.services.decision_execution import (
     DecisionExecutionContractError,
     DecisionExecutionService,
@@ -32,6 +28,10 @@ from rop.services.decision_execution import (
 from rop.services.decision_execution_consistency import (
     DecisionExecutionConsistencyContractError,
     DecisionExecutionConsistencyService,
+)
+from rop.services.decision_input_bundle import (
+    DecisionInputBundleContractError,
+    DecisionInputBundleService,
 )
 from rop.services.decision_input_eligibility import (
     DecisionInputEligibilityContractError,
@@ -82,6 +82,9 @@ from rop.services.reasoning_handoff import (
     ReasoningHandoffContractError,
     ReasoningHandoffService,
 )
+from rop.services.reasoning_handoff_api import (
+    ReasoningHandoffApiService,
+)
 from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -98,9 +101,13 @@ from rop.services.reasoning_run_execution import (
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,
 )
-from rop.services.reasoning_run_execution_bundle import (
-    ReasoningRunExecutionBundleContractError,
-    ReasoningRunExecutionBundleService,
+from rop.services.reasoning_run_execution_api_audit_bundle import (
+    ReasoningRunExecutionApiAuditBundleContractError,
+    ReasoningRunExecutionApiAuditBundleService,
+)
+from rop.services.reasoning_run_execution_api_audit_bundle_consistency import (
+    ReasoningRunExecutionApiAuditBundleConsistencyContractError,
+    ReasoningRunExecutionApiAuditBundleConsistencyService,
 )
 from rop.services.reasoning_run_execution_api_audit_package import (
     ReasoningRunExecutionApiAuditPackageContractError,
@@ -110,14 +117,6 @@ from rop.services.reasoning_run_execution_api_audit_package_consistency import (
     ReasoningRunExecutionApiAuditPackageConsistencyContractError,
     ReasoningRunExecutionApiAuditPackageConsistencyService,
 )
-from rop.services.reasoning_run_execution_api_audit_bundle import (
-    ReasoningRunExecutionApiAuditBundleContractError,
-    ReasoningRunExecutionApiAuditBundleService,
-)
-from rop.services.reasoning_run_execution_api_audit_bundle_consistency import (
-    ReasoningRunExecutionApiAuditBundleConsistencyContractError,
-    ReasoningRunExecutionApiAuditBundleConsistencyService,
-)
 from rop.services.reasoning_run_execution_audit_package import (
     ReasoningRunExecutionAuditPackageContractError,
     ReasoningRunExecutionAuditPackageService,
@@ -125,6 +124,10 @@ from rop.services.reasoning_run_execution_audit_package import (
 from rop.services.reasoning_run_execution_audit_package_api_consistency import (
     ReasoningRunExecutionAuditPackageApiConsistencyContractError,
     ReasoningRunExecutionAuditPackageApiConsistencyService,
+)
+from rop.services.reasoning_run_execution_bundle import (
+    ReasoningRunExecutionBundleContractError,
+    ReasoningRunExecutionBundleService,
 )
 from rop.services.reasoning_run_execution_bundle_consistency import (
     ReasoningRunExecutionBundleConsistencyContractError,
@@ -183,6 +186,7 @@ __all__ = [
     "ReasoningContextConsistencyService",
     "ReasoningContextContractError",
     "ReasoningContextService",
+    "ReasoningHandoffApiService",
     "ReasoningHandoffContractError",
     "ReasoningHandoffService",
     "ReasoningPipelineContractError",
