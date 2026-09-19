@@ -249,3 +249,124 @@ def test_contract_failure_returns_generic_500(
     assert r.status_code == 500
     assert "raw internal detail" not in r.json()["detail"]
     assert r.json()["detail"] == "Internal reasoning-handoff contract violation"
+
+# ---------------------------------------------------------------------------
+# Orchestration identity: Task 055 context flows unchanged through 056 -> 057
+# ---------------------------------------------------------------------------
+
+
+class _StubContextService:
+    """Records the session passed in; returns a sentinel context."""
+
+    def __init__(self, sentinel: object) -> None:
+        self.sentinel = sentinel
+        self.calls: list[tuple[str, object]] = []
+
+    def build_for_session(self, db: object, session_id: object) -> object:
+        self.calls.append(("build_for_session", session_id))
+        return self.sentinel
+
+
+class _StubAuditService:
+    """Records the exact context it received; returns a sentinel audit."""
+
+    def __init__(self, sentinel: object) -> None:
+        self.sentinel = sentinel
+        self.received_contexts: list[object] = []
+
+    def build(self, *, context: object) -> object:
+        self.received_contexts.append(context)
+        return self.sentinel
+
+
+class _StubHandoffService:
+    """Records the exact context and audit it received."""
+
+    def __init__(self, sentinel: object) -> None:
+        self.sentinel = sentinel
+        self.received_contexts: list[object] = []
+        self.received_audits: list[object] = []
+
+    def build(
+        self,
+        *,
+        reasoning_context: object,
+        context_consistency: object,
+    ) -> object:
+        self.received_contexts.append(reasoning_context)
+        self.received_audits.append(context_consistency)
+        return self.sentinel
+
+
+def test_orchestration_passes_exact_same_objects() -> None:
+    """Task 059 must pass the *exact same* Task 055 context object into
+    Task 056 and then Task 057, and the *exact same* Task 056 audit
+    object into Task 057. Identity, not equality: a future refactor
+    that builds a second context (or a second audit) must fail this
+    test."""
+    from rop.services.reasoning_handoff_api import (
+        ReasoningHandoffApiService,
+    )
+
+    context_sentinel = object()
+    audit_sentinel = object()
+    handoff_sentinel = {"sentinel": "handoff"}
+
+    context_stub = _StubContextService(context_sentinel)
+    audit_stub = _StubAuditService(audit_sentinel)
+    handoff_stub = _StubHandoffService(handoff_sentinel)
+
+    service = ReasoningHandoffApiService(
+        reasoning_context_service=context_stub,  # type: ignore[arg-type]
+        reasoning_context_consistency_service=audit_stub,  # type: ignore[arg-type]
+        reasoning_handoff_service=handoff_stub,  # type: ignore[arg-type]
+    )
+
+    session_id = uuid4()
+    result = service.build_for_session(
+        db=None,  # type: ignore[arg-type]
+        session_id=session_id,
+    )
+
+    # Exactly one call into each stage.
+    assert len(context_stub.calls) == 1
+    assert len(audit_stub.received_contexts) == 1
+    assert len(handoff_stub.received_contexts) == 1
+    assert len(handoff_stub.received_audits) == 1
+
+    # The same object that Task 055 produced is what Task 056 received
+    # -- identity, not just equality.
+    assert audit_stub.received_contexts[0] is context_sentinel
+
+    # ... and the same context object is also what Task 057 received.
+    assert handoff_stub.received_contexts[0] is context_sentinel
+
+    # The audit that Task 056 produced is what Task 057 received --
+    # identity again.
+    assert handoff_stub.received_audits[0] is audit_sentinel
+
+    # The result is whatever Task 057 returned, unchanged.
+    assert result is handoff_sentinel
+
+
+def test_orchestration_does_not_rebuild_context() -> None:
+    """Task 055 must be called exactly once, regardless of how many
+    downstream stages need the context."""
+    from rop.services.reasoning_handoff_api import (
+        ReasoningHandoffApiService,
+    )
+
+    context_stub = _StubContextService(object())
+    audit_stub = _StubAuditService(object())
+    handoff_stub = _StubHandoffService(object())
+
+    service = ReasoningHandoffApiService(
+        reasoning_context_service=context_stub,  # type: ignore[arg-type]
+        reasoning_context_consistency_service=audit_stub,  # type: ignore[arg-type]
+        reasoning_handoff_service=handoff_stub,  # type: ignore[arg-type]
+    )
+
+    service.build_for_session(db=None, session_id=uuid4())  # type: ignore[arg-type]
+
+    assert len(context_stub.calls) == 1
+
