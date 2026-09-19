@@ -250,6 +250,7 @@ def test_contract_failure_returns_generic_500(
     assert "raw internal detail" not in r.json()["detail"]
     assert r.json()["detail"] == "Internal reasoning-handoff contract violation"
 
+
 # ---------------------------------------------------------------------------
 # Orchestration identity: Task 055 context flows unchanged through 056 -> 057
 # ---------------------------------------------------------------------------
@@ -369,4 +370,3 @@ def test_orchestration_does_not_rebuild_context() -> None:
     service.build_for_session(db=None, session_id=uuid4())  # type: ignore[arg-type]
 
     assert len(context_stub.calls) == 1
-
