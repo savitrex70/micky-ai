@@ -196,8 +196,6 @@ __all__ = [
     "ReasoningContextService",
     "ReasoningHandoffApiAuditPackageContractError",
     "ReasoningHandoffApiAuditPackageService",
-    "ReasoningHandoffApiAuditPackageContractError",
-    "ReasoningHandoffApiAuditPackageService",
     "ReasoningHandoffApiConsistencyContractError",
     "ReasoningHandoffApiConsistencyService",
     "ReasoningHandoffApiService",

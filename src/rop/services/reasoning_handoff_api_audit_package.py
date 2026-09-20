@@ -183,6 +183,26 @@ class ReasoningHandoffApiAuditPackageService:
                 + repr(api_consistency.get("api_consistency_source")),
             )
 
+        # Response session identity -- checked before the nested
+        # Task 057 validator so a nested-session-only defect surfaces
+        # the specific SESSION_ID_MISMATCH invariant rather than a
+        # generic RESPONSE_MISMATCH.
+        response_sid = _coerce_session_id(response.get("session_id"))
+        if response_sid != sid:
+            raise ReasoningHandoffApiAuditPackageContractError(
+                "SESSION_ID_MISMATCH",
+                "response.session_id does not match the supplied " "session_id",
+            )
+        reasoning_context = response.get("reasoning_context")
+        if isinstance(reasoning_context, Mapping):
+            nested_sid = _coerce_session_id(reasoning_context.get("session_id"))
+            if nested_sid != sid:
+                raise ReasoningHandoffApiAuditPackageContractError(
+                    "SESSION_ID_MISMATCH",
+                    "response.reasoning_context.session_id does not "
+                    "match the supplied session_id",
+                )
+
         # Response contract (Task 057).
         response_for_validation = _deep_normalize_session_ids(response)
         try:
@@ -197,25 +217,6 @@ class ReasoningHandoffApiAuditPackageService:
                 "RESPONSE_MISMATCH",
                 "Task 057 response failed its own validator: " + str(exc),
             ) from exc
-
-        # Response session identity.
-        response_sid = _coerce_session_id(response.get("session_id"))
-        if response_sid != sid:
-            raise ReasoningHandoffApiAuditPackageContractError(
-                "SESSION_ID_MISMATCH",
-                "response.session_id does not match the supplied " "session_id",
-            )
-
-        # Response nested reasoning_context session identity.
-        reasoning_context = response.get("reasoning_context")
-        if isinstance(reasoning_context, Mapping):
-            nested_sid = _coerce_session_id(reasoning_context.get("session_id"))
-            if nested_sid != sid:
-                raise ReasoningHandoffApiAuditPackageContractError(
-                    "SESSION_ID_MISMATCH",
-                    "response.reasoning_context.session_id does not "
-                    "match the supplied session_id",
-                )
 
         # API audit contract (Task 060).
         audit_for_validation = dict(api_consistency)
@@ -347,6 +348,12 @@ class ReasoningHandoffApiAuditPackageService:
         if not isinstance(result["path"], str):
             raise ReasoningHandoffApiAuditPackageContractError(
                 "INVALID_PATH", "path is not a string"
+            )
+        if _PATH_PATTERN.match(result["path"]) is None:
+            raise ReasoningHandoffApiAuditPackageContractError(
+                "INVALID_PATH",
+                "path does not match the Task 059 handoff route: "
+                + repr(result["path"]),
             )
         if not isinstance(result["status_code"], int) or isinstance(
             result["status_code"], bool

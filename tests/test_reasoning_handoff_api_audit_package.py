@@ -354,17 +354,32 @@ def test_response_session_mismatch_rejected() -> None:
 
 def test_nested_reasoning_context_session_mismatch_rejected() -> None:
     """The package must reject a response whose nested
-    reasoning_context.session_id disagrees with the package session,
-    even if the top-level response session matches."""
+    reasoning_context.session_id disagrees with the top-level
+    response session -- even when the supplied session and path both
+    match the top-level response session. This proves the nested
+    session relationship is checked independently, not just via the
+    supplied/path comparison.
+
+    Because the tamper changes the response body, the Task 060 audit's
+    fingerprint must be recomputed so that the fingerprint check does
+    not fire first and mask the specific nested-session defect."""
     sid, method, path, status, body, audit = _real_response_and_audit()
+
+    # Change ONLY the nested reasoning_context.session_id. Everything
+    # else stays pointed at the original session.
+    other_nested = str(uuid4())
     tampered = copy.deepcopy(body)
-    # Swap the nested reasoning_context.session_id AND the top-level
-    # response.session_id to a new value; leave the supplied session
-    # and path pointing at the original. The package must reject
-    # because path_sid (original) != response_sid (new).
-    other = str(uuid4())
-    tampered["session_id"] = other
-    tampered["reasoning_context"]["session_id"] = other
+    tampered["reasoning_context"]["session_id"] = other_nested
+    # Top-level session is deliberately left at its original value.
+
+    # Recompute the audit's response fingerprint for the tampered body
+    # so the fingerprint check passes and the nested-session check is
+    # the one that fires.
+    tampered_audit = copy.deepcopy(audit)
+    tampered_audit["audited_response_fingerprint"] = (
+        ReasoningHandoffApiConsistencyService._response_fingerprint(tampered)
+    )
+
     with pytest.raises(ReasoningHandoffApiAuditPackageContractError) as ei:
         _service().build(
             session_id=sid,
@@ -372,12 +387,9 @@ def test_nested_reasoning_context_session_mismatch_rejected() -> None:
             path=path,
             status_code=status,
             response=tampered,
-            api_consistency=audit,
+            api_consistency=tampered_audit,
         )
-    assert ei.value.invariant in (
-        "SESSION_ID_MISMATCH",
-        "RESPONSE_MISMATCH",
-    )
+    assert ei.value.invariant == "SESSION_ID_MISMATCH"
 
 
 # ---------------------------------------------------------------------------
