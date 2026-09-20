@@ -15,7 +15,9 @@ from rop.schemas.decision_candidate_set import (
     DecisionCandidateSetRead,
 )
 from rop.schemas.decision_context import DecisionContextRead
-from rop.schemas.decision_input_bundle import DecisionInputBundleRead
+from rop.schemas.decision_evaluation_consistency import (
+    DecisionEvaluationConsistencyRead,
+)
 from rop.schemas.decision_execution import (
     DecisionExecutionRead,
     DecisionSelectedCandidateRead,
@@ -23,11 +25,9 @@ from rop.schemas.decision_execution import (
 from rop.schemas.decision_execution_consistency import (
     DecisionExecutionConsistencyRead,
 )
-from rop.schemas.decision_policy import DecisionPolicyRead
-from rop.schemas.decision_evaluation_consistency import (
-    DecisionEvaluationConsistencyRead,
-)
+from rop.schemas.decision_input_bundle import DecisionInputBundleRead
 from rop.schemas.decision_input_eligibility import DecisionInputEligibilityRead
+from rop.schemas.decision_policy import DecisionPolicyRead
 from rop.schemas.differential_decision_readiness import (
     DifferentialDecisionReadinessRead,
 )
@@ -53,16 +53,14 @@ from rop.schemas.observation import (
     ObservationRead,
     ObservationUpdate,
 )
-from rop.schemas.reasoning_session import (
-    ReasoningSessionCreate,
-    ReasoningSessionRead,
-    ReasoningSessionUpdate,
-)
 from rop.schemas.reasoning_context import ReasoningContextRead
 from rop.schemas.reasoning_context_consistency import (
     ReasoningContextConsistencyRead,
 )
 from rop.schemas.reasoning_handoff import ReasoningHandoffRead
+from rop.schemas.reasoning_handoff_api_consistency import (
+    ReasoningHandoffApiConsistencyRead,
+)
 from rop.schemas.reasoning_pipeline import (
     ReasoningPipelineRead,
     ReasoningPipelineStageRead,
@@ -78,11 +76,11 @@ from rop.schemas.reasoning_run_execution import (
     ReasoningRunExecutionRead,
     ReasoningRunExecutionStageRead,
 )
-from rop.schemas.reasoning_run_execution_bundle import (
-    ReasoningRunExecutionBundleRead,
+from rop.schemas.reasoning_run_execution_api_audit_bundle import (
+    ReasoningRunExecutionApiAuditBundleRead,
 )
-from rop.schemas.reasoning_run_execution_audit_package import (
-    ReasoningRunExecutionAuditPackageRead,
+from rop.schemas.reasoning_run_execution_api_audit_bundle_consistency import (
+    ReasoningRunExecutionApiAuditBundleConsistencyRead,
 )
 from rop.schemas.reasoning_run_execution_api_audit_package import (
     ReasoningRunExecutionApiAuditPackageRead,
@@ -90,20 +88,25 @@ from rop.schemas.reasoning_run_execution_api_audit_package import (
 from rop.schemas.reasoning_run_execution_api_audit_package_consistency import (
     ReasoningRunExecutionApiAuditPackageConsistencyRead,
 )
-from rop.schemas.reasoning_run_execution_api_audit_bundle import (
-    ReasoningRunExecutionApiAuditBundleRead,
-)
-from rop.schemas.reasoning_run_execution_api_audit_bundle_consistency import (
-    ReasoningRunExecutionApiAuditBundleConsistencyRead,
+from rop.schemas.reasoning_run_execution_audit_package import (
+    ReasoningRunExecutionAuditPackageRead,
 )
 from rop.schemas.reasoning_run_execution_audit_package_api_consistency import (
     ReasoningRunExecutionAuditPackageApiConsistencyRead,
+)
+from rop.schemas.reasoning_run_execution_bundle import (
+    ReasoningRunExecutionBundleRead,
 )
 from rop.schemas.reasoning_run_execution_bundle_consistency import (
     ReasoningRunExecutionBundleConsistencyRead,
 )
 from rop.schemas.reasoning_run_execution_consistency import (
     ReasoningRunExecutionConsistencyRead,
+)
+from rop.schemas.reasoning_session import (
+    ReasoningSessionCreate,
+    ReasoningSessionRead,
+    ReasoningSessionUpdate,
 )
 from rop.schemas.reasoning_step import ReasoningStepCreate, ReasoningStepRead
 from rop.schemas.template_match import TemplateMatchRead
@@ -151,6 +154,7 @@ __all__ = [
     "ObservationUpdate",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
+    "ReasoningHandoffApiConsistencyRead",
     "ReasoningHandoffRead",
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
