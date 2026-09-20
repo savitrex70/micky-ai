@@ -209,12 +209,29 @@ class ReasoningHandoffApiConsistencyService:
         if extras:
             _add("RESPONSE_SHAPE_MISMATCH")
 
-        # --- Response session id ---
+        # --- Response session id (top-level) ---
         response_session = _coerce_session_id(response_body.get("session_id"))
         if response_session is None:
             _add("SESSION_ID_INVALID")
         elif supplied_session is not None and response_session != supplied_session:
             _add("SESSION_ID_MISMATCH")
+
+        # --- Response session id vs nested Task 055 context session id ---
+        # Task 057's own validator does not enforce equality between
+        # the handoff's top-level session_id and the nested
+        # reasoning_context.session_id, so Task 060 checks it
+        # explicitly. A mismatch means the handoff package is
+        # internally associated with a different session than the one
+        # the API surface reports.
+        reasoning_context = response_body.get("reasoning_context")
+        if isinstance(reasoning_context, Mapping):
+            nested_session = _coerce_session_id(reasoning_context.get("session_id"))
+            if (
+                response_session is not None
+                and nested_session is not None
+                and nested_session != response_session
+            ):
+                _add("SESSION_ID_MISMATCH")
 
         # --- Nested handoff validation via Task 057's own validator ---
         # Task 057 expects UUID objects for session ids. The HTTP body

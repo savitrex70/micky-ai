@@ -716,3 +716,29 @@ def test_no_llm_or_provider_symbols() -> None:
     for token in _FORBIDDEN_SUBSTRINGS:
         pattern = r"\b" + _re.escape(token) + r"\b"
         assert not _re.search(pattern, code), token
+
+
+def test_response_session_disagrees_with_nested_context() -> None:
+    """If the top-level response session_id is swapped to another
+    UUID, and the supplied session_id / path are swapped to match, but
+    the nested reasoning_context.session_id still points at the
+    original session, Task 060 must detect SESSION_ID_MISMATCH. Task
+    057's validator alone does not catch this."""
+    sid, body = _capture_handoff_response()
+
+    other = str(uuid4())
+    tampered = copy.deepcopy(body)
+    tampered["session_id"] = other
+    # Deliberately leave tampered["reasoning_context"]["session_id"]
+    # at its original value.
+
+    result = _service().build(
+        session_id=other,
+        method="GET",
+        path=f"/sessions/{other}/reasoning-handoff",
+        status_code=200,
+        response_body=tampered,
+    )
+    assert "SESSION_ID_MISMATCH" in result["consistency_issues"]
+    assert result["session_consistent"] is False
+    assert result["api_consistent"] is False
