@@ -46,6 +46,7 @@ from rop.schemas import (
     ObservationExtractionRequest,
     ObservationExtractionResponse,
     ObservationRead,
+    ReasoningHandoffApiAuditBundleRead,
     ReasoningHandoffRead,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
@@ -107,8 +108,13 @@ from rop.services import (
     ObservationService,
     ReasoningContextConsistencyContractError,
     ReasoningContextContractError,
+    ReasoningHandoffApiAuditBundleContractError,
+    ReasoningHandoffApiAuditPackageConsistencyContractError,
+    ReasoningHandoffApiAuditPackageContractError,
+    ReasoningHandoffApiConsistencyContractError,
     ReasoningHandoffApiService,
     ReasoningHandoffContractError,
+    ReasoningHandoffFullyAuditedApiService,
     ReasoningPipelineContractError,
     ReasoningPipelineService,
     ReasoningRunConsistencyContractError,
@@ -191,6 +197,7 @@ reasoning_run_execution_audit_package_service = (
     ReasoningRunExecutionAuditPackageService()
 )
 reasoning_handoff_api_service = ReasoningHandoffApiService()
+reasoning_handoff_fully_audited_api_service = ReasoningHandoffFullyAuditedApiService()
 
 
 @router.post(
@@ -2242,4 +2249,65 @@ def get_reasoning_handoff(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-handoff contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-handoff/fully-audited",
+    response_model=ReasoningHandoffApiAuditBundleRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_handoff_fully_audited(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 065: fully audited reasoning handoff.
+
+    Returns the Task 063 audit bundle for the requested session: the
+    exact Task 061 audited API package, the exact Task 062 consistency
+    audit of that package, the session identity, and the fixed Task 063
+    bundle source. The bundle's ``bundle_consistent`` is derived
+    deterministically from Task 062's ``package_consistent``.
+
+    Delegates to ``ReasoningHandoffFullyAuditedApiService``, which calls
+    the Task 059 API orchestration exactly once and derives Tasks 060,
+    061, 062, and 063 from that exact response body. This endpoint does
+    not itself build context, audit context or responses, package, or
+    bundle, and makes no internal HTTP call.
+
+    A valid result whose underlying handoff legitimately reports
+    ``handoff_consistent = False`` still produces a valid 200 response:
+    Task 060/061/062/063 faithfully represent it, so the bundle reports
+    ``bundle_consistent = True``.
+
+    Strictly read-only: no candidates are generated or regenerated, no
+    observations or entities are written, no session state is mutated,
+    no transaction is committed. Repeated GETs on an unchanged session
+    return identical results.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_handoff_fully_audited_api_service.build_for_session(
+            db, session_id
+        )
+    except (
+        ReasoningContextContractError,
+        ReasoningContextConsistencyContractError,
+        ReasoningHandoffContractError,
+        ReasoningHandoffApiConsistencyContractError,
+        ReasoningHandoffApiAuditPackageContractError,
+        ReasoningHandoffApiAuditPackageConsistencyContractError,
+        ReasoningHandoffApiAuditBundleContractError,
+    ) as exc:
+        # Tasks 055-063: an internal contract violation, never medical
+        # or client-input error -- never leak the raw exception detail.
+        # An unavailable or malformed upstream result is never silently
+        # downgraded into a successful audited response.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=("Internal reasoning-handoff fully-audited contract violation"),
         ) from exc
