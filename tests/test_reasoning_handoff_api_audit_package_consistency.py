@@ -647,3 +647,103 @@ def test_no_llm_or_provider_symbols_in_service() -> None:
     for token in _FORBIDDEN_SUBSTRINGS:
         pattern = r"\b" + _re.escape(token) + r"\b"
         assert not _re.search(pattern, src), token
+
+
+# ---------------------------------------------------------------------------
+# Final-validator hardening: tampered derived flags are rejected
+# ---------------------------------------------------------------------------
+
+
+def _clean_audit_result() -> dict:
+    package = _valid_package()
+    return _service().build(package=package)
+
+
+def test_validate_result_rejects_tampered_session_consistent() -> None:
+    """session_consistent=False with an empty issue list contradicts the
+    derived-flag relationship and must be rejected."""
+    tampered = dict(_clean_audit_result())
+    tampered["session_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "SESSION_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_method_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["method_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "METHOD_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_path_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["path_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "PATH_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_status_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["status_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "STATUS_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_nested_response_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["nested_response_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "NESTED_RESPONSE_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_nested_api_consistency() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["nested_api_consistency_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "NESTED_API_CONSISTENCY_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_provenance_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["provenance_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "PROVENANCE_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_package_relationship() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["package_relationship_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "PACKAGE_RELATIONSHIP_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_source_consistency() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["source_consistency"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "SOURCE_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_metadata_consistent() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["metadata_consistent"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "METADATA_CONSISTENT_MISMATCH"
+
+
+def test_validate_result_rejects_available_false() -> None:
+    tampered = dict(_clean_audit_result())
+    tampered["available"] = False
+    with pytest.raises(ReasoningHandoffApiAuditPackageConsistencyContractError) as ei:
+        ReasoningHandoffApiAuditPackageConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "RESULT_UNAVAILABLE"

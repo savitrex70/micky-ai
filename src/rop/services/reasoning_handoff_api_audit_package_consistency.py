@@ -217,14 +217,12 @@ class ReasoningHandoffApiAuditPackageConsistencyService:
 
         # --- Nested Task 057 response ---
         response = package.get("response")
-        response_valid = False
         if not isinstance(response, Mapping):
             issues.append("NESTED_RESPONSE_MISMATCH")
         else:
             response_for_validation = _deep_normalize_session_ids(response)
             try:
                 ReasoningHandoffService._validate_result(response_for_validation)
-                response_valid = True
             except Exception:
                 issues.append("NESTED_RESPONSE_MISMATCH")
 
@@ -463,6 +461,11 @@ class ReasoningHandoffApiAuditPackageConsistencyService:
                     field.upper() + "_TYPE",
                     field + " is not boolean: " + repr(result[field]),
                 )
+        if result["available"] is not True:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "RESULT_UNAVAILABLE",
+                "available is not True",
+            )
         issues = result["consistency_issues"]
         if not isinstance(issues, list):
             raise ReasoningHandoffApiAuditPackageConsistencyContractError(
@@ -508,4 +511,126 @@ class ReasoningHandoffApiAuditPackageConsistencyService:
                 "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
                 "audited_package_fingerprint is not a 64-char lowercase "
                 "hex string: " + repr(fp),
+            )
+
+        # Derived-flag relationships: every flag must be exactly the
+        # deterministic projection of the issue set that build()
+        # computes, so a tampered final result cannot claim a flag
+        # that contradicts its own consistency_issues.
+        issue_set = set(issues)
+
+        expected_session_consistent = not any(
+            i in issue_set
+            for i in (
+                "SESSION_ID_INVALID",
+                "SESSION_ID_MISMATCH",
+                "AUDITED_SESSION_ID_MISMATCH",
+            )
+        )
+        if result["session_consistent"] != expected_session_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "SESSION_CONSISTENT_MISMATCH",
+                "session_consistent does not match consistency_issues",
+            )
+
+        expected_method_consistent = (
+            "METHOD_INVALID" not in issue_set
+            and "AUDITED_METHOD_MISMATCH" not in issue_set
+        )
+        if result["method_consistent"] != expected_method_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "METHOD_CONSISTENT_MISMATCH",
+                "method_consistent does not match consistency_issues",
+            )
+
+        expected_path_consistent = (
+            "PATH_INVALID" not in issue_set and "AUDITED_PATH_MISMATCH" not in issue_set
+        )
+        if result["path_consistent"] != expected_path_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "PATH_CONSISTENT_MISMATCH",
+                "path_consistent does not match consistency_issues",
+            )
+
+        expected_status_consistent = not any(
+            i in issue_set
+            for i in (
+                "STATUS_CODE_INVALID",
+                "AUDITED_STATUS_CODE_MISMATCH",
+            )
+        )
+        if result["status_consistent"] != expected_status_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "STATUS_CONSISTENT_MISMATCH",
+                "status_consistent does not match consistency_issues",
+            )
+
+        expected_nested_response_consistent = (
+            "NESTED_RESPONSE_MISMATCH" not in issue_set
+        )
+        if result["nested_response_consistent"] != expected_nested_response_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "NESTED_RESPONSE_CONSISTENT_MISMATCH",
+                "nested_response_consistent does not match " "consistency_issues",
+            )
+
+        expected_nested_api_consistency_consistent = (
+            "NESTED_API_CONSISTENCY_MISMATCH" not in issue_set
+        )
+        if (
+            result["nested_api_consistency_consistent"]
+            != expected_nested_api_consistency_consistent
+        ):
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "NESTED_API_CONSISTENCY_CONSISTENT_MISMATCH",
+                "nested_api_consistency_consistent does not match "
+                "consistency_issues",
+            )
+
+        expected_provenance_consistent = (
+            "AUDITED_RESPONSE_FINGERPRINT_MISMATCH" not in issue_set
+        )
+        if result["provenance_consistent"] != expected_provenance_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "PROVENANCE_CONSISTENT_MISMATCH",
+                "provenance_consistent does not match " "consistency_issues",
+            )
+
+        expected_package_relationship_consistent = (
+            "PACKAGE_RELATIONSHIP_MISMATCH" not in issue_set
+        )
+        if (
+            result["package_relationship_consistent"]
+            != expected_package_relationship_consistent
+        ):
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "PACKAGE_RELATIONSHIP_CONSISTENT_MISMATCH",
+                "package_relationship_consistent does not match " "consistency_issues",
+            )
+
+        expected_source_consistency = not any(
+            i in issue_set
+            for i in (
+                "RESPONSE_SOURCE_MISMATCH",
+                "API_CONSISTENCY_SOURCE_MISMATCH",
+                "PACKAGE_SOURCE_MISMATCH",
+            )
+        )
+        if result["source_consistency"] != expected_source_consistency:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "SOURCE_CONSISTENT_MISMATCH",
+                "source_consistency does not match consistency_issues",
+            )
+
+        expected_metadata_consistent = not any(
+            i in issue_set
+            for i in (
+                "MISSING_PACKAGE_FIELD",
+                "INVALID_PACKAGE_AVAILABLE",
+            )
+        )
+        if result["metadata_consistent"] != expected_metadata_consistent:
+            raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+                "METADATA_CONSISTENT_MISMATCH",
+                "metadata_consistent does not match consistency_issues",
             )
