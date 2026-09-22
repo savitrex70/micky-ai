@@ -61,6 +61,9 @@ from rop.schemas.reasoning_handoff import ReasoningHandoffRead
 from rop.schemas.reasoning_handoff_api_audit_package import (
     ReasoningHandoffApiAuditPackageRead,
 )
+from rop.schemas.reasoning_handoff_api_audit_package_consistency import (
+    ReasoningHandoffApiAuditPackageConsistencyRead,
+)
 from rop.schemas.reasoning_handoff_api_consistency import (
     ReasoningHandoffApiConsistencyRead,
 )
@@ -157,6 +160,7 @@ __all__ = [
     "ObservationUpdate",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
+    "ReasoningHandoffApiAuditPackageConsistencyRead",
     "ReasoningHandoffApiAuditPackageRead",
     "ReasoningHandoffApiConsistencyRead",
     "ReasoningHandoffRead",
