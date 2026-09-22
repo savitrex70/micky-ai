@@ -475,3 +475,92 @@ def test_no_llm_or_provider_symbols_in_service() -> None:
     for token in _FORBIDDEN:
         pattern = r"\b" + _re.escape(token) + r"\b"
         assert not _re.search(pattern, src), token
+
+
+# ---------------------------------------------------------------------------
+# Adversarial provenance-failure coverage
+# ---------------------------------------------------------------------------
+
+
+def test_fingerprint_compute_failure_is_reported(monkeypatch) -> None:
+    """Force _package_fingerprint to raise and verify the provenance
+    failure is surfaced as AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED,
+    never as a silent success."""
+    from rop.services.reasoning_handoff_api_audit_package_consistency import (
+        ReasoningHandoffApiAuditPackageConsistencyService,
+    )
+
+    # Build a valid bundle BEFORE monkeypatching, so the setup path
+    # runs against the real implementation.
+    bundle = _valid_bundle()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("forced fingerprint compute failure")
+
+    monkeypatch.setattr(
+        ReasoningHandoffApiAuditPackageConsistencyService,
+        "_package_fingerprint",
+        boom,
+    )
+    result = _service().build(bundle=bundle)
+    assert "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED" in result["consistency_issues"]
+    assert result["provenance_consistent"] is False
+    assert result["package_consistent"] is False
+
+
+def test_fingerprint_check_unavailable_when_nested_validation_fails(
+    monkeypatch,
+) -> None:
+    """Force the nested Task 061 validator to raise and verify that the
+    provenance check reports CHECK_UNAVAILABLE rather than silently
+    passing or falling back to a stale fingerprint comparison."""
+    from rop.services.reasoning_handoff_api_audit_package import (
+        ReasoningHandoffApiAuditPackageService,
+    )
+
+    bundle = _valid_bundle()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("forced nested validator failure")
+
+    monkeypatch.setattr(
+        ReasoningHandoffApiAuditPackageService,
+        "_validate_result",
+        boom,
+    )
+    result = _service().build(bundle=bundle)
+    assert "NESTED_PACKAGE_MISMATCH" in result["consistency_issues"]
+    assert (
+        "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    )
+    assert result["nested_package_consistent"] is False
+    assert result["provenance_consistent"] is False
+    assert result["package_consistent"] is False
+
+
+def test_fingerprint_check_unavailable_when_audit_validation_fails(
+    monkeypatch,
+) -> None:
+    """Same as above but forcing the nested Task 062 validator to fail."""
+    from rop.services.reasoning_handoff_api_audit_package_consistency import (
+        ReasoningHandoffApiAuditPackageConsistencyService,
+    )
+
+    bundle = _valid_bundle()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("forced audit validator failure")
+
+    monkeypatch.setattr(
+        ReasoningHandoffApiAuditPackageConsistencyService,
+        "_validate_result",
+        boom,
+    )
+    result = _service().build(bundle=bundle)
+    assert "NESTED_PACKAGE_AUDIT_MISMATCH" in result["consistency_issues"]
+    assert (
+        "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE" in result["consistency_issues"]
+    )
+    assert result["nested_package_audit_consistent"] is False
+    assert result["provenance_consistent"] is False
+    assert result["package_consistent"] is False
