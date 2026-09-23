@@ -108,6 +108,10 @@ from rop.services.reasoning_handoff_api_consistency import (
 from rop.services.reasoning_handoff_fully_audited_api import (
     ReasoningHandoffFullyAuditedApiService,
 )
+from rop.services.reasoning_handoff_fully_audited_api_audit_package import (
+    ReasoningHandoffFullyAuditedApiAuditPackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditPackageService,
+)
 from rop.services.reasoning_handoff_fully_audited_api_consistency import (
     ReasoningHandoffFullyAuditedApiConsistencyContractError,
     ReasoningHandoffFullyAuditedApiConsistencyService,
@@ -225,6 +229,8 @@ __all__ = [
     "ReasoningHandoffApiConsistencyService",
     "ReasoningHandoffApiService",
     "ReasoningHandoffContractError",
+    "ReasoningHandoffFullyAuditedApiAuditPackageContractError",
+    "ReasoningHandoffFullyAuditedApiAuditPackageService",
     "ReasoningHandoffFullyAuditedApiConsistencyContractError",
     "ReasoningHandoffFullyAuditedApiConsistencyService",
     "ReasoningHandoffFullyAuditedApiService",
