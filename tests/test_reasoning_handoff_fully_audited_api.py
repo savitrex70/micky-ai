@@ -434,6 +434,295 @@ def test_forced_bundle_contract_error_returns_generic_500(
     r = client.get(ENDPOINT.format(sid=sid))
     assert r.status_code == 500
     assert "raw internal detail" not in r.json()["detail"]
+    assert (
+        r.json()["detail"]
+        == "Internal reasoning-handoff fully-audited contract violation"
+    )
+
+
+def test_forced_audit_contract_error_returns_generic_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 060 audit failure must return generic 500, not leak detail."""
+    from rop.api import sessions as sessions_module
+    from rop.services.reasoning_handoff_api_consistency import (
+        ReasoningHandoffApiConsistencyContractError,
+    )
+
+    sid = _seed_full_session("Task 065 forced audit failure")
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise ReasoningHandoffApiConsistencyContractError(
+            "FORCED_TEST_FAILURE", "raw internal detail must not leak"
+        )
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_consistency_service,
+        "build",
+        boom,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+    assert "raw internal detail" not in r.json()["detail"]
+    assert (
+        r.json()["detail"]
+        == "Internal reasoning-handoff fully-audited contract violation"
+    )
+
+
+def test_forced_package_contract_error_returns_generic_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 061 package failure must return generic 500, not leak detail."""
+    from rop.api import sessions as sessions_module
+    from rop.services.reasoning_handoff_api_audit_package import (
+        ReasoningHandoffApiAuditPackageContractError,
+    )
+
+    sid = _seed_full_session("Task 065 forced package failure")
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise ReasoningHandoffApiAuditPackageContractError(
+            "FORCED_TEST_FAILURE", "raw internal detail must not leak"
+        )
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_audit_package_service,
+        "build",
+        boom,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+    assert "raw internal detail" not in r.json()["detail"]
+    assert (
+        r.json()["detail"]
+        == "Internal reasoning-handoff fully-audited contract violation"
+    )
+
+
+def test_forced_package_consistency_contract_error_returns_generic_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 062 package consistency failure must return generic 500."""
+    from rop.api import sessions as sessions_module
+    from rop.services.reasoning_handoff_api_audit_package_consistency import (
+        ReasoningHandoffApiAuditPackageConsistencyContractError,
+    )
+
+    sid = _seed_full_session("Task 065 forced package consistency failure")
+
+    def boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise ReasoningHandoffApiAuditPackageConsistencyContractError(
+            "FORCED_TEST_FAILURE", "raw internal detail must not leak"
+        )
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_audit_package_consistency_service,
+        "build",
+        boom,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+    assert "raw internal detail" not in r.json()["detail"]
+    assert (
+        r.json()["detail"]
+        == "Internal reasoning-handoff fully-audited contract violation"
+    )
+
+
+def test_error_behavior_is_deterministic_across_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All contract errors from any stage must yield identical status and
+    generic detail -- no stage-specific error messages."""
+    from rop.api import sessions as sessions_module
+    from rop.services.reasoning_handoff import ReasoningHandoffContractError
+    from rop.services.reasoning_handoff_api_audit_bundle import (
+        ReasoningHandoffApiAuditBundleContractError,
+    )
+    from rop.services.reasoning_handoff_api_audit_package import (
+        ReasoningHandoffApiAuditPackageContractError,
+    )
+    from rop.services.reasoning_handoff_api_audit_package_consistency import (
+        ReasoningHandoffApiAuditPackageConsistencyContractError,
+    )
+    from rop.services.reasoning_handoff_api_consistency import (
+        ReasoningHandoffApiConsistencyContractError,
+    )
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+
+    def make_boom(exc_type: type[Exception]):
+        def boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise exc_type("FORCED", "detail must not leak")
+
+        return boom
+
+    error_types_and_targets = [
+        (
+            ReasoningHandoffContractError,
+            "reasoning_handoff_api_service",
+            "build_for_session",
+        ),
+        (
+            ReasoningHandoffApiConsistencyContractError,
+            "reasoning_handoff_api_consistency_service",
+            "build",
+        ),
+        (
+            ReasoningHandoffApiAuditPackageContractError,
+            "reasoning_handoff_api_audit_package_service",
+            "build",
+        ),
+        (
+            ReasoningHandoffApiAuditPackageConsistencyContractError,
+            "reasoning_handoff_api_audit_package_consistency_service",
+            "build",
+        ),
+        (
+            ReasoningHandoffApiAuditBundleContractError,
+            "reasoning_handoff_api_audit_bundle_service",
+            "build",
+        ),
+    ]
+
+    results = []
+    for exc_type, service_attr, method_name in error_types_and_targets:
+        sid = _seed_full_session(f"Task 065 deterministic error {exc_type.__name__}")
+        monkeypatch.setattr(
+            getattr(orchestration, service_attr),
+            method_name,
+            make_boom(exc_type),
+        )
+        r = client.get(ENDPOINT.format(sid=sid))
+        assert r.status_code == 500
+        assert (
+            r.json()["detail"]
+            == "Internal reasoning-handoff fully-audited contract violation"
+        )
+        results.append(r.json()["detail"])
+
+    # All stages must produce exactly the same generic error
+    assert len(set(results)) == 1
+
+
+def test_wrong_session_identity_in_handoff_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Task 059 response with a different session_id must surface as
+    an internal failure, not a successful response with mismatched session."""
+    from rop.api import sessions as sessions_module
+
+    sid = _seed_full_session("Task 065 wrong session identity")
+    handoff = _inconsistent_handoff(UUID(sid))
+    handoff["session_id"] = str(uuid4())  # wrong session
+
+    def stub(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return handoff
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_service,
+        "build_for_session",
+        stub,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+
+
+def test_malformed_audit_response_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed Task 060 audit must surface as 500, never 200."""
+    from rop.api import sessions as sessions_module
+
+    sid = _seed_full_session("Task 065 malformed audit")
+
+    def malformed_audit(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"available": True}  # missing required fields
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_consistency_service,
+        "build",
+        malformed_audit,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+
+
+def test_malformed_package_response_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed Task 061 package must surface as 500."""
+    from rop.api import sessions as sessions_module
+
+    sid = _seed_full_session("Task 065 malformed package")
+
+    def malformed_package(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"available": True}  # missing required fields
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_audit_package_service,
+        "build",
+        malformed_package,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+
+
+def test_malformed_package_consistency_response_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed Task 062 audit must surface as 500."""
+    from rop.api import sessions as sessions_module
+
+    sid = _seed_full_session("Task 065 malformed package consistency")
+
+    def malformed_consistency(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"available": True}  # missing required fields
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_audit_package_consistency_service,
+        "build",
+        malformed_consistency,
+    )
+    r = client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
+
+
+def test_malformed_bundle_response_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed Task 063 bundle must surface as 500, never 200.
+
+    The endpoint declares ``response_model=ReasoningHandoffApiAuditBundleRead``,
+    so a malformed bundle is rejected by FastAPI's response validation
+    before any body reaches the client. The failure is therefore observed
+    at the server boundary, which is why this test uses a client that does
+    not re-raise server exceptions inside the test process.
+    """
+    from rop.api import sessions as sessions_module
+
+    sid = _seed_full_session("Task 065 malformed bundle")
+
+    def malformed_bundle(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"available": True}  # missing required fields
+
+    orchestration = sessions_module.reasoning_handoff_fully_audited_api_service
+    monkeypatch.setattr(
+        orchestration.reasoning_handoff_api_audit_bundle_service,
+        "build",
+        malformed_bundle,
+    )
+    boundary_client = TestClient(app, raise_server_exceptions=False)
+    r = boundary_client.get(ENDPOINT.format(sid=sid))
+    assert r.status_code == 500
 
 
 def test_unavailable_nested_audit_is_not_downgraded_to_200(
@@ -742,6 +1031,263 @@ def test_orchestration_uses_the_audited_route_transport() -> None:
     assert kwargs["method"] == "GET"
     assert kwargs["status_code"] == 200
     assert kwargs["path"] == f"/sessions/{session_id}/reasoning-handoff"
+
+
+# ---------------------------------------------------------------------------
+# Orchestration call ordering: explicit 059 → 060 → 061 → 062 → 063 sequence
+# ---------------------------------------------------------------------------
+
+
+class _OrderedCallRecorder:
+    """Records call order across all five orchestration stages using
+    separate recorder objects that share a single call_order list.
+    """
+
+    def __init__(self, shared_order: list[str]) -> None:
+        self.shared_order = shared_order
+        self.sentinels: dict[str, object] = {
+            "response": {"sentinel": "response"},
+            "audit": {"sentinel": "audit"},
+            "package": {"sentinel": "package"},
+            "package_consistency": {"sentinel": "package_consistency"},
+            "bundle": {"sentinel": "bundle"},
+        }
+
+
+class _HandoffRecorder(_OrderedCallRecorder):
+    def build_for_session(self, db: object, session_id: object) -> object:
+        self.shared_order.append("059:build_for_session")
+        return self.sentinels["response"]
+
+
+class _AuditRecorder(_OrderedCallRecorder):
+    def build(self, **kwargs: Any) -> object:
+        self.shared_order.append("060:build")
+        return self.sentinels["audit"]
+
+
+class _PackageRecorder(_OrderedCallRecorder):
+    def build(self, **kwargs: Any) -> object:
+        self.shared_order.append("061:build")
+        return self.sentinels["package"]
+
+
+class _ConsistencyRecorder(_OrderedCallRecorder):
+    def build(self, *, package: object) -> object:
+        self.shared_order.append("062:build")
+        return self.sentinels["package_consistency"]
+
+
+class _BundleRecorder(_OrderedCallRecorder):
+    def build(self, **kwargs: Any) -> object:
+        self.shared_order.append("063:build")
+        return self.sentinels["bundle"]
+
+
+# ---------------------------------------------------------------------------
+# Forced-failure tests for dependent tasks (060, 061, 062)
+# ---------------------------------------------------------------------------
+
+
+# Sentinel values reused across the stubbing helpers below.
+_VALID_RESPONSE = {"available": True, "handoff_source": "task_059"}
+_VALID_AUDIT = {"api_consistent": True}
+_VALID_PACKAGE = {"package_consistent": True}
+
+
+def test_060_api_consistency_failure_propagates() -> None:
+    """Force Task 060 (API consistency) to raise and verify that
+    the failure propagates unchanged so the API layer can translate
+    it into a generic 500 rather than silently succeeding."""
+    from rop.services.reasoning_handoff_fully_audited_api import (
+        ReasoningHandoffFullyAuditedApiService,
+    )
+
+    class _StubHandoff:
+        def build_for_session(self, db: object, session_id: object) -> dict:
+            return dict(_VALID_RESPONSE)
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("forced Task 060 API consistency failure")
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=_StubHandoff(),
+        reasoning_handoff_api_consistency_service=type("Stub", (), {"build": boom})(),
+    )
+
+    with pytest.raises(RuntimeError, match="forced Task 060"):
+        service.build_for_session(db=None, session_id=uuid4())
+
+
+def test_061_package_failure_propagates() -> None:
+    """Force Task 061 (API audit package) to raise and verify that
+    the failure propagates unchanged."""
+    from rop.services.reasoning_handoff_fully_audited_api import (
+        ReasoningHandoffFullyAuditedApiService,
+    )
+
+    class _StubHandoff:
+        def build_for_session(self, db: object, session_id: object) -> dict:
+            return dict(_VALID_RESPONSE)
+
+    class _StubAudit:
+        def build(self, *args: object, **kwargs: object) -> dict:
+            return dict(_VALID_AUDIT)
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("forced Task 061 package failure")
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=_StubHandoff(),
+        reasoning_handoff_api_consistency_service=_StubAudit(),
+        reasoning_handoff_api_audit_package_service=type("Stub", (), {"build": boom})(),
+    )
+
+    with pytest.raises(RuntimeError, match="forced Task 061"):
+        service.build_for_session(db=None, session_id=uuid4())
+
+
+def test_062_package_consistency_failure_propagates() -> None:
+    """Force Task 062 (API audit package consistency) to raise and
+    verify that the failure propagates unchanged."""
+    from rop.services.reasoning_handoff_fully_audited_api import (
+        ReasoningHandoffFullyAuditedApiService,
+    )
+
+    class _StubHandoff:
+        def build_for_session(self, db: object, session_id: object) -> dict:
+            return dict(_VALID_RESPONSE)
+
+    class _StubAudit:
+        def build(self, *args: object, **kwargs: object) -> dict:
+            return dict(_VALID_AUDIT)
+
+    class _StubPackage:
+        def build(self, *args: object, **kwargs: object) -> dict:
+            return dict(_VALID_PACKAGE)
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("forced Task 062 package consistency failure")
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=_StubHandoff(),
+        reasoning_handoff_api_consistency_service=_StubAudit(),
+        reasoning_handoff_api_audit_package_service=_StubPackage(),
+        reasoning_handoff_api_audit_package_consistency_service=type(
+            "Stub", (), {"build": boom}
+        )(),
+    )
+
+    with pytest.raises(RuntimeError, match="forced Task 062"):
+        service.build_for_session(db=None, session_id=uuid4())
+
+
+def test_060_failure_does_not_reach_061() -> None:
+    """When Task 060 fails, Tasks 061, 062, and 063 must never be
+    invoked -- the failure short-circuits the chain."""
+    from rop.services.reasoning_handoff_fully_audited_api import (
+        ReasoningHandoffFullyAuditedApiService,
+    )
+
+    class _StubHandoff:
+        def build_for_session(self, db: object, session_id: object) -> dict:
+            return dict(_VALID_RESPONSE)
+
+    class _CallTracker:
+        def __init__(self) -> None:
+            self.called = False
+
+        def build(self, *args: object, **kwargs: object) -> object:
+            self.called = True
+            return {}
+
+    package_tracker = _CallTracker()
+    consistency_tracker = _CallTracker()
+    bundle_tracker = _CallTracker()
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("forced Task 060 failure")
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=_StubHandoff(),
+        reasoning_handoff_api_consistency_service=type("Stub", (), {"build": boom})(),
+        reasoning_handoff_api_audit_package_service=package_tracker,
+        reasoning_handoff_api_audit_package_consistency_service=consistency_tracker,
+        reasoning_handoff_api_audit_bundle_service=bundle_tracker,
+    )
+
+    with pytest.raises(RuntimeError, match="forced Task 060"):
+        service.build_for_session(db=None, session_id=uuid4())
+
+    assert not package_tracker.called, "Task 061 was invoked despite Task 060 failure"
+    assert (
+        not consistency_tracker.called
+    ), "Task 062 was invoked despite Task 060 failure"
+    assert not bundle_tracker.called, "Task 063 was invoked despite Task 060 failure"
+
+
+def test_orchestration_calls_stages_in_exact_order_059_060_061_062_063() -> None:
+    """The orchestration must call stages in the exact sequence:
+    Task 059 → Task 060 → Task 061 → Task 062 → Task 063.
+    Any reordering is a defect."""
+    call_order: list[str] = []
+    handoff_recorder = _HandoffRecorder(call_order)
+    audit_recorder = _AuditRecorder(call_order)
+    package_recorder = _PackageRecorder(call_order)
+    consistency_recorder = _ConsistencyRecorder(call_order)
+    bundle_recorder = _BundleRecorder(call_order)
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=handoff_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_consistency_service=audit_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_package_service=package_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_package_consistency_service=consistency_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_bundle_service=bundle_recorder,  # type: ignore[arg-type]
+    )
+
+    session_id = uuid4()
+    result = service.build_for_session(db=None, session_id=session_id)
+
+    assert call_order == [
+        "059:build_for_session",
+        "060:build",
+        "061:build",
+        "062:build",
+        "063:build",
+    ]
+    assert result is bundle_recorder.sentinels["bundle"]
+
+
+def test_orchestration_each_stage_called_exactly_once() -> None:
+    """Each orchestration stage must be called exactly once per request."""
+    call_order: list[str] = []
+    handoff_recorder = _HandoffRecorder(call_order)
+    audit_recorder = _AuditRecorder(call_order)
+    package_recorder = _PackageRecorder(call_order)
+    consistency_recorder = _ConsistencyRecorder(call_order)
+    bundle_recorder = _BundleRecorder(call_order)
+
+    service = ReasoningHandoffFullyAuditedApiService(
+        reasoning_handoff_api_service=handoff_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_consistency_service=audit_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_package_service=package_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_package_consistency_service=consistency_recorder,  # type: ignore[arg-type]
+        reasoning_handoff_api_audit_bundle_service=bundle_recorder,  # type: ignore[arg-type]
+    )
+
+    session_id = uuid4()
+    service.build_for_session(db=None, session_id=session_id)
+
+    # Count occurrences of each stage
+    from collections import Counter
+
+    counts = Counter(call_order)
+
+    assert counts["059:build_for_session"] == 1
+    assert counts["060:build"] == 1
+    assert counts["061:build"] == 1
+    assert counts["062:build"] == 1
+    assert counts["063:build"] == 1
 
 
 # ---------------------------------------------------------------------------
