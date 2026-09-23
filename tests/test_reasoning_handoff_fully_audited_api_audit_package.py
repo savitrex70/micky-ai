@@ -480,6 +480,256 @@ def test_validate_result_rejects_bad_transport() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Audit provenance mismatches (method / path / status)
+# ---------------------------------------------------------------------------
+
+
+def test_audit_audited_method_mismatch_rejected() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["audited_method"] = "POST"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "INVALID_METHOD"
+
+
+def test_audit_audited_path_mismatch_rejected() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["audited_path"] = (
+        "/sessions/ffffffff-ffff-ffff-ffff-ffffffffffff/reasoning-handoff/fully-audited"
+    )
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "INVALID_PATH"
+
+
+def test_audit_audited_status_code_mismatch_rejected() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["audited_status_code"] = 201
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "INVALID_STATUS"
+
+
+def test_validate_result_rejects_audited_method_mismatch() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"] = dict(tampered["api_consistency"])
+    tampered["api_consistency"]["audited_method"] = "POST"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "INVALID_METHOD"
+
+
+def test_validate_result_rejects_audited_path_mismatch() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"] = dict(tampered["api_consistency"])
+    tampered["api_consistency"][
+        "audited_path"
+    ] = "/sessions/ffffffff-ffff-ffff-ffff-ffffffffffff/reasoning-handoff/fully-audited"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "INVALID_PATH"
+
+
+def test_validate_result_rejects_audited_status_code_mismatch() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["api_consistency"] = dict(tampered["api_consistency"])
+    tampered["api_consistency"]["audited_status_code"] = 201
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "INVALID_STATUS"
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_validate_result_rejects_malformed_fingerprint_format() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = dict(package)
+    tampered["audited_response_fingerprint"] = "not-a-hex-string"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "RESPONSE_FINGERPRINT_MISMATCH"
+
+
+def test_validate_result_rejects_short_fingerprint() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = dict(package)
+    tampered["audited_response_fingerprint"] = "abc123"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "RESPONSE_FINGERPRINT_MISMATCH"
+
+
+def test_validate_result_rejects_nested_fingerprint_mismatch() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    # Keep package fingerprint correct, but tamper the nested audit's fingerprint
+    # to a different well-formed 64-char hex value so the validator's second
+    # check (audit fingerprint vs recomputed) fails with RESPONSE_MISMATCH.
+    nested = dict(tampered["api_consistency"])
+    nested["audited_response_fingerprint"] = "f" * 64
+    # Ensure nested fingerprint is indeed not equal to recomputed (which is package's fingerprint)  # noqa: E501
+    assert (
+        nested["audited_response_fingerprint"]
+        != tampered["audited_response_fingerprint"]
+    )
+    tampered["api_consistency"] = nested
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "RESPONSE_MISMATCH"
+
+
+def test_build_rejects_nested_fingerprint_mismatch() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["audited_response_fingerprint"] = "f" * 64
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    # Build compares audit fingerprint to recomputed fingerprint of supplied response
+    assert ei.value.invariant == "RESPONSE_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# Nested Task 066 consistency_issues tampering (via Task 067)
+# ---------------------------------------------------------------------------
+
+
+def test_build_rejects_duplicate_consistency_issues_in_nested_audit() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    # Duplicate an existing issue -- Task 066 validator rejects duplicates.
+    # Start from a valid audit with empty issues, add a duplicate pair.
+    broken["consistency_issues"] = ["INVALID_METHOD", "INVALID_METHOD"]
+    broken["api_consistent"] = False
+    broken["method_consistent"] = False
+    # Keep other derived flags consistent with the duplicate set to isolate the duplicate check  # noqa: E501
+    # But Task 066 will reject before Task 067 checks provenance, so invariant is API_CONSISTENCY_MISMATCH  # noqa: E501
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_build_rejects_unordered_consistency_issues_in_nested_audit() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["consistency_issues"] = ["RESPONSE_SHAPE_MISMATCH", "INVALID_METHOD"]
+    broken["api_consistent"] = False
+    broken["method_consistent"] = False
+    broken["response_shape_consistent"] = False
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_build_rejects_invalid_issue_type_in_nested_audit() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    broken["consistency_issues"] = [123]  # type: ignore[list-item]
+    broken["api_consistent"] = False
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_build_rejects_unknown_issue_order_violation_in_nested_audit() -> None:
+    sid, path, body, audit, _package = _valid_package()
+    broken = copy.deepcopy(audit)
+    # Unknown issue must be sorted among leftovers; placing it unsorted should be rejected  # noqa: E501
+    # Task 066 orders known issues first, then leftovers sorted. An unsorted leftover order  # noqa: E501
+    # will be caught as ISSUES_ORDER.
+    broken["consistency_issues"] = ["ZZZ_UNKNOWN", "AAA_UNKNOWN"]
+    broken["api_consistent"] = False
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        _build(sid, path, body, broken)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_validate_result_rejects_duplicate_issue_via_nested_audit() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    nested = dict(tampered["api_consistency"])
+    nested["consistency_issues"] = ["INVALID_METHOD", "INVALID_METHOD"]
+    nested["api_consistent"] = False
+    nested["method_consistent"] = False
+    tampered["api_consistency"] = nested
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_validate_result_rejects_wrong_order_issue_via_nested_audit() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    nested = dict(tampered["api_consistency"])
+    nested["consistency_issues"] = ["RESPONSE_SHAPE_MISMATCH", "INVALID_METHOD"]
+    nested["api_consistent"] = False
+    nested["method_consistent"] = False
+    nested["response_shape_consistent"] = False
+    tampered["api_consistency"] = nested
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+def test_validate_result_rejects_non_string_issue_via_nested_audit() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    nested = dict(tampered["api_consistency"])
+    nested["consistency_issues"] = ["INVALID_METHOD", 123]  # type: ignore[list-item]
+    nested["api_consistent"] = False
+    nested["method_consistent"] = False
+    tampered["api_consistency"] = nested
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# Explicit validator tampering — nested session / provenance
+# ---------------------------------------------------------------------------
+
+
+def test_validate_result_rejects_tampered_response_session() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["response"] = copy.deepcopy(tampered["response"])
+    tampered["response"]["session_id"] = str(uuid4())
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "RESPONSE_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_nested_session_mismatch() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    # Tamper the nested audit's audited_session_id to mismatch package session_id
+    nested = dict(tampered["api_consistency"])
+    nested["audited_session_id"] = str(uuid4())
+    tampered["api_consistency"] = nested
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "SESSION_ID_MISMATCH"
+
+
+def test_validate_result_rejects_tampered_response_source() -> None:
+    _sid, _path, _body, _audit, package = _valid_package()
+    tampered = copy.deepcopy(package)
+    tampered["response"] = copy.deepcopy(tampered["response"])
+    tampered["response"]["bundle_source"] = "WRONG_SOURCE"
+    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditPackageContractError) as ei:
+        ReasoningHandoffFullyAuditedApiAuditPackageService._validate_result(tampered)
+    assert ei.value.invariant == "RESPONSE_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
 # Legitimate underlying inconsistency
 # ---------------------------------------------------------------------------
 
