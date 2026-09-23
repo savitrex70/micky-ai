@@ -310,54 +310,71 @@ def test_forced_attestation_fingerprint_compute_failure() -> None:
 
 
 # Semantic distinction
+def _real_legitimate_defect() -> tuple[UUID, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Create a coherent defect chain: bundle False, consistency True, attestation True."""
+    sid, bundle, _ = _real_bundle_and_consistency()
+    # Create a defect Task 068 audit: package_consistent=False with a single issue
+    # This will make Task 069 bundle_consistent=False but still valid
+    orig_audit = bundle["api_audit_package_consistency"]
+    defect_audit = copy.deepcopy(orig_audit)
+    # Set the audit to report a defect: package_consistent=False, nested_response_consistent=False
+    defect_audit["consistency_issues"] = ["NESTED_RESPONSE_MISMATCH"]
+    defect_audit["package_consistent"] = False
+    defect_audit["nested_response_consistent"] = False
+    # Ensure other flags are consistent with the issue set (only this issue)
+    # From Task 068 logic: only nested_response_consistent should be False, others True
+    defect_audit["session_consistent"] = True
+    defect_audit["method_consistent"] = True
+    defect_audit["path_consistent"] = True
+    defect_audit["status_consistent"] = True
+    defect_audit["nested_api_audit_consistent"] = True
+    defect_audit["provenance_consistent"] = True
+    defect_audit["package_relationship_consistent"] = True
+    defect_audit["source_consistency"] = True
+    defect_audit["metadata_consistent"] = True
+    # Validate the defect audit is still internally consistent (it correctly reports a defect)
+    ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._validate_result(defect_audit)
+    # Now build a Task 069 bundle with this defect audit - it should have bundle_consistent=False
+    package = bundle["api_audit_package"]
+    defect_bundle = ReasoningHandoffFullyAuditedApiAuditBundleService().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=defect_audit,
+    )
+    assert defect_bundle["bundle_consistent"] is False
+    # Now audit this defect bundle with Task 070 - it should be coherent (True) because the bundle correctly reports the defect
+    defect_consistency = ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService().build(bundle=defect_bundle)
+    assert defect_consistency["bundle_consistent"] is True
+    assert defect_consistency["consistency_issues"] == []
+    # Now the attestation should be True (follows consistency)
+    return sid, defect_bundle, defect_consistency
+
+
 def test_legitimate_defect_case() -> None:
-    # Task 069 bundle_consistent = False but Task 070 bundle_consistent = True (coherent)
-    # We simulate by using a real bundle where we tamper the underlying package to be inconsistent
-    # but keep Task 069/070 coherent. Simpler: we test the intentional semantic via direct construction:
-    # Create a scenario where bundle has bundle_consistent=False but consistency says bundle_consistent=True
-    # That would be incoherent per current logic, so we need to craft a case where the attestation is coherent
-    # Instead we test the valid attestation where bundle_consistent=True and consistency True -> attestation True
-    # and also the legitimate defect where we make the underlying Task 067 package report a defect but Task 069/070 are coherent
-    # For now, verify that attestation_consistent == consistency.bundle_consistent, not bundle.bundle_consistent
-    sid, bundle, consistency = _real_bundle_and_consistency()
-    # Force bundle to have bundle_consistent=False but consistency still True is incoherent, should be rejected
-    # Instead we test that a coherent attestation with bundle_consistent=False / consistency True is allowed if we construct correctly
-    # To simulate legitimate defect, we need to create a bundle where the underlying API audit is defect but Task 069/070 are coherent
-    # We can do this by creating a session where the API response is defect but we still have a valid bundle
-    # Simpler: assert the current valid attestation has attestation_consistent == consistency.bundle_consistent
-    att = _service().build(session_id=sid, api_audit_bundle=bundle, api_audit_bundle_consistency=consistency)
-    assert att["attestation_consistent"] == consistency["bundle_consistent"]
-    # Now test that if we artificially make bundle bundle_consistent=False but keep consistency True, the attestation should still be True
-    # if Task 070 correctly audits it as coherent (i.e., bundle was tampered to be False but consistency still True is incoherent)
-    # Actually the legitimate defect case is: Task 069 bundle_consistent=False, Task 070 bundle_consistent=True -> Task 071 attestation_consistent=True
-    # This is the correct behavior per spec, so we need to construct such a bundle
-    # We can simulate by directly building a bundle with bundle_consistent=False via mocking the underlying package to be inconsistent
-    # For this test, we will directly verify the logic: attestation_consistent derives from consistency, not bundle
-    bundle_false = copy.deepcopy(bundle)
-    bundle_false["bundle_consistent"] = False
-    # To make this coherent, we need consistency to also have bundle_consistent=False? No, that would be coherent but not the legitimate defect case
-    # The legitimate defect case requires bundle False, consistency True -> but that is actually incoherent per Task 070 validation
-    # So we need to understand: bundle_consistent=False in Task 069 means the underlying audit package is defect, but Task 070's bundle_consistent=True means Task 070 says the bundle is internally coherent (i.e., it correctly reports the defect)
-    # So we can test this by ensuring that if we have a bundle with bundle_consistent=False and a consistency that correctly reports bundle_consistent=False as True? This is confusing.
-    # Simpler: we test that attestation_consistent is derived from consistency, not bundle
-    assert att["attestation_consistent"] == consistency["bundle_consistent"]
-    assert att["attestation_consistent"] != bundle["bundle_consistent"] or bundle["bundle_consistent"] == consistency["bundle_consistent"]
+    sid, defect_bundle, defect_consistency = _real_legitimate_defect()
+    assert defect_bundle["bundle_consistent"] is False
+    assert defect_consistency["bundle_consistent"] is True
+    att = _service().build(
+        session_id=sid, api_audit_bundle=defect_bundle, api_audit_bundle_consistency=defect_consistency
+    )
+    assert att["attestation_consistent"] is True
+    assert att["attestation_consistent"] == defect_consistency["bundle_consistent"]
+    assert att["attestation_consistent"] != defect_bundle["bundle_consistent"]
 
 
 def test_legitimate_defect_explicit() -> None:
-    # Verify attestation_consistent follows Task 070, not Task 069.
-    # The spec allows bundle_consistent=False with consistency True -> attestation True.
-    # Here we verify the derivation is from consistency: create a valid attestation
-    # and ensure its flag equals consistency's bundle_consistent.
-    sid, bundle, consistency = _real_bundle_and_consistency()
-    att = _service().build(session_id=sid, api_audit_bundle=bundle, api_audit_bundle_consistency=consistency)
-    assert att["attestation_consistent"] == consistency["bundle_consistent"]
-    # Also verify via _validate_result that mismatched attestation_consistent is rejected
+    sid, defect_bundle, defect_consistency = _real_legitimate_defect()
+    att = _service().build(
+        session_id=sid, api_audit_bundle=defect_bundle, api_audit_bundle_consistency=defect_consistency
+    )
+    assert att["attestation_consistent"] is True
+    # Also verify mismatched attestation_consistent is rejected
     tampered = dict(att)
-    tampered["attestation_consistent"] = not consistency["bundle_consistent"]
+    tampered["attestation_consistent"] = False
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditAttestationContractError) as ei:
         ReasoningHandoffFullyAuditedApiAuditAttestationService._validate_result(tampered)
     assert ei.value.invariant == "ATTESTATION_CONSISTENCY_MISMATCH"
+
 
 def test_malformed_relationship_rejected() -> None:
     att = _valid_attestation()
