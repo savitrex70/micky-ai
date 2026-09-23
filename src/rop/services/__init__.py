@@ -112,6 +112,10 @@ from rop.services.reasoning_handoff_fully_audited_api_audit_bundle import (
     ReasoningHandoffFullyAuditedApiAuditBundleContractError,
     ReasoningHandoffFullyAuditedApiAuditBundleService,
 )
+from rop.services.reasoning_handoff_fully_audited_api_audit_bundle_consistency import (
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService,
+)
 from rop.services.reasoning_handoff_fully_audited_api_audit_package import (
     ReasoningHandoffFullyAuditedApiAuditPackageContractError,
     ReasoningHandoffFullyAuditedApiAuditPackageService,
@@ -237,6 +241,8 @@ __all__ = [
     "ReasoningHandoffApiConsistencyService",
     "ReasoningHandoffApiService",
     "ReasoningHandoffContractError",
+    "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError",
+    "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService",
     "ReasoningHandoffFullyAuditedApiAuditBundleContractError",
     "ReasoningHandoffFullyAuditedApiAuditBundleService",
     "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError",
