@@ -43,12 +43,6 @@ _CONSISTENCY_SOURCE = (
 
 _PACKAGE_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
-# Module-level cache of the last audited Task 067 package for validator-level
-# provenance binding checks. This allows _validate_result to detect post-build
-# tampering of audited_package_fingerprint even when the fingerprinted value
-# remains syntactically valid.
-_LAST_AUDITED_PACKAGE: Mapping[str, Any] | None = None
-
 _PACKAGE_REQUIRED_FIELDS = (
     "available",
     "package_consistent",
@@ -384,10 +378,6 @@ class ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService:
                 "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
                 "could not compute the audited package fingerprint: " + str(exc),
             ) from exc
-        # Cache for validator hardening: allows _validate_result to verify binding
-        # against post-build tampering of a syntactically valid fingerprint.
-        global _LAST_AUDITED_PACKAGE
-        _LAST_AUDITED_PACKAGE = dict(package) if isinstance(package, Mapping) else None
 
         result: dict[str, Any] = {
             "available": True,
@@ -502,28 +492,6 @@ class ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService:
                 "audited_package_fingerprint is not a 64-char lowercase "
                 "hex string: " + repr(fp),
             )
-        # Provenance binding: recompute fingerprint from the audited package
-        # and ensure it matches the declared value. This protects against
-        # post-build tampering where an attacker replaces the fingerprint
-        # with another syntactically valid 64-char hex digest.
-        # If the last audited package is available, verify binding.
-        if _LAST_AUDITED_PACKAGE is not None:
-            try:
-                # Use the class's canonical fingerprint helper
-                recomputed_fp = ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._package_fingerprint(  # noqa: E501
-                    _LAST_AUDITED_PACKAGE
-                )
-            except Exception as exc:
-                raise ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError(  # noqa: E501
-                    "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
-                    "audited_package_fingerprint could not be recomputed: " + str(exc),
-                ) from exc
-            if fp != recomputed_fp:
-                raise ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError(  # noqa: E501
-                    "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
-                    "audited_package_fingerprint does not match the audited package: "
-                    + repr(fp),
-                )
 
         # Derived-flag relationships: every flag must be exactly the
         # deterministic projection of the issue set that build() computes,

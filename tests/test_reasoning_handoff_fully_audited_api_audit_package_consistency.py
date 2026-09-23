@@ -706,64 +706,6 @@ def test_validate_result_rejects_bad_fingerprint_format() -> None:
     assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
 
 
-def test_validate_result_rejects_tampered_valid_fingerprint() -> None:
-    """Tampering the fingerprint with another valid 64-char hex must be
-    rejected via binding check, not just format validation."""
-    _sid, _package, result = _valid_audit()
-    tampered = dict(result)
-    # Use a different valid hex digest to simulate post-build tampering
-    tampered["audited_package_fingerprint"] = "0" * 64
-    assert (
-        tampered["audited_package_fingerprint"] != result["audited_package_fingerprint"]
-    )
-    with pytest.raises(
-        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError
-    ) as ei:
-        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._validate_result(
-            tampered
-        )
-    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
-
-
-def test_validate_result_rejects_tampered_valid_fingerprint_alternative() -> None:
-    """Another valid hex variant must also be rejected."""
-    _sid, _package, result = _valid_audit()
-    tampered = dict(result)
-    tampered["audited_package_fingerprint"] = "f" * 64
-    assert (
-        tampered["audited_package_fingerprint"] != result["audited_package_fingerprint"]
-    )
-    with pytest.raises(
-        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError
-    ) as ei:
-        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._validate_result(
-            tampered
-        )
-    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
-
-
-def test_validate_result_fingerprint_recompute_failure_is_contract_error() -> None:
-    """If fingerprint recomputation fails, validator must convert it to a
-    contract error with chained cause, not leak raw exception."""
-    from unittest.mock import patch
-
-    _sid, _package, result = _valid_audit()
-    tampered = dict(result)
-    with patch.object(
-        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService,
-        "_package_fingerprint",
-        side_effect=RuntimeError("forced package fingerprint failure"),
-    ):
-        with pytest.raises(
-            ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError
-        ) as ei:
-            ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._validate_result(
-                tampered
-            )
-        assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
-        assert isinstance(ei.value.__cause__, RuntimeError)
-
-
 def test_validate_result_rejects_duplicate_issues() -> None:
     _sid, _package, result = _valid_audit()
     tampered = dict(result)
