@@ -84,6 +84,8 @@ _ISSUE_ORDER = (
     "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
     "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
     "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE",
+    "AUDITED_BUNDLE_FINGERPRINT_MISMATCH",
+    "AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED",
     "BUNDLE_RELATIONSHIP_MISMATCH",
     "PACKAGE_SOURCE_MISMATCH",
     "CONSISTENCY_SOURCE_MISMATCH",
@@ -140,6 +142,25 @@ def _bundle_fingerprint(bundle: Mapping[str, Any]) -> str:
         _canonicalize(bundle), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _expected_bundle_fingerprint(bundle: Mapping[str, Any]) -> str:
+    """Recompute Task069's audited_bundle_fingerprint from supplied bundle."""
+    sid = bundle.get("session_id")
+    if isinstance(sid, UUID):
+        sid_str = str(sid)
+    elif isinstance(sid, str):
+        sid_str = sid
+    else:
+        sid_str = str(sid) if sid is not None else ""
+    payload = {
+        "session_id": sid_str,
+        "api_audit_package": _canonicalize(bundle.get("api_audit_package")),
+        "api_audit_package_consistency": _canonicalize(
+            bundle.get("api_audit_package_consistency")
+        ),
+    }
+    return _bundle_fingerprint(payload)
 
 
 class ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError(Exception):
@@ -250,7 +271,17 @@ class ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService:
         ):
             _add("BUNDLE_SOURCE_MISMATCH")
 
-        # 11. fallback Task 069 contract
+        # 11. bundle fingerprint provenance (Task069's own fingerprint)
+        try:
+            expected_bundle_fp = _expected_bundle_fingerprint(bundle)
+        except Exception:
+            _add("AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED")
+        else:
+            actual_bundle_fp = bundle.get("audited_bundle_fingerprint")
+            if actual_bundle_fp != expected_bundle_fp:
+                _add("AUDITED_BUNDLE_FINGERPRINT_MISMATCH")
+
+        # 12. fallback Task 069 contract
         if not issues:
             try:
                 ReasoningHandoffFullyAuditedApiAuditBundleService._validate_result(
@@ -278,6 +309,8 @@ class ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService:
                 "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
                 "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
                 "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE",
+                "AUDITED_BUNDLE_FINGERPRINT_MISMATCH",
+                "AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED",
             )
         )
         bundle_relationship_consistent = (
@@ -415,6 +448,8 @@ class ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService:
                 "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
                 "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
                 "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE",
+                "AUDITED_BUNDLE_FINGERPRINT_MISMATCH",
+                "AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED",
             )
         )
         if result["provenance_consistent"] != expected_provenance_consistent:

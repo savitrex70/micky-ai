@@ -252,8 +252,8 @@ def test_audited_bundle_fingerprint_mismatch_reports_issue() -> None:
     bundle = _real_bundle()
     bundle["audited_bundle_fingerprint"] = "0" * 64
     result = _check(bundle)
-    # bundle fingerprint itself is not a separate issue; tampering triggers BUNDLE_CONTRACT_MISMATCH
-    assert "BUNDLE_CONTRACT_MISMATCH" in result["consistency_issues"]
+    assert "AUDITED_BUNDLE_FINGERPRINT_MISMATCH" in result["consistency_issues"]
+    assert result["provenance_consistent"] is False
     assert result["bundle_consistent"] is False
 
 
