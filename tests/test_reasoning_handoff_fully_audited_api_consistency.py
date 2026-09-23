@@ -651,6 +651,52 @@ def test_validate_result_rejects_bad_fingerprint_format() -> None:
     assert ei.value.invariant == "AUDITED_RESPONSE_FINGERPRINT_FORMAT"
 
 
+def test_validate_result_rejects_none_audited_session_id_without_session_issue() -> (
+    None
+):
+    _sid, _path, _body, result = _valid_audit()
+    tampered = dict(result)
+    tampered["audited_session_id"] = None
+    tampered["session_consistent"] = True
+    tampered["consistency_issues"] = []
+    tampered["api_consistent"] = True
+    tampered["method_consistent"] = True
+    tampered["path_consistent"] = True
+    tampered["status_consistent"] = True
+    tampered["response_shape_consistent"] = True
+    tampered["nested_bundle_consistent"] = True
+    tampered["nested_package_audit_consistent"] = True
+    tampered["provenance_consistent"] = True
+    tampered["source_consistency"] = True
+    tampered["metadata_consistent"] = True
+    with pytest.raises(ReasoningHandoffFullyAuditedApiConsistencyContractError) as ei:
+        ReasoningHandoffFullyAuditedApiConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "AUDITED_SESSION_ID_INCOHERENT"
+
+
+def test_validate_result_rejects_invalid_audited_session_id_without_session_issue() -> (
+    None
+):
+    _sid, _path, _body, result = _valid_audit()
+    tampered = dict(result)
+    tampered["audited_session_id"] = "not-a-uuid"
+    tampered["session_consistent"] = True
+    tampered["consistency_issues"] = []
+    tampered["api_consistent"] = True
+    tampered["method_consistent"] = True
+    tampered["path_consistent"] = True
+    tampered["status_consistent"] = True
+    tampered["response_shape_consistent"] = True
+    tampered["nested_bundle_consistent"] = True
+    tampered["nested_package_audit_consistent"] = True
+    tampered["provenance_consistent"] = True
+    tampered["source_consistency"] = True
+    tampered["metadata_consistent"] = True
+    with pytest.raises(ReasoningHandoffFullyAuditedApiConsistencyContractError) as ei:
+        ReasoningHandoffFullyAuditedApiConsistencyService._validate_result(tampered)
+    assert ei.value.invariant == "AUDITED_SESSION_ID_INCOHERENT"
+
+
 # ---------------------------------------------------------------------------
 # Architectural assertions
 # ---------------------------------------------------------------------------
