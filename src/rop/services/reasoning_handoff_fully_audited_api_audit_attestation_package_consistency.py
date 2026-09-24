@@ -359,6 +359,17 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
         return result
 
     @staticmethod
+    def _package_fingerprint(package: Mapping[str, Any]) -> str:
+        """Return the exact Task 073 package fingerprint of ``package``.
+
+        Delegates to the module-level recomputation function, which
+        applies the canonical Task 073 fingerprint definition: the
+        same package-core construction and SHA-256 helper the Task 073
+        service itself uses. No second hashing implementation exists.
+        """
+        return _expected_package_fingerprint(package)
+
+    @staticmethod
     def _validate_result(
         result: dict[str, Any],
         package: Mapping[str, Any] | None = None,
@@ -423,6 +434,26 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
                 "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
                 "audited_package_fingerprint is not a lowercase 64-character SHA-256 string",
             )
+
+        if package is not None:
+            try:
+                expected = _expected_package_fingerprint(package)
+            except Exception as exc:
+                raise _ContractError(
+                    "PACKAGE_FINGERPRINT_COMPUTE_FAILED",
+                    "could not recompute package fingerprint: " + str(exc),
+                ) from exc
+            if result["package_fingerprint"] != expected:
+                raise _ContractError(
+                    "PACKAGE_FINGERPRINT_MISMATCH",
+                    "package_fingerprint does not match the exact Task 073 package definition",
+                )
+            if result["audited_package_fingerprint"] != expected:
+                raise _ContractError(
+                    "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
+                    "audited_package_fingerprint does not match the exact Task 073 package definition",
+                )
+
         if package_fp != audited_package_fp:
             raise _ContractError(
                 "PACKAGE_FINGERPRINT_PAIR_MISMATCH",
@@ -504,22 +535,3 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
                 "METADATA_CONSISTENT_MISMATCH",
                 "metadata_consistent does not match consistency_issues",
             )
-
-        if package is not None:
-            try:
-                expected = _expected_package_fingerprint(package)
-            except Exception as exc:
-                raise _ContractError(
-                    "PACKAGE_FINGERPRINT_COMPUTE_FAILED",
-                    "could not recompute package fingerprint: " + str(exc),
-                ) from exc
-            if result["package_fingerprint"] != expected:
-                raise _ContractError(
-                    "PACKAGE_FINGERPRINT_MISMATCH",
-                    "package_fingerprint does not match the exact Task 073 package definition",
-                )
-            if result["audited_package_fingerprint"] != expected:
-                raise _ContractError(
-                    "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
-                    "audited_package_fingerprint does not match the exact Task 073 package definition",
-                )
