@@ -239,7 +239,7 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
             if isinstance(status_code, int) and not isinstance(status_code, bool)
             else None
         )
-        audited_response_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+        audited_response_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(  # noqa: E501
             response_body
         )
 

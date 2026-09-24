@@ -287,7 +287,7 @@ class ReasoningRunExecutionApiAuditPackageService:
                 "api_consistency.audited_status_code does not match the "
                 "supplied status_code: " + repr(audited_status_code),
             )
-        expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+        expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(  # noqa: E501
             response
         )
         audited_fingerprint = api_consistency.get("audited_response_fingerprint")

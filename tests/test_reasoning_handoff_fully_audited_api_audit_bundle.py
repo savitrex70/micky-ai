@@ -202,7 +202,11 @@ def test_missing_package_raises() -> None:
 def test_non_mapping_package_raises() -> None:
     sid, _, package_audit = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package="not-a-mapping", api_audit_package_consistency=package_audit)  # type: ignore[arg-type]
+        _service().build(  # type: ignore[arg-type]
+            session_id=sid,
+            api_audit_package="not-a-mapping",
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_MISMATCH"
 
 
@@ -220,7 +224,11 @@ def test_missing_consistency_raises() -> None:
 def test_non_mapping_consistency_raises() -> None:
     sid, package, _ = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency="x")  # type: ignore[arg-type]
+        _service().build(  # type: ignore[arg-type]
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency="x",
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_CONSISTENCY_MISMATCH"
 
 
@@ -264,7 +272,8 @@ def test_nested_consistency_fingerprint_mismatch() -> None:
     # Tamper package so its fingerprint no longer matches audit
     broken_package = copy.deepcopy(package)
     broken_package["audited_response_fingerprint"] = "f" * 64
-    # Need to make package still pass its own validator? This will fail nested package validation first
+    # Need to make package still pass its own validator? This will fail nested package
+    # validation first
     # Instead test via direct fingerprint mismatch with valid package but tampered audit
     broken_audit = copy.deepcopy(package_audit)
     broken_audit["audited_package_fingerprint"] = "f" * 64
@@ -316,8 +325,10 @@ def test_provenance_unavailable() -> None:
 def test_bundle_relationship_mismatch() -> None:
     sid, package, package_audit = _real_package_and_audit()
     # package_consistent in audit is True for valid, bundle_consistent should mirror it
-    # To test relationship, we need to tamper the bundle's expected value? Actually bundle relationship is checked in _validate_result, not build
-    # Build always sets bundle_consistent correctly, so to test mismatch we need to validate tampered bundle
+    # To test relationship, we need to tamper the bundle's expected value? Actually
+    # bundle relationship is checked in _validate_result, not build
+    # Build always sets bundle_consistent correctly, so to test mismatch we need to
+    # validate tampered bundle
     bundle = _valid_bundle()
     tampered = dict(bundle)
     tampered["bundle_consistent"] = not tampered["bundle_consistent"]
@@ -362,11 +373,15 @@ def test_bundle_source_mismatch_via_validate() -> None:
 
 
 def test_valid_package_containing_legitimate_defect() -> None:
-    # Create a package that truthfully reports underlying defect: package_consistent=False but Task 068 says package_consistent=True
-    # We can simulate by creating a valid package where api_consistent=False but package_consistent mirrors it
+    # Create a package that truthfully reports underlying defect:
+    # package_consistent=False but Task 068 says package_consistent=True
+    # We can simulate by creating a valid package where api_consistent=False but
+    # package_consistent mirrors it
     sid, package, package_audit = _real_package_and_audit()
-    # The package we have is consistent (package_consistent=True). To get a defect-reporting package, we need to make the underlying API audit report a defect
-    # Instead we can directly test that a valid bundle with package_consistent=False can still be consistent if Task 068 says so
+    # The package we have is consistent (package_consistent=True). To get a defect-
+    # reporting package, we need to make the underlying API audit report a defect
+    # Instead we can directly test that a valid bundle with package_consistent=False can
+    # still be consistent if Task 068 says so
     # For simplicity, we use the valid bundle and assert it distinguishes from malformed
     bundle = _valid_bundle()
     assert bundle["bundle_consistent"] is True
@@ -476,7 +491,8 @@ def test_no_llm_provider_symbols() -> None:
     src = inspect.getsource(mod).lower()
     for token in ("ollama", "openai", "gemini", "anthropic", "model_name", "api_key"):
         assert token not in src
-    # provider/rag/llm words appear as substrings in normal code (e.g. fullmatch), so check word-boundary
+    # provider/rag/llm words appear as substrings in normal code (e.g. fullmatch), so
+    # check word-boundary
     assert "provider" not in src.split() and "rag" not in src.split()
 
 

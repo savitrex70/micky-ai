@@ -264,7 +264,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             # failure. It must never be silently converted to a
             # skip-the-check that leaves the flag True.
             try:
-                expected_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(
+                expected_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(  # noqa: E501
                     api_audit_package
                 )
             except Exception:

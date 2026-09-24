@@ -200,8 +200,10 @@ def test_input_immutability() -> None:
 
 
 def test_valid_package_containing_legitimate_defect() -> None:
-    # A bundle that truthfully reports underlying defect should still be bundle_consistent
-    # We simulate by making underlying package have api_consistent=False but correctly reported
+    # A bundle that truthfully reports underlying defect should still be
+    # bundle_consistent
+    # We simulate by making underlying package have api_consistent=False but correctly
+    # reported
     # Instead we test that tampered inconsistent bundle is distinct from honest defect
     bundle = _real_bundle()
     res_honest = _check(bundle)
@@ -318,7 +320,8 @@ def test_audited_package_fingerprint_check_unavailable() -> None:
     )
     bundle["api_audit_package_consistency"]["audited_package_fingerprint"] = "invalid"
     result = _check(bundle)
-    # Could be either NESTED_PACKAGE_CONSISTENCY_MISMATCH or AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE depending on validator order
+    # Could be either NESTED_PACKAGE_CONSISTENCY_MISMATCH or
+    # AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE depending on validator order
     assert result["provenance_consistent"] is False
     assert any(
         i in result["consistency_issues"]

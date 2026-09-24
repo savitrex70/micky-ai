@@ -285,7 +285,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             and package.get("response") is not None
         ):
             try:
-                expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+                expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(  # noqa: E501
                     response
                 )
             except Exception:
@@ -391,7 +391,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
         )
 
         try:
-            audited_package_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(
+            audited_package_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(  # noqa: E501
                 package
             )
         except Exception as exc:
