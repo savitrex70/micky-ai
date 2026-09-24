@@ -91,6 +91,68 @@ from rop.services.reasoning_context_consistency import (
     ReasoningContextConsistencyContractError,
     ReasoningContextConsistencyService,
 )
+from rop.services.reasoning_handoff import (
+    ReasoningHandoffContractError,
+    ReasoningHandoffService,
+)
+from rop.services.reasoning_handoff_api import (
+    ReasoningHandoffApiService,
+)
+from rop.services.reasoning_handoff_api_audit_bundle import (
+    ReasoningHandoffApiAuditBundleContractError,
+    ReasoningHandoffApiAuditBundleService,
+)
+from rop.services.reasoning_handoff_api_audit_bundle_consistency import (
+    ReasoningHandoffApiAuditBundleConsistencyContractError,
+    ReasoningHandoffApiAuditBundleConsistencyService,
+)
+from rop.services.reasoning_handoff_api_audit_package import (
+    ReasoningHandoffApiAuditPackageContractError,
+    ReasoningHandoffApiAuditPackageService,
+)
+from rop.services.reasoning_handoff_api_audit_package_consistency import (
+    ReasoningHandoffApiAuditPackageConsistencyContractError,
+    ReasoningHandoffApiAuditPackageConsistencyService,
+)
+from rop.services.reasoning_handoff_api_consistency import (
+    ReasoningHandoffApiConsistencyContractError,
+    ReasoningHandoffApiConsistencyService,
+)
+from rop.services.reasoning_handoff_fully_audited_api import (
+    ReasoningHandoffFullyAuditedApiService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation import (
+    ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_bundle import (
+    ReasoningHandoffFullyAuditedApiAuditBundleContractError,
+    ReasoningHandoffFullyAuditedApiAuditBundleService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_bundle_consistency import (
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_package import (
+    ReasoningHandoffFullyAuditedApiAuditPackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditPackageService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_package_consistency import (
+    ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_consistency import (
+    ReasoningHandoffFullyAuditedApiConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiConsistencyService,
+)
 from rop.services.reasoning_pipeline import (
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -199,6 +261,36 @@ __all__ = [
     "ReasoningContextConsistencyService",
     "ReasoningContextContractError",
     "ReasoningContextService",
+    "ReasoningHandoffApiAuditBundleConsistencyContractError",
+    "ReasoningHandoffApiAuditBundleConsistencyService",
+    "ReasoningHandoffApiAuditBundleContractError",
+    "ReasoningHandoffApiAuditBundleService",
+    "ReasoningHandoffApiAuditPackageConsistencyContractError",
+    "ReasoningHandoffApiAuditPackageConsistencyService",
+    "ReasoningHandoffApiAuditPackageContractError",
+    "ReasoningHandoffApiAuditPackageService",
+    "ReasoningHandoffApiConsistencyContractError",
+    "ReasoningHandoffApiConsistencyService",
+    "ReasoningHandoffApiService",
+    "ReasoningHandoffContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyService",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationPackageService",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationService",
+    "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError",
+    "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService",
+    "ReasoningHandoffFullyAuditedApiAuditBundleContractError",
+    "ReasoningHandoffFullyAuditedApiAuditBundleService",
+    "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError",
+    "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService",
+    "ReasoningHandoffFullyAuditedApiAuditPackageContractError",
+    "ReasoningHandoffFullyAuditedApiAuditPackageService",
+    "ReasoningHandoffFullyAuditedApiConsistencyContractError",
+    "ReasoningHandoffFullyAuditedApiConsistencyService",
+    "ReasoningHandoffFullyAuditedApiService",
+    "ReasoningHandoffService",
     "ReasoningPipelineContractError",
     "ReasoningPipelineService",
     "ReasoningRunConsistencyContractError",
