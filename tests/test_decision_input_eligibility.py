@@ -527,8 +527,7 @@ def test_task_033_consistent_is_not_blocking() -> None:
 
     assert result["evaluation_structure_consistent"] is True
     assert (
-        BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT
-        not in result["blocking_conditions"]
+        BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT not in result["blocking_conditions"]
     )
 
 
@@ -545,9 +544,7 @@ def test_task_033_inconsistent_blocks_eligibility() -> None:
 
     assert result["evaluation_structure_consistent"] is False
     assert result["eligible"] is False
-    assert (
-        BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
-    )
+    assert BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
 
 
 def test_evaluation_consistent_matches_upstream_consistent() -> None:
@@ -580,9 +577,7 @@ def test_evaluation_consistent_reflects_upstream_inconsistency() -> None:
 
     assert result["evaluation_consistent"] is False
     assert result["eligible"] is False
-    assert (
-        BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
-    )
+    assert BLOCKING_EVALUATION_STRUCTURE_INCONSISTENT in result["blocking_conditions"]
 
 
 # ---------------------------------------------------------------------------
@@ -634,9 +629,7 @@ def test_blocking_conditions_have_no_duplicates() -> None:
 
     result = _eligibility_service().build(context, consistency_result)
 
-    assert len(result["blocking_conditions"]) == len(
-        set(result["blocking_conditions"])
-    )
+    assert len(result["blocking_conditions"]) == len(set(result["blocking_conditions"]))
 
 
 def test_invalid_blocking_condition_identifier_rejected() -> None:
@@ -1093,9 +1086,7 @@ def test_api_decision_input_eligibility_is_deterministic() -> None:
 def test_api_response_matches_service_output() -> None:
     session_id = _seed_session("Task 034 service-agreement test")
 
-    api_result = client.get(
-        f"/sessions/{session_id}/decision-input-eligibility"
-    ).json()
+    api_result = client.get(f"/sessions/{session_id}/decision-input-eligibility").json()
 
     # Use whichever db dependency is actually wired into `client` right now
     # rather than this module's own engine directly: when the full suite

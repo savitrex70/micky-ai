@@ -146,23 +146,17 @@ def test_tie_behavior_is_explicit_unresolved() -> None:
 
 def test_required_criteria_behavior_is_explicit() -> None:
     policy = _policy_service().build()
-    assert (
-        policy["required_criteria_behavior"] == "MUST_ALL_BE_SATISFIED"
-    )
+    assert policy["required_criteria_behavior"] == "MUST_ALL_BE_SATISFIED"
 
 
 def test_insufficient_input_behavior_is_explicit() -> None:
     policy = _policy_service().build()
-    assert (
-        policy["insufficient_input_behavior"] == "MUST_RETURN_UNAVAILABLE"
-    )
+    assert policy["insufficient_input_behavior"] == "MUST_RETURN_UNAVAILABLE"
 
 
 def test_incomplete_input_behavior_is_explicit() -> None:
     policy = _policy_service().build()
-    assert (
-        policy["incomplete_input_behavior"] == "MUST_RETURN_INCONSISTENT"
-    )
+    assert policy["incomplete_input_behavior"] == "MUST_RETURN_INCONSISTENT"
 
 
 def test_required_candidate_count_is_one() -> None:
@@ -349,9 +343,7 @@ def test_build_for_session_delegates_to_task037(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, db, session_id, candidates)
 
-    monkeypatch.setattr(
-        DecisionInputBundleService, "build_for_session", spy
-    )
+    monkeypatch.setattr(DecisionInputBundleService, "build_for_session", spy)
 
     sid = _create_session("Task 038 delegation")
     session_uuid = UUID(sid)
@@ -363,9 +355,7 @@ def test_build_for_session_delegates_to_task037(monkeypatch) -> None:
         candidates = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        policy = _policy_service().build_for_session(
-            db, session_uuid, candidates
-        )
+        policy = _policy_service().build_for_session(db, session_uuid, candidates)
     finally:
         db_gen.close()
 
@@ -389,9 +379,7 @@ def test_policy_identical_across_sessions() -> None:
             candidates = CandidateGenerationService().list_by_session(
                 db, session_uuid, offset=0, limit=100
             )
-            policy = _policy_service().build_for_session(
-                db, session_uuid, candidates
-            )
+            policy = _policy_service().build_for_session(db, session_uuid, candidates)
         finally:
             db_gen.close()
         if sid == sid_a:

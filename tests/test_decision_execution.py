@@ -294,7 +294,10 @@ def test_unique_highest_wins_despite_lower_tie() -> None:
 def test_optional_failure_does_not_exclude() -> None:
     hid = uuid4()
     a = _assessment(
-        hid, "H1", 1, 10.0,
+        hid,
+        "H1",
+        1,
+        10.0,
         [("req", True, True), ("opt", False, False)],
     )
     result = _service().build(_bundle([a]), _default_policy())
@@ -303,7 +306,10 @@ def test_optional_failure_does_not_exclude() -> None:
 
 def test_required_failure_excludes() -> None:
     a = _assessment(
-        uuid4(), "H1", 1, 10.0,
+        uuid4(),
+        "H1",
+        1,
+        10.0,
         [("req", True, False), ("opt", False, True)],
     )
     result = _service().build(_bundle([a]), _default_policy())
@@ -313,11 +319,17 @@ def test_required_failure_excludes() -> None:
 def test_mixed_required_and_optional() -> None:
     h1 = uuid4()
     a1 = _assessment(
-        h1, "H1", 1, 10.0,
+        h1,
+        "H1",
+        1,
+        10.0,
         [("r1", True, True), ("o1", False, False)],
     )
     a2 = _assessment(
-        uuid4(), "H2", 2, 5.0,
+        uuid4(),
+        "H2",
+        2,
+        5.0,
         [("r1", True, False), ("o1", False, True)],
     )
     result = _service().build(_bundle([a1, a2]), _default_policy())
@@ -340,9 +352,7 @@ def test_zero_required_criteria_is_vacuously_eligible() -> None:
 
 
 def test_unavailable_bundle_returns_input_unavailable() -> None:
-    result = _service().build(
-        _bundle([], available=False), _default_policy()
-    )
+    result = _service().build(_bundle([], available=False), _default_policy())
     assert result["outcome"] == OUTCOME_INPUT_UNAVAILABLE
     assert result["available"] is False
     assert result["selected_candidate"] is None
@@ -690,9 +700,7 @@ def test_api_matches_service_output() -> None:
         candidates = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        service_result = _service().build_for_session(
-            db, session_uuid, candidates
-        )
+        service_result = _service().build_for_session(db, session_uuid, candidates)
     finally:
         db_gen.close()
 

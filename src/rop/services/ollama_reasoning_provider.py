@@ -38,9 +38,7 @@ class OllamaReasoningProvider:
             base_url if base_url is not None else settings.ollama_base_url
         ).rstrip("/")
         resolved_model = (
-            model_name
-            if model_name is not None
-            else settings.ollama_reasoning_model
+            model_name if model_name is not None else settings.ollama_reasoning_model
         )
         # Configuration is validated lazily at call time so that a
         # raw provider exception never escapes construction. The Task
@@ -53,9 +51,7 @@ class OllamaReasoningProvider:
         self, request: LLMReasoningRequest
     ) -> LLMReasoningProviderResponse:
         if not self.model_name:
-            raise LLMReasoningProviderError(
-                "OLLAMA_REASONING_MODEL is not configured"
-            )
+            raise LLMReasoningProviderError("OLLAMA_REASONING_MODEL is not configured")
         body = {
             "model": self.model_name,
             "stream": False,
@@ -74,9 +70,7 @@ class OllamaReasoningProvider:
         }
         try:
             with httpx.Client(timeout=self._timeout) as client:
-                response = client.post(
-                    self.base_url + "/api/chat", json=body
-                )
+                response = client.post(self.base_url + "/api/chat", json=body)
         except httpx.HTTPError as exc:
             raise LLMReasoningProviderError(
                 "Ollama request failed: " + str(exc)
@@ -95,15 +89,9 @@ class OllamaReasoningProvider:
                 "Ollama returned non-JSON envelope"
             ) from exc
         message = data.get("message") if isinstance(data, dict) else None
-        text = (
-            message.get("content")
-            if isinstance(message, dict)
-            else None
-        )
+        text = message.get("content") if isinstance(message, dict) else None
         if not isinstance(text, str) or not text:
-            raise LLMReasoningProviderError(
-                "Ollama response had no message content"
-            )
+            raise LLMReasoningProviderError("Ollama response had no message content")
         return LLMReasoningProviderResponse(
             provider=self.provider_name,
             model=self.model_name,

@@ -130,26 +130,22 @@ class ReasoningPipelineService:
         # Task 041 composes the same service instances downstream
         # callers would use.
         self.decision_context_service = DecisionContextService()
-        self.decision_candidate_evaluation_service = (
-            DecisionCandidateEvaluationService(self.decision_context_service)
+        self.decision_candidate_evaluation_service = DecisionCandidateEvaluationService(
+            self.decision_context_service
         )
         self.decision_evaluation_consistency_service = (
             DecisionEvaluationConsistencyService(
                 self.decision_candidate_evaluation_service
             )
         )
-        self.decision_input_eligibility_service = (
-            DecisionInputEligibilityService(
-                self.decision_evaluation_consistency_service
-            )
+        self.decision_input_eligibility_service = DecisionInputEligibilityService(
+            self.decision_evaluation_consistency_service
         )
         self.decision_candidate_set_service = DecisionCandidateSetService(
             self.decision_input_eligibility_service
         )
-        self.decision_candidate_assessment_service = (
-            DecisionCandidateAssessmentService(
-                self.decision_candidate_set_service
-            )
+        self.decision_candidate_assessment_service = DecisionCandidateAssessmentService(
+            self.decision_candidate_set_service
         )
         self.decision_input_bundle_service = DecisionInputBundleService(
             self.decision_candidate_set_service,
@@ -199,15 +195,11 @@ class ReasoningPipelineService:
         eligibility = self.decision_input_eligibility_service.build(
             context, consistency
         )
-        candidate_set = self.decision_candidate_set_service.build(
-            context, eligibility
-        )
+        candidate_set = self.decision_candidate_set_service.build(context, eligibility)
         assessment = self.decision_candidate_assessment_service.build(
             candidate_set, evaluations, consistency
         )
-        bundle = self.decision_input_bundle_service.build(
-            candidate_set, assessment
-        )
+        bundle = self.decision_input_bundle_service.build(candidate_set, assessment)
         policy = self.decision_policy_service.build()
         execution = self.decision_execution_service.build(bundle, policy)
         audit = self.decision_execution_consistency_service.build(
@@ -238,11 +230,8 @@ class ReasoningPipelineService:
         Convenience wrapper around ``build_for_session_with_inputs`` for
         callers that do not need the intermediate bundle/policy.
         """
-        result, _, _ = self.build_for_session_with_inputs(
-            db, session_id, candidates
-        )
+        result, _, _ = self.build_for_session_with_inputs(db, session_id, candidates)
         return result
-
 
     def build(
         self,
@@ -353,14 +342,10 @@ class ReasoningPipelineService:
             if not isinstance(entry, Mapping):
                 raise ReasoningPipelineContractError(
                     "EVALUATION_ENTRY_TYPE",
-                    "evaluation entry is not a mapping: "
-                    + type(entry).__name__,
+                    "evaluation entry is not a mapping: " + type(entry).__name__,
                 )
             entry_source = entry.get("evaluation_source")
-            if (
-                entry_source
-                != EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032
-            ):
+            if entry_source != EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032:
                 raise ReasoningPipelineContractError(
                     "INVALID_EVALUATION_SOURCE",
                     "evaluation_source is not the Task 032 identifier: "
@@ -390,10 +375,7 @@ class ReasoningPipelineService:
                 EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032,
                 True,
                 True,
-                all(
-                    _f(e, "evaluation_complete", "evaluation")
-                    for e in evaluations
-                ),
+                all(_f(e, "evaluation_complete", "evaluation") for e in evaluations),
             ),
             self._make_stage(
                 "033_DECISION_EVALUATION_CONSISTENCY",
@@ -483,7 +465,6 @@ class ReasoningPipelineService:
         self._validate_result(result, bundle, policy)
         return result
 
-
     @staticmethod
     def _make_stage(
         stage_id: str,
@@ -556,8 +537,10 @@ class ReasoningPipelineService:
         if result["stage_count"] != len(stages):
             raise ReasoningPipelineContractError(
                 "STAGE_COUNT_MISMATCH",
-                "stage_count " + repr(result["stage_count"])
-                + " != len(stages) " + repr(len(stages)),
+                "stage_count "
+                + repr(result["stage_count"])
+                + " != len(stages) "
+                + repr(len(stages)),
             )
         seen_ids: set[str] = set()
         expected_order = 1
@@ -592,15 +575,20 @@ class ReasoningPipelineService:
             if s["stage_order"] != expected_order:
                 raise ReasoningPipelineContractError(
                     "STAGE_ORDER_MISMATCH",
-                    "stage_order " + repr(s["stage_order"])
-                    + " != expected " + repr(expected_order),
+                    "stage_order "
+                    + repr(s["stage_order"])
+                    + " != expected "
+                    + repr(expected_order),
                 )
             expected_order += 1
             for field in _STAGE_BOOLEAN_FIELDS:
                 if not isinstance(s[field], bool):
                     raise ReasoningPipelineContractError(
                         "STAGE_" + field.upper() + "_TYPE",
-                        s["stage_id"] + "." + field + " is not boolean: "
+                        s["stage_id"]
+                        + "."
+                        + field
+                        + " is not boolean: "
                         + repr(s[field]),
                     )
 
@@ -608,8 +596,10 @@ class ReasoningPipelineService:
         if result["completed_stage_count"] != expected_completed:
             raise ReasoningPipelineContractError(
                 "COMPLETED_COUNT_MISMATCH",
-                "completed_stage_count " + repr(result["completed_stage_count"])
-                + " != actual " + repr(expected_completed),
+                "completed_stage_count "
+                + repr(result["completed_stage_count"])
+                + " != actual "
+                + repr(expected_completed),
             )
         expected_complete = all(s["complete"] for s in stages)
         if result["pipeline_complete"] != expected_complete:
@@ -623,10 +613,7 @@ class ReasoningPipelineService:
                 "PIPELINE_CONSISTENT_MISMATCH",
                 "pipeline_consistent does not match stage consistency",
             )
-        if (
-            result["pipeline_source"]
-            != PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041
-        ):
+        if result["pipeline_source"] != PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041:
             raise ReasoningPipelineContractError(
                 "INVALID_PIPELINE_SOURCE",
                 "pipeline_source is not the Task 041 identifier: "
@@ -657,8 +644,7 @@ class ReasoningPipelineService:
         except Exception as exc:
             raise ReasoningPipelineContractError(
                 "INVALID_FINAL_EXECUTION",
-                "final_execution failed the Task 039 validator: "
-                + str(exc),
+                "final_execution failed the Task 039 validator: " + str(exc),
             ) from exc
 
         # Reuse Task 040's output validator for final_execution_consistency.
@@ -671,6 +657,5 @@ class ReasoningPipelineService:
         except Exception as exc:
             raise ReasoningPipelineContractError(
                 "INVALID_FINAL_AUDIT",
-                "final_execution_consistency failed its own validator: "
-                + str(exc),
+                "final_execution_consistency failed its own validator: " + str(exc),
             ) from exc

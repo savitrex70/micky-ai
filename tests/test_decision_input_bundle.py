@@ -200,9 +200,7 @@ def _ready_bundle() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def test_single_candidate_bundle() -> None:
-    cs, aset = _chain(
-        [_score_result(hypothesis_name="H1", hypothesis_score=5.0)]
-    )
+    cs, aset = _chain([_score_result(hypothesis_name="H1", hypothesis_score=5.0)])
     result = _bundle_service().build(cs, aset)
 
     assert set(result) == set(RESULT_FIELDS)
@@ -225,10 +223,7 @@ def test_multiple_candidates_bundle() -> None:
 def test_source_fixed() -> None:
     cs, aset = _ready_bundle()
     result = _bundle_service().build(cs, aset)
-    assert (
-        result["input_source"]
-        == INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
-    )
+    assert result["input_source"] == INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
 
 
 def test_nested_sources_preserved() -> None:
@@ -679,9 +674,7 @@ def test_build_for_session_delegates_to_task035_and_036(monkeypatch) -> None:
     monkeypatch.setattr(
         DecisionCandidateSetService, "build_for_session_with_inputs", spy_cs
     )
-    monkeypatch.setattr(
-        DecisionCandidateAssessmentService, "build", spy_as
-    )
+    monkeypatch.setattr(DecisionCandidateAssessmentService, "build", spy_as)
 
     sid = _seed_session("Task 037 delegation")
     session_uuid = UUID(sid)
@@ -693,9 +686,7 @@ def test_build_for_session_delegates_to_task035_and_036(monkeypatch) -> None:
         candidates = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        result = _bundle_service().build_for_session(
-            db, session_uuid, candidates
-        )
+        result = _bundle_service().build_for_session(db, session_uuid, candidates)
     finally:
         db_gen.close()
 
@@ -777,10 +768,7 @@ def test_api_endpoint() -> None:
     assert r.status_code == 200
     payload = r.json()
     assert set(payload) == set(RESULT_FIELDS)
-    assert (
-        payload["input_source"]
-        == INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
-    )
+    assert payload["input_source"] == INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
     assert payload["available"] is True
     assert payload["candidate_count"] >= 1
     assert payload["candidate_assessment_alignment_complete"] is True
@@ -803,14 +791,10 @@ def test_api_missing_session_returns_404() -> None:
 
 def test_api_is_read_only() -> None:
     sid = _seed_session("Task 037 read-only")
-    before = client.get(
-        f"/sessions/{sid}/decision-candidate-assessments"
-    ).json()
+    before = client.get(f"/sessions/{sid}/decision-candidate-assessments").json()
     r = client.get(f"/sessions/{sid}/decision-input-bundle")
     assert r.status_code == 200
-    after = client.get(
-        f"/sessions/{sid}/decision-candidate-assessments"
-    ).json()
+    after = client.get(f"/sessions/{sid}/decision-candidate-assessments").json()
     assert after == before
 
 

@@ -17,9 +17,7 @@ from rop.services.decision_policy import (
     DecisionPolicyService,
 )
 
-DECISION_EXECUTION_SOURCE_DECISION_EXECUTION_TASK_039 = (
-    "DECISION_EXECUTION_TASK_039"
-)
+DECISION_EXECUTION_SOURCE_DECISION_EXECUTION_TASK_039 = "DECISION_EXECUTION_TASK_039"
 """Fixed structural-contract identifier for Task 039 results."""
 
 OUTCOME_SELECTED = "SELECTED"
@@ -176,9 +174,7 @@ class DecisionExecutionService:
         result = self._execute_default_policy(
             assessments, eligible, policy_id, policy_version
         )
-        self._validate_result(
-            result, bundle, policy, assessments, eligible
-        )
+        self._validate_result(result, bundle, policy, assessments, eligible)
         return result
 
     @staticmethod
@@ -186,9 +182,7 @@ class DecisionExecutionService:
         bundle: Mapping[str, Any] | None,
     ) -> Mapping[str, Any]:
         if bundle is None:
-            raise DecisionExecutionContractError(
-                "MISSING_BUNDLE", "bundle is required"
-            )
+            raise DecisionExecutionContractError("MISSING_BUNDLE", "bundle is required")
         if not isinstance(bundle, Mapping):
             raise DecisionExecutionContractError(
                 "BUNDLE_TYPE",
@@ -216,10 +210,7 @@ class DecisionExecutionService:
                 "BUNDLE_COUNT_NEGATIVE",
                 f"candidate_count is negative: {count!r}",
             )
-        if (
-            bundle["input_source"]
-            != INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
-        ):
+        if bundle["input_source"] != INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037:
             raise DecisionExecutionContractError(
                 "INVALID_BUNDLE_SOURCE",
                 "input_source is not the Task 037 identifier: "
@@ -260,8 +251,7 @@ class DecisionExecutionService:
         except DecisionInputBundleContractError as exc:
             raise DecisionExecutionContractError(
                 "INVALID_BUNDLE_STRUCTURE",
-                "supplied bundle failed the Task 037 contract: "
-                f"{exc}",
+                "supplied bundle failed the Task 037 contract: " f"{exc}",
             ) from exc
         return bundle
 
@@ -270,9 +260,7 @@ class DecisionExecutionService:
         policy: Mapping[str, Any] | None,
     ) -> Mapping[str, Any]:
         if policy is None:
-            raise DecisionExecutionContractError(
-                "MISSING_POLICY", "policy is required"
-            )
+            raise DecisionExecutionContractError("MISSING_POLICY", "policy is required")
         if not isinstance(policy, Mapping):
             raise DecisionExecutionContractError(
                 "POLICY_TYPE",
@@ -577,8 +565,7 @@ class DecisionExecutionService:
         if not isinstance(selected, Mapping):
             raise DecisionExecutionContractError(
                 "SELECTED_TYPE",
-                f"selected_candidate is not a mapping: "
-                f"{type(selected).__name__}",
+                f"selected_candidate is not a mapping: " f"{type(selected).__name__}",
             )
         for field in (
             "hypothesis_id",

@@ -354,9 +354,7 @@ def test_malformed_task043_result() -> None:
     # Break the nested Task 043 audit's structure.
     tampered["reasoning_run_consistency"]["consistency_issues"] = "nope"
     result = _service().build(execution=tampered)
-    assert (
-        "NESTED_REASONING_RUN_AUDIT_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_REASONING_RUN_AUDIT_MISMATCH" in result["consistency_issues"]
     assert result["nested_reasoning_run_audit_consistent"] is False
 
 
@@ -365,9 +363,7 @@ def test_wrong_nested_task043_source() -> None:
     tampered = copy.deepcopy(execution)
     tampered["reasoning_run_consistency"]["run_consistency_source"] = "WRONG"
     result = _service().build(execution=tampered)
-    assert (
-        "NESTED_REASONING_RUN_AUDIT_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_REASONING_RUN_AUDIT_MISMATCH" in result["consistency_issues"]
 
 
 def test_execution_consistent_disagrees_with_nested_task043() -> None:
@@ -468,9 +464,7 @@ def test_no_duplicate_issues() -> None:
     tampered["stages"][0]["stage_source"] = "WRONG"
     tampered["stages"][1]["stage_source"] = "WRONG"
     result = _service().build(execution=tampered)
-    assert (
-        result["consistency_issues"].count("STAGE_SOURCE_MISMATCH") == 1
-    )
+    assert result["consistency_issues"].count("STAGE_SOURCE_MISMATCH") == 1
 
 
 def test_input_not_mutated() -> None:
@@ -626,29 +620,19 @@ def _force_failure(
         raise RuntimeError("forced failure at " + stage_id)
 
     if stage_id == "OBSERVATION_EXTRACTION":
-        monkeypatch.setattr(
-            ObservationExtractionService, "extract_and_store", boom
-        )
+        monkeypatch.setattr(ObservationExtractionService, "extract_and_store", boom)
     elif stage_id == "MISSING_INFORMATION":
-        monkeypatch.setattr(
-            MissingInformationService, "detect_and_store", boom
-        )
+        monkeypatch.setattr(MissingInformationService, "detect_and_store", boom)
     elif stage_id == "TEMPLATE_MATCHING":
         monkeypatch.setattr(TemplateMatchService, "match", boom)
     elif stage_id == "CANDIDATE_GENERATION":
         monkeypatch.setattr(CandidateGenerationService, "generate", boom)
     elif stage_id == "EVIDENCE_EVALUATION":
-        monkeypatch.setattr(
-            EvidenceEvaluationService, "evaluate_session", boom
-        )
+        monkeypatch.setattr(EvidenceEvaluationService, "evaluate_session", boom)
     elif stage_id == "REASONING_RUN":
-        monkeypatch.setattr(
-            ReasoningRunService, "build_for_session", boom
-        )
+        monkeypatch.setattr(ReasoningRunService, "build_for_session", boom)
     elif stage_id == "REASONING_RUN_CONSISTENCY":
-        monkeypatch.setattr(
-            ReasoningRunConsistencyService, "build_for_session", boom
-        )
+        monkeypatch.setattr(ReasoningRunConsistencyService, "build_for_session", boom)
     else:
         raise AssertionError("unknown stage_id: " + stage_id)
 
@@ -665,9 +649,7 @@ _FAILING_STAGES = (
 
 
 @pytest.mark.parametrize("failing_stage", _FAILING_STAGES)
-def test_real_failed_execution_each_stage(
-    monkeypatch, failing_stage
-) -> None:
+def test_real_failed_execution_each_stage(monkeypatch, failing_stage) -> None:
     """Force Task 044 to fail at each stage after SESSION_VERIFIED.
     The resulting FAILED execution must audit as structurally
     consistent."""
@@ -684,15 +666,9 @@ def test_real_failed_execution_each_stage(
     assert execution["execution_consistent"] is False
 
     failing_index = execution["stages"].index(
-        next(
-            s
-            for s in execution["stages"]
-            if s["stage_id"] == failing_stage
-        )
+        next(s for s in execution["stages"] if s["stage_id"] == failing_stage)
     )
-    failed_count = sum(
-        1 for s in execution["stages"] if s["status"] == "FAILED"
-    )
+    failed_count = sum(1 for s in execution["stages"] if s["status"] == "FAILED")
     assert failed_count == 1
     for i, s in enumerate(execution["stages"]):
         if i < failing_index:

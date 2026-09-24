@@ -124,8 +124,7 @@ class ReasoningRunExecutionApiAuditBundleService:
         if not isinstance(api_audit_package_consistency, Mapping):
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "MISSING_API_AUDIT_PACKAGE_CONSISTENCY",
-                "api_audit_package_consistency is required and must be "
-                "a mapping",
+                "api_audit_package_consistency is required and must be " "a mapping",
             )
 
         # HTTP metadata checks (exact; no normalization).
@@ -146,9 +145,7 @@ class ReasoningRunExecutionApiAuditBundleService:
             )
 
         # Validate the nested Task 051 object.
-        package_for_validation = _deep_normalize_session_ids(
-            api_audit_package
-        )
+        package_for_validation = _deep_normalize_session_ids(api_audit_package)
         try:
             ReasoningRunExecutionApiAuditPackageService._validate_result(
                 package_for_validation
@@ -181,9 +178,7 @@ class ReasoningRunExecutionApiAuditBundleService:
             ) from exc
 
         # Session identity.
-        package_session_id = _coerce_session_id(
-            api_audit_package.get("session_id")
-        )
+        package_session_id = _coerce_session_id(api_audit_package.get("session_id"))
         if package_session_id != sid:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "SESSION_ID_MISMATCH",
@@ -208,8 +203,7 @@ class ReasoningRunExecutionApiAuditBundleService:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "STATUS_MISMATCH",
                 "api_audit_package.status_code does not match the supplied "
-                "status_code: "
-                + repr(api_audit_package.get("status_code")),
+                "status_code: " + repr(api_audit_package.get("status_code")),
             )
 
         # Task 052 availability.
@@ -224,8 +218,9 @@ class ReasoningRunExecutionApiAuditBundleService:
         # Task 052's own staticmethod (delegated, not reimplemented)
         # and require an exact match.
         expected_fingerprint = (
-            ReasoningRunExecutionApiAuditPackageConsistencyService
-            ._package_fingerprint(api_audit_package)
+            ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(
+                api_audit_package
+            )
         )
         audited_fingerprint = api_audit_package_consistency.get(
             "audited_package_fingerprint"
@@ -245,8 +240,7 @@ class ReasoningRunExecutionApiAuditBundleService:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "INVALID_API_AUDIT_PACKAGE_SOURCE",
                 "api_audit_package.package_source is not the Task 051 "
-                "identifier: "
-                + repr(api_audit_package.get("package_source")),
+                "identifier: " + repr(api_audit_package.get("package_source")),
             )
         if (
             api_audit_package_consistency.get("package_consistency_source")
@@ -256,11 +250,7 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "INVALID_API_AUDIT_CONSISTENCY_SOURCE",
                 "api_audit_package_consistency.package_consistency_source "
                 "is not the Task 052 identifier: "
-                + repr(
-                    api_audit_package_consistency.get(
-                        "package_consistency_source"
-                    )
-                ),
+                + repr(api_audit_package_consistency.get("package_consistency_source")),
             )
 
         # Bundle consistency derives only from Task 052's package_consistent.
@@ -277,12 +267,8 @@ class ReasoningRunExecutionApiAuditBundleService:
             "path": path,
             "status_code": status_code,
             "api_audit_package": api_audit_package,
-            "api_audit_package_consistency": (
-                api_audit_package_consistency
-            ),
-            "bundle_source": (
-                REASONING_RUN_EXECUTION_API_AUDIT_BUNDLE_SOURCE_TASK_053
-            ),
+            "api_audit_package_consistency": (api_audit_package_consistency),
+            "bundle_source": (REASONING_RUN_EXECUTION_API_AUDIT_BUNDLE_SOURCE_TASK_053),
         }
         self._validate_result(result)
         return result
@@ -303,8 +289,7 @@ class ReasoningRunExecutionApiAuditBundleService:
         if not isinstance(result["session_id"], UUID):
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "SESSION_ID_TYPE",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         if result["method"] != _EXPECTED_METHOD:
             raise ReasoningRunExecutionApiAuditBundleContractError(
@@ -316,14 +301,12 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "INVALID_PATH",
                 "path is not a non-empty string: " + repr(result["path"]),
             )
-        if (
-            not isinstance(result["status_code"], int)
-            or isinstance(result["status_code"], bool)
+        if not isinstance(result["status_code"], int) or isinstance(
+            result["status_code"], bool
         ):
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "INVALID_STATUS",
-                "status_code is not an int: "
-                + repr(result["status_code"]),
+                "status_code is not an int: " + repr(result["status_code"]),
             )
         if result["status_code"] != _EXPECTED_STATUS:
             raise ReasoningRunExecutionApiAuditBundleContractError(
@@ -336,9 +319,7 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "api_audit_package is not a mapping: "
                 + type(result["api_audit_package"]).__name__,
             )
-        if not isinstance(
-            result["api_audit_package_consistency"], Mapping
-        ):
+        if not isinstance(result["api_audit_package_consistency"], Mapping):
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "API_AUDIT_PACKAGE_CONSISTENCY_TYPE",
                 "api_audit_package_consistency is not a mapping: "
@@ -355,8 +336,7 @@ class ReasoningRunExecutionApiAuditBundleService:
         except Exception as exc:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "INVALID_API_AUDIT_PACKAGE",
-                "nested Task 051 package failed its own validator: "
-                + str(exc),
+                "nested Task 051 package failed its own validator: " + str(exc),
             ) from exc
         try:
             ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
@@ -365,18 +345,14 @@ class ReasoningRunExecutionApiAuditBundleService:
         except Exception as exc:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "INVALID_API_AUDIT_PACKAGE_CONSISTENCY",
-                "nested Task 052 audit failed its own validator: "
-                + str(exc),
+                "nested Task 052 audit failed its own validator: " + str(exc),
             ) from exc
         # Session identity.
-        package_sid = _coerce_session_id(
-            result["api_audit_package"].get("session_id")
-        )
+        package_sid = _coerce_session_id(result["api_audit_package"].get("session_id"))
         if package_sid != result["session_id"]:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "SESSION_ID_MISMATCH",
-                "api_audit_package.session_id does not match bundle "
-                "session_id",
+                "api_audit_package.session_id does not match bundle " "session_id",
             )
         # HTTP metadata agreement.
         if result["api_audit_package"].get("method") != result["method"]:
@@ -389,14 +365,10 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "PATH_MISMATCH",
                 "api_audit_package.path does not match bundle path",
             )
-        if (
-            result["api_audit_package"].get("status_code")
-            != result["status_code"]
-        ):
+        if result["api_audit_package"].get("status_code") != result["status_code"]:
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "STATUS_MISMATCH",
-                "api_audit_package.status_code does not match bundle "
-                "status_code",
+                "api_audit_package.status_code does not match bundle " "status_code",
             )
         # Audit availability.
         if result["api_audit_package_consistency"].get("available") is not True:
@@ -411,13 +383,10 @@ class ReasoningRunExecutionApiAuditBundleService:
         ):
             raise ReasoningRunExecutionApiAuditBundleContractError(
                 "INVALID_API_AUDIT_PACKAGE_SOURCE",
-                "api_audit_package.package_source is not the Task 051 "
-                "identifier",
+                "api_audit_package.package_source is not the Task 051 " "identifier",
             )
         if (
-            result["api_audit_package_consistency"].get(
-                "package_consistency_source"
-            )
+            result["api_audit_package_consistency"].get("package_consistency_source")
             != REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_CONSISTENCY_SOURCE_TASK_052
         ):
             raise ReasoningRunExecutionApiAuditBundleContractError(
@@ -436,9 +405,7 @@ class ReasoningRunExecutionApiAuditBundleService:
             )
         # Bundle consistency relationship.
         expected = bool(
-            result["api_audit_package_consistency"].get(
-                "package_consistent", False
-            )
+            result["api_audit_package_consistency"].get("package_consistent", False)
         )
         if result["bundle_consistent"] != expected:
             raise ReasoningRunExecutionApiAuditBundleContractError(
@@ -446,5 +413,6 @@ class ReasoningRunExecutionApiAuditBundleService:
                 "bundle_consistent does not match Task 052's "
                 "package_consistent: "
                 + repr(result["bundle_consistent"])
-                + " != " + repr(expected),
+                + " != "
+                + repr(expected),
             )

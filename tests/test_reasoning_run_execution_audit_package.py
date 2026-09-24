@@ -168,9 +168,7 @@ def test_valid_package_with_task046_bundle_consistent_false() -> None:
         ReasoningRunExecutionConsistencyService,
     )
 
-    audit = ReasoningRunExecutionConsistencyService().build(
-        execution=execution
-    )
+    audit = ReasoningRunExecutionConsistencyService().build(execution=execution)
     bundle = ReasoningRunExecutionBundleService().build(
         session_id=UUID(sid),
         execution=execution,
@@ -178,9 +176,7 @@ def test_valid_package_with_task046_bundle_consistent_false() -> None:
     )
     assert bundle["bundle_consistent"] is False
 
-    consistency = ReasoningRunExecutionBundleConsistencyService().build(
-        bundle=bundle
-    )
+    consistency = ReasoningRunExecutionBundleConsistencyService().build(bundle=bundle)
     assert consistency["bundle_consistent"] is True
 
     package = _service().build(
@@ -190,9 +186,7 @@ def test_valid_package_with_task046_bundle_consistent_false() -> None:
     )
     assert package["available"] is True
     assert package["package_consistent"] is True
-    assert (
-        package["execution_bundle"]["bundle_consistent"] is False
-    )
+    assert package["execution_bundle"]["bundle_consistent"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +195,7 @@ def test_valid_package_with_task046_bundle_consistent_false() -> None:
 
 
 def test_missing_execution_bundle() -> None:
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=uuid4(),
             execution_bundle=None,
@@ -213,9 +205,7 @@ def test_missing_execution_bundle() -> None:
 
 
 def test_missing_bundle_consistency() -> None:
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=uuid4(),
             execution_bundle={},
@@ -228,9 +218,7 @@ def test_malformed_task046_contract() -> None:
     package = _valid_package()
     tampered_bundle = copy.deepcopy(package["execution_bundle"])
     del tampered_bundle["bundle_source"]
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=tampered_bundle,
@@ -243,9 +231,7 @@ def test_malformed_task047_contract() -> None:
     package = _valid_package()
     tampered_consistency = copy.deepcopy(package["bundle_consistency"])
     del tampered_consistency["bundle_consistency_source"]
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=package["execution_bundle"],
@@ -262,9 +248,7 @@ def test_malformed_task047_contract() -> None:
 def test_session_mismatch() -> None:
     package = _valid_package()
     other_session = uuid4()
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=other_session,
             execution_bundle=package["execution_bundle"],
@@ -277,9 +261,7 @@ def test_bundle_audit_unavailable() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package["bundle_consistency"])
     tampered["available"] = False
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=package["execution_bundle"],
@@ -295,9 +277,7 @@ def test_bundle_audit_session_inconsistent() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package["bundle_consistency"])
     tampered["session_consistent"] = False
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=package["execution_bundle"],
@@ -318,9 +298,7 @@ def test_wrong_task046_source() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package["execution_bundle"])
     tampered["bundle_source"] = "WRONG"
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=tampered,
@@ -336,9 +314,7 @@ def test_wrong_task047_source() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package["bundle_consistency"])
     tampered["bundle_consistency_source"] = "WRONG"
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         _service().build(
             session_id=package["session_id"],
             execution_bundle=package["execution_bundle"],
@@ -354,9 +330,7 @@ def test_wrong_task048_source() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package)
     tampered["package_source"] = "WRONG"
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         ReasoningRunExecutionAuditPackageService._validate_result(tampered)
     assert ei.value.invariant == "INVALID_PACKAGE_SOURCE"
 
@@ -370,9 +344,7 @@ def test_package_consistent_mismatch_rejected() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package)
     tampered["package_consistent"] = not tampered["package_consistent"]
-    with pytest.raises(
-        ReasoningRunExecutionAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionAuditPackageContractError) as ei:
         ReasoningRunExecutionAuditPackageService._validate_result(tampered)
     assert ei.value.invariant == "PACKAGE_CONSISTENT_MISMATCH"
 
@@ -394,9 +366,7 @@ def test_task046_called_exactly_once(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, db, session_id)
 
-    monkeypatch.setattr(
-        ReasoningRunExecutionBundleService, "build_for_session", spy
-    )
+    monkeypatch.setattr(ReasoningRunExecutionBundleService, "build_for_session", spy)
 
     sid = _create_session("Patient reports chest pain")
     _package_via_service(sid)
@@ -435,9 +405,7 @@ def test_exact_bundle_passed_to_task047(monkeypatch) -> None:
     monkeypatch.setattr(
         ReasoningRunExecutionBundleService, "build_for_session", spy_046
     )
-    monkeypatch.setattr(
-        ReasoningRunExecutionBundleConsistencyService, "build", spy_047
-    )
+    monkeypatch.setattr(ReasoningRunExecutionBundleConsistencyService, "build", spy_047)
 
     sid = _create_session("Patient reports chest pain")
     _package_via_service(sid)
@@ -526,6 +494,7 @@ def test_no_decision_or_llm_logic() -> None:
     ):
         assert forbidden not in src.lower()
 
+
 def test_no_task047_reimplementation() -> None:
     """Task 048 must not reimplement Task 047's audit logic -- it must
     delegate to Task 047's own build() and validator."""
@@ -551,4 +520,3 @@ def test_no_task047_reimplementation() -> None:
     ):
         pattern = r"\b" + _re.escape(forbidden) + r"\b"
         assert not _re.search(pattern, src), forbidden
-

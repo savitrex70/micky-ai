@@ -186,7 +186,9 @@ def _make_context(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return _context_service().build(ranked, summary, consistency, readiness)
 
 
-def _chain(entries: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+def _chain(
+    entries: list[dict[str, Any]]
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Return (candidate_set, evaluations, consistency, context)."""
     context = _make_context(entries)
     evaluations = _candidate_evaluation_service().evaluate(context)
@@ -197,7 +199,9 @@ def _chain(entries: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str
     return candidate_set, evaluations, consistency, context
 
 
-def _ready_chain() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+def _ready_chain() -> (
+    tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]
+):
     return _chain(
         [
             _score_result(hypothesis_name="H1", hypothesis_score=10.0),
@@ -212,9 +216,7 @@ def _ready_chain() -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]
 
 
 def test_single_candidate_assessment() -> None:
-    cs, ev, co, _ = _chain(
-        [_score_result(hypothesis_name="H1", hypothesis_score=5.0)]
-    )
+    cs, ev, co, _ = _chain([_score_result(hypothesis_name="H1", hypothesis_score=5.0)])
     result = _assessment_service().build(cs, ev, co)
 
     assert set(result) == set(RESULT_FIELDS)
@@ -340,13 +342,8 @@ def test_evaluation_counts_preserved() -> None:
         assert a["criterion_count"] == u["criterion_count"]
         assert a["criteria_satisfied"] == u["criteria_satisfied"]
         assert a["criteria_unsatisfied"] == u["criteria_unsatisfied"]
-        assert (
-            a["required_criteria_satisfied"] == u["required_criteria_satisfied"]
-        )
-        assert (
-            a["required_criteria_unsatisfied"]
-            == u["required_criteria_unsatisfied"]
-        )
+        assert a["required_criteria_satisfied"] == u["required_criteria_satisfied"]
+        assert a["required_criteria_unsatisfied"] == u["required_criteria_unsatisfied"]
         assert a["evaluation_complete"] == u["evaluation_complete"]
 
 
@@ -530,9 +527,7 @@ def test_rejects_invalid_candidate_uuid() -> None:
 def test_rejects_duplicate_candidate_id() -> None:
     cs, ev, co, _ = _ready_chain()
     broken = copy.deepcopy(cs)
-    broken["candidates"][1]["hypothesis_id"] = broken["candidates"][0][
-        "hypothesis_id"
-    ]
+    broken["candidates"][1]["hypothesis_id"] = broken["candidates"][0]["hypothesis_id"]
     with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
         _assessment_service().build(broken, ev, co)
     assert ei.value.invariant == "DUPLICATE_CANDIDATE_ID"
@@ -623,9 +618,7 @@ def test_rejects_missing_criterion_field() -> None:
 def test_rejects_duplicate_criterion_id() -> None:
     cs, ev, co, _ = _ready_chain()
     broken = copy.deepcopy(ev)
-    broken[0]["criteria"][1]["criterion_id"] = broken[0]["criteria"][0][
-        "criterion_id"
-    ]
+    broken[0]["criteria"][1]["criterion_id"] = broken[0]["criteria"][0]["criterion_id"]
     with pytest.raises(DecisionCandidateAssessmentContractError) as ei:
         _assessment_service().build(cs, broken, co)
     assert ei.value.invariant == "DUPLICATE_CRITERION_ID"
@@ -727,7 +720,9 @@ def test_rejects_negative_consistency_count() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _valid_result() -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+def _valid_result() -> (
+    tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]
+):
     cs, ev, co, _ = _ready_chain()
     result = _assessment_service().build(cs, ev, co)
     return result, cs, ev, co
@@ -1089,9 +1084,7 @@ def test_api_is_deterministic() -> None:
 
 def test_api_matches_service_output() -> None:
     sid = _seed_session("Task 036 agreement")
-    api_result = client.get(
-        f"/sessions/{sid}/decision-candidate-assessments"
-    ).json()
+    api_result = client.get(f"/sessions/{sid}/decision-candidate-assessments").json()
 
     session_uuid = UUID(sid)
     db_gen = app.dependency_overrides[get_db]()
@@ -1135,14 +1128,8 @@ def test_counts_derived_match_declared_for_valid_chain() -> None:
         assert a["criterion_count"] == u["criterion_count"]
         assert a["criteria_satisfied"] == u["criteria_satisfied"]
         assert a["criteria_unsatisfied"] == u["criteria_unsatisfied"]
-        assert (
-            a["required_criteria_satisfied"]
-            == u["required_criteria_satisfied"]
-        )
-        assert (
-            a["required_criteria_unsatisfied"]
-            == u["required_criteria_unsatisfied"]
-        )
+        assert a["required_criteria_satisfied"] == u["required_criteria_satisfied"]
+        assert a["required_criteria_unsatisfied"] == u["required_criteria_unsatisfied"]
 
 
 def test_rejects_declared_criterion_count_mismatch() -> None:
@@ -1224,9 +1211,7 @@ def test_build_for_session_delegates_to_task035(monkeypatch) -> None:
         candidates = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        result = _assessment_service().build_for_session(
-            db, session_uuid, candidates
-        )
+        result = _assessment_service().build_for_session(db, session_uuid, candidates)
     finally:
         db_gen.close()
 

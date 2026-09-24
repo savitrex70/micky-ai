@@ -86,7 +86,12 @@ def _seed_full_session(user_input: str) -> str:
     sid = _create_session(user_input)
     client.post(
         f"/sessions/{sid}/observations",
-        json={"text": "Patient reports chest pain", "type": "symptom", "confidence": 0.9, "source": "unit_test"},
+        json={
+            "text": "Patient reports chest pain",
+            "type": "symptom",
+            "confidence": 0.9,
+            "source": "unit_test",
+        },
     )
     client.post(f"/sessions/{sid}/generate-candidates")
     client.post(f"/sessions/{sid}/evaluate-evidence")
@@ -104,15 +109,28 @@ def _real_package_and_audit() -> tuple[UUID, dict[str, Any], dict[str, Any]]:
         session_id=sid, method="GET", path=path, status_code=200, response_body=body
     )
     package = ReasoningHandoffFullyAuditedApiAuditPackageService().build(
-        session_id=sid, method="GET", path=path, status_code=200, response=body, api_consistency=api_audit
+        session_id=sid,
+        method="GET",
+        path=path,
+        status_code=200,
+        response=body,
+        api_consistency=api_audit,
     )
-    package_audit = ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(package=package)
+    package_audit = (
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(
+            package=package
+        )
+    )
     return sid, package, package_audit
 
 
 def _valid_bundle() -> dict[str, Any]:
     sid, package, package_audit = _real_package_and_audit()
-    return _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    return _service().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
+    )
 
 
 # Valid
@@ -124,13 +142,24 @@ def test_valid_bundle_shape() -> None:
 
 def test_bundle_source_fixed() -> None:
     bundle = _valid_bundle()
-    assert bundle["bundle_source"] == REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_BUNDLE_SOURCE_TASK_069
+    assert (
+        bundle["bundle_source"]
+        == REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_BUNDLE_SOURCE_TASK_069
+    )
 
 
 def test_deterministic() -> None:
     sid, package, package_audit = _real_package_and_audit()
-    b1 = _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
-    b2 = _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    b1 = _service().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
+    )
+    b2 = _service().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
+    )
     assert b1 == b2
 
 
@@ -138,14 +167,22 @@ def test_input_immutability() -> None:
     sid, package, package_audit = _real_package_and_audit()
     before_p = copy.deepcopy(package)
     before_a = copy.deepcopy(package_audit)
-    _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    _service().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
+    )
     assert package == before_p
     assert package_audit == before_a
 
 
 def test_bundle_preserves_inputs_by_identity() -> None:
     sid, package, package_audit = _real_package_and_audit()
-    bundle = _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    bundle = _service().build(
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
+    )
     assert bundle["api_audit_package"] is package
     assert bundle["api_audit_package_consistency"] is package_audit
 
@@ -154,7 +191,11 @@ def test_bundle_preserves_inputs_by_identity() -> None:
 def test_missing_package_raises() -> None:
     sid, _, package_audit = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=None, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=None,
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_MISMATCH"
 
 
@@ -168,7 +209,11 @@ def test_non_mapping_package_raises() -> None:
 def test_missing_consistency_raises() -> None:
     sid, package, _ = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=None)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=None,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_CONSISTENCY_MISMATCH"
 
 
@@ -182,14 +227,22 @@ def test_non_mapping_consistency_raises() -> None:
 def test_invalid_session_id_raises() -> None:
     _, package, package_audit = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id="not-a-uuid", api_audit_package=package, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id="not-a-uuid",
+            api_audit_package=package,
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "SESSION_ID_INVALID"
 
 
 def test_package_session_mismatch() -> None:
     _, package, package_audit = _real_package_and_audit()
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=uuid4(), api_audit_package=package, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id=uuid4(),
+            api_audit_package=package,
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "SESSION_ID_MISMATCH"
 
 
@@ -198,7 +251,11 @@ def test_package_fingerprint_mismatch() -> None:
     broken_audit = copy.deepcopy(package_audit)
     broken_audit["audited_package_fingerprint"] = "0" * 64
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=broken_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=broken_audit,
+        )
     assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
 
 
@@ -212,7 +269,11 @@ def test_nested_consistency_fingerprint_mismatch() -> None:
     broken_audit = copy.deepcopy(package_audit)
     broken_audit["audited_package_fingerprint"] = "f" * 64
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=broken_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=broken_audit,
+        )
     assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
 
 
@@ -220,9 +281,19 @@ def test_fingerprint_recomputation_failure() -> None:
     from unittest.mock import patch
 
     sid, package, package_audit = _real_package_and_audit()
-    with patch.object(ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService, "_package_fingerprint", side_effect=RuntimeError("forced")):
-        with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-            _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    with patch.object(
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService,
+        "_package_fingerprint",
+        side_effect=RuntimeError("forced"),
+    ):
+        with pytest.raises(
+            ReasoningHandoffFullyAuditedApiAuditBundleContractError
+        ) as ei:
+            _service().build(
+                session_id=sid,
+                api_audit_package=package,
+                api_audit_package_consistency=package_audit,
+            )
         assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
         assert isinstance(ei.value.__cause__, RuntimeError)
 
@@ -234,7 +305,11 @@ def test_provenance_unavailable() -> None:
     broken_audit = copy.deepcopy(package_audit)
     broken_audit["available"] = False
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=broken_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=broken_audit,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_CONSISTENCY_MISMATCH"
 
 
@@ -256,7 +331,11 @@ def test_package_source_mismatch() -> None:
     broken = copy.deepcopy(package)
     broken["package_source"] = "WRONG"
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=broken, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=broken,
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "PACKAGE_SOURCE_MISMATCH"
 
 
@@ -265,7 +344,11 @@ def test_consistency_source_mismatch() -> None:
     broken = copy.deepcopy(package_audit)
     broken["package_consistency_source"] = "WRONG"
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=broken)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=broken,
+        )
     assert ei.value.invariant == "CONSISTENCY_SOURCE_MISMATCH"
 
 
@@ -291,7 +374,11 @@ def test_valid_package_containing_legitimate_defect() -> None:
     broken_package = copy.deepcopy(package)
     broken_package["available"] = False
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError):
-        _service().build(session_id=sid, api_audit_package=broken_package, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=broken_package,
+            api_audit_package_consistency=package_audit,
+        )
 
 
 def test_tampered_nested_package_rejected() -> None:
@@ -299,7 +386,11 @@ def test_tampered_nested_package_rejected() -> None:
     broken = copy.deepcopy(package)
     broken["available"] = False
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=broken, api_audit_package_consistency=package_audit)
+        _service().build(
+            session_id=sid,
+            api_audit_package=broken,
+            api_audit_package_consistency=package_audit,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_MISMATCH"
 
 
@@ -308,7 +399,11 @@ def test_tampered_nested_consistency_rejected() -> None:
     broken = copy.deepcopy(package_audit)
     broken["available"] = False
     with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-        _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=broken)
+        _service().build(
+            session_id=sid,
+            api_audit_package=package,
+            api_audit_package_consistency=broken,
+        )
     assert ei.value.invariant == "API_AUDIT_PACKAGE_CONSISTENCY_MISMATCH"
 
 
@@ -323,16 +418,31 @@ def test_own_bundle_fingerprint_compute_failure() -> None:
     from unittest.mock import patch
 
     sid, package, package_audit = _real_package_and_audit()
-    with patch("rop.services.reasoning_handoff_fully_audited_api_audit_bundle._bundle_fingerprint", side_effect=RuntimeError("forced bundle fp")):
-        with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleContractError) as ei:
-            _service().build(session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit)
+    with patch(
+        "rop.services.reasoning_handoff_fully_audited_api_audit_bundle._bundle_fingerprint",
+        side_effect=RuntimeError("forced bundle fp"),
+    ):
+        with pytest.raises(
+            ReasoningHandoffFullyAuditedApiAuditBundleContractError
+        ) as ei:
+            _service().build(
+                session_id=sid,
+                api_audit_package=package,
+                api_audit_package_consistency=package_audit,
+            )
         assert ei.value.invariant == "AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED"
         assert isinstance(ei.value.__cause__, RuntimeError)
 
 
 def test_no_database_imports() -> None:
     src = inspect.getsource(mod)
-    for forbidden in ("SessionLocal", "create_engine", "get_db", "sqlalchemy", "get_db"):
+    for forbidden in (
+        "SessionLocal",
+        "create_engine",
+        "get_db",
+        "sqlalchemy",
+        "get_db",
+    ):
         assert forbidden not in src
 
 
@@ -344,7 +454,11 @@ def test_no_http_imports() -> None:
 
 def test_no_endpoint_invocation() -> None:
     src = inspect.getsource(mod)
-    for forbidden in ("rop.api.sessions", "build_for_session", "ReasoningHandoffFullyAuditedApiService"):
+    for forbidden in (
+        "rop.api.sessions",
+        "build_for_session",
+        "ReasoningHandoffFullyAuditedApiService",
+    ):
         assert forbidden not in src
 
 
@@ -352,7 +466,10 @@ def test_no_workflow_build_invocation() -> None:
     src = inspect.getsource(mod)
     # Should not call Task 067 build or Task 068 build
     assert "ReasoningHandoffFullyAuditedApiAuditPackageService().build" not in src
-    assert "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build" not in src
+    assert (
+        "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build"
+        not in src
+    )
 
 
 def test_no_llm_provider_symbols() -> None:
@@ -367,5 +484,3 @@ def test_no_module_level_mutable_state() -> None:
     src = inspect.getsource(mod)
     assert "_LAST" not in src
     assert "global" not in src
-
-

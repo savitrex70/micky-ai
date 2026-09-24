@@ -176,9 +176,7 @@ def test_valid_context_and_valid_output() -> None:
     assert result["llm_reasoning_source"] == LLM_REASONING_TASK_057
     assert result["provider"] == "fake"
     assert result["model"] == "fake-model"
-    assert len(result["candidate_assessments"]) == len(
-        ctx["candidate_state"]
-    )
+    assert len(result["candidate_assessments"]) == len(ctx["candidate_state"])
     assert provider.calls == 1
 
 
@@ -246,9 +244,7 @@ def _unavailable_context() -> dict[str, Any]:
 
 def test_unavailable_context_returns_soft_result() -> None:
     provider = FakeProvider(response_text="")
-    result = _service_with(provider).build(
-        context=_unavailable_context()
-    )
+    result = _service_with(provider).build(context=_unavailable_context())
     assert result["available"] is False
     assert result["proposal_consistent"] is False
     assert result["candidate_assessments"] == []
@@ -305,9 +301,7 @@ def test_missing_context_raises() -> None:
 
 def test_provider_unavailable_raises() -> None:
     ctx = _valid_context()
-    provider = FakeProvider(
-        raise_error=LLMReasoningProviderError("no connection")
-    )
+    provider = FakeProvider(raise_error=LLMReasoningProviderError("no connection"))
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(provider).build(context=ctx)
     assert ei.value.invariant == "MODEL_UNAVAILABLE"
@@ -420,9 +414,7 @@ def test_duplicate_candidate_assessment_rejected() -> None:
 def test_unknown_evidence_id_rejected() -> None:
     ctx = _valid_context()
     output = json.loads(_valid_model_output(ctx))
-    output["candidate_assessments"][0]["supporting_evidence_ids"] = [
-        str(uuid4())
-    ]
+    output["candidate_assessments"][0]["supporting_evidence_ids"] = [str(uuid4())]
     provider = FakeProvider(response_text=json.dumps(output))
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(provider).build(context=ctx)
@@ -432,9 +424,7 @@ def test_unknown_evidence_id_rejected() -> None:
 def test_unknown_contradicting_evidence_id_rejected() -> None:
     ctx = _valid_context()
     output = json.loads(_valid_model_output(ctx))
-    output["candidate_assessments"][0]["contradicting_evidence_ids"] = [
-        str(uuid4())
-    ]
+    output["candidate_assessments"][0]["contradicting_evidence_ids"] = [str(uuid4())]
     provider = FakeProvider(response_text=json.dumps(output))
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(provider).build(context=ctx)
@@ -444,9 +434,7 @@ def test_unknown_contradicting_evidence_id_rejected() -> None:
 def test_unknown_missing_information_id_rejected() -> None:
     ctx = _valid_context()
     output = json.loads(_valid_model_output(ctx))
-    output["candidate_assessments"][0]["unresolved_information_ids"] = [
-        str(uuid4())
-    ]
+    output["candidate_assessments"][0]["unresolved_information_ids"] = [str(uuid4())]
     provider = FakeProvider(response_text=json.dumps(output))
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(provider).build(context=ctx)
@@ -550,6 +538,7 @@ def test_does_not_mutate_context() -> None:
     assert list(ctx["reasoning_pipeline"].keys()) == pipeline_keys
     assert list(ctx["reasoning_run_consistency"].keys()) == audit_keys
 
+
 # ---------------------------------------------------------------------------
 # Task 057 follow-up: blocker-fix regression tests
 # ---------------------------------------------------------------------------
@@ -604,9 +593,7 @@ def test_reordered_candidate_assessments_rejected() -> None:
     if len(ctx["candidate_state"]) < 2:
         pytest.skip("seed session produced only one candidate")
     output = json.loads(_valid_model_output(ctx))
-    output["candidate_assessments"] = list(
-        reversed(output["candidate_assessments"])
-    )
+    output["candidate_assessments"] = list(reversed(output["candidate_assessments"]))
     provider = FakeProvider(response_text=json.dumps(output))
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(provider).build(context=ctx)
@@ -627,9 +614,7 @@ def test_to_json_safe_accepts_supported_values() -> None:
     assert LLMReasoningService._to_json_safe(None) is None
     u = uuid4()
     assert LLMReasoningService._to_json_safe(u) == str(u)
-    assert LLMReasoningService._to_json_safe({"a": [u]}) == {
-        "a": [str(u)]
-    }
+    assert LLMReasoningService._to_json_safe({"a": [u]}) == {"a": [str(u)]}
 
 
 def test_ollama_provider_construction_does_not_raise_without_model() -> None:
@@ -651,9 +636,7 @@ def test_ollama_provider_generate_raises_without_model() -> None:
     )
 
     provider = OllamaReasoningProvider(model_name="")
-    request = LLMReasoningRequest(
-        payload={}, context_fingerprint="0" * 64
-    )
+    request = LLMReasoningRequest(payload={}, context_fingerprint="0" * 64)
     with pytest.raises(LLMReasoningProviderError):
         provider.generate_reasoning(request)
 
@@ -675,9 +658,7 @@ def test_pyproject_excludes_ollama_smoke_by_default() -> None:
     import tomllib
     from pathlib import Path
 
-    pyproject_path = (
-        Path(__file__).resolve().parent.parent / "pyproject.toml"
-    )
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
     with pyproject_path.open("rb") as f:
         data = tomllib.load(f)
     ini = data["tool"]["pytest"]["ini_options"]
@@ -686,4 +667,3 @@ def test_pyproject_excludes_ollama_smoke_by_default() -> None:
     assert "not ollama_smoke" in addopts
     markers = ini["markers"]
     assert any("ollama_smoke" in m for m in markers)
-

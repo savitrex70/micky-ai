@@ -133,17 +133,13 @@ def _get_run_and_state(
     db_gen = app.dependency_overrides[get_db]()
     db = next(db_gen)
     try:
-        run, bundle, policy = (
-            ReasoningRunService().build_for_session_with_inputs(
-                db, session_uuid
-            )
+        run, bundle, policy = ReasoningRunService().build_for_session_with_inputs(
+            db, session_uuid
         )
         obs = ObservationService().list_by_session(
             db, session_uuid, offset=0, limit=1000
         )
-        ent = EntityService().list_by_session(
-            db, session_uuid, offset=0, limit=1000
-        )
+        ent = EntityService().list_by_session(db, session_uuid, offset=0, limit=1000)
         mi = MissingInformationService().list_by_session(db, session_uuid)
         tm = TemplateMatchService().list_by_session(db, session_uuid)
         cands = CandidateGenerationService().list_by_session(
@@ -191,10 +187,7 @@ def test_valid_full_run_all_flags_true() -> None:
 def test_valid_run_source_fixed() -> None:
     sid = _seed_full_session("Task 043 source")
     result = _build_audit(sid)
-    assert (
-        result["run_consistency_source"]
-        == REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
-    )
+    assert result["run_consistency_source"] == REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +218,7 @@ def test_empty_session_candidate_generation_stage_audited() -> None:
 def test_empty_session_input_unavailable_preserved() -> None:
     sid = _create_session("Task 043 empty input unavailable")
     r = client.get(f"/sessions/{sid}/reasoning-run").json()
-    assert (
-        r["reasoning_pipeline"]["final_execution"]["outcome"]
-        == "INPUT_UNAVAILABLE"
-    )
+    assert r["reasoning_pipeline"]["final_execution"]["outcome"] == "INPUT_UNAVAILABLE"
     # And the audit still succeeds.
     result = _build_audit(sid)
     assert result["available"] is True
@@ -274,10 +264,7 @@ def test_candidate_generation_availability_mismatch_detected() -> None:
         bundle=bundle,
         policy=policy,
     )
-    assert (
-        "CANDIDATE_GENERATION_AVAILABILITY_MISMATCH"
-        in result["consistency_issues"]
-    )
+    assert "CANDIDATE_GENERATION_AVAILABILITY_MISMATCH" in result["consistency_issues"]
 
 
 def test_candidate_generation_stage_mismatch_detected() -> None:
@@ -720,8 +707,7 @@ def test_api_valid() -> None:
     assert set(payload) == set(RESULT_FIELDS)
     assert payload["available"] is True
     assert (
-        payload["run_consistency_source"]
-        == REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
+        payload["run_consistency_source"] == REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
     )
 
 
@@ -757,9 +743,7 @@ def test_api_is_read_only() -> None:
 
 def test_api_matches_service_output() -> None:
     sid = _seed_full_session("Task 043 api agreement")
-    api_result = client.get(
-        f"/sessions/{sid}/reasoning-run-consistency"
-    ).json()
+    api_result = client.get(f"/sessions/{sid}/reasoning-run-consistency").json()
     service_result = _build_audit(sid)
     assert api_result == service_result
 
@@ -797,9 +781,7 @@ def test_deep_pipeline_tamper_selected_missing() -> None:
     run, obs, ent, mi, tm, cands, bundle, policy = _valid_run_and_state()
     tampered = copy.deepcopy(run)
     tampered["reasoning_pipeline"]["final_execution"]["outcome"] = "SELECTED"
-    tampered["reasoning_pipeline"]["final_execution"]["selected_candidate"] = (
-        None
-    )
+    tampered["reasoning_pipeline"]["final_execution"]["selected_candidate"] = None
     result = _service().build(
         run=tampered,
         observations=obs,
@@ -1059,6 +1041,7 @@ def test_session_flag_reflects_semantic_mismatch() -> None:
     assert result["session_consistent"] is False
     assert result["run_consistent"] is False
 
+
 # ---------------------------------------------------------------------------
 # Round 4: audited_run_fingerprint provenance
 # ---------------------------------------------------------------------------
@@ -1108,10 +1091,8 @@ def test_audited_run_fingerprint_changes_when_run_changes() -> None:
         bundle=bundle,
         policy=policy,
     )
-    assert (
-        audit1["audited_run_fingerprint"]
-        != audit2["audited_run_fingerprint"]
-    )
+    assert audit1["audited_run_fingerprint"] != audit2["audited_run_fingerprint"]
+
 
 # ---------------------------------------------------------------------------
 # audited_run_fingerprint format validation
@@ -1191,4 +1172,3 @@ def test_fingerprint_non_hex_chars_rejected() -> None:
     with pytest.raises(ReasoningRunConsistencyContractError) as ei:
         ReasoningRunConsistencyService._validate_result(audit)
     assert ei.value.invariant == "AUDITED_RUN_FINGERPRINT_FORMAT"
-

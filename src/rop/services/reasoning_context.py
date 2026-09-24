@@ -94,13 +94,9 @@ class ReasoningContextService:
         entity_service: EntityService | None = None,
         missing_information_service: MissingInformationService | None = None,
         template_match_service: TemplateMatchService | None = None,
-        candidate_generation_service: (
-            CandidateGenerationService | None
-        ) = None,
+        candidate_generation_service: CandidateGenerationService | None = None,
         reasoning_run_service: ReasoningRunService | None = None,
-        reasoning_run_consistency_service: (
-            ReasoningRunConsistencyService | None
-        ) = None,
+        reasoning_run_consistency_service: ReasoningRunConsistencyService | None = None,
     ) -> None:
         self.reasoning_session_service = (
             reasoning_session_service or ReasoningSessionService()
@@ -110,18 +106,13 @@ class ReasoningContextService:
         self.missing_information_service = (
             missing_information_service or MissingInformationService()
         )
-        self.template_match_service = (
-            template_match_service or TemplateMatchService()
-        )
+        self.template_match_service = template_match_service or TemplateMatchService()
         self.candidate_generation_service = (
             candidate_generation_service or CandidateGenerationService()
         )
-        self.reasoning_run_service = (
-            reasoning_run_service or ReasoningRunService()
-        )
+        self.reasoning_run_service = reasoning_run_service or ReasoningRunService()
         self.reasoning_run_consistency_service = (
-            reasoning_run_consistency_service
-            or ReasoningRunConsistencyService()
+            reasoning_run_consistency_service or ReasoningRunConsistencyService()
         )
 
     def build_for_session(
@@ -146,12 +137,10 @@ class ReasoningContextService:
             ),
             _STATE_PAGE_SIZE,
         )
-        missing_information = (
-            self.missing_information_service.list_by_session(db, session_id)
-        )
-        template_matches = self.template_match_service.list_by_session(
+        missing_information = self.missing_information_service.list_by_session(
             db, session_id
         )
+        template_matches = self.template_match_service.list_by_session(db, session_id)
         candidates = self._paginate(
             lambda off: self.candidate_generation_service.list_by_session(
                 db, session_id, offset=off, limit=_CANDIDATE_PAGE_SIZE
@@ -163,8 +152,7 @@ class ReasoningContextService:
         # independently rebuilding a second Task 042 run.
         try:
             run, bundle, policy = (
-                self.reasoning_run_service
-                .build_for_session_with_inputs(db, session_id)
+                self.reasoning_run_service.build_for_session_with_inputs(db, session_id)
             )
         except ReasoningRunContractError as exc:
             raise ReasoningContextContractError(
@@ -215,8 +203,7 @@ class ReasoningContextService:
         if sid is None:
             raise ReasoningContextContractError(
                 "SESSION_ID_INVALID",
-                "session_id is not a UUID: "
-                + type(session_id).__name__,
+                "session_id is not a UUID: " + type(session_id).__name__,
             )
         for name, value in (
             ("observations", observations),
@@ -238,8 +225,7 @@ class ReasoningContextService:
         if not isinstance(reasoning_run_consistency, Mapping):
             raise ReasoningContextContractError(
                 "MISSING_REASONING_RUN_CONSISTENCY",
-                "reasoning_run_consistency is required and must be a "
-                "mapping",
+                "reasoning_run_consistency is required and must be a " "mapping",
             )
 
         # Validate the nested Task 042 and Task 043 contracts using
@@ -277,16 +263,13 @@ class ReasoningContextService:
         # staticmethod (delegated, not reimplemented) and require an
         # exact match against the audit's provenance field.
         try:
-            expected_fingerprint = (
-                ReasoningRunConsistencyService._run_fingerprint(
-                    reasoning_run
-                )
+            expected_fingerprint = ReasoningRunConsistencyService._run_fingerprint(
+                reasoning_run
             )
         except Exception as exc:
             raise ReasoningContextContractError(
                 "AUDIT_RUN_FINGERPRINT_COMPUTE_FAILED",
-                "could not compute the Task 042 run fingerprint: "
-                + str(exc),
+                "could not compute the Task 042 run fingerprint: " + str(exc),
             ) from exc
         if (
             reasoning_run_consistency.get("audited_run_fingerprint")
@@ -356,15 +339,13 @@ class ReasoningContextService:
         if not isinstance(result["session_id"], UUID):
             raise ReasoningContextContractError(
                 "SESSION_ID_TYPE",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         for field in _RESULT_LIST_FIELDS:
             if not isinstance(result[field], list):
                 raise ReasoningContextContractError(
                     field.upper() + "_TYPE",
-                    field + " is not a list: "
-                    + type(result[field]).__name__,
+                    field + " is not a list: " + type(result[field]).__name__,
                 )
         if not isinstance(result["reasoning_pipeline"], Mapping):
             raise ReasoningContextContractError(
@@ -379,14 +360,11 @@ class ReasoningContextService:
                 + type(result["reasoning_run_consistency"]).__name__,
             )
         try:
-            ReasoningRunService._validate_result(
-                dict(result["reasoning_pipeline"])
-            )
+            ReasoningRunService._validate_result(dict(result["reasoning_pipeline"]))
         except Exception as exc:
             raise ReasoningContextContractError(
                 "INVALID_REASONING_RUN",
-                "nested Task 042 run failed its own validator: "
-                + str(exc),
+                "nested Task 042 run failed its own validator: " + str(exc),
             ) from exc
         try:
             ReasoningRunConsistencyService._validate_result(
@@ -395,13 +373,9 @@ class ReasoningContextService:
         except Exception as exc:
             raise ReasoningContextContractError(
                 "INVALID_REASONING_RUN_CONSISTENCY",
-                "nested Task 043 audit failed its own validator: "
-                + str(exc),
+                "nested Task 043 audit failed its own validator: " + str(exc),
             ) from exc
-        if (
-            result["context_source"]
-            != REASONING_CONTEXT_SOURCE_TASK_055
-        ):
+        if result["context_source"] != REASONING_CONTEXT_SOURCE_TASK_055:
             raise ReasoningContextContractError(
                 "INVALID_CONTEXT_SOURCE",
                 "context_source is not the Task 055 identifier: "

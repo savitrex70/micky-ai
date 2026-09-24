@@ -274,9 +274,7 @@ def test_identity_preserved() -> None:
 
     for i, entry in enumerate(context["differential"]):
         assert result["candidates"][i]["hypothesis_id"] == entry["hypothesis_id"]
-        assert (
-            result["candidates"][i]["hypothesis_name"] == entry["hypothesis_name"]
-        )
+        assert result["candidates"][i]["hypothesis_name"] == entry["hypothesis_name"]
 
 
 def test_rank_preserved() -> None:

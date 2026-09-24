@@ -71,8 +71,9 @@ def _create_session(user_input: str) -> str:
     return str(r.json()["id"])
 
 
-def _real_response_and_audit(
-) -> tuple[UUID, str, str, int, dict[str, Any], dict[str, Any]]:
+def _real_response_and_audit() -> (
+    tuple[UUID, str, str, int, dict[str, Any], dict[str, Any]]
+):
     """Call the real endpoint and audit it with Task 050."""
     sid_str = _create_session("Patient reports chest pain")
     sid = UUID(sid_str)
@@ -201,9 +202,7 @@ def test_package_consistent_false_with_api_consistent_true() -> None:
     tampered = copy.deepcopy(body)
     tampered["package_consistent"] = False
     tampered["bundle_consistency"]["bundle_consistent"] = False
-    tampered["bundle_consistency"]["consistency_issues"] = [
-        "NESTED_EXECUTION_MISMATCH"
-    ]
+    tampered["bundle_consistency"]["consistency_issues"] = ["NESTED_EXECUTION_MISMATCH"]
     audit = ReasoningRunExecutionAuditPackageApiConsistencyService().build(
         session_id=sid,
         method=method,
@@ -243,9 +242,7 @@ def _valid_inputs() -> dict[str, Any]:
 def test_invalid_method() -> None:
     inputs = _valid_inputs()
     inputs["method"] = "GET"
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "INVALID_METHOD"
 
@@ -253,9 +250,7 @@ def test_invalid_method() -> None:
 def test_invalid_path() -> None:
     inputs = _valid_inputs()
     inputs["path"] = "/sessions/x/reasoning-run/execute"
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "INVALID_PATH"
 
@@ -263,9 +258,7 @@ def test_invalid_path() -> None:
 def test_invalid_status() -> None:
     inputs = _valid_inputs()
     inputs["status_code"] = 500
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "INVALID_STATUS"
 
@@ -273,9 +266,7 @@ def test_invalid_status() -> None:
 def test_session_id_mismatch() -> None:
     inputs = _valid_inputs()
     inputs["session_id"] = uuid4()
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "SESSION_ID_MISMATCH"
 
@@ -283,9 +274,7 @@ def test_session_id_mismatch() -> None:
 def test_invalid_session_id() -> None:
     inputs = _valid_inputs()
     inputs["session_id"] = "not-a-uuid"
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "SESSION_ID_INVALID"
 
@@ -295,9 +284,7 @@ def test_malformed_task048_response() -> None:
     tampered = copy.deepcopy(inputs["response"])
     del tampered["package_source"]
     inputs["response"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant in (
         "RESPONSE_MISMATCH",
@@ -310,9 +297,7 @@ def test_malformed_task050_audit() -> None:
     tampered = copy.deepcopy(inputs["api_consistency"])
     del tampered["api_consistency_source"]
     inputs["api_consistency"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant in (
         "API_CONSISTENCY_MISMATCH",
@@ -325,9 +310,7 @@ def test_api_audit_unavailable() -> None:
     tampered = copy.deepcopy(inputs["api_consistency"])
     tampered["available"] = False
     inputs["api_consistency"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant in (
         "API_CONSISTENCY_MISMATCH",
@@ -340,9 +323,7 @@ def test_wrong_task048_source() -> None:
     tampered = copy.deepcopy(inputs["response"])
     tampered["package_source"] = "WRONG"
     inputs["response"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant in (
         "RESPONSE_MISMATCH",
@@ -355,9 +336,7 @@ def test_wrong_task050_source() -> None:
     tampered = copy.deepcopy(inputs["api_consistency"])
     tampered["api_consistency_source"] = "WRONG"
     inputs["api_consistency"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant in (
         "API_CONSISTENCY_MISMATCH",
@@ -369,9 +348,7 @@ def test_wrong_task051_source() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package)
     tampered["package_source"] = "WRONG"
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         ReasoningRunExecutionApiAuditPackageService._validate_result(tampered)
     assert ei.value.invariant == "PACKAGE_SOURCE_MISMATCH"
 
@@ -380,9 +357,7 @@ def test_package_consistent_mismatch() -> None:
     package = _valid_package()
     tampered = copy.deepcopy(package)
     tampered["package_consistent"] = not tampered["package_consistent"]
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         ReasoningRunExecutionApiAuditPackageService._validate_result(tampered)
     assert ei.value.invariant == "API_CONSISTENCY_MISMATCH"
 
@@ -475,6 +450,7 @@ def test_no_task050_build_invocation() -> None:
 def test_no_task048_build_for_session() -> None:
     src = inspect.getsource(mod)
     import re as _re
+
     assert not _re.search(r"\.build_for_session\s*\(", src)
 
 
@@ -515,6 +491,7 @@ def test_no_decision_or_llm_logic() -> None:
     ):
         assert forbidden not in src.lower()
 
+
 # ---------------------------------------------------------------------------
 # Provenance binding (reviewer round 2)
 # ---------------------------------------------------------------------------
@@ -547,9 +524,7 @@ def test_stale_audit_from_other_response_rejected() -> None:
     body_b = r_b.json()
 
     # Pair B's response with A's audit -- must be rejected.
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(
             session_id=sid_b,
             method="POST",
@@ -572,9 +547,7 @@ def test_tampered_fingerprint_rejected() -> None:
     sid, method, path, status, body, audit = _real_response_and_audit()
     tampered = copy.deepcopy(audit)
     tampered["audited_response_fingerprint"] = "0" * 64
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditPackageContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditPackageContractError) as ei:
         _service().build(
             session_id=sid,
             method=method,
@@ -594,4 +567,3 @@ def test_audit_provenance_fields_present() -> None:
     assert audit["audited_status_code"] == 200
     assert isinstance(audit["audited_response_fingerprint"], str)
     assert len(audit["audited_response_fingerprint"]) == 64
-

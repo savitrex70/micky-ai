@@ -40,7 +40,5 @@ class ReasoningRunExecutionApiAuditBundleRead(BaseModel):
     path: str
     status_code: int
     api_audit_package: ReasoningRunExecutionApiAuditPackageRead
-    api_audit_package_consistency: (
-        ReasoningRunExecutionApiAuditPackageConsistencyRead
-    )
+    api_audit_package_consistency: ReasoningRunExecutionApiAuditPackageConsistencyRead
     bundle_source: str

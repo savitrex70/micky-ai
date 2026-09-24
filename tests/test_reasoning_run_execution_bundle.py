@@ -101,10 +101,7 @@ def test_valid_bundle_shape() -> None:
 
 def test_bundle_source_fixed() -> None:
     bundle = _make_valid_bundle()
-    assert (
-        bundle["bundle_source"]
-        == REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046
-    )
+    assert bundle["bundle_source"] == REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046
 
 
 def test_nested_execution_present() -> None:
@@ -173,29 +170,19 @@ def _force_failure(monkeypatch, stage_id: str) -> None:
         raise RuntimeError("forced failure at " + stage_id)
 
     if stage_id == "OBSERVATION_EXTRACTION":
-        monkeypatch.setattr(
-            ObservationExtractionService, "extract_and_store", boom
-        )
+        monkeypatch.setattr(ObservationExtractionService, "extract_and_store", boom)
     elif stage_id == "MISSING_INFORMATION":
-        monkeypatch.setattr(
-            MissingInformationService, "detect_and_store", boom
-        )
+        monkeypatch.setattr(MissingInformationService, "detect_and_store", boom)
     elif stage_id == "TEMPLATE_MATCHING":
         monkeypatch.setattr(TemplateMatchService, "match", boom)
     elif stage_id == "CANDIDATE_GENERATION":
         monkeypatch.setattr(CandidateGenerationService, "generate", boom)
     elif stage_id == "EVIDENCE_EVALUATION":
-        monkeypatch.setattr(
-            EvidenceEvaluationService, "evaluate_session", boom
-        )
+        monkeypatch.setattr(EvidenceEvaluationService, "evaluate_session", boom)
     elif stage_id == "REASONING_RUN":
-        monkeypatch.setattr(
-            ReasoningRunService, "build_for_session", boom
-        )
+        monkeypatch.setattr(ReasoningRunService, "build_for_session", boom)
     elif stage_id == "REASONING_RUN_CONSISTENCY":
-        monkeypatch.setattr(
-            ReasoningRunConsistencyService, "build_for_session", boom
-        )
+        monkeypatch.setattr(ReasoningRunConsistencyService, "build_for_session", boom)
     else:
         raise AssertionError("unknown stage_id: " + stage_id)
 
@@ -231,9 +218,7 @@ def _valid_execution_and_audit() -> tuple[dict[str, Any], dict[str, Any]]:
     sid = _create_session("Patient reports chest pain")
     r = client.post(f"/sessions/{sid}/reasoning-run/execute")
     execution = r.json()
-    audit = ReasoningRunExecutionConsistencyService().build(
-        execution=execution
-    )
+    audit = ReasoningRunExecutionConsistencyService().build(execution=execution)
     return execution, audit
 
 
@@ -342,9 +327,7 @@ def test_bundle_inconsistent_when_audit_reports_inconsistent() -> None:
     # not inspect the nested run's source; Task 045's does.
     execution["reasoning_run"]["run_source"] = "WRONG"
 
-    audit = ReasoningRunExecutionConsistencyService().build(
-        execution=execution
-    )
+    audit = ReasoningRunExecutionConsistencyService().build(execution=execution)
     # Task 045 audit is valid and available, but reports inconsistency.
     assert audit["available"] is True
     assert audit["execution_consistent"] is False
@@ -407,9 +390,7 @@ def test_exact_execution_passed_to_audit(monkeypatch) -> None:
         captured["execution"] = execution
         return original_build(self, execution=execution)
 
-    monkeypatch.setattr(
-        ReasoningRunExecutionConsistencyService, "build", spy_build
-    )
+    monkeypatch.setattr(ReasoningRunExecutionConsistencyService, "build", spy_build)
 
     sid = _create_session("Patient reports chest pain")
     r = client.post(f"/sessions/{sid}/reasoning-run/execute-audited")
@@ -444,9 +425,7 @@ def test_build_for_session_delegates_to_044_and_045() -> None:
     # Indirectly verified by the spy tests above; this is a structural
     # check that the service holds both nested services as attributes.
     svc = _service()
-    assert isinstance(
-        svc.reasoning_run_execution_service, ReasoningRunExecutionService
-    )
+    assert isinstance(svc.reasoning_run_execution_service, ReasoningRunExecutionService)
     assert isinstance(
         svc.reasoning_run_execution_consistency_service,
         ReasoningRunExecutionConsistencyService,
@@ -489,9 +468,7 @@ def test_api_execute_audited_endpoint() -> None:
     assert r.status_code == 200
     payload = r.json()
     assert set(payload) == set(RESULT_FIELDS)
-    assert payload["bundle_source"] == (
-        "REASONING_RUN_EXECUTION_BUNDLE_TASK_046"
-    )
+    assert payload["bundle_source"] == ("REASONING_RUN_EXECUTION_BUNDLE_TASK_046")
 
 
 def test_api_missing_session_returns_404() -> None:

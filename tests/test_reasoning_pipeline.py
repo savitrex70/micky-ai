@@ -146,10 +146,7 @@ def test_valid_pipeline_shape() -> None:
 def test_pipeline_source_fixed() -> None:
     sid = _seed_session("Task 041 source")
     result = _build_for(sid)
-    assert (
-        result["pipeline_source"]
-        == PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041
-    )
+    assert result["pipeline_source"] == PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041
 
 
 def test_stage_count_and_ids() -> None:
@@ -178,9 +175,7 @@ def test_completed_stage_count_matches() -> None:
 def test_pipeline_flags_consistent_with_stages() -> None:
     sid = _seed_session("Task 041 flags")
     result = _build_for(sid)
-    assert result["pipeline_complete"] == all(
-        s["complete"] for s in result["stages"]
-    )
+    assert result["pipeline_complete"] == all(s["complete"] for s in result["stages"])
     assert result["pipeline_consistent"] == all(
         s["consistent"] for s in result["stages"]
     )
@@ -222,20 +217,15 @@ def test_each_stage_source_is_upstream_identifier() -> None:
     result = _build_for(sid)
     expected_sources = {
         "031_DECISION_CONTEXT": "DECISION_CONTEXT_TASK_031",
-        "032_DECISION_CANDIDATE_EVALUATION":
-            "DECISION_CANDIDATE_EVALUATION_TASK_032",
-        "033_DECISION_EVALUATION_CONSISTENCY":
-            "DECISION_EVALUATION_CONSISTENCY_TASK_033",
-        "034_DECISION_INPUT_ELIGIBILITY":
-            "DECISION_INPUT_ELIGIBILITY_TASK_034",
+        "032_DECISION_CANDIDATE_EVALUATION": "DECISION_CANDIDATE_EVALUATION_TASK_032",
+        "033_DECISION_EVALUATION_CONSISTENCY": "DECISION_EVALUATION_CONSISTENCY_TASK_033",
+        "034_DECISION_INPUT_ELIGIBILITY": "DECISION_INPUT_ELIGIBILITY_TASK_034",
         "035_DECISION_CANDIDATE_SET": "DECISION_CANDIDATE_SET_TASK_035",
-        "036_DECISION_CANDIDATE_ASSESSMENT":
-            "DECISION_CANDIDATE_ASSESSMENT_TASK_036",
+        "036_DECISION_CANDIDATE_ASSESSMENT": "DECISION_CANDIDATE_ASSESSMENT_TASK_036",
         "037_DECISION_INPUT_BUNDLE": "DECISION_INPUT_BUNDLE_TASK_037",
         "038_DECISION_POLICY": "DECISION_POLICY_TASK_038",
         "039_DECISION_EXECUTION": "DECISION_EXECUTION_TASK_039",
-        "040_DECISION_EXECUTION_CONSISTENCY":
-            "DECISION_EXECUTION_CONSISTENCY_TASK_040",
+        "040_DECISION_EXECUTION_CONSISTENCY": "DECISION_EXECUTION_CONSISTENCY_TASK_040",
     }
     for s in result["stages"]:
         assert s["stage_source"] == expected_sources[s["stage_id"]]
@@ -558,12 +548,8 @@ def test_rejects_selected_candidate_not_eligible() -> None:
     if result["final_execution"]["outcome"] != "SELECTED":
         pytest.skip("seed session did not yield SELECTED")
     tampered = copy.deepcopy(result)
-    tampered["final_execution"]["selected_candidate"]["hypothesis_id"] = (
-        uuid4()
-    )
-    tampered["final_execution"]["selected_candidate"]["hypothesis_name"] = (
-        "FAKE"
-    )
+    tampered["final_execution"]["selected_candidate"]["hypothesis_id"] = uuid4()
+    tampered["final_execution"]["selected_candidate"]["hypothesis_name"] = "FAKE"
     with pytest.raises(ReasoningPipelineContractError) as ei:
         ReasoningPipelineService._validate_result(
             tampered, inputs["bundle"], inputs["policy"]
@@ -582,10 +568,7 @@ def test_api_endpoint() -> None:
     assert r.status_code == 200
     payload = r.json()
     assert set(payload) == set(RESULT_FIELDS)
-    assert (
-        payload["pipeline_source"]
-        == PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041
-    )
+    assert payload["pipeline_source"] == PIPELINE_SOURCE_REASONING_PIPELINE_TASK_041
     assert payload["stage_count"] == 10
 
 
@@ -633,16 +616,12 @@ def _json_safe(result: dict[str, Any]) -> dict[str, Any]:
             "selected_candidate": (
                 {
                     **e["selected_candidate"],
-                    "hypothesis_id": str(
-                        e["selected_candidate"]["hypothesis_id"]
-                    ),
+                    "hypothesis_id": str(e["selected_candidate"]["hypothesis_id"]),
                 }
                 if e["selected_candidate"] is not None
                 else None
             ),
-            "eligible_candidate_ids": [
-                str(hid) for hid in e["eligible_candidate_ids"]
-            ],
+            "eligible_candidate_ids": [str(hid) for hid in e["eligible_candidate_ids"]],
         }
 
     return {

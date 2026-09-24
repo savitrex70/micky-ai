@@ -123,9 +123,7 @@ class DecisionCandidateAssessmentService:
 
     def __init__(
         self,
-        decision_candidate_set_service: (
-            DecisionCandidateSetService | None
-        ) = None,
+        decision_candidate_set_service: DecisionCandidateSetService | None = None,
     ) -> None:
         self.decision_candidate_set_service = (
             decision_candidate_set_service or DecisionCandidateSetService()
@@ -235,9 +233,7 @@ class DecisionCandidateAssessmentService:
                 ASSESSMENT_SOURCE_DECISION_CANDIDATE_ASSESSMENT_TASK_036
             ),
         }
-        self._validate_result(
-            result, candidate_set, evaluations, consistency_result
-        )
+        self._validate_result(result, candidate_set, evaluations, consistency_result)
         return result
 
     @staticmethod
@@ -251,8 +247,7 @@ class DecisionCandidateAssessmentService:
         if not isinstance(candidate_set, Mapping):
             raise DecisionCandidateAssessmentContractError(
                 "CANDIDATE_SET_TYPE",
-                f"candidate_set is not a mapping: "
-                f"{type(candidate_set).__name__}",
+                f"candidate_set is not a mapping: " f"{type(candidate_set).__name__}",
             )
         for field in _CANDIDATE_SET_FIELDS:
             if field not in candidate_set:
@@ -320,9 +315,7 @@ class DecisionCandidateAssessmentService:
                     f"hypothesis_name is not a string: "
                     f"{type(entry['hypothesis_name']).__name__}",
                 )
-            if not isinstance(entry["rank"], int) or isinstance(
-                entry["rank"], bool
-            ):
+            if not isinstance(entry["rank"], int) or isinstance(entry["rank"], bool):
                 raise DecisionCandidateAssessmentContractError(
                     "INVALID_CANDIDATE_RANK",
                     f"rank is not an int: {entry['rank']!r}",
@@ -344,8 +337,7 @@ class DecisionCandidateAssessmentService:
             ):
                 raise DecisionCandidateAssessmentContractError(
                     "INVALID_TIE_GROUP_SIZE",
-                    f"tie_group_size is not an int: "
-                    f"{entry['tie_group_size']!r}",
+                    f"tie_group_size is not an int: " f"{entry['tie_group_size']!r}",
                 )
             for gap_field in (
                 "score_gap_to_next_higher",
@@ -461,8 +453,7 @@ class DecisionCandidateAssessmentService:
                 if not isinstance(c["reason"], str):
                     raise DecisionCandidateAssessmentContractError(
                         "INVALID_CRITERION_REASON",
-                        f"reason is not a string: "
-                        f"{type(c['reason']).__name__}",
+                        f"reason is not a string: " f"{type(c['reason']).__name__}",
                     )
             for count_field in (
                 "criterion_count",
@@ -488,9 +479,7 @@ class DecisionCandidateAssessmentService:
                     f"evaluation_complete is not boolean: "
                     f"{entry['evaluation_complete']!r}",
                 )
-            derived_counts = (
-                DecisionCandidateAssessmentService._derive_counts(criteria)
-            )
+            derived_counts = DecisionCandidateAssessmentService._derive_counts(criteria)
             for count_field, derived_value in derived_counts.items():
                 declared_value = entry[count_field]
                 if declared_value != derived_value:
@@ -503,8 +492,7 @@ class DecisionCandidateAssessmentService:
             if src != EVALUATION_SOURCE_DECISION_CANDIDATE_EVALUATION_TASK_032:
                 raise DecisionCandidateAssessmentContractError(
                     "INVALID_EVALUATION_SOURCE",
-                    "evaluation_source is not the Task 032 identifier: "
-                    f"{src!r}",
+                    "evaluation_source is not the Task 032 identifier: " f"{src!r}",
                 )
             by_id[hid] = entry
         return by_id
@@ -552,8 +540,7 @@ class DecisionCandidateAssessmentService:
         if source != CONSISTENCY_SOURCE_DECISION_EVALUATION_CONSISTENCY_TASK_033:
             raise DecisionCandidateAssessmentContractError(
                 "INVALID_CONSISTENCY_SOURCE",
-                "consistency_source is not the Task 033 identifier: "
-                f"{source!r}",
+                "consistency_source is not the Task 033 identifier: " f"{source!r}",
             )
         coverage_complete = (
             consistency_result["all_candidates_evaluated"]
@@ -624,9 +611,7 @@ class DecisionCandidateAssessmentService:
             "criteria_satisfied": counts["criteria_satisfied"],
             "criteria_unsatisfied": counts["criteria_unsatisfied"],
             "required_criteria_satisfied": counts["required_criteria_satisfied"],
-            "required_criteria_unsatisfied": (
-                counts["required_criteria_unsatisfied"]
-            ),
+            "required_criteria_unsatisfied": (counts["required_criteria_unsatisfied"]),
             "evaluation_complete": evaluation["evaluation_complete"],
             "assessment_source": (
                 ASSESSMENT_SOURCE_DECISION_CANDIDATE_ASSESSMENT_TASK_036
@@ -754,18 +739,12 @@ class DecisionCandidateAssessmentService:
                         "TIE_GROUP_SIZE_MISMATCH",
                         f"assessment {i}: tie_group_size differs",
                     )
-                if (
-                    a["score_gap_to_next_higher"]
-                    != c["score_gap_to_next_higher"]
-                ):
+                if a["score_gap_to_next_higher"] != c["score_gap_to_next_higher"]:
                     raise DecisionCandidateAssessmentContractError(
                         "GAP_HIGHER_MISMATCH",
                         f"assessment {i}: gap_higher differs",
                     )
-                if (
-                    a["score_gap_to_next_lower"]
-                    != c["score_gap_to_next_lower"]
-                ):
+                if a["score_gap_to_next_lower"] != c["score_gap_to_next_lower"]:
                     raise DecisionCandidateAssessmentContractError(
                         "GAP_LOWER_MISMATCH",
                         f"assessment {i}: gap_lower differs",
@@ -786,10 +765,7 @@ class DecisionCandidateAssessmentService:
                         "CRITERIA_SATISFIED_MISMATCH",
                         f"assessment {i}: criteria_satisfied differs",
                     )
-                if (
-                    a["criteria_unsatisfied"]
-                    != upstream_eval["criteria_unsatisfied"]
-                ):
+                if a["criteria_unsatisfied"] != upstream_eval["criteria_unsatisfied"]:
                     raise DecisionCandidateAssessmentContractError(
                         "CRITERIA_UNSATISFIED_MISMATCH",
                         f"assessment {i}: criteria_unsatisfied differs",
@@ -808,13 +784,9 @@ class DecisionCandidateAssessmentService:
                 ):
                     raise DecisionCandidateAssessmentContractError(
                         "REQ_UNSATISFIED_MISMATCH",
-                        f"assessment {i}: required_criteria_unsatisfied "
-                        "differs",
+                        f"assessment {i}: required_criteria_unsatisfied " "differs",
                     )
-                if (
-                    a["evaluation_complete"]
-                    != upstream_eval["evaluation_complete"]
-                ):
+                if a["evaluation_complete"] != upstream_eval["evaluation_complete"]:
                     raise DecisionCandidateAssessmentContractError(
                         "EVAL_COMPLETE_MISMATCH",
                         f"assessment {i}: evaluation_complete differs",

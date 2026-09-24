@@ -39,8 +39,7 @@ class LLMReasoningProvider(Protocol):
 
     def generate_reasoning(
         self, request: LLMReasoningRequest
-    ) -> LLMReasoningProviderResponse:
-        ...
+    ) -> LLMReasoningProviderResponse: ...
 
 
 @dataclass(frozen=True)

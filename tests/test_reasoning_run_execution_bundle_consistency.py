@@ -153,9 +153,7 @@ def test_valid_bundle_with_task044_execution_consistent_false() -> None:
     ObservationExtractionService.extract_and_store = boom
     try:
         sid = _create_session("Patient reports chest pain")
-        bundle = client.post(
-            f"/sessions/{sid}/reasoning-run/execute-audited"
-        ).json()
+        bundle = client.post(f"/sessions/{sid}/reasoning-run/execute-audited").json()
     finally:
         ObservationExtractionService.extract_and_store = original
 
@@ -182,9 +180,7 @@ def test_valid_bundle_with_task045_execution_consistent_false() -> None:
         ReasoningRunExecutionConsistencyService,
     )
 
-    audit = ReasoningRunExecutionConsistencyService().build(
-        execution=execution
-    )
+    audit = ReasoningRunExecutionConsistencyService().build(execution=execution)
     assert audit["execution_consistent"] is False
 
     from rop.services.reasoning_run_execution_bundle import (
@@ -211,17 +207,13 @@ def test_valid_bundle_with_task045_execution_consistent_false() -> None:
 
 
 def test_missing_bundle() -> None:
-    with pytest.raises(
-        ReasoningRunExecutionBundleConsistencyContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionBundleConsistencyContractError) as ei:
         _service().build(bundle=None)
     assert ei.value.invariant == "MISSING_BUNDLE"
 
 
 def test_non_mapping_bundle() -> None:
-    with pytest.raises(
-        ReasoningRunExecutionBundleConsistencyContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionBundleConsistencyContractError) as ei:
         _service().build(bundle="nope")  # type: ignore[arg-type]
     assert ei.value.invariant == "BUNDLE_TYPE"
 
@@ -258,9 +250,7 @@ def test_missing_nested_audit() -> None:
     tampered = copy.deepcopy(bundle)
     tampered["execution_consistency"] = None
     result = _service().build(bundle=tampered)
-    assert (
-        "NESTED_EXECUTION_AUDIT_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_EXECUTION_AUDIT_MISMATCH" in result["consistency_issues"]
     assert result["nested_execution_audit_consistent"] is False
 
 
@@ -292,9 +282,7 @@ def test_invalid_audit_source() -> None:
     tampered = copy.deepcopy(bundle)
     tampered["execution_consistency"]["execution_consistency_source"] = "WRONG"
     result = _service().build(bundle=tampered)
-    assert (
-        "EXECUTION_AUDIT_SOURCE_MISMATCH" in result["consistency_issues"]
-    )
+    assert "EXECUTION_AUDIT_SOURCE_MISMATCH" in result["consistency_issues"]
     assert result["source_consistency"] is False
 
 
@@ -384,14 +372,8 @@ def test_no_duplicate_issues() -> None:
     tampered["execution"] = None
     tampered["execution_consistency"] = None
     result = _service().build(bundle=tampered)
-    assert (
-        result["consistency_issues"].count("NESTED_EXECUTION_MISMATCH") == 1
-    )
-    assert (
-        result["consistency_issues"].count(
-            "NESTED_EXECUTION_AUDIT_MISMATCH"
-        ) == 1
-    )
+    assert result["consistency_issues"].count("NESTED_EXECUTION_MISMATCH") == 1
+    assert result["consistency_issues"].count("NESTED_EXECUTION_AUDIT_MISMATCH") == 1
 
 
 def test_input_not_mutated() -> None:

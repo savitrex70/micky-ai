@@ -19,8 +19,7 @@ REASONING_RUN_EXECUTION_AUDIT_PACKAGE_API_CONSISTENCY_SOURCE_TASK_050 = (
 _EXPECTED_METHOD = "POST"
 _EXPECTED_STATUS = 200
 _PATH_PATTERN = re.compile(
-    r"^/sessions/(?P<session_id>[^/]+)"
-    r"/reasoning-run/execute-fully-audited$"
+    r"^/sessions/(?P<session_id>[^/]+)" r"/reasoning-run/execute-fully-audited$"
 )
 
 _EXPECTED_BODY_FIELDS = frozenset(
@@ -157,8 +156,7 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         if not isinstance(response_body, Mapping):
             raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
                 "RESPONSE_BODY_TYPE",
-                "response_body is not a mapping: "
-                + type(response_body).__name__,
+                "response_body is not a mapping: " + type(response_body).__name__,
             )
 
         issues: list[str] = []
@@ -238,13 +236,11 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         audited_path = path if isinstance(path, str) else None
         audited_status_code = (
             status_code
-            if isinstance(status_code, int)
-            and not isinstance(status_code, bool)
+            if isinstance(status_code, int) and not isinstance(status_code, bool)
             else None
         )
-        audited_response_fingerprint = (
-            ReasoningRunExecutionAuditPackageApiConsistencyService
-            ._response_fingerprint(response_body)
+        audited_response_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+            response_body
         )
 
         # Deterministic ordering, dedupe.
@@ -258,19 +254,14 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         path_consistent = "INVALID_PATH" not in unique_issues
         status_consistent = "INVALID_STATUS" not in unique_issues
         session_consistent = not any(
-            i in unique_issues
-            for i in ("SESSION_ID_INVALID", "SESSION_ID_MISMATCH")
+            i in unique_issues for i in ("SESSION_ID_INVALID", "SESSION_ID_MISMATCH")
         )
         response_shape_consistent = not any(
             i in unique_issues
             for i in ("MISSING_RESPONSE_FIELD", "RESPONSE_SHAPE_MISMATCH")
         )
-        nested_package_consistent = (
-            "NESTED_PACKAGE_MISMATCH" not in unique_issues
-        )
-        source_consistency = (
-            "PACKAGE_SOURCE_MISMATCH" not in unique_issues
-        )
+        nested_package_consistent = "NESTED_PACKAGE_MISMATCH" not in unique_issues
+        source_consistency = "PACKAGE_SOURCE_MISMATCH" not in unique_issues
         metadata_consistent = not any(
             i in unique_issues
             for i in (
@@ -320,14 +311,18 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
             return str(value)
         if isinstance(value, Mapping):
             return {
-                str(k): ReasoningRunExecutionAuditPackageApiConsistencyService
-                ._canonicalize(v)
+                str(
+                    k
+                ): ReasoningRunExecutionAuditPackageApiConsistencyService._canonicalize(
+                    v
+                )
                 for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
             }
         if isinstance(value, list):
             return [
-                ReasoningRunExecutionAuditPackageApiConsistencyService
-                ._canonicalize(item)
+                ReasoningRunExecutionAuditPackageApiConsistencyService._canonicalize(
+                    item
+                )
                 for item in value
             ]
         if isinstance(value, (str, int, float, bool)) or value is None:
@@ -342,8 +337,9 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         representations of the same logical response.
         """
         canonical = (
-            ReasoningRunExecutionAuditPackageApiConsistencyService
-            ._canonicalize(response_body)
+            ReasoningRunExecutionAuditPackageApiConsistencyService._canonicalize(
+                response_body
+            )
         )
         payload = json.dumps(
             canonical, sort_keys=True, separators=(",", ":"), default=str
@@ -367,8 +363,7 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -422,6 +417,5 @@ class ReasoningRunExecutionAuditPackageApiConsistencyService:
         ):
             raise ReasoningRunExecutionAuditPackageApiConsistencyContractError(
                 "AUDITED_STATUS_CODE_TYPE",
-                "audited_status_code is not an int or None: "
-                + repr(raw_status),
+                "audited_status_code is not an int or None: " + repr(raw_status),
             )

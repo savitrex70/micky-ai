@@ -40,8 +40,7 @@ _PACKAGE_REQUIRED_FIELDS = (
 
 _EXPECTED_STATUS_CODE = 200
 _PATH_PATTERN = re.compile(
-    r"^/sessions/(?P<session_id>[^/]+)"
-    r"/reasoning-run/execute-fully-audited$"
+    r"^/sessions/(?P<session_id>[^/]+)" r"/reasoning-run/execute-fully-audited$"
 )
 
 _RESULT_REQUIRED_FIELDS = (
@@ -198,22 +197,14 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             if path_match is None:
                 issues.append("PATH_INVALID")
             else:
-                path_sid = _coerce_session_id(
-                    path_match.group("session_id")
-                )
+                path_sid = _coerce_session_id(path_match.group("session_id"))
                 if path_sid is None:
                     issues.append("SESSION_ID_INVALID")
-                elif (
-                    package_session_id is not None
-                    and path_sid != package_session_id
-                ):
+                elif package_session_id is not None and path_sid != package_session_id:
                     issues.append("SESSION_ID_MISMATCH")
 
         status_code = package.get("status_code")
-        if (
-            not isinstance(status_code, int)
-            or isinstance(status_code, bool)
-        ):
+        if not isinstance(status_code, int) or isinstance(status_code, bool):
             issues.append("STATUS_CODE_INVALID")
         elif status_code != _EXPECTED_STATUS_CODE:
             issues.append("STATUS_CODE_INVALID")
@@ -284,9 +275,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 issues.append("AUDITED_METHOD_MISMATCH")
             if api_consistency.get("audited_path") != package.get("path"):
                 issues.append("AUDITED_PATH_MISMATCH")
-            if api_consistency.get("audited_status_code") != package.get(
-                "status_code"
-            ):
+            if api_consistency.get("audited_status_code") != package.get("status_code"):
                 issues.append("AUDITED_STATUS_CODE_MISMATCH")
 
         # --- Response provenance: recompute fingerprint independently ---
@@ -296,9 +285,8 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             and package.get("response") is not None
         ):
             try:
-                expected_fingerprint = (
-                    ReasoningRunExecutionAuditPackageApiConsistencyService
-                    ._response_fingerprint(response)
+                expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+                    response
                 )
             except Exception:
                 expected_fingerprint = None
@@ -376,9 +364,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             i in unique_issues
             for i in ("STATUS_CODE_INVALID", "AUDITED_STATUS_CODE_MISMATCH")
         )
-        nested_response_consistent = (
-            "NESTED_RESPONSE_MISMATCH" not in unique_issues
-        )
+        nested_response_consistent = "NESTED_RESPONSE_MISMATCH" not in unique_issues
         nested_api_consistency_consistent = (
             "NESTED_API_CONSISTENCY_MISMATCH" not in unique_issues
         )
@@ -405,15 +391,13 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
         )
 
         try:
-            audited_package_fingerprint = (
-                ReasoningRunExecutionApiAuditPackageConsistencyService
-                ._package_fingerprint(package)
+            audited_package_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(
+                package
             )
         except Exception as exc:
             raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
                 "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED",
-                "could not compute the audited package fingerprint: "
-                + str(exc),
+                "could not compute the audited package fingerprint: " + str(exc),
             ) from exc
 
         result: dict[str, Any] = {
@@ -424,13 +408,9 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             "path_consistent": path_consistent,
             "status_consistent": status_consistent,
             "nested_response_consistent": nested_response_consistent,
-            "nested_api_consistency_consistent": (
-                nested_api_consistency_consistent
-            ),
+            "nested_api_consistency_consistent": (nested_api_consistency_consistent),
             "provenance_consistent": provenance_consistent,
-            "package_relationship_consistent": (
-                package_relationship_consistent
-            ),
+            "package_relationship_consistent": (package_relationship_consistent),
             "source_consistency": source_consistency,
             "metadata_consistent": metadata_consistent,
             "consistency_issues": ordered_issues,
@@ -449,15 +429,18 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             return str(value)
         if isinstance(value, Mapping):
             return {
-                str(k):
-                    ReasoningRunExecutionApiAuditPackageConsistencyService
-                    ._canonicalize(v)
+                str(
+                    k
+                ): ReasoningRunExecutionApiAuditPackageConsistencyService._canonicalize(
+                    v
+                )
                 for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
             }
         if isinstance(value, list):
             return [
-                ReasoningRunExecutionApiAuditPackageConsistencyService
-                ._canonicalize(item)
+                ReasoningRunExecutionApiAuditPackageConsistencyService._canonicalize(
+                    item
+                )
                 for item in value
             ]
         if isinstance(value, (str, int, float, bool)) or value is None:
@@ -468,8 +451,9 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
     def _package_fingerprint(package: Mapping[str, Any]) -> str:
         """Return a SHA-256 hex digest of the canonicalized package."""
         canonical = (
-            ReasoningRunExecutionApiAuditPackageConsistencyService
-            ._canonicalize(package)
+            ReasoningRunExecutionApiAuditPackageConsistencyService._canonicalize(
+                package
+            )
         )
         payload = json.dumps(
             canonical, sort_keys=True, separators=(",", ":"), default=str
@@ -493,8 +477,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -522,8 +505,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
             raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
                 "PACKAGE_CONSISTENCY_SOURCE_MISMATCH",
                 "package_consistency_source is not the Task 052 "
-                "identifier: "
-                + repr(result["package_consistency_source"]),
+                "identifier: " + repr(result["package_consistency_source"]),
             )
         if result["package_consistent"] != (len(issues) == 0):
             raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
@@ -531,9 +513,7 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 "package_consistent does not match consistency_issues",
             )
         fp = result["audited_package_fingerprint"]
-        if not isinstance(fp, str) or not (
-            _PACKAGE_FINGERPRINT_HEX_RE.match(fp)
-        ):
+        if not isinstance(fp, str) or not (_PACKAGE_FINGERPRINT_HEX_RE.match(fp)):
             raise ReasoningRunExecutionApiAuditPackageConsistencyContractError(
                 "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
                 "audited_package_fingerprint is not a 64-char lowercase "

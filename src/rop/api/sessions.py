@@ -1720,9 +1720,7 @@ def get_decision_policy(
         page_offset += page_size
 
     try:
-        return decision_policy_service.build_for_session(
-            db, session_id, candidates
-        )
+        return decision_policy_service.build_for_session(db, session_id, candidates)
     except (
         HypothesisScoreContractError,
         DifferentialRankingContractError,
@@ -1796,9 +1794,7 @@ def get_decision_execution(
         page_offset += page_size
 
     try:
-        return decision_execution_service.build_for_session(
-            db, session_id, candidates
-        )
+        return decision_execution_service.build_for_session(db, session_id, candidates)
     except (
         HypothesisScoreContractError,
         DifferentialRankingContractError,
@@ -1955,9 +1951,7 @@ def get_reasoning_pipeline(
         page_offset += page_size
 
     try:
-        return reasoning_pipeline_service.build_for_session(
-            db, session_id, candidates
-        )
+        return reasoning_pipeline_service.build_for_session(db, session_id, candidates)
     except (
         HypothesisScoreContractError,
         DifferentialRankingContractError,
@@ -2061,9 +2055,7 @@ def get_reasoning_run_consistency(
         )
 
     try:
-        return reasoning_run_consistency_service.build_for_session(
-            db, session_id
-        )
+        return reasoning_run_consistency_service.build_for_session(db, session_id)
     except ReasoningRunConsistencyContractError as exc:
         # Task 043: an internal contract violation, never medical or
         # client-input error -- never leak the raw exception detail.
@@ -2109,9 +2101,7 @@ def execute_reasoning_run(
         )
 
     try:
-        return reasoning_run_execution_service.execute_for_session(
-            db, session_id
-        )
+        return reasoning_run_execution_service.execute_for_session(db, session_id)
     except ReasoningRunExecutionContractError as exc:
         # Task 044: an internal contract violation, never medical or
         # client-input error -- never leak the raw exception detail.
@@ -2162,9 +2152,7 @@ def execute_reasoning_run_audited(
         )
 
     try:
-        return reasoning_run_execution_bundle_service.build_for_session(
-            db, session_id
-        )
+        return reasoning_run_execution_bundle_service.build_for_session(db, session_id)
     except ReasoningRunExecutionBundleContractError as exc:
         # Task 046: an internal contract violation, never medical or
         # client-input error -- never leak the raw exception detail.
@@ -2212,10 +2200,10 @@ def execute_reasoning_run_fully_audited(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                "Internal reasoning-run-execution-audit-package "
-                "contract violation"
+                "Internal reasoning-run-execution-audit-package " "contract violation"
             ),
         ) from exc
+
 
 @router.get(
     "/{session_id}/reasoning-handoff",

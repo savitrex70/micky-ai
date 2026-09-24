@@ -140,9 +140,7 @@ class LLMReasoningService:
     ) -> dict[str, Any]:
         """Obtain Task 055 context exactly once, then delegate to build."""
         try:
-            context = self.reasoning_context_service.build_for_session(
-                db, session_id
-            )
+            context = self.reasoning_context_service.build_for_session(db, session_id)
         except ReasoningContextContractError as exc:
             # Distinguish "the session/input does not exist" from
             # "the upstream state is malformed or inconsistent" so a
@@ -185,9 +183,7 @@ class LLMReasoningService:
 
         # Task 056 audit of the exact supplied context.
         try:
-            audit = self.reasoning_context_consistency_service.build(
-                context=context
-            )
+            audit = self.reasoning_context_consistency_service.build(context=context)
         except Exception as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
@@ -240,9 +236,7 @@ class LLMReasoningService:
 
         # Strict output parsing: no regex, no heuristic repair.
         try:
-            raw = _RawLLMReasoningProposal.model_validate_json(
-                provider_response.text
-            )
+            raw = _RawLLMReasoningProposal.model_validate_json(provider_response.text)
         except ValidationError as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
@@ -263,12 +257,8 @@ class LLMReasoningService:
                 candidate_id=a.candidate_id,
                 assessment=a.assessment,
                 supporting_evidence_ids=list(a.supporting_evidence_ids),
-                contradicting_evidence_ids=list(
-                    a.contradicting_evidence_ids
-                ),
-                unresolved_information_ids=list(
-                    a.unresolved_information_ids
-                ),
+                contradicting_evidence_ids=list(a.contradicting_evidence_ids),
+                unresolved_information_ids=list(a.unresolved_information_ids),
                 explanation=a.explanation,
                 uncertainty_flags=list(a.uncertainty_flags),
             )
@@ -340,9 +330,7 @@ class LLMReasoningService:
         for field, schema in _ELEMENT_SERIALIZERS:
             for item in context[field]:
                 validated = schema.model_validate(item)
-                payload[field].append(
-                    validated.model_dump(mode="json")
-                )
+                payload[field].append(validated.model_dump(mode="json"))
         return LLMReasoningService._to_json_safe(payload)
 
     @staticmethod
@@ -351,13 +339,10 @@ class LLMReasoningService:
             return str(value)
         if isinstance(value, Mapping):
             return {
-                str(k): LLMReasoningService._to_json_safe(v)
-                for k, v in value.items()
+                str(k): LLMReasoningService._to_json_safe(v) for k, v in value.items()
             }
         if isinstance(value, list):
-            return [
-                LLMReasoningService._to_json_safe(v) for v in value
-            ]
+            return [LLMReasoningService._to_json_safe(v) for v in value]
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         raise LLMReasoningContractError(
@@ -368,9 +353,7 @@ class LLMReasoningService:
 
     @staticmethod
     def _fingerprint(serialized: Mapping[str, Any]) -> str:
-        canonical = ReasoningRunConsistencyService._canonicalize(
-            serialized
-        )
+        canonical = ReasoningRunConsistencyService._canonicalize(serialized)
         payload = json.dumps(
             canonical, sort_keys=True, separators=(",", ":"), default=str
         )
@@ -398,8 +381,7 @@ class LLMReasoningService:
             if a.candidate_id in seen_candidates:
                 raise LLMReasoningContractError(
                     _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                    "duplicate candidate_assessment for: "
-                    + str(a.candidate_id),
+                    "duplicate candidate_assessment for: " + str(a.candidate_id),
                 )
             seen_candidates.add(a.candidate_id)
 

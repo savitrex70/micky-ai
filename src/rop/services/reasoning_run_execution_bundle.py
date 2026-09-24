@@ -75,16 +75,13 @@ class ReasoningRunExecutionBundleService:
 
     def __init__(
         self,
-        reasoning_run_execution_service: (
-            ReasoningRunExecutionService | None
-        ) = None,
+        reasoning_run_execution_service: ReasoningRunExecutionService | None = None,
         reasoning_run_execution_consistency_service: (
             ReasoningRunExecutionConsistencyService | None
         ) = None,
     ) -> None:
         self.reasoning_run_execution_service = (
-            reasoning_run_execution_service
-            or ReasoningRunExecutionService()
+            reasoning_run_execution_service or ReasoningRunExecutionService()
         )
         self.reasoning_run_execution_consistency_service = (
             reasoning_run_execution_consistency_service
@@ -211,10 +208,7 @@ class ReasoningRunExecutionBundleService:
             )
 
         # Rule F: fixed sources.
-        if (
-            execution.get("execution_source")
-            != REASONING_RUN_EXECUTION_SOURCE_TASK_044
-        ):
+        if execution.get("execution_source") != REASONING_RUN_EXECUTION_SOURCE_TASK_044:
             raise ReasoningRunExecutionBundleContractError(
                 "INVALID_EXECUTION_SOURCE",
                 "execution.execution_source is not the Task 044 identifier: "
@@ -236,9 +230,7 @@ class ReasoningRunExecutionBundleService:
         expected_bundle_consistent = bool(
             execution_consistency.get("execution_consistent", False)
         )
-        if (
-            bool(execution_consistency.get("available", False)) is not True
-        ):
+        if bool(execution_consistency.get("available", False)) is not True:
             raise ReasoningRunExecutionBundleContractError(
                 "AUDIT_UNAVAILABLE",
                 "execution_consistency.available is not True",
@@ -250,9 +242,7 @@ class ReasoningRunExecutionBundleService:
             "session_id": session_id,
             "execution": dict(execution),
             "execution_consistency": dict(execution_consistency),
-            "bundle_source": (
-                REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046
-            ),
+            "bundle_source": (REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046),
         }
         self._validate_result(result)
         return result
@@ -273,14 +263,12 @@ class ReasoningRunExecutionBundleService:
         if not isinstance(result["session_id"], UUID):
             raise ReasoningRunExecutionBundleContractError(
                 "SESSION_ID_TYPE",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         if not isinstance(result["execution"], Mapping):
             raise ReasoningRunExecutionBundleContractError(
                 "EXECUTION_TYPE",
-                "execution is not a mapping: "
-                + type(result["execution"]).__name__,
+                "execution is not a mapping: " + type(result["execution"]).__name__,
             )
         if not isinstance(result["execution_consistency"], Mapping):
             raise ReasoningRunExecutionBundleContractError(
@@ -290,9 +278,7 @@ class ReasoningRunExecutionBundleService:
             )
         # Re-run the nested validators.
         try:
-            ReasoningRunExecutionService._validate_result(
-                dict(result["execution"])
-            )
+            ReasoningRunExecutionService._validate_result(dict(result["execution"]))
         except Exception as exc:
             raise ReasoningRunExecutionBundleContractError(
                 "INVALID_EXECUTION",
@@ -315,26 +301,22 @@ class ReasoningRunExecutionBundleService:
                 "AUDIT_UNAVAILABLE",
                 "execution_consistency.available is not True",
             )
-        if (
-            result["execution_consistency"].get("session_consistent")
-            is not True
-        ):
+        if result["execution_consistency"].get("session_consistent") is not True:
             raise ReasoningRunExecutionBundleContractError(
                 "SESSION_CONSISTENCY_FALSE",
                 "execution_consistency.session_consistent is not True",
             )
         # Bundle consistency relationship.
         expected = bool(
-            result["execution_consistency"].get(
-                "execution_consistent", False
-            )
+            result["execution_consistency"].get("execution_consistent", False)
         )
         if result["bundle_consistent"] != expected:
             raise ReasoningRunExecutionBundleContractError(
                 "BUNDLE_CONSISTENT_MISMATCH",
                 "bundle_consistent does not match the nested audit: "
                 + repr(result["bundle_consistent"])
-                + " != " + repr(expected),
+                + " != "
+                + repr(expected),
             )
         # Source identifiers.
         if (
@@ -347,9 +329,7 @@ class ReasoningRunExecutionBundleService:
                 + repr(result["execution"].get("execution_source")),
             )
         if (
-            result["execution_consistency"].get(
-                "execution_consistency_source"
-            )
+            result["execution_consistency"].get("execution_consistency_source")
             != REASONING_RUN_EXECUTION_CONSISTENCY_SOURCE_TASK_045
         ):
             raise ReasoningRunExecutionBundleContractError(
@@ -357,15 +337,10 @@ class ReasoningRunExecutionBundleService:
                 "execution_consistency.execution_consistency_source is "
                 "not the Task 045 identifier: "
                 + repr(
-                    result["execution_consistency"].get(
-                        "execution_consistency_source"
-                    )
+                    result["execution_consistency"].get("execution_consistency_source")
                 ),
             )
-        if (
-            result["bundle_source"]
-            != REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046
-        ):
+        if result["bundle_source"] != REASONING_RUN_EXECUTION_BUNDLE_SOURCE_TASK_046:
             raise ReasoningRunExecutionBundleContractError(
                 "INVALID_BUNDLE_SOURCE",
                 "bundle_source is not the Task 046 identifier: "

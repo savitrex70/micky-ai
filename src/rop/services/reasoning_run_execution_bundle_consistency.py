@@ -158,9 +158,7 @@ class ReasoningRunExecutionBundleConsistencyService:
                 except (ValueError, TypeError):
                     pass
             try:
-                ReasoningRunExecutionService._validate_result(
-                    execution_for_validation
-                )
+                ReasoningRunExecutionService._validate_result(execution_for_validation)
             except ReasoningRunExecutionContractError:
                 issues.append("NESTED_EXECUTION_MISMATCH")
             except Exception:
@@ -180,9 +178,7 @@ class ReasoningRunExecutionBundleConsistencyService:
 
         # Session identity agreement.
         if isinstance(execution, Mapping) and bundle_session_id is not None:
-            exec_session_id = _coerce_session_id(
-                execution.get("session_id")
-            )
+            exec_session_id = _coerce_session_id(execution.get("session_id"))
             if exec_session_id != bundle_session_id:
                 issues.append("SESSION_ID_MISMATCH")
         if isinstance(execution_consistency, Mapping):
@@ -202,9 +198,7 @@ class ReasoningRunExecutionBundleConsistencyService:
         if not isinstance(execution_consistency, Mapping):
             issues.append("BUNDLE_RELATIONSHIP_MISMATCH")
         else:
-            raw_audit_consistent = execution_consistency.get(
-                "execution_consistent"
-            )
+            raw_audit_consistent = execution_consistency.get("execution_consistent")
             if not isinstance(raw_audit_consistent, bool):
                 issues.append("BUNDLE_RELATIONSHIP_MISMATCH")
             elif bundle.get("bundle_consistent") != raw_audit_consistent:
@@ -242,12 +236,9 @@ class ReasoningRunExecutionBundleConsistencyService:
 
         # Derive flags.
         session_consistent = not any(
-            i in unique_issues
-            for i in ("SESSION_ID_INVALID", "SESSION_ID_MISMATCH")
+            i in unique_issues for i in ("SESSION_ID_INVALID", "SESSION_ID_MISMATCH")
         )
-        nested_execution_consistent = (
-            "NESTED_EXECUTION_MISMATCH" not in unique_issues
-        )
+        nested_execution_consistent = "NESTED_EXECUTION_MISMATCH" not in unique_issues
         nested_execution_audit_consistent = (
             "NESTED_EXECUTION_AUDIT_MISMATCH" not in unique_issues
             and "AUDIT_UNAVAILABLE" not in unique_issues
@@ -284,12 +275,8 @@ class ReasoningRunExecutionBundleConsistencyService:
             "bundle_consistent": not ordered_issues,
             "session_consistent": session_consistent,
             "nested_execution_consistent": nested_execution_consistent,
-            "nested_execution_audit_consistent": (
-                nested_execution_audit_consistent
-            ),
-            "bundle_relationship_consistent": (
-                bundle_relationship_consistent
-            ),
+            "nested_execution_audit_consistent": (nested_execution_audit_consistent),
+            "bundle_relationship_consistent": (bundle_relationship_consistent),
             "source_consistency": source_consistency,
             "metadata_consistent": metadata_consistent,
             "consistency_issues": ordered_issues,
@@ -317,8 +304,7 @@ class ReasoningRunExecutionBundleConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunExecutionBundleConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:

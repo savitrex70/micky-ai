@@ -65,6 +65,7 @@ def test_extraction_service_stores_observations_on_session() -> None:
         assert {observation.session_id for observation in observations} == {session.id}
         assert db.query(ReasoningSession).one().observations == observations
 
+
 def test_extractor_handles_symptom_without_severity() -> None:
     """Regression: a symptom that matches without an optional severity
     prefix (e.g. plain "chest pain") must not crash the extractor. The
@@ -78,4 +79,3 @@ def test_extractor_handles_symptom_without_severity() -> None:
     # And no severity observation is produced for this input.
     severity_values = [o.text for o in observations if o.type == "severity"]
     assert severity_values == []
-

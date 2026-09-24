@@ -77,8 +77,7 @@ def _create_session(user_input: str) -> str:
     return str(r.json()["id"])
 
 
-def _task051_and_052(
-) -> tuple[UUID, str, str, int, dict[str, Any], dict[str, Any]]:
+def _task051_and_052() -> tuple[UUID, str, str, int, dict[str, Any], dict[str, Any]]:
     sid_str = _create_session("Patient reports chest pain")
     sid = UUID(sid_str)
     path = f"/sessions/{sid_str}/reasoning-run/execute-fully-audited"
@@ -185,9 +184,7 @@ def test_task051_package_consistent_false_bundle_consistent_true() -> None:
         api_audit_package_consistency=audit_052,
     )
     assert bundle["api_audit_package"]["package_consistent"] is False
-    assert (
-        bundle["api_audit_package_consistency"]["package_consistent"] is True
-    )
+    assert bundle["api_audit_package_consistency"]["package_consistent"] is True
     assert bundle["bundle_consistent"] is True
 
 
@@ -443,6 +440,7 @@ def test_no_http_or_testclient() -> None:
 def test_no_upstream_build_invocations() -> None:
     src = inspect.getsource(mod)
     import re as _re
+
     assert not _re.search(r"\.build\s*\(", src)
     assert not _re.search(r"\.build_for_session\s*\(", src)
 
@@ -463,6 +461,7 @@ def test_no_decision_or_llm_logic() -> None:
     ):
         assert forbidden not in src.lower()
 
+
 # ---------------------------------------------------------------------------
 # Round 2: Task 052 provenance fingerprint binding
 # ---------------------------------------------------------------------------
@@ -470,16 +469,12 @@ def test_no_decision_or_llm_logic() -> None:
 
 def test_stale_audit_from_other_package_rejected() -> None:
     sid_a, method_a, path_a, status_a, package_a, _ = _task051_and_052()
-    audit_a = (
-        ReasoningRunExecutionApiAuditPackageConsistencyService().build(
-            package=package_a
-        )
+    audit_a = ReasoningRunExecutionApiAuditPackageConsistencyService().build(
+        package=package_a
     )
     sid_b, method_b, path_b, status_b, package_b, _ = _task051_and_052()
 
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditBundleContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditBundleContractError) as ei:
         _service().build(
             session_id=sid_b,
             method=method_b,
@@ -496,9 +491,7 @@ def test_tampered_audit_fingerprint_rejected() -> None:
     tampered = copy.deepcopy(inputs["api_audit_package_consistency"])
     tampered["audited_package_fingerprint"] = "0" * 64
     inputs["api_audit_package_consistency"] = tampered
-    with pytest.raises(
-        ReasoningRunExecutionApiAuditBundleContractError
-    ) as ei:
+    with pytest.raises(ReasoningRunExecutionApiAuditBundleContractError) as ei:
         _service().build(**inputs)
     assert ei.value.invariant == "AUDIT_PACKAGE_FINGERPRINT_MISMATCH"
 
@@ -508,4 +501,3 @@ def test_matching_fingerprint_accepted() -> None:
     bundle = _service().build(**inputs)
     assert bundle["available"] is True
     assert bundle["bundle_consistent"] is True
-

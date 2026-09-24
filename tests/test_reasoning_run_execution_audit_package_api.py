@@ -92,10 +92,7 @@ def test_nested_execution_bundle_preserved() -> None:
     r = client.post(ENDPOINT.format(sid=sid))
     payload = r.json()
     bundle = payload["execution_bundle"]
-    assert (
-        bundle["bundle_source"]
-        == "REASONING_RUN_EXECUTION_BUNDLE_TASK_046"
-    )
+    assert bundle["bundle_source"] == "REASONING_RUN_EXECUTION_BUNDLE_TASK_046"
     assert bundle["available"] is True
 
 
@@ -189,6 +186,7 @@ def test_task048_result_passed_through_unchanged(monkeypatch) -> None:
         )
     finally:
         db_gen.close()
+
     def spy(self, db, session_id):
         return canned
 
@@ -219,9 +217,7 @@ def _strip_uuids(obj):
 
 def test_task048_contract_error_returns_500(monkeypatch) -> None:
     def boom(self, db, session_id):
-        raise ReasoningRunExecutionAuditPackageContractError(
-            "TEST", "forced failure"
-        )
+        raise ReasoningRunExecutionAuditPackageContractError("TEST", "forced failure")
 
     monkeypatch.setattr(
         ReasoningRunExecutionAuditPackageService, "build_for_session", boom
@@ -246,7 +242,7 @@ def test_api_does_not_invoke_task044_directly() -> None:
     # The Task 049 endpoint function specifically must not call Task 044.
     start = src.find("def execute_reasoning_run_fully_audited")
     assert start != -1
-    body = src[start:start + 2000]
+    body = src[start : start + 2000]
     assert "ReasoningRunExecutionService().execute_for_session" not in body
     assert "reasoning_run_execution_service.execute_for_session" not in body
 
@@ -256,7 +252,7 @@ def test_api_does_not_invoke_task045_directly() -> None:
 
     src = inspect.getsource(sessions_mod)
     start = src.find("def execute_reasoning_run_fully_audited")
-    body = src[start:start + 2000]
+    body = src[start : start + 2000]
     assert "ReasoningRunExecutionConsistencyService" not in body
 
 
@@ -265,7 +261,7 @@ def test_api_does_not_invoke_task046_directly() -> None:
 
     src = inspect.getsource(sessions_mod)
     start = src.find("def execute_reasoning_run_fully_audited")
-    body = src[start:start + 2000]
+    body = src[start : start + 2000]
     assert "reasoning_run_execution_bundle_service" not in body
 
 
@@ -274,13 +270,9 @@ def test_api_does_not_invoke_task047_directly() -> None:
 
     src = inspect.getsource(sessions_mod)
     start = src.find("def execute_reasoning_run_fully_audited")
-    body = src[start:start + 2000]
-    assert (
-        "ReasoningRunExecutionBundleConsistencyService" not in body
-    )
-    assert (
-        "reasoning_run_execution_bundle_consistency_service" not in body
-    )
+    body = src[start : start + 2000]
+    assert "ReasoningRunExecutionBundleConsistencyService" not in body
+    assert "reasoning_run_execution_bundle_consistency_service" not in body
 
 
 # ---------------------------------------------------------------------------

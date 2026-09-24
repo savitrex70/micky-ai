@@ -23,8 +23,7 @@ REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_SOURCE_TASK_051 = (
 _EXPECTED_METHOD = "POST"
 _EXPECTED_STATUS = 200
 _PATH_PATTERN = re.compile(
-    r"^/sessions/(?P<session_id>[^/]+)"
-    r"/reasoning-run/execute-fully-audited$"
+    r"^/sessions/(?P<session_id>[^/]+)" r"/reasoning-run/execute-fully-audited$"
 )
 
 _PACKAGE_REQUIRED_FIELDS = (
@@ -150,15 +149,13 @@ class ReasoningRunExecutionApiAuditPackageService:
         if match is None:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "INVALID_PATH",
-                "path does not match the Task 049 fully-audited route: "
-                + repr(path),
+                "path does not match the Task 049 fully-audited route: " + repr(path),
             )
         path_sid = _coerce_session_id(match.group("session_id"))
         if path_sid is None:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "SESSION_ID_INVALID",
-                "path session id is not a UUID: "
-                + repr(match.group("session_id")),
+                "path session id is not a UUID: " + repr(match.group("session_id")),
             )
         if path_sid != sid:
             raise ReasoningRunExecutionApiAuditPackageContractError(
@@ -188,8 +185,7 @@ class ReasoningRunExecutionApiAuditPackageService:
         if response_sid != sid:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "SESSION_ID_MISMATCH",
-                "response.session_id does not match the supplied "
-                "session_id",
+                "response.session_id does not match the supplied " "session_id",
             )
 
         # Response source.
@@ -268,40 +264,33 @@ class ReasoningRunExecutionApiAuditPackageService:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "SESSION_ID_MISMATCH",
                 "api_consistency.audited_session_id does not match the "
-                "supplied session_id: "
-                + repr(audited_session_id),
+                "supplied session_id: " + repr(audited_session_id),
             )
         audited_method = api_consistency.get("audited_method")
         if audited_method != method:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "INVALID_METHOD",
                 "api_consistency.audited_method does not match the "
-                "supplied method: "
-                + repr(audited_method),
+                "supplied method: " + repr(audited_method),
             )
         audited_path = api_consistency.get("audited_path")
         if audited_path != path:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "INVALID_PATH",
                 "api_consistency.audited_path does not match the "
-                "supplied path: "
-                + repr(audited_path),
+                "supplied path: " + repr(audited_path),
             )
         audited_status_code = api_consistency.get("audited_status_code")
         if audited_status_code != status_code:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "INVALID_STATUS",
                 "api_consistency.audited_status_code does not match the "
-                "supplied status_code: "
-                + repr(audited_status_code),
+                "supplied status_code: " + repr(audited_status_code),
             )
-        expected_fingerprint = (
-            ReasoningRunExecutionAuditPackageApiConsistencyService
-            ._response_fingerprint(response)
+        expected_fingerprint = ReasoningRunExecutionAuditPackageApiConsistencyService._response_fingerprint(
+            response
         )
-        audited_fingerprint = api_consistency.get(
-            "audited_response_fingerprint"
-        )
+        audited_fingerprint = api_consistency.get("audited_response_fingerprint")
         if audited_fingerprint != expected_fingerprint:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "RESPONSE_MISMATCH",
@@ -310,9 +299,7 @@ class ReasoningRunExecutionApiAuditPackageService:
             )
 
         # Package consistency derives only from Task 050's api_consistent.
-        expected_package_consistent = bool(
-            api_consistency.get("api_consistent", False)
-        )
+        expected_package_consistent = bool(api_consistency.get("api_consistent", False))
 
         result: dict[str, Any] = {
             "available": True,
@@ -346,8 +333,7 @@ class ReasoningRunExecutionApiAuditPackageService:
         if not isinstance(result["session_id"], UUID):
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "SESSION_ID_INVALID",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         if not isinstance(result["method"], str):
             raise ReasoningRunExecutionApiAuditPackageContractError(
@@ -387,9 +373,7 @@ class ReasoningRunExecutionApiAuditPackageService:
                 "api_consistency is not a mapping",
             )
         # Nested validators.
-        response_for_validation = _deep_normalize_session_ids(
-            result["response"]
-        )
+        response_for_validation = _deep_normalize_session_ids(result["response"])
         try:
             ReasoningRunExecutionAuditPackageService._validate_result(
                 response_for_validation
@@ -397,8 +381,7 @@ class ReasoningRunExecutionApiAuditPackageService:
         except Exception as exc:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "RESPONSE_MISMATCH",
-                "nested Task 048 response failed its own validator: "
-                + str(exc),
+                "nested Task 048 response failed its own validator: " + str(exc),
             ) from exc
         try:
             ReasoningRunExecutionAuditPackageApiConsistencyService._validate_result(
@@ -407,8 +390,7 @@ class ReasoningRunExecutionApiAuditPackageService:
         except Exception as exc:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "API_CONSISTENCY_MISMATCH",
-                "nested Task 050 audit failed its own validator: "
-                + str(exc),
+                "nested Task 050 audit failed its own validator: " + str(exc),
             ) from exc
         # Session identity.
         response_sid = _coerce_session_id(result["response"].get("session_id"))
@@ -456,14 +438,13 @@ class ReasoningRunExecutionApiAuditPackageService:
                 + repr(result["package_source"]),
             )
         # Package consistency relationship.
-        expected = bool(
-            result["api_consistency"].get("api_consistent", False)
-        )
+        expected = bool(result["api_consistency"].get("api_consistent", False))
         if result["package_consistent"] != expected:
             raise ReasoningRunExecutionApiAuditPackageContractError(
                 "API_CONSISTENCY_MISMATCH",
                 "package_consistent does not match Task 050's "
                 "api_consistent: "
                 + repr(result["package_consistent"])
-                + " != " + repr(expected),
+                + " != "
+                + repr(expected),
             )

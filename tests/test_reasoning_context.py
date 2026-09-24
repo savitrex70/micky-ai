@@ -135,10 +135,7 @@ def test_nested_reasoning_run_consistency_present() -> None:
     sid = _seed_full_session("Patient reports chest pain")
     ctx = _context_for_session(sid)
     rc = ctx["reasoning_run_consistency"]
-    assert (
-        rc["run_consistency_source"]
-        == "REASONING_RUN_CONSISTENCY_TASK_043"
-    )
+    assert rc["run_consistency_source"] == "REASONING_RUN_CONSISTENCY_TASK_043"
 
 
 def test_context_consistent_true_when_counts_match() -> None:
@@ -217,9 +214,7 @@ def _valid_pure_inputs() -> dict[str, Any]:
         obs = ObservationService().list_by_session(
             db, session_uuid, offset=0, limit=1000
         )
-        ent = EntityService().list_by_session(
-            db, session_uuid, offset=0, limit=1000
-        )
+        ent = EntityService().list_by_session(db, session_uuid, offset=0, limit=1000)
         mi = MissingInformationService().list_by_session(db, session_uuid)
         tm = TemplateMatchService().list_by_session(db, session_uuid)
         cands = CandidateGenerationService().list_by_session(
@@ -228,10 +223,8 @@ def _valid_pure_inputs() -> dict[str, Any]:
         # Build Task 042 exactly once and reuse its intermediates so
         # Task 043 audits the exact run being packaged, not a second
         # independently-rebuilt run.
-        run, bundle, policy = (
-            ReasoningRunService().build_for_session_with_inputs(
-                db, session_uuid
-            )
+        run, bundle, policy = ReasoningRunService().build_for_session_with_inputs(
+            db, session_uuid
         )
         audit = ReasoningRunConsistencyService().build(
             run=run,
@@ -337,17 +330,12 @@ def test_upstream_values_preserved_exactly() -> None:
     # Every upstream list should match by length.
     assert len(ctx["observations"]) == len(inputs["observations"])
     assert len(ctx["entities"]) == len(inputs["entities"])
-    assert len(ctx["missing_information"]) == len(
-        inputs["missing_information"]
-    )
+    assert len(ctx["missing_information"]) == len(inputs["missing_information"])
     assert len(ctx["template_context"]) == len(inputs["template_context"])
     assert len(ctx["candidate_state"]) == len(inputs["candidate_state"])
     # And the nested run/audit are the exact same dicts.
     assert ctx["reasoning_pipeline"] == inputs["reasoning_run"]
-    assert (
-        ctx["reasoning_run_consistency"]
-        == inputs["reasoning_run_consistency"]
-    )
+    assert ctx["reasoning_run_consistency"] == inputs["reasoning_run_consistency"]
 
 
 def test_context_consistent_false_when_candidate_count_mismatches() -> None:
@@ -403,9 +391,7 @@ def test_pure_build_preserves_upstream_ordering() -> None:
     assert [c.id for c in ctx["candidate_state"]] == [
         c.id for c in inputs["candidate_state"]
     ]
-    assert [o.id for o in ctx["observations"]] == [
-        o.id for o in inputs["observations"]
-    ]
+    assert [o.id for o in ctx["observations"]] == [o.id for o in inputs["observations"]]
 
 
 # ---------------------------------------------------------------------------
@@ -501,18 +487,14 @@ def _raw_inputs_for(session_id: str) -> dict[str, Any]:
         obs = ObservationService().list_by_session(
             db, session_uuid, offset=0, limit=1000
         )
-        ent = EntityService().list_by_session(
-            db, session_uuid, offset=0, limit=1000
-        )
+        ent = EntityService().list_by_session(db, session_uuid, offset=0, limit=1000)
         mi = MissingInformationService().list_by_session(db, session_uuid)
         tm = TemplateMatchService().list_by_session(db, session_uuid)
         cands = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        run, bundle, policy = (
-            ReasoningRunService().build_for_session_with_inputs(
-                db, session_uuid
-            )
+        run, bundle, policy = ReasoningRunService().build_for_session_with_inputs(
+            db, session_uuid
         )
     finally:
         db_gen.close()
@@ -616,4 +598,3 @@ def test_available_when_audit_reports_inconsistency() -> None:
     assert ctx["available"] is True
     assert ctx["context_consistent"] is True
     assert ctx["reasoning_run_consistency"]["run_consistent"] is False
-

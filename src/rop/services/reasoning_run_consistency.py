@@ -25,9 +25,7 @@ from rop.services.reasoning_run import (
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.template_match import TemplateMatchService
 
-REASONING_RUN_CONSISTENCY_SOURCE_TASK_043 = (
-    "REASONING_RUN_CONSISTENCY_TASK_043"
-)
+REASONING_RUN_CONSISTENCY_SOURCE_TASK_043 = "REASONING_RUN_CONSISTENCY_TASK_043"
 """Fixed structural-contract identifier for Task 043 results."""
 
 _RUN_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -187,17 +185,13 @@ class ReasoningRunConsistencyService:
         self.reasoning_session_service = (
             reasoning_session_service or ReasoningSessionService()
         )
-        self.reasoning_run_service = (
-            reasoning_run_service or ReasoningRunService()
-        )
+        self.reasoning_run_service = reasoning_run_service or ReasoningRunService()
         self.observation_service = observation_service or ObservationService()
         self.entity_service = entity_service or EntityService()
         self.missing_information_service = (
             missing_information_service or MissingInformationService()
         )
-        self.template_match_service = (
-            template_match_service or TemplateMatchService()
-        )
+        self.template_match_service = template_match_service or TemplateMatchService()
         self.candidate_generation_service = (
             candidate_generation_service or CandidateGenerationService()
         )
@@ -228,9 +222,7 @@ class ReasoningRunConsistencyService:
 
         try:
             run, bundle, policy = (
-                self.reasoning_run_service.build_for_session_with_inputs(
-                    db, session_id
-                )
+                self.reasoning_run_service.build_for_session_with_inputs(db, session_id)
             )
         except ReasoningRunContractError as exc:
             raise ReasoningRunConsistencyContractError(
@@ -248,12 +240,10 @@ class ReasoningRunConsistencyService:
                 db, session_id, offset=off, limit=_STATE_PAGE_SIZE
             )
         )
-        missing_information = (
-            self.missing_information_service.list_by_session(db, session_id)
-        )
-        template_matches = self.template_match_service.list_by_session(
+        missing_information = self.missing_information_service.list_by_session(
             db, session_id
         )
+        template_matches = self.template_match_service.list_by_session(db, session_id)
 
         candidates: list[Any] = []
         page_offset = 0
@@ -280,7 +270,6 @@ class ReasoningRunConsistencyService:
             policy=policy,
         )
 
-
     def build(
         self,
         *,
@@ -300,9 +289,7 @@ class ReasoningRunConsistencyService:
         without cross-checks.
         """
         if run is None:
-            raise ReasoningRunConsistencyContractError(
-                "MISSING_RUN", "run is required"
-            )
+            raise ReasoningRunConsistencyContractError("MISSING_RUN", "run is required")
         if not isinstance(run, Mapping):
             raise ReasoningRunConsistencyContractError(
                 "RUN_TYPE",
@@ -341,8 +328,7 @@ class ReasoningRunConsistencyService:
             if required_field not in run:
                 raise ReasoningRunConsistencyContractError(
                     "INVALID_REASONING_RUN",
-                    "Task 042 run is missing required field: "
-                    + required_field,
+                    "Task 042 run is missing required field: " + required_field,
                 )
         if not isinstance(run.get("stages"), list):
             raise ReasoningRunConsistencyContractError(
@@ -382,9 +368,10 @@ class ReasoningRunConsistencyService:
                 if "STAGE_ORDER_MISMATCH" not in issues:
                     issues.append("STAGE_ORDER_MISMATCH")
             expected_source = _EXPECTED_STAGE_SOURCES.get(sid)
-            if expected_source is not None and stage.get(
-                "stage_source"
-            ) != expected_source:
+            if (
+                expected_source is not None
+                and stage.get("stage_source") != expected_source
+            ):
                 if "STAGE_SOURCE_MISMATCH" not in issues:
                     issues.append("STAGE_SOURCE_MISMATCH")
             for field in _STAGE_REQUIRED_FIELDS:
@@ -485,24 +472,22 @@ class ReasoningRunConsistencyService:
 
         # --- Metadata / run-level flag checks ---
         expected_completed = sum(
-            1
-            for s in stages
-            if isinstance(s, Mapping) and s.get("complete") is True
+            1 for s in stages if isinstance(s, Mapping) and s.get("complete") is True
         )
         if run.get("completed_stage_count") != expected_completed:
             issues.append("COMPLETED_STAGE_COUNT_MISMATCH")
 
-        expected_run_complete = all(
-            isinstance(s, Mapping) and s.get("complete") is True
-            for s in stages
-        ) and len(stages) > 0
+        expected_run_complete = (
+            all(isinstance(s, Mapping) and s.get("complete") is True for s in stages)
+            and len(stages) > 0
+        )
         if run.get("run_complete") != expected_run_complete:
             issues.append("RUN_COMPLETE_MISMATCH")
 
-        expected_run_consistent = all(
-            isinstance(s, Mapping) and s.get("consistent") is True
-            for s in stages
-        ) and len(stages) > 0
+        expected_run_consistent = (
+            all(isinstance(s, Mapping) and s.get("consistent") is True for s in stages)
+            and len(stages) > 0
+        )
         if run.get("run_consistent") != expected_run_consistent:
             issues.append("RUN_CONSISTENCY_MISMATCH")
 
@@ -535,9 +520,7 @@ class ReasoningRunConsistencyService:
             )
         )
 
-        candidate_count_consistent = (
-            "CANDIDATE_COUNT_MISMATCH" not in unique_issues
-        )
+        candidate_count_consistent = "CANDIDATE_COUNT_MISMATCH" not in unique_issues
         candidate_generation_consistent = (
             "CANDIDATE_GENERATION_AVAILABILITY_MISMATCH" not in unique_issues
             and "CANDIDATE_GENERATION_STAGE_MISMATCH" not in unique_issues
@@ -545,9 +528,7 @@ class ReasoningRunConsistencyService:
         candidate_state_consistent = (
             candidate_count_consistent and candidate_generation_consistent
         )
-        template_context_consistent = (
-            "TEMPLATE_STAGE_MISMATCH" not in unique_issues
-        )
+        template_context_consistent = "TEMPLATE_STAGE_MISMATCH" not in unique_issues
         pipeline_consistent = not any(
             i in unique_issues
             for i in (
@@ -582,21 +563,18 @@ class ReasoningRunConsistencyService:
         session_consistent = _stage_triple_ok("SESSION_INPUT")
         observations_consistent = _stage_triple_ok("OBSERVATIONS")
         entities_consistent = _stage_triple_ok("ENTITIES")
-        missing_information_consistent = _stage_triple_ok(
-            "MISSING_INFORMATION"
-        )
+        missing_information_consistent = _stage_triple_ok("MISSING_INFORMATION")
 
         run_consistent = not ordered_issues
 
         try:
-            audited_run_fingerprint = (
-                ReasoningRunConsistencyService._run_fingerprint(run)
+            audited_run_fingerprint = ReasoningRunConsistencyService._run_fingerprint(
+                run
             )
         except Exception as exc:
             raise ReasoningRunConsistencyContractError(
                 "AUDITED_RUN_FINGERPRINT_COMPUTE_FAILED",
-                "could not compute the audited run fingerprint: "
-                + str(exc),
+                "could not compute the audited run fingerprint: " + str(exc),
             ) from exc
 
         result: dict[str, Any] = {
@@ -615,9 +593,7 @@ class ReasoningRunConsistencyService:
             "source_consistency": source_consistency,
             "metadata_consistency": metadata_consistency,
             "consistency_issues": ordered_issues,
-            "run_consistency_source": (
-                REASONING_RUN_CONSISTENCY_SOURCE_TASK_043
-            ),
+            "run_consistency_source": (REASONING_RUN_CONSISTENCY_SOURCE_TASK_043),
             "audited_run_fingerprint": audited_run_fingerprint,
         }
         self._validate_result(result)
@@ -630,14 +606,12 @@ class ReasoningRunConsistencyService:
             return str(value)
         if isinstance(value, Mapping):
             return {
-                str(k):
-                    ReasoningRunConsistencyService._canonicalize(v)
+                str(k): ReasoningRunConsistencyService._canonicalize(v)
                 for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
             }
         if isinstance(value, list):
             return [
-                ReasoningRunConsistencyService._canonicalize(item)
-                for item in value
+                ReasoningRunConsistencyService._canonicalize(item) for item in value
             ]
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
@@ -669,8 +643,7 @@ class ReasoningRunConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -704,8 +677,7 @@ class ReasoningRunConsistencyService:
         if not isinstance(fingerprint, str):
             raise ReasoningRunConsistencyContractError(
                 "AUDITED_RUN_FINGERPRINT_TYPE",
-                "audited_run_fingerprint is not a string: "
-                + repr(fingerprint),
+                "audited_run_fingerprint is not a string: " + repr(fingerprint),
             )
         if not _RUN_FINGERPRINT_HEX_RE.fullmatch(fingerprint):
             raise ReasoningRunConsistencyContractError(

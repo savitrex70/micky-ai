@@ -90,7 +90,13 @@ ISSUE_ORDER = (
 def _create_session(user_input: str) -> str:
     r = client.post(
         "/sessions",
-        json={"status": "created", "domain": "testing", "user_input": user_input, "current_stage": "initial", "metadata": {"source": "task-070-test"}},
+        json={
+            "status": "created",
+            "domain": "testing",
+            "user_input": user_input,
+            "current_stage": "initial",
+            "metadata": {"source": "task-070-test"},
+        },
     )
     assert r.status_code == 201
     return str(r.json()["id"])
@@ -98,7 +104,15 @@ def _create_session(user_input: str) -> str:
 
 def _seed_full(user_input: str) -> str:
     sid = _create_session(user_input)
-    client.post(f"/sessions/{sid}/observations", json={"text": "Patient reports chest pain", "type": "symptom", "confidence": 0.9, "source": "unit_test"})
+    client.post(
+        f"/sessions/{sid}/observations",
+        json={
+            "text": "Patient reports chest pain",
+            "type": "symptom",
+            "confidence": 0.9,
+            "source": "unit_test",
+        },
+    )
     client.post(f"/sessions/{sid}/generate-candidates")
     client.post(f"/sessions/{sid}/evaluate-evidence")
     return sid
@@ -115,11 +129,22 @@ def _real_bundle() -> dict[str, Any]:
         session_id=sid, method="GET", path=path, status_code=200, response_body=body
     )
     package = ReasoningHandoffFullyAuditedApiAuditPackageService().build(
-        session_id=sid, method="GET", path=path, status_code=200, response=body, api_consistency=api_audit
+        session_id=sid,
+        method="GET",
+        path=path,
+        status_code=200,
+        response=body,
+        api_consistency=api_audit,
     )
-    package_audit = ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(package=package)
+    package_audit = (
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(
+            package=package
+        )
+    )
     bundle = ReasoningHandoffFullyAuditedApiAuditBundleService().build(
-        session_id=sid, api_audit_package=package, api_audit_package_consistency=package_audit
+        session_id=sid,
+        api_audit_package=package,
+        api_audit_package_consistency=package_audit,
     )
     return bundle
 
@@ -146,7 +171,10 @@ def test_valid_reports_all_true_for_honest_bundle() -> None:
     assert result["source_consistency"] is True
     assert result["metadata_consistent"] is True
     assert result["consistency_issues"] == []
-    assert result["bundle_consistency_source"] == REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_BUNDLE_CONSISTENCY_SOURCE_TASK_070
+    assert (
+        result["bundle_consistency_source"]
+        == REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_BUNDLE_CONSISTENCY_SOURCE_TASK_070
+    )
 
 
 def test_result_shape_and_types() -> None:
@@ -181,18 +209,25 @@ def test_valid_package_containing_legitimate_defect() -> None:
     tampered = copy.deepcopy(bundle)
     tampered["bundle_consistent"] = False
     res_tampered = _check(tampered)
-    assert res_tampered["consistency_issues"] and "BUNDLE_RELATIONSHIP_MISMATCH" in res_tampered["consistency_issues"]
+    assert (
+        res_tampered["consistency_issues"]
+        and "BUNDLE_RELATIONSHIP_MISMATCH" in res_tampered["consistency_issues"]
+    )
 
 
 # Contract boundary
 def test_missing_bundle_raises() -> None:
-    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError) as ei:
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError
+    ) as ei:
         _svc().build(bundle=None)
     assert ei.value.invariant == "MISSING_BUNDLE"
 
 
 def test_non_mapping_bundle_raises() -> None:
-    with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError) as ei:
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError
+    ) as ei:
         _svc().build(bundle="not-a-mapping")  # type: ignore[arg-type]
     assert ei.value.invariant == "BUNDLE_TYPE"
 
@@ -263,8 +298,13 @@ def test_fingerprint_compute_failed_raises_contract() -> None:
     from unittest.mock import patch
 
     bundle = _real_bundle()
-    with patch("rop.services.reasoning_handoff_fully_audited_api_audit_bundle_consistency._bundle_fingerprint", side_effect=RuntimeError("forced")):
-        with pytest.raises(ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError) as ei:
+    with patch(
+        "rop.services.reasoning_handoff_fully_audited_api_audit_bundle_consistency._bundle_fingerprint",
+        side_effect=RuntimeError("forced"),
+    ):
+        with pytest.raises(
+            ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError
+        ) as ei:
             _check(bundle)
         assert ei.value.invariant == "AUDITED_BUNDLE_FINGERPRINT_COMPUTE_FAILED"
         assert isinstance(ei.value.__cause__, RuntimeError)
@@ -273,12 +313,20 @@ def test_fingerprint_compute_failed_raises_contract() -> None:
 def test_audited_package_fingerprint_check_unavailable() -> None:
     bundle = _real_bundle()
     # Make package audit unavailable so fingerprint check unavailable
-    bundle["api_audit_package_consistency"] = copy.deepcopy(bundle["api_audit_package_consistency"])
+    bundle["api_audit_package_consistency"] = copy.deepcopy(
+        bundle["api_audit_package_consistency"]
+    )
     bundle["api_audit_package_consistency"]["audited_package_fingerprint"] = "invalid"
     result = _check(bundle)
     # Could be either NESTED_PACKAGE_CONSISTENCY_MISMATCH or AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE depending on validator order
     assert result["provenance_consistent"] is False
-    assert any(i in result["consistency_issues"] for i in ("AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE", "NESTED_PACKAGE_CONSISTENCY_MISMATCH"))
+    assert any(
+        i in result["consistency_issues"]
+        for i in (
+            "AUDITED_PACKAGE_FINGERPRINT_CHECK_UNAVAILABLE",
+            "NESTED_PACKAGE_CONSISTENCY_MISMATCH",
+        )
+    )
 
 
 def test_bundle_relationship_mismatch() -> None:
@@ -301,7 +349,9 @@ def test_package_source_mismatch() -> None:
 
 def test_consistency_source_mismatch() -> None:
     bundle = _real_bundle()
-    bundle["api_audit_package_consistency"] = copy.deepcopy(bundle["api_audit_package_consistency"])
+    bundle["api_audit_package_consistency"] = copy.deepcopy(
+        bundle["api_audit_package_consistency"]
+    )
     bundle["api_audit_package_consistency"]["package_consistency_source"] = "WRONG"
     result = _check(bundle)
     assert "CONSISTENCY_SOURCE_MISMATCH" in result["consistency_issues"]
@@ -321,7 +371,10 @@ def test_bundle_contract_mismatch() -> None:
     # Tamper bundle to make Task 069 validator fail: change fingerprint format
     bundle["audited_bundle_fingerprint"] = "not-hex"
     result = _check(bundle)
-    assert any(i in result["consistency_issues"] for i in ("BUNDLE_CONTRACT_MISMATCH", "AUDITED_BUNDLE_FINGERPRINT_MISMATCH"))
+    assert any(
+        i in result["consistency_issues"]
+        for i in ("BUNDLE_CONTRACT_MISMATCH", "AUDITED_BUNDLE_FINGERPRINT_MISMATCH")
+    )
 
 
 def test_issue_order_and_dedupe() -> None:
@@ -331,7 +384,9 @@ def test_issue_order_and_dedupe() -> None:
     bundle["bundle_source"] = "WRONG"
     result = _check(bundle)
     issues = result["consistency_issues"]
-    assert issues == sorted(set(issues), key=lambda x: ISSUE_ORDER.index(x) if x in ISSUE_ORDER else 999)
+    assert issues == sorted(
+        set(issues), key=lambda x: ISSUE_ORDER.index(x) if x in ISSUE_ORDER else 999
+    )
     assert len(issues) == len(set(issues))
 
 
@@ -376,5 +431,3 @@ def test_no_llm_provider_symbols() -> None:
     for token in ("ollama", "openai", "gemini", "anthropic", "model_name", "api_key"):
         assert token not in src
     assert "provider" not in src.split() and "rag" not in src.split()
-
-

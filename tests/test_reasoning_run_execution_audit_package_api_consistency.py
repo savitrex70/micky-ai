@@ -183,9 +183,7 @@ def test_package_consistent_false_still_api_consistent() -> None:
     tampered = copy.deepcopy(body)
     tampered["package_consistent"] = False
     tampered["bundle_consistency"]["bundle_consistent"] = False
-    tampered["bundle_consistency"]["consistency_issues"] = [
-        "NESTED_EXECUTION_MISMATCH"
-    ]
+    tampered["bundle_consistency"]["consistency_issues"] = ["NESTED_EXECUTION_MISMATCH"]
 
     result = _service().build(
         session_id=sid,
@@ -458,9 +456,7 @@ def test_no_duplicate_issues() -> None:
         status_code=200,
         response_body=tampered,
     )
-    assert (
-        result["consistency_issues"].count("SESSION_ID_INVALID") == 1
-    )
+    assert result["consistency_issues"].count("SESSION_ID_INVALID") == 1
 
 
 def test_input_not_mutated() -> None:
@@ -510,6 +506,7 @@ def test_no_task048_build_for_session() -> None:
     # The docstring mentions build_for_session; ensure the service
     # does not actually CALL it.
     import re as _re
+
     assert not _re.search(r"\.build_for_session\s*\(", src)
 
 
@@ -565,6 +562,7 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
 
 # ---------------------------------------------------------------------------
 # Round 2: exact method case sensitivity
@@ -622,4 +620,3 @@ def test_method_mixedcase_post_is_invalid() -> None:
     )
     assert result["method_consistent"] is False
     assert "INVALID_METHOD" in result["consistency_issues"]
-

@@ -282,9 +282,7 @@ def test_wrong_route_session_id() -> None:
     bundle = _valid_bundle()
     tampered = copy.deepcopy(bundle)
     other_sid = str(uuid4())
-    tampered["path"] = (
-        f"/sessions/{other_sid}/reasoning-run/execute-fully-audited"
-    )
+    tampered["path"] = f"/sessions/{other_sid}/reasoning-run/execute-fully-audited"
     tampered["api_audit_package"]["path"] = tampered["path"]
     result = _service().build(bundle=tampered)
     assert "SESSION_ID_MISMATCH" in result["consistency_issues"]
@@ -337,9 +335,7 @@ def test_nested_task051_invalid() -> None:
 def test_nested_task052_invalid() -> None:
     bundle = _valid_bundle()
     tampered = copy.deepcopy(bundle)
-    del tampered["api_audit_package_consistency"][
-        "audited_package_fingerprint"
-    ]
+    del tampered["api_audit_package_consistency"]["audited_package_fingerprint"]
     result = _service().build(bundle=tampered)
     assert "NESTED_PACKAGE_AUDIT_MISMATCH" in result["consistency_issues"]
 
@@ -369,9 +365,7 @@ def test_wrong_task051_source() -> None:
 def test_wrong_task052_source() -> None:
     bundle = _valid_bundle()
     tampered = copy.deepcopy(bundle)
-    tampered["api_audit_package_consistency"][
-        "package_consistency_source"
-    ] = "WRONG"
+    tampered["api_audit_package_consistency"]["package_consistency_source"] = "WRONG"
     result = _service().build(bundle=tampered)
     assert "PACKAGE_AUDIT_SOURCE_MISMATCH" in result["consistency_issues"]
 
@@ -450,24 +444,16 @@ def test_stale_task052_audit_from_other_package() -> None:
         "bundle_source": "REASONING_RUN_EXECUTION_API_AUDIT_BUNDLE_TASK_053",
     }
     result = _service().build(bundle=synthetic_bundle)
-    assert (
-        "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
-        in result["consistency_issues"]
-    )
+    assert "AUDITED_PACKAGE_FINGERPRINT_MISMATCH" in result["consistency_issues"]
     assert result["package_audit_provenance_consistent"] is False
 
 
 def test_tampered_audited_package_fingerprint() -> None:
     bundle = _valid_bundle()
     tampered = copy.deepcopy(bundle)
-    tampered["api_audit_package_consistency"][
-        "audited_package_fingerprint"
-    ] = "0" * 64
+    tampered["api_audit_package_consistency"]["audited_package_fingerprint"] = "0" * 64
     result = _service().build(bundle=tampered)
-    assert (
-        "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
-        in result["consistency_issues"]
-    )
+    assert "AUDITED_PACKAGE_FINGERPRINT_MISMATCH" in result["consistency_issues"]
 
 
 def test_bundle_relationship_mismatch() -> None:
@@ -550,6 +536,7 @@ def test_no_http_or_testclient() -> None:
 def test_no_upstream_build_invocations() -> None:
     src = inspect.getsource(mod)
     import re as _re
+
     assert not _re.search(r"\.build\s*\(", src)
     assert not _re.search(r"\.build_for_session\s*\(", src)
 
@@ -569,6 +556,7 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
 
 # ---------------------------------------------------------------------------
 # Round 2: fingerprint-computation failure is a provenance failure
@@ -606,10 +594,7 @@ def test_fingerprint_compute_failure_is_provenance_failure(
 
     result = _service().build(bundle=bundle)
 
-    assert (
-        "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
-        in result["consistency_issues"]
-    )
+    assert "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED" in result["consistency_issues"]
     assert result["package_audit_provenance_consistent"] is False
     assert result["bundle_consistent"] is False
     # Input is not mutated.
@@ -637,13 +622,11 @@ def test_fingerprint_compute_failure_does_not_cascade_into_mismatch(
     )
 
     result = _service().build(bundle=bundle)
-    assert (
-        "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
-        not in result["consistency_issues"]
-    )
+    assert "AUDITED_PACKAGE_FINGERPRINT_MISMATCH" not in result["consistency_issues"]
     assert result["consistency_issues"] == [
         "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
     ]
+
 
 # ---------------------------------------------------------------------------
 # Round 3: provenance flag is False whenever the check cannot be performed
@@ -691,4 +674,3 @@ def test_valid_bundle_provenance_flag_true() -> None:
     bundle = _valid_bundle()
     result = _service().build(bundle=bundle)
     assert result["package_audit_provenance_consistent"] is True
-

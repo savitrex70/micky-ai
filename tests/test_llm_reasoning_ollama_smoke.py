@@ -96,9 +96,7 @@ def test_live_ollama_reasoning_boundary() -> None:
     assert result["available"] is True
     assert result["proposal_consistent"] is True
     assert result["provider"] == "ollama"
-    assert len(result["candidate_assessments"]) == len(
-        ctx["candidate_state"]
-    )
+    assert len(result["candidate_assessments"]) == len(ctx["candidate_state"])
     for assessment in result["candidate_assessments"]:
         assert assessment["assessment"] in {
             "SUPPORTS",

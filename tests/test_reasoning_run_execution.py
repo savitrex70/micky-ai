@@ -134,10 +134,7 @@ def test_valid_full_execution_shape() -> None:
 def test_execution_source_fixed() -> None:
     sid = _seed_rich_session("Patient reports chest pain")
     result = _execute(sid)
-    assert (
-        result["execution_source"]
-        == REASONING_RUN_EXECUTION_SOURCE_TASK_044
-    )
+    assert result["execution_source"] == REASONING_RUN_EXECUTION_SOURCE_TASK_044
 
 
 def test_stage_ids_and_order() -> None:
@@ -155,9 +152,7 @@ def test_stage_ids_and_order() -> None:
 def test_completed_stage_count_matches() -> None:
     sid = _seed_rich_session("Patient reports chest pain")
     result = _execute(sid)
-    actual = sum(
-        1 for s in result["stages"] if s["status"] == "COMPLETED"
-    )
+    actual = sum(1 for s in result["stages"] if s["status"] == "COMPLETED")
     assert result["completed_stage_count"] == actual
     assert result["completed_stage_count"] == result["stage_count"]
 
@@ -236,9 +231,7 @@ def test_delegates_observation_extraction(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, db, session_id, text)
 
-    monkeypatch.setattr(
-        ObservationExtractionService, "extract_and_store", spy
-    )
+    monkeypatch.setattr(ObservationExtractionService, "extract_and_store", spy)
     sid = _seed_rich_session("Patient reports chest pain")
     _execute(sid)
     assert calls["n"] == 1
@@ -252,9 +245,7 @@ def test_delegates_missing_information(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, db, session_id, observations, profile_name)
 
-    monkeypatch.setattr(
-        MissingInformationService, "detect_and_store", spy
-    )
+    monkeypatch.setattr(MissingInformationService, "detect_and_store", spy)
     sid = _seed_rich_session("Patient reports chest pain")
     _execute(sid)
     assert calls["n"] == 1
@@ -296,9 +287,7 @@ def test_delegates_evidence_evaluation(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, **kwargs)
 
-    monkeypatch.setattr(
-        EvidenceEvaluationService, "evaluate_session", spy
-    )
+    monkeypatch.setattr(EvidenceEvaluationService, "evaluate_session", spy)
     sid = _seed_rich_session("Patient reports chest pain")
     _execute(sid)
     assert calls["n"] == 1
@@ -326,9 +315,7 @@ def test_delegates_reasoning_run_consistency(monkeypatch) -> None:
         calls["n"] += 1
         return original(self, db, session_id)
 
-    monkeypatch.setattr(
-        ReasoningRunConsistencyService, "build_for_session", spy
-    )
+    monkeypatch.setattr(ReasoningRunConsistencyService, "build_for_session", spy)
     sid = _seed_rich_session("Patient reports chest pain")
     _execute(sid)
     assert calls["n"] == 1
@@ -343,9 +330,7 @@ def test_observation_extraction_failure_propagates(monkeypatch) -> None:
     def boom(self, db, session_id, text):
         raise RuntimeError("extraction blew up")
 
-    monkeypatch.setattr(
-        ObservationExtractionService, "extract_and_store", boom
-    )
+    monkeypatch.setattr(ObservationExtractionService, "extract_and_store", boom)
     sid = _seed_rich_session("Patient reports chest pain")
     result = _execute(sid)
     assert result["outcome"] == OUTCOME_FAILED
@@ -362,9 +347,7 @@ def test_missing_information_failure_propagates(monkeypatch) -> None:
     def boom(self, db, session_id, observations, profile_name=None):
         raise RuntimeError("mi blew up")
 
-    monkeypatch.setattr(
-        MissingInformationService, "detect_and_store", boom
-    )
+    monkeypatch.setattr(MissingInformationService, "detect_and_store", boom)
     sid = _seed_rich_session("Patient reports chest pain")
     result = _execute(sid)
     assert result["outcome"] == OUTCOME_FAILED
@@ -417,9 +400,7 @@ def test_stage_failure_does_not_produce_fabricated_result(monkeypatch) -> None:
     def boom(self, db, session_id, text):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(
-        ObservationExtractionService, "extract_and_store", boom
-    )
+    monkeypatch.setattr(ObservationExtractionService, "extract_and_store", boom)
     sid = _seed_rich_session("Patient reports chest pain")
     result = _execute(sid)
     assert result["outcome"] == OUTCOME_FAILED
@@ -445,13 +426,9 @@ def test_repeat_execution_succeeds() -> None:
 def test_repeat_execution_does_not_grow_observations() -> None:
     sid = _seed_rich_session("Patient reports chest pain")
     _execute(sid)
-    first_count = len(
-        client.get(f"/sessions/{sid}/observations").json()
-    )
+    first_count = len(client.get(f"/sessions/{sid}/observations").json())
     _execute(sid)
-    second_count = len(
-        client.get(f"/sessions/{sid}/observations").json()
-    )
+    second_count = len(client.get(f"/sessions/{sid}/observations").json())
     # Task 044 reuses existing observations on repeat execution rather
     # than re-invoking the append-only extractor.
     assert second_count == first_count
@@ -479,10 +456,7 @@ def test_api_execute_endpoint() -> None:
     payload = r.json()
     assert set(payload) == set(RESULT_FIELDS)
     assert payload["outcome"] == OUTCOME_COMPLETED
-    assert (
-        payload["execution_source"]
-        == REASONING_RUN_EXECUTION_SOURCE_TASK_044
-    )
+    assert payload["execution_source"] == REASONING_RUN_EXECUTION_SOURCE_TASK_044
 
 
 def test_api_execute_empty_session() -> None:
@@ -510,16 +484,12 @@ def test_api_execute_is_deterministic_on_empty_session() -> None:
 
 def test_api_execute_matches_service_output() -> None:
     sid = _seed_rich_session("Patient reports chest pain")
-    api_result = client.post(
-        f"/sessions/{sid}/reasoning-run/execute"
-    ).json()
+    api_result = client.post(f"/sessions/{sid}/reasoning-run/execute").json()
     service_result = _execute(sid)
     # Candidate generation deletes and recreates candidates on each
     # call, so two separate executions produce different candidate
     # UUIDs. Compare structure with UUIDs replaced by a placeholder.
-    assert _strip_uuids(
-        _strip_run_fingerprint(api_result)
-    ) == _strip_uuids(
+    assert _strip_uuids(_strip_run_fingerprint(api_result)) == _strip_uuids(
         _strip_run_fingerprint(_json_safe(service_result))
     )
 
@@ -581,9 +551,7 @@ def _json_safe_run(run: dict[str, Any]) -> dict[str, Any]:
             if fe["selected_candidate"] is not None
             else None
         ),
-        "eligible_candidate_ids": [
-            str(hid) for hid in fe["eligible_candidate_ids"]
-        ],
+        "eligible_candidate_ids": [str(hid) for hid in fe["eligible_candidate_ids"]],
     }
     return {
         **run,

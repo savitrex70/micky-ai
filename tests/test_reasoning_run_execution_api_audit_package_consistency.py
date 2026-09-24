@@ -272,9 +272,7 @@ def test_nested_api_consistency_mismatch() -> None:
     tampered = copy.deepcopy(package)
     del tampered["api_consistency"]["audited_method"]
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_stale_audit_from_other_response() -> None:
@@ -314,8 +312,7 @@ def test_stale_audit_from_other_response() -> None:
     }
     result = _service().build(package=fake_package)
     assert (
-        "AUDITED_RESPONSE_FINGERPRINT_MISMATCH"
-        in result["consistency_issues"]
+        "AUDITED_RESPONSE_FINGERPRINT_MISMATCH" in result["consistency_issues"]
         or "AUDITED_PATH_MISMATCH" in result["consistency_issues"]
         or "AUDITED_SESSION_ID_MISMATCH" in result["consistency_issues"]
     )
@@ -327,10 +324,7 @@ def test_tampered_fingerprint() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["audited_response_fingerprint"] = "0" * 64
     result = _service().build(package=tampered)
-    assert (
-        "AUDITED_RESPONSE_FINGERPRINT_MISMATCH"
-        in result["consistency_issues"]
-    )
+    assert "AUDITED_RESPONSE_FINGERPRINT_MISMATCH" in result["consistency_issues"]
     assert result["provenance_consistent"] is False
 
 
@@ -356,9 +350,7 @@ def test_wrong_task050_source() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["api_consistency_source"] = "WRONG"
     result = _service().build(package=tampered)
-    assert (
-        "API_CONSISTENCY_SOURCE_MISMATCH" in result["consistency_issues"]
-    )
+    assert "API_CONSISTENCY_SOURCE_MISMATCH" in result["consistency_issues"]
 
 
 def test_wrong_task051_source() -> None:
@@ -463,6 +455,7 @@ def test_no_http_or_testclient() -> None:
 def test_no_upstream_build_invocations() -> None:
     src = inspect.getsource(mod)
     import re as _re
+
     assert not _re.search(r"\.build\s*\(", src)
     assert not _re.search(r"\.build_for_session\s*\(", src)
 
@@ -482,6 +475,7 @@ def test_no_decision_or_llm_logic() -> None:
         "recommendation",
     ):
         assert forbidden not in src.lower()
+
 
 # ---------------------------------------------------------------------------
 # Round 2: exact route + nested Task 050 flag checks
@@ -504,9 +498,7 @@ def test_api_consistency_available_false() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["available"] = False
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
     assert result["nested_api_consistency_consistent"] is False
 
 
@@ -515,9 +507,7 @@ def test_api_consistency_session_consistent_false() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["session_consistent"] = False
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_api_consistency_method_consistent_false() -> None:
@@ -525,9 +515,7 @@ def test_api_consistency_method_consistent_false() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["method_consistent"] = False
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_api_consistency_path_consistent_false() -> None:
@@ -535,9 +523,7 @@ def test_api_consistency_path_consistent_false() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["path_consistent"] = False
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_api_consistency_status_consistent_false() -> None:
@@ -545,9 +531,7 @@ def test_api_consistency_status_consistent_false() -> None:
     tampered = copy.deepcopy(package)
     tampered["api_consistency"]["status_consistent"] = False
     result = _service().build(package=tampered)
-    assert (
-        "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
-    )
+    assert "NESTED_API_CONSISTENCY_MISMATCH" in result["consistency_issues"]
 
 
 def test_wrong_status_code_both_sides() -> None:
@@ -560,6 +544,7 @@ def test_wrong_status_code_both_sides() -> None:
     result = _service().build(package=tampered)
     assert "STATUS_CODE_INVALID" in result["consistency_issues"]
     assert result["status_consistent"] is False
+
 
 # ---------------------------------------------------------------------------
 # Round 3: audited_package_fingerprint provenance
@@ -606,9 +591,7 @@ def test_audited_package_fingerprint_valid_hex_accepted() -> None:
     assert len(fp) == 64
     assert fp == fp.lower()
     # The existing build path validates without raising.
-    ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(
-        result
-    )
+    ReasoningRunExecutionApiAuditPackageConsistencyService._validate_result(result)
 
 
 def test_audited_package_fingerprint_non_hex_rejected() -> None:
@@ -629,9 +612,9 @@ def test_audited_package_fingerprint_uppercase_rejected() -> None:
     package = _valid_package()
     result = _service().build(package=package)
     tampered = copy.deepcopy(result)
-    tampered["audited_package_fingerprint"] = (
-        tampered["audited_package_fingerprint"].upper()
-    )
+    tampered["audited_package_fingerprint"] = tampered[
+        "audited_package_fingerprint"
+    ].upper()
     with pytest.raises(
         ReasoningRunExecutionApiAuditPackageConsistencyContractError
     ) as ei:
@@ -639,4 +622,3 @@ def test_audited_package_fingerprint_uppercase_rejected() -> None:
             tampered
         )
     assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
-

@@ -97,9 +97,8 @@ class ReasoningRunExecutionAuditPackageService:
         """Delegate Task 046 -> Task 047 -> Task 048 assemble."""
         # 1. Task 046 bundle.
         try:
-            bundle = (
-                self.reasoning_run_execution_bundle_service
-                .build_for_session(db, session_id)
+            bundle = self.reasoning_run_execution_bundle_service.build_for_session(
+                db, session_id
             )
         except ReasoningRunExecutionBundleContractError as exc:
             raise ReasoningRunExecutionAuditPackageContractError(
@@ -109,9 +108,8 @@ class ReasoningRunExecutionAuditPackageService:
 
         # 2. Task 047 audit of the exact returned bundle.
         try:
-            consistency = (
-                self.reasoning_run_execution_bundle_consistency_service
-                .build(bundle=bundle)
+            consistency = self.reasoning_run_execution_bundle_consistency_service.build(
+                bundle=bundle
             )
         except ReasoningRunExecutionBundleConsistencyContractError as exc:
             raise ReasoningRunExecutionAuditPackageContractError(
@@ -156,17 +154,13 @@ class ReasoningRunExecutionAuditPackageService:
         raw_bundle_session_id = bundle_for_validation.get("session_id")
         if isinstance(raw_bundle_session_id, str):
             try:
-                bundle_for_validation["session_id"] = UUID(
-                    raw_bundle_session_id
-                )
+                bundle_for_validation["session_id"] = UUID(raw_bundle_session_id)
             except (ValueError, TypeError):
                 pass
 
         # Validate the nested Task 046 bundle.
         try:
-            ReasoningRunExecutionBundleService._validate_result(
-                bundle_for_validation
-            )
+            ReasoningRunExecutionBundleService._validate_result(bundle_for_validation)
         except ReasoningRunExecutionBundleContractError as exc:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "INVALID_EXECUTION_BUNDLE",
@@ -195,14 +189,11 @@ class ReasoningRunExecutionAuditPackageService:
             ) from exc
 
         # Session identity agreement.
-        bundle_session_id = _coerce_session_id(
-            execution_bundle.get("session_id")
-        )
+        bundle_session_id = _coerce_session_id(execution_bundle.get("session_id"))
         if bundle_session_id != session_id:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "SESSION_ID_MISMATCH",
-                "execution_bundle.session_id does not match package "
-                "session_id",
+                "execution_bundle.session_id does not match package " "session_id",
             )
 
         # Bundle audit availability and session consistency.
@@ -225,8 +216,7 @@ class ReasoningRunExecutionAuditPackageService:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "INVALID_BUNDLE_SOURCE",
                 "execution_bundle.bundle_source is not the Task 046 "
-                "identifier: "
-                + repr(execution_bundle.get("bundle_source")),
+                "identifier: " + repr(execution_bundle.get("bundle_source")),
             )
         if (
             bundle_consistency.get("bundle_consistency_source")
@@ -236,9 +226,7 @@ class ReasoningRunExecutionAuditPackageService:
                 "INVALID_BUNDLE_CONSISTENCY_SOURCE",
                 "bundle_consistency.bundle_consistency_source is not the "
                 "Task 047 identifier: "
-                + repr(
-                    bundle_consistency.get("bundle_consistency_source")
-                ),
+                + repr(bundle_consistency.get("bundle_consistency_source")),
             )
 
         # Package consistency derives from Task 047's bundle_consistent.
@@ -254,9 +242,7 @@ class ReasoningRunExecutionAuditPackageService:
             "session_id": session_id,
             "execution_bundle": dict(execution_bundle),
             "bundle_consistency": dict(bundle_consistency),
-            "package_source": (
-                REASONING_RUN_EXECUTION_AUDIT_PACKAGE_SOURCE_TASK_048
-            ),
+            "package_source": (REASONING_RUN_EXECUTION_AUDIT_PACKAGE_SOURCE_TASK_048),
         }
         self._validate_result(result)
         return result
@@ -277,8 +263,7 @@ class ReasoningRunExecutionAuditPackageService:
         if not isinstance(result["session_id"], UUID):
             raise ReasoningRunExecutionAuditPackageContractError(
                 "SESSION_ID_TYPE",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         if not isinstance(result["execution_bundle"], Mapping):
             raise ReasoningRunExecutionAuditPackageContractError(
@@ -301,14 +286,11 @@ class ReasoningRunExecutionAuditPackageService:
             except (ValueError, TypeError):
                 pass
         try:
-            ReasoningRunExecutionBundleService._validate_result(
-                bundle_for_validation
-            )
+            ReasoningRunExecutionBundleService._validate_result(bundle_for_validation)
         except Exception as exc:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "INVALID_EXECUTION_BUNDLE",
-                "nested Task 046 bundle failed its own validator: "
-                + str(exc),
+                "nested Task 046 bundle failed its own validator: " + str(exc),
             ) from exc
         try:
             ReasoningRunExecutionBundleConsistencyService._validate_result(
@@ -317,28 +299,21 @@ class ReasoningRunExecutionAuditPackageService:
         except Exception as exc:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "INVALID_BUNDLE_CONSISTENCY",
-                "nested Task 047 audit failed its own validator: "
-                + str(exc),
+                "nested Task 047 audit failed its own validator: " + str(exc),
             ) from exc
         # Session identity.
-        bundle_sid = _coerce_session_id(
-            result["execution_bundle"].get("session_id")
-        )
+        bundle_sid = _coerce_session_id(result["execution_bundle"].get("session_id"))
         if bundle_sid != result["session_id"]:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "SESSION_ID_MISMATCH",
-                "execution_bundle.session_id does not match package "
-                "session_id",
+                "execution_bundle.session_id does not match package " "session_id",
             )
         if result["bundle_consistency"].get("available") is not True:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "BUNDLE_AUDIT_UNAVAILABLE",
                 "bundle_consistency.available is not True",
             )
-        if (
-            result["bundle_consistency"].get("session_consistent")
-            is not True
-        ):
+        if result["bundle_consistency"].get("session_consistent") is not True:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "BUNDLE_AUDIT_SESSION_INCONSISTENT",
                 "bundle_consistency.session_consistent is not True",
@@ -350,8 +325,7 @@ class ReasoningRunExecutionAuditPackageService:
         ):
             raise ReasoningRunExecutionAuditPackageContractError(
                 "INVALID_BUNDLE_SOURCE",
-                "execution_bundle.bundle_source is not the Task 046 "
-                "identifier",
+                "execution_bundle.bundle_source is not the Task 046 " "identifier",
             )
         if (
             result["bundle_consistency"].get("bundle_consistency_source")
@@ -372,13 +346,12 @@ class ReasoningRunExecutionAuditPackageService:
                 + repr(result["package_source"]),
             )
         # Package consistency relationship.
-        expected = bool(
-            result["bundle_consistency"].get("bundle_consistent", False)
-        )
+        expected = bool(result["bundle_consistency"].get("bundle_consistent", False))
         if result["package_consistent"] != expected:
             raise ReasoningRunExecutionAuditPackageContractError(
                 "PACKAGE_CONSISTENT_MISMATCH",
                 "package_consistent does not match the Task 047 audit: "
                 + repr(result["package_consistent"])
-                + " != " + repr(expected),
+                + " != "
+                + repr(expected),
             )

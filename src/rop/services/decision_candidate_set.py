@@ -13,9 +13,7 @@ from rop.services.decision_input_eligibility import (
     DecisionInputEligibilityService,
 )
 
-CANDIDATE_SET_SOURCE_DECISION_CANDIDATE_SET_TASK_035 = (
-    "DECISION_CANDIDATE_SET_TASK_035"
-)
+CANDIDATE_SET_SOURCE_DECISION_CANDIDATE_SET_TASK_035 = "DECISION_CANDIDATE_SET_TASK_035"
 """Fixed structural-contract identifier for Task 035 results."""
 
 _REQUIRED_CONTEXT_FIELDS = (
@@ -130,8 +128,7 @@ class DecisionCandidateSetService:
         ) = None,
     ) -> None:
         self.decision_input_eligibility_service = (
-            decision_input_eligibility_service
-            or DecisionInputEligibilityService()
+            decision_input_eligibility_service or DecisionInputEligibilityService()
         )
 
     def build_for_session_with_inputs(
@@ -210,10 +207,7 @@ class DecisionCandidateSetService:
         eligible = self._validate_and_extract_eligibility(eligibility_result)
 
         available = (
-            eligible
-            and context_available
-            and decision_ready
-            and candidate_count > 0
+            eligible and context_available and decision_ready and candidate_count > 0
         )
 
         if available:
@@ -291,8 +285,7 @@ class DecisionCandidateSetService:
             if not isinstance(entry, Mapping):
                 raise DecisionCandidateSetContractError(
                     "MALFORMED_CANDIDATE",
-                    "candidate entry is not a mapping: "
-                    f"{type(entry).__name__}",
+                    "candidate entry is not a mapping: " f"{type(entry).__name__}",
                 )
             for field in _CANDIDATE_FIELDS:
                 if field not in entry:
@@ -420,8 +413,7 @@ class DecisionCandidateSetService:
         if len(blocking_conditions) != len(set(blocking_conditions)):
             raise DecisionCandidateSetContractError(
                 "DUPLICATE_BLOCKING_CONDITION",
-                f"blocking_conditions contains duplicates: "
-                f"{blocking_conditions!r}",
+                f"blocking_conditions contains duplicates: " f"{blocking_conditions!r}",
             )
         present_in_order = [
             condition
@@ -449,8 +441,7 @@ class DecisionCandidateSetService:
             )
 
         recomputed_eligible = all(
-            eligibility_result[field]
-            for field in _ELIGIBILITY_CONJUNCTION_FIELDS
+            eligibility_result[field] for field in _ELIGIBILITY_CONJUNCTION_FIELDS
         )
         if eligible != recomputed_eligible:
             raise DecisionCandidateSetContractError(

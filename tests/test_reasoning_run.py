@@ -179,12 +179,8 @@ def test_completed_stage_count_matches() -> None:
 def test_run_flags_derived_from_stages() -> None:
     sid = _seed_full_session("Task 042 flags")
     result = _build_for(sid)
-    assert result["run_complete"] == all(
-        s["complete"] for s in result["stages"]
-    )
-    assert result["run_consistent"] == all(
-        s["consistent"] for s in result["stages"]
-    )
+    assert result["run_complete"] == all(s["complete"] for s in result["stages"])
+    assert result["run_consistent"] == all(s["consistent"] for s in result["stages"])
 
 
 def test_candidate_count_matches_collection() -> None:
@@ -295,13 +291,10 @@ def test_downstream_input_unavailable_visible() -> None:
     sid = _create_session("Task 042 input unavailable")
     run = _build_for(sid)
     assert (
-        run["reasoning_pipeline"]["final_execution"]["outcome"]
-        == "INPUT_UNAVAILABLE"
+        run["reasoning_pipeline"]["final_execution"]["outcome"] == "INPUT_UNAVAILABLE"
     )
     assert (
-        run["reasoning_pipeline"]["final_execution_consistency"][
-            "execution_consistent"
-        ]
+        run["reasoning_pipeline"]["final_execution_consistency"]["execution_consistent"]
         is True
     )
 
@@ -431,10 +424,8 @@ def test_rejects_malformed_nested_pipeline() -> None:
         from rop.services.reasoning_pipeline import ReasoningPipelineService
 
         pipeline_service = ReasoningPipelineService()
-        result, bundle, policy = (
-            pipeline_service.build_for_session_with_inputs(
-                db, session_uuid, []
-            )
+        result, bundle, policy = pipeline_service.build_for_session_with_inputs(
+            db, session_uuid, []
         )
         # Tamper the pipeline result so its own validator fails.
         result["pipeline_source"] = "WRONG"
@@ -475,10 +466,12 @@ def test_does_not_mutate_inputs() -> None:
     try:
         from rop.services.reasoning_pipeline import ReasoningPipelineService
 
-        result, bundle, policy = (
-            ReasoningPipelineService().build_for_session_with_inputs(
-                db, session_uuid, []
-            )
+        (
+            result,
+            bundle,
+            policy,
+        ) = ReasoningPipelineService().build_for_session_with_inputs(
+            db, session_uuid, []
         )
         bundle_before = copy.deepcopy(bundle)
         policy_before = copy.deepcopy(policy)
@@ -617,9 +610,7 @@ def _json_safe(result: dict[str, Any]) -> dict[str, Any]:
             if fe["selected_candidate"] is not None
             else None
         ),
-        "eligible_candidate_ids": [
-            str(hid) for hid in fe["eligible_candidate_ids"]
-        ],
+        "eligible_candidate_ids": [str(hid) for hid in fe["eligible_candidate_ids"]],
     }
     return {
         **result,

@@ -31,9 +31,7 @@ _STATUS_COMPLETED = "COMPLETED"
 _STATUS_FAILED = "FAILED"
 _STATUS_SKIPPED = "SKIPPED"
 
-_VALID_STATUSES = frozenset(
-    {_STATUS_COMPLETED, _STATUS_FAILED, _STATUS_SKIPPED}
-)
+_VALID_STATUSES = frozenset({_STATUS_COMPLETED, _STATUS_FAILED, _STATUS_SKIPPED})
 
 _EXECUTION_REQUIRED_FIELDS = (
     "available",
@@ -253,8 +251,7 @@ class ReasoningRunExecutionConsistencyService:
             if available is not True:
                 issues.append("AVAILABILITY_MISMATCH")
             if any(
-                not isinstance(s, Mapping)
-                or s.get("status") != _STATUS_COMPLETED
+                not isinstance(s, Mapping) or s.get("status") != _STATUS_COMPLETED
                 for s in stages
             ):
                 issues.append("OUTCOME_MISMATCH")
@@ -270,8 +267,7 @@ class ReasoningRunExecutionConsistencyService:
             failed_count = sum(
                 1
                 for s in stages
-                if isinstance(s, Mapping)
-                and s.get("status") == _STATUS_FAILED
+                if isinstance(s, Mapping) and s.get("status") == _STATUS_FAILED
             )
             if failed_count != 1:
                 issues.append("OUTCOME_MISMATCH")
@@ -281,8 +277,7 @@ class ReasoningRunExecutionConsistencyService:
                 failed_index = next(
                     i
                     for i, s in enumerate(stages)
-                    if isinstance(s, Mapping)
-                    and s.get("status") == _STATUS_FAILED
+                    if isinstance(s, Mapping) and s.get("status") == _STATUS_FAILED
                 )
                 for i, s in enumerate(stages):
                     if not isinstance(s, Mapping):
@@ -322,9 +317,7 @@ class ReasoningRunExecutionConsistencyService:
                 issues.append("NESTED_REASONING_RUN_AUDIT_MISMATCH")
             else:
                 try:
-                    ReasoningRunConsistencyService._validate_result(
-                        dict(nested_audit)
-                    )
+                    ReasoningRunConsistencyService._validate_result(dict(nested_audit))
                 except ReasoningRunConsistencyContractError:
                     issues.append("NESTED_REASONING_RUN_AUDIT_MISMATCH")
                 except Exception:
@@ -341,17 +334,11 @@ class ReasoningRunExecutionConsistencyService:
         # For a COMPLETED execution, execution_consistent must match the
         # nested Task 043 run_consistent.
         if outcome == OUTCOME_COMPLETED and derived_execution_consistent is not None:
-            if (
-                execution.get("execution_consistent")
-                != derived_execution_consistent
-            ):
+            if execution.get("execution_consistent") != derived_execution_consistent:
                 issues.append("EXECUTION_CONSISTENCY_MISMATCH")
 
         # --- Execution source ---
-        if (
-            execution.get("execution_source")
-            != REASONING_RUN_EXECUTION_SOURCE_TASK_044
-        ):
+        if execution.get("execution_source") != REASONING_RUN_EXECUTION_SOURCE_TASK_044:
             issues.append("EXECUTION_SOURCE_MISMATCH")
 
         # --- Deterministic issue ordering, dedupe ---
@@ -461,8 +448,7 @@ class ReasoningRunExecutionConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunExecutionConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -490,8 +476,7 @@ class ReasoningRunExecutionConsistencyService:
             raise ReasoningRunExecutionConsistencyContractError(
                 "INVALID_SOURCE",
                 "execution_consistency_source is not the Task 045 "
-                "identifier: "
-                + repr(result["execution_consistency_source"]),
+                "identifier: " + repr(result["execution_consistency_source"]),
             )
         if result["execution_consistent"] != (len(issues) == 0):
             raise ReasoningRunExecutionConsistencyContractError(

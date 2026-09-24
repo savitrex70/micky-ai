@@ -101,9 +101,7 @@ def _assessment(
     sat = sum(1 for c in criteria if c["satisfied"])
     unsat = len(criteria) - sat
     req_sat = sum(1 for c in criteria if c["required"] and c["satisfied"])
-    req_unsat = sum(
-        1 for c in criteria if c["required"] and not c["satisfied"]
-    )
+    req_unsat = sum(1 for c in criteria if c["required"] and not c["satisfied"])
     return {
         "hypothesis_id": hid,
         "hypothesis_name": name,
@@ -736,9 +734,7 @@ def test_rejects_selected_missing_field() -> None:
 def test_no_forbidden_fields() -> None:
     h1 = uuid4()
     a1 = _assessment(h1, "H1", 1, 10.0, _all_required_satisfied())
-    r = _service().build(
-        _bundle([a1]), _default_policy(), _exec_selected(a1, [a1])
-    )
+    r = _service().build(_bundle([a1]), _default_policy(), _exec_selected(a1, [a1]))
     forbidden = (
         "winner",
         "recommendation",
@@ -802,10 +798,7 @@ def test_api_endpoint() -> None:
     assert r.status_code == 200
     payload = r.json()
     assert set(payload) == set(RESULT_FIELDS)
-    assert (
-        payload["execution_source"]
-        == DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040
-    )
+    assert payload["execution_source"] == DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040
     assert payload["available"] is True
     assert payload["execution_consistent"] is True
     assert payload["consistency_issues"] == []
@@ -827,12 +820,8 @@ def test_api_missing_session_returns_404() -> None:
 
 def test_api_is_deterministic() -> None:
     sid = _seed_session("Task 040 deterministic")
-    first = client.get(
-        f"/sessions/{sid}/decision-execution-consistency"
-    ).json()
-    second = client.get(
-        f"/sessions/{sid}/decision-execution-consistency"
-    ).json()
+    first = client.get(f"/sessions/{sid}/decision-execution-consistency").json()
+    second = client.get(f"/sessions/{sid}/decision-execution-consistency").json()
     assert first == second
 
 
@@ -847,9 +836,7 @@ def test_api_is_read_only() -> None:
 
 def test_api_matches_service_output() -> None:
     sid = _seed_session("Task 040 agreement")
-    api_result = client.get(
-        f"/sessions/{sid}/decision-execution-consistency"
-    ).json()
+    api_result = client.get(f"/sessions/{sid}/decision-execution-consistency").json()
 
     session_uuid = UUID(sid)
     db_gen = app.dependency_overrides[get_db]()
@@ -860,9 +847,7 @@ def test_api_matches_service_output() -> None:
         candidates = CandidateGenerationService().list_by_session(
             db, session_uuid, offset=0, limit=100
         )
-        service_result = _service().build_for_session(
-            db, session_uuid, candidates
-        )
+        service_result = _service().build_for_session(db, session_uuid, candidates)
     finally:
         db_gen.close()
 

@@ -24,13 +24,9 @@ REASONING_RUN_SOURCE_TASK_042 = "REASONING_RUN_TASK_042"
 STAGE_SOURCE_SESSION_INPUT = "REASONING_RUN_STAGE_SESSION_INPUT_TASK_042"
 STAGE_SOURCE_OBSERVATIONS = "REASONING_RUN_STAGE_OBSERVATIONS_TASK_042"
 STAGE_SOURCE_ENTITIES = "REASONING_RUN_STAGE_ENTITIES_TASK_042"
-STAGE_SOURCE_MISSING_INFORMATION = (
-    "REASONING_RUN_STAGE_MISSING_INFORMATION_TASK_042"
-)
+STAGE_SOURCE_MISSING_INFORMATION = "REASONING_RUN_STAGE_MISSING_INFORMATION_TASK_042"
 STAGE_SOURCE_TEMPLATE_CONTEXT = "REASONING_RUN_STAGE_TEMPLATE_CONTEXT_TASK_042"
-STAGE_SOURCE_CANDIDATE_GENERATION = (
-    "REASONING_RUN_STAGE_CANDIDATE_GENERATION_TASK_042"
-)
+STAGE_SOURCE_CANDIDATE_GENERATION = "REASONING_RUN_STAGE_CANDIDATE_GENERATION_TASK_042"
 
 _CANDIDATE_PAGE_SIZE = 100
 _STATE_PAGE_SIZE = 1000
@@ -121,9 +117,7 @@ class ReasoningRunService:
         self.missing_information_service = (
             missing_information_service or MissingInformationService()
         )
-        self.template_match_service = (
-            template_match_service or TemplateMatchService()
-        )
+        self.template_match_service = template_match_service or TemplateMatchService()
         self.candidate_generation_service = (
             candidate_generation_service or CandidateGenerationService()
         )
@@ -167,9 +161,7 @@ class ReasoningRunService:
         """
         session = self.reasoning_session_service.get(db, session_id)
         if session is None:
-            raise ReasoningRunContractError(
-                "MISSING_SESSION", "session does not exist"
-            )
+            raise ReasoningRunContractError("MISSING_SESSION", "session does not exist")
 
         observations = self._paginate(
             lambda off: self.observation_service.list_by_session(
@@ -181,12 +173,10 @@ class ReasoningRunService:
                 db, session_id, offset=off, limit=_STATE_PAGE_SIZE
             )
         )
-        missing_information = (
-            self.missing_information_service.list_by_session(db, session_id)
-        )
-        template_matches = self.template_match_service.list_by_session(
+        missing_information = self.missing_information_service.list_by_session(
             db, session_id
         )
+        template_matches = self.template_match_service.list_by_session(db, session_id)
 
         candidates: list[CandidateHypothesis] = []
         page_offset = 0
@@ -231,11 +221,8 @@ class ReasoningRunService:
         Convenience wrapper around ``build_for_session_with_inputs`` for
         callers that do not need the intermediate bundle/policy.
         """
-        result, _, _ = self.build_for_session_with_inputs(
-            db, session_id
-        )
+        result, _, _ = self.build_for_session_with_inputs(db, session_id)
         return result
-
 
     def build(
         self,
@@ -252,9 +239,7 @@ class ReasoningRunService:
     ) -> dict[str, Any]:
         """Compose the full ROP run view. Pure; never mutates inputs."""
         if session is None:
-            raise ReasoningRunContractError(
-                "MISSING_SESSION", "session is required"
-            )
+            raise ReasoningRunContractError("MISSING_SESSION", "session is required")
         for name, value in (
             ("observations", observations),
             ("entities", entities),
@@ -270,8 +255,7 @@ class ReasoningRunService:
         if not isinstance(pipeline_result, Mapping):
             raise ReasoningRunContractError(
                 "PIPELINE_RESULT_TYPE",
-                "pipeline_result is not a mapping: "
-                + type(pipeline_result).__name__,
+                "pipeline_result is not a mapping: " + type(pipeline_result).__name__,
             )
         if not isinstance(bundle, Mapping):
             raise ReasoningRunContractError(
@@ -294,27 +278,19 @@ class ReasoningRunService:
         except ReasoningPipelineContractError as exc:
             raise ReasoningRunContractError(
                 "INVALID_REASONING_PIPELINE",
-                "nested Task 041 result failed its own validator: "
-                + str(exc),
+                "nested Task 041 result failed its own validator: " + str(exc),
             ) from exc
         except Exception as exc:
             raise ReasoningRunContractError(
                 "INVALID_REASONING_PIPELINE",
-                "nested Task 041 result failed its own validator: "
-                + str(exc),
+                "nested Task 041 result failed its own validator: " + str(exc),
             ) from exc
 
         has_template = len(template_matches) > 0
         has_candidates = len(candidates) > 0
-        pipeline_available = bool(
-            pipeline_result.get("available", False)
-        )
-        pipeline_consistent = bool(
-            pipeline_result.get("pipeline_consistent", False)
-        )
-        pipeline_complete = bool(
-            pipeline_result.get("pipeline_complete", False)
-        )
+        pipeline_available = bool(pipeline_result.get("available", False))
+        pipeline_consistent = bool(pipeline_result.get("pipeline_consistent", False))
+        pipeline_complete = bool(pipeline_result.get("pipeline_complete", False))
 
         stages = [
             self._make_stage(
@@ -412,8 +388,7 @@ class ReasoningRunService:
             if not isinstance(value, bool):
                 raise ReasoningRunContractError(
                     "STAGE_" + name.upper() + "_TYPE",
-                    stage_id + "." + name + " is not boolean: "
-                    + repr(value),
+                    stage_id + "." + name + " is not boolean: " + repr(value),
                 )
         return {
             "stage_id": stage_id,
@@ -452,14 +427,10 @@ class ReasoningRunService:
 
         # candidate_generation_available must equal (candidate_count > 0).
         expected_generation_available = result["candidate_count"] > 0
-        if (
-            result["candidate_generation_available"]
-            != expected_generation_available
-        ):
+        if result["candidate_generation_available"] != expected_generation_available:
             raise ReasoningRunContractError(
                 "CANDIDATE_GENERATION_AVAILABLE_MISMATCH",
-                "candidate_generation_available does not match "
-                "candidate_count > 0",
+                "candidate_generation_available does not match " "candidate_count > 0",
             )
 
         stages = result["stages"]
@@ -471,8 +442,10 @@ class ReasoningRunService:
         if result["stage_count"] != len(stages):
             raise ReasoningRunContractError(
                 "STAGE_COUNT_MISMATCH",
-                "stage_count " + repr(result["stage_count"])
-                + " != len(stages) " + repr(len(stages)),
+                "stage_count "
+                + repr(result["stage_count"])
+                + " != len(stages) "
+                + repr(len(stages)),
             )
         seen_ids: set[str] = set()
         expected_order = 1
@@ -490,8 +463,7 @@ class ReasoningRunService:
             if not isinstance(s["stage_id"], str) or not s["stage_id"]:
                 raise ReasoningRunContractError(
                     "STAGE_ID_TYPE",
-                    "stage_id is not a non-empty string: "
-                    + repr(s["stage_id"]),
+                    "stage_id is not a non-empty string: " + repr(s["stage_id"]),
                 )
             if not isinstance(s["stage_source"], str) or not s["stage_source"]:
                 raise ReasoningRunContractError(
@@ -508,15 +480,20 @@ class ReasoningRunService:
             if s["stage_order"] != expected_order:
                 raise ReasoningRunContractError(
                     "STAGE_ORDER_MISMATCH",
-                    "stage_order " + repr(s["stage_order"])
-                    + " != expected " + repr(expected_order),
+                    "stage_order "
+                    + repr(s["stage_order"])
+                    + " != expected "
+                    + repr(expected_order),
                 )
             expected_order += 1
             for field in _STAGE_BOOLEAN_FIELDS:
                 if not isinstance(s[field], bool):
                     raise ReasoningRunContractError(
                         "STAGE_" + field.upper() + "_TYPE",
-                        s["stage_id"] + "." + field + " is not boolean: "
+                        s["stage_id"]
+                        + "."
+                        + field
+                        + " is not boolean: "
                         + repr(s[field]),
                     )
 
@@ -526,7 +503,8 @@ class ReasoningRunService:
                 "COMPLETED_COUNT_MISMATCH",
                 "completed_stage_count "
                 + repr(result["completed_stage_count"])
-                + " != actual " + repr(expected_completed),
+                + " != actual "
+                + repr(expected_completed),
             )
         expected_complete = all(s["complete"] for s in stages)
         if result["run_complete"] != expected_complete:
@@ -551,6 +529,5 @@ class ReasoningRunService:
         if not isinstance(pipeline, Mapping):
             raise ReasoningRunContractError(
                 "PIPELINE_TYPE",
-                "reasoning_pipeline is not a mapping: "
-                + type(pipeline).__name__,
+                "reasoning_pipeline is not a mapping: " + type(pipeline).__name__,
             )

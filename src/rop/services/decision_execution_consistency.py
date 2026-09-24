@@ -182,12 +182,8 @@ class DecisionExecutionConsistencyService:
         execution = self._validate_execution(execution_result)
 
         expected_eligible = self._compute_expected_eligible(bundle)
-        expected_eligible_ids = [
-            a["hypothesis_id"] for a in expected_eligible
-        ]
-        expected_outcome = self._derive_expected_outcome(
-            bundle, expected_eligible
-        )
+        expected_eligible_ids = [a["hypothesis_id"] for a in expected_eligible]
+        expected_outcome = self._derive_expected_outcome(bundle, expected_eligible)
 
         issues: list[str] = []
 
@@ -215,15 +211,11 @@ class DecisionExecutionConsistencyService:
             issues.append("OUTCOME_MISMATCH")
 
         # Selection audit, driven by the execution's own outcome.
-        self._audit_selection(
-            issues, execution, expected_eligible, bundle
-        )
+        self._audit_selection(issues, execution, expected_eligible, bundle)
 
         # Deterministic ordering, no duplicates.
         unique_issues = set(issues)
-        ordered_issues = [
-            i for i in _ISSUE_ORDER if i in unique_issues
-        ]
+        ordered_issues = [i for i in _ISSUE_ORDER if i in unique_issues]
         # Any issue not in _ISSUE_ORDER (shouldn't happen) is appended
         # in sorted order so the output stays deterministic.
         leftovers = sorted(unique_issues - set(_ISSUE_ORDER))
@@ -268,9 +260,7 @@ class DecisionExecutionConsistencyService:
             "metadata_consistent": metadata_consistent,
             "source_consistent": source_consistent,
             "consistency_issues": ordered_issues,
-            "execution_source": (
-                DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040
-            ),
+            "execution_source": (DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040),
         }
         self._validate_result(result)
         return result
@@ -401,15 +391,13 @@ class DecisionExecutionConsistencyService:
         if not isinstance(ids, list):
             raise DecisionExecutionConsistencyContractError(
                 "EXECUTION_IDS_TYPE",
-                f"eligible_candidate_ids is not a list: "
-                f"{type(ids).__name__}",
+                f"eligible_candidate_ids is not a list: " f"{type(ids).__name__}",
             )
         for hid in ids:
             if not isinstance(hid, UUID):
                 raise DecisionExecutionConsistencyContractError(
                     "EXECUTION_ID_TYPE",
-                    f"eligible_candidate_id is not a UUID: "
-                    f"{type(hid).__name__}",
+                    f"eligible_candidate_id is not a UUID: " f"{type(hid).__name__}",
                 )
         for field in ("policy_id", "policy_version"):
             if not isinstance(execution_result[field], str) or not (
@@ -420,9 +408,7 @@ class DecisionExecutionConsistencyService:
                     f"{field} is not a non-empty string: "
                     f"{execution_result[field]!r}",
                 )
-        if not isinstance(
-            execution_result["decision_execution_source"], str
-        ):
+        if not isinstance(execution_result["decision_execution_source"], str):
             raise DecisionExecutionConsistencyContractError(
                 "EXECUTION_SOURCE_TYPE",
                 "decision_execution_source is not a string: "
@@ -612,8 +598,7 @@ class DecisionExecutionConsistencyService:
         if not isinstance(issues, list):
             raise DecisionExecutionConsistencyContractError(
                 "ISSUES_TYPE",
-                f"consistency_issues is not a list: "
-                f"{type(issues).__name__}",
+                f"consistency_issues is not a list: " f"{type(issues).__name__}",
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -633,13 +618,9 @@ class DecisionExecutionConsistencyService:
         if issues != expected_order:
             raise DecisionExecutionConsistencyContractError(
                 "ISSUES_ORDER",
-                "consistency_issues is not in the fixed order: "
-                f"{issues!r}",
+                "consistency_issues is not in the fixed order: " f"{issues!r}",
             )
-        if (
-            result["execution_source"]
-            != DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040
-        ):
+        if result["execution_source"] != DECISION_EXECUTION_CONSISTENCY_SOURCE_TASK_040:
             raise DecisionExecutionConsistencyContractError(
                 "INVALID_SOURCE",
                 "execution_source is not the Task 040 identifier: "

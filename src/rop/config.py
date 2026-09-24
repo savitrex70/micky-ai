@@ -19,9 +19,7 @@ class Settings(BaseSettings):
     # Ollama provider raises MODEL_UNAVAILABLE cleanly if either is
     # absent when it is actually invoked. Env vars are
     # ROP_OLLAMA_BASE_URL and ROP_OLLAMA_REASONING_MODEL.
-    ollama_base_url: str = Field(
-        default="http://localhost:11434", min_length=1
-    )
+    ollama_base_url: str = Field(default="http://localhost:11434", min_length=1)
     ollama_reasoning_model: str | None = None
 
     @field_validator("database_url")

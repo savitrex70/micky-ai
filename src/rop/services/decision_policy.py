@@ -132,9 +132,7 @@ class DecisionPolicyService:
         then returns the fixed policy. It does not walk Tasks 031-036
         itself and does not embed session data in the policy.
         """
-        self.decision_input_bundle_service.build_for_session(
-            db, session_id, candidates
-        )
+        self.decision_input_bundle_service.build_for_session(db, session_id, candidates)
         return self.build()
 
     def build(self) -> dict[str, Any]:
@@ -145,16 +143,10 @@ class DecisionPolicyService:
             "policy_name": POLICY_NAME_DEFAULT,
             "required_candidate_count": 1,
             "allowed_selection_mode": SELECTION_MODE_SINGLE_CANDIDATE,
-            "required_criteria_behavior": (
-                REQUIRED_CRITERIA_MUST_ALL_BE_SATISFIED
-            ),
+            "required_criteria_behavior": (REQUIRED_CRITERIA_MUST_ALL_BE_SATISFIED),
             "tie_behavior": TIE_BEHAVIOR_MUST_RETURN_UNRESOLVED,
-            "insufficient_input_behavior": (
-                INSUFFICIENT_INPUT_MUST_RETURN_UNAVAILABLE
-            ),
-            "incomplete_input_behavior": (
-                INCOMPLETE_INPUT_MUST_RETURN_INCONSISTENT
-            ),
+            "insufficient_input_behavior": (INSUFFICIENT_INPUT_MUST_RETURN_UNAVAILABLE),
+            "incomplete_input_behavior": (INCOMPLETE_INPUT_MUST_RETURN_INCONSISTENT),
             "policy_source": POLICY_SOURCE_DECISION_POLICY_TASK_038,
         }
         self._validate_policy(policy)
@@ -205,8 +197,7 @@ class DecisionPolicyService:
         if policy["tie_behavior"] not in _ALLOWED_TIE_BEHAVIORS:
             raise DecisionPolicyContractError(
                 "INVALID_TIE_BEHAVIOR",
-                f"tie_behavior is not a valid behavior: "
-                f"{policy['tie_behavior']!r}",
+                f"tie_behavior is not a valid behavior: " f"{policy['tie_behavior']!r}",
             )
         if (
             policy["insufficient_input_behavior"]

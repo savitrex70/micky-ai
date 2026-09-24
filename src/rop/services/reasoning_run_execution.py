@@ -40,22 +40,14 @@ _EXECUTION_STAGE_IDS = (
 )
 
 _STAGE_SOURCES = {
-    "SESSION_VERIFIED":
-        "REASONING_RUN_EXECUTION_STAGE_SESSION_VERIFIED_TASK_044",
-    "OBSERVATION_EXTRACTION":
-        "REASONING_RUN_EXECUTION_STAGE_OBSERVATION_EXTRACTION_TASK_044",
-    "MISSING_INFORMATION":
-        "REASONING_RUN_EXECUTION_STAGE_MISSING_INFORMATION_TASK_044",
-    "TEMPLATE_MATCHING":
-        "REASONING_RUN_EXECUTION_STAGE_TEMPLATE_MATCHING_TASK_044",
-    "CANDIDATE_GENERATION":
-        "REASONING_RUN_EXECUTION_STAGE_CANDIDATE_GENERATION_TASK_044",
-    "EVIDENCE_EVALUATION":
-        "REASONING_RUN_EXECUTION_STAGE_EVIDENCE_EVALUATION_TASK_044",
-    "REASONING_RUN":
-        "REASONING_RUN_EXECUTION_STAGE_REASONING_RUN_TASK_044",
-    "REASONING_RUN_CONSISTENCY":
-        "REASONING_RUN_EXECUTION_STAGE_REASONING_RUN_CONSISTENCY_TASK_044",
+    "SESSION_VERIFIED": "REASONING_RUN_EXECUTION_STAGE_SESSION_VERIFIED_TASK_044",
+    "OBSERVATION_EXTRACTION": "REASONING_RUN_EXECUTION_STAGE_OBSERVATION_EXTRACTION_TASK_044",
+    "MISSING_INFORMATION": "REASONING_RUN_EXECUTION_STAGE_MISSING_INFORMATION_TASK_044",
+    "TEMPLATE_MATCHING": "REASONING_RUN_EXECUTION_STAGE_TEMPLATE_MATCHING_TASK_044",
+    "CANDIDATE_GENERATION": "REASONING_RUN_EXECUTION_STAGE_CANDIDATE_GENERATION_TASK_044",
+    "EVIDENCE_EVALUATION": "REASONING_RUN_EXECUTION_STAGE_EVIDENCE_EVALUATION_TASK_044",
+    "REASONING_RUN": "REASONING_RUN_EXECUTION_STAGE_REASONING_RUN_TASK_044",
+    "REASONING_RUN_CONSISTENCY": "REASONING_RUN_EXECUTION_STAGE_REASONING_RUN_CONSISTENCY_TASK_044",
 }
 
 _RESULT_REQUIRED_FIELDS = (
@@ -119,17 +111,13 @@ class ReasoningRunExecutionService:
         reasoning_session_service: ReasoningSessionService | None = None,
         observation_service: ObservationService | None = None,
         entity_service: EntityService | None = None,
-        observation_extraction_service: (
-            ObservationExtractionService | None
-        ) = None,
+        observation_extraction_service: ObservationExtractionService | None = None,
         missing_information_service: MissingInformationService | None = None,
         template_match_service: TemplateMatchService | None = None,
         candidate_generation_service: CandidateGenerationService | None = None,
         evidence_evaluation_service: EvidenceEvaluationService | None = None,
         reasoning_run_service: ReasoningRunService | None = None,
-        reasoning_run_consistency_service: (
-            ReasoningRunConsistencyService | None
-        ) = None,
+        reasoning_run_consistency_service: ReasoningRunConsistencyService | None = None,
     ) -> None:
         self.reasoning_session_service = (
             reasoning_session_service or ReasoningSessionService()
@@ -142,21 +130,16 @@ class ReasoningRunExecutionService:
         self.missing_information_service = (
             missing_information_service or MissingInformationService()
         )
-        self.template_match_service = (
-            template_match_service or TemplateMatchService()
-        )
+        self.template_match_service = template_match_service or TemplateMatchService()
         self.candidate_generation_service = (
             candidate_generation_service or CandidateGenerationService()
         )
         self.evidence_evaluation_service = (
             evidence_evaluation_service or EvidenceEvaluationService()
         )
-        self.reasoning_run_service = (
-            reasoning_run_service or ReasoningRunService()
-        )
+        self.reasoning_run_service = reasoning_run_service or ReasoningRunService()
         self.reasoning_run_consistency_service = (
-            reasoning_run_consistency_service
-            or ReasoningRunConsistencyService()
+            reasoning_run_consistency_service or ReasoningRunConsistencyService()
         )
 
     def execute_for_session(
@@ -190,8 +173,7 @@ class ReasoningRunExecutionService:
             ("CANDIDATE_GENERATION", self._stage_candidate_generation),
             ("EVIDENCE_EVALUATION", self._stage_evidence_evaluation),
             ("REASONING_RUN", self._stage_reasoning_run),
-            ("REASONING_RUN_CONSISTENCY",
-                self._stage_reasoning_run_consistency),
+            ("REASONING_RUN_CONSISTENCY", self._stage_reasoning_run_consistency),
         )
 
         for stage_id, method in stages:
@@ -243,23 +225,21 @@ class ReasoningRunExecutionService:
         )
 
     def _stage_template_matching(self, db, session, session_id, state):
-        existing = self.template_match_service.list_by_session(
-            db, session_id
-        )
+        existing = self.template_match_service.list_by_session(db, session_id)
         # Same idempotency rule as observations -- do not append a
         # second template match when one already exists.
         if not existing:
             self.template_match_service.match(
                 db, session_id, state["observations"], state["entities"]
             )
-        state["template_matches"] = (
-            self.template_match_service.list_by_session(db, session_id)
+        state["template_matches"] = self.template_match_service.list_by_session(
+            db, session_id
         )
 
     def _stage_candidate_generation(self, db, session, session_id, state):
         template = self._resolve_template(state.get("template_matches", []))
-        missing_information = (
-            self.missing_information_service.list_by_session(db, session_id)
+        missing_information = self.missing_information_service.list_by_session(
+            db, session_id
         )
         self.candidate_generation_service.generate(
             db=db,
@@ -285,17 +265,11 @@ class ReasoningRunExecutionService:
         )
 
     def _stage_reasoning_run(self, db, session, session_id, state):
-        state["run"] = self.reasoning_run_service.build_for_session(
-            db, session_id
-        )
+        state["run"] = self.reasoning_run_service.build_for_session(db, session_id)
 
-    def _stage_reasoning_run_consistency(
-        self, db, session, session_id, state
-    ):
-        state["audit"] = (
-            self.reasoning_run_consistency_service.build_for_session(
-                db, session_id
-            )
+    def _stage_reasoning_run_consistency(self, db, session, session_id, state):
+        state["audit"] = self.reasoning_run_consistency_service.build_for_session(
+            db, session_id
         )
 
     @staticmethod
@@ -364,9 +338,9 @@ class ReasoningRunExecutionService:
             # composed earlier in the same execution.
             run = None
             audit = None
-        execution_consistent = bool(
-            audit.get("run_consistent", False)
-        ) if audit is not None else False
+        execution_consistent = (
+            bool(audit.get("run_consistent", False)) if audit is not None else False
+        )
         result: dict[str, Any] = {
             "available": available,
             "outcome": outcome,
@@ -407,14 +381,12 @@ class ReasoningRunExecutionService:
         ):
             raise ReasoningRunExecutionContractError(
                 "INVALID_OUTCOME",
-                "outcome is not a known identifier: "
-                + repr(result["outcome"]),
+                "outcome is not a known identifier: " + repr(result["outcome"]),
             )
         if not isinstance(result["session_id"], UUID):
             raise ReasoningRunExecutionContractError(
                 "SESSION_ID_TYPE",
-                "session_id is not a UUID: "
-                + type(result["session_id"]).__name__,
+                "session_id is not a UUID: " + type(result["session_id"]).__name__,
             )
         for field in ("completed_stage_count", "stage_count"):
             value = result[field]
@@ -442,8 +414,10 @@ class ReasoningRunExecutionService:
         if len(stages) != result["stage_count"]:
             raise ReasoningRunExecutionContractError(
                 "STAGE_COUNT_MISMATCH",
-                "stage_count " + repr(result["stage_count"])
-                + " != len(stages) " + repr(len(stages)),
+                "stage_count "
+                + repr(result["stage_count"])
+                + " != len(stages) "
+                + repr(len(stages)),
             )
         seen_ids: set[str] = set()
         expected_order = 1
@@ -467,8 +441,10 @@ class ReasoningRunExecutionService:
             if s["stage_order"] != expected_order:
                 raise ReasoningRunExecutionContractError(
                     "STAGE_ORDER_MISMATCH",
-                    "stage_order " + repr(s["stage_order"])
-                    + " != expected " + repr(expected_order),
+                    "stage_order "
+                    + repr(s["stage_order"])
+                    + " != expected "
+                    + repr(expected_order),
                 )
             expected_order += 1
             if s["status"] not in (
@@ -478,18 +454,16 @@ class ReasoningRunExecutionService:
             ):
                 raise ReasoningRunExecutionContractError(
                     "INVALID_STAGE_STATUS",
-                    "stage status is not a known identifier: "
-                    + repr(s["status"]),
+                    "stage status is not a known identifier: " + repr(s["status"]),
                 )
-        completed = sum(
-            1 for s in stages if s["status"] == _STATUS_COMPLETED
-        )
+        completed = sum(1 for s in stages if s["status"] == _STATUS_COMPLETED)
         if result["completed_stage_count"] != completed:
             raise ReasoningRunExecutionContractError(
                 "COMPLETED_COUNT_MISMATCH",
                 "completed_stage_count "
                 + repr(result["completed_stage_count"])
-                + " != actual " + repr(completed),
+                + " != actual "
+                + repr(completed),
             )
         # Stage IDs must match the declared Task 044 stage list in
         # exact order, and each stage_source must match its canonical
@@ -498,17 +472,22 @@ class ReasoningRunExecutionService:
         if actual_ids != _EXECUTION_STAGE_IDS:
             raise ReasoningRunExecutionContractError(
                 "STAGE_IDS_MISMATCH",
-                "stage_ids " + repr(actual_ids)
-                + " != declared " + repr(_EXECUTION_STAGE_IDS),
+                "stage_ids "
+                + repr(actual_ids)
+                + " != declared "
+                + repr(_EXECUTION_STAGE_IDS),
             )
         for s in stages:
             expected_source = _STAGE_SOURCES.get(s["stage_id"])
             if s["stage_source"] != expected_source:
                 raise ReasoningRunExecutionContractError(
                     "STAGE_SOURCE_MISMATCH",
-                    "stage_id " + repr(s["stage_id"])
-                    + " has stage_source " + repr(s["stage_source"])
-                    + ", expected " + repr(expected_source),
+                    "stage_id "
+                    + repr(s["stage_id"])
+                    + " has stage_source "
+                    + repr(s["stage_source"])
+                    + ", expected "
+                    + repr(expected_source),
                 )
         # reasoning_run / reasoning_run_consistency are nullable.
         if result["reasoning_run"] is not None and not isinstance(
@@ -536,8 +515,7 @@ class ReasoningRunExecutionService:
             if result["reasoning_run_consistency"] is None:
                 raise ReasoningRunExecutionContractError(
                     "COMPLETED_WITHOUT_AUDIT",
-                    "COMPLETED outcome requires a "
-                    "reasoning_run_consistency",
+                    "COMPLETED outcome requires a " "reasoning_run_consistency",
                 )
         if result["outcome"] == OUTCOME_FAILED:
             if result["available"] is not False:
@@ -545,10 +523,7 @@ class ReasoningRunExecutionService:
                     "FAILED_MUST_BE_UNAVAILABLE",
                     "FAILED outcome requires available=False",
                 )
-        if (
-            result["execution_source"]
-            != REASONING_RUN_EXECUTION_SOURCE_TASK_044
-        ):
+        if result["execution_source"] != REASONING_RUN_EXECUTION_SOURCE_TASK_044:
             raise ReasoningRunExecutionContractError(
                 "INVALID_EXECUTION_SOURCE",
                 "execution_source is not the Task 044 identifier: "

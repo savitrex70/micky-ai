@@ -24,8 +24,7 @@ REASONING_RUN_EXECUTION_API_AUDIT_BUNDLE_CONSISTENCY_SOURCE_TASK_054 = (
 _EXPECTED_METHOD = "POST"
 _EXPECTED_STATUS_CODE = 200
 _PATH_PATTERN = re.compile(
-    r"^/sessions/(?P<session_id>[^/]+)"
-    r"/reasoning-run/execute-fully-audited$"
+    r"^/sessions/(?P<session_id>[^/]+)" r"/reasoning-run/execute-fully-audited$"
 )
 
 _BUNDLE_REQUIRED_FIELDS = (
@@ -190,15 +189,10 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             if path_match is None:
                 issues.append("PATH_INVALID")
             else:
-                path_sid = _coerce_session_id(
-                    path_match.group("session_id")
-                )
+                path_sid = _coerce_session_id(path_match.group("session_id"))
                 if path_sid is None:
                     issues.append("SESSION_ID_INVALID")
-                elif (
-                    bundle_session_id is not None
-                    and path_sid != bundle_session_id
-                ):
+                elif bundle_session_id is not None and path_sid != bundle_session_id:
                     issues.append("SESSION_ID_MISMATCH")
 
         if bundle.get("method") != _EXPECTED_METHOD:
@@ -217,9 +211,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
         if not isinstance(api_audit_package, Mapping):
             issues.append("NESTED_PACKAGE_MISMATCH")
         else:
-            package_for_validation = _deep_normalize_session_ids(
-                api_audit_package
-            )
+            package_for_validation = _deep_normalize_session_ids(api_audit_package)
             try:
                 ReasoningRunExecutionApiAuditPackageService._validate_result(
                     package_for_validation
@@ -228,9 +220,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
                 issues.append("NESTED_PACKAGE_MISMATCH")
 
         # --- Nested Task 052 audit ---
-        api_audit_package_consistency = bundle.get(
-            "api_audit_package_consistency"
-        )
+        api_audit_package_consistency = bundle.get("api_audit_package_consistency")
         if not isinstance(api_audit_package_consistency, Mapping):
             issues.append("NESTED_PACKAGE_AUDIT_MISMATCH")
         else:
@@ -242,13 +232,8 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
                 issues.append("NESTED_PACKAGE_AUDIT_MISMATCH")
 
         # --- Session identity between bundle and nested Task 051 ---
-        if (
-            isinstance(api_audit_package, Mapping)
-            and bundle_session_id is not None
-        ):
-            pkg_sid = _coerce_session_id(
-                api_audit_package.get("session_id")
-            )
+        if isinstance(api_audit_package, Mapping) and bundle_session_id is not None:
+            pkg_sid = _coerce_session_id(api_audit_package.get("session_id"))
             if pkg_sid != bundle_session_id:
                 issues.append("PACKAGE_SESSION_MISMATCH")
 
@@ -258,9 +243,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
                 issues.append("METHOD_MISMATCH")
             if api_audit_package.get("path") != bundle.get("path"):
                 issues.append("PATH_MISMATCH")
-            if api_audit_package.get("status_code") != bundle.get(
-                "status_code"
-            ):
+            if api_audit_package.get("status_code") != bundle.get("status_code"):
                 issues.append("STATUS_MISMATCH")
 
         # --- Task 052 availability ---
@@ -281,19 +264,14 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             # failure. It must never be silently converted to a
             # skip-the-check that leaves the flag True.
             try:
-                expected_fingerprint = (
-                    ReasoningRunExecutionApiAuditPackageConsistencyService
-                    ._package_fingerprint(api_audit_package)
+                expected_fingerprint = ReasoningRunExecutionApiAuditPackageConsistencyService._package_fingerprint(
+                    api_audit_package
                 )
             except Exception:
-                issues.append(
-                    "AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED"
-                )
+                issues.append("AUDITED_PACKAGE_FINGERPRINT_COMPUTE_FAILED")
             else:
                 if (
-                    api_audit_package_consistency.get(
-                        "audited_package_fingerprint"
-                    )
+                    api_audit_package_consistency.get("audited_package_fingerprint")
                     != expected_fingerprint
                 ):
                     issues.append("AUDITED_PACKAGE_FINGERPRINT_MISMATCH")
@@ -317,9 +295,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
                 issues.append("RESPONSE_PACKAGE_SOURCE_MISMATCH")
         if isinstance(api_audit_package_consistency, Mapping):
             if (
-                api_audit_package_consistency.get(
-                    "package_consistency_source"
-                )
+                api_audit_package_consistency.get("package_consistency_source")
                 != REASONING_RUN_EXECUTION_API_AUDIT_PACKAGE_CONSISTENCY_SOURCE_TASK_052
             ):
                 issues.append("PACKAGE_AUDIT_SOURCE_MISMATCH")
@@ -348,16 +324,12 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             i in unique_issues for i in ("METHOD_INVALID", "METHOD_MISMATCH")
         )
         path_consistent = not any(
-            i in unique_issues
-            for i in ("PATH_INVALID", "PATH_MISMATCH")
+            i in unique_issues for i in ("PATH_INVALID", "PATH_MISMATCH")
         )
         status_consistent = not any(
-            i in unique_issues
-            for i in ("STATUS_CODE_INVALID", "STATUS_MISMATCH")
+            i in unique_issues for i in ("STATUS_CODE_INVALID", "STATUS_MISMATCH")
         )
-        nested_package_consistent = (
-            "NESTED_PACKAGE_MISMATCH" not in unique_issues
-        )
+        nested_package_consistent = "NESTED_PACKAGE_MISMATCH" not in unique_issues
         nested_package_audit_consistent = (
             "NESTED_PACKAGE_AUDIT_MISMATCH" not in unique_issues
         )
@@ -396,15 +368,11 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             "path_consistent": path_consistent,
             "status_consistent": status_consistent,
             "nested_package_consistent": nested_package_consistent,
-            "nested_package_audit_consistent": (
-                nested_package_audit_consistent
-            ),
+            "nested_package_audit_consistent": (nested_package_audit_consistent),
             "package_audit_provenance_consistent": (
                 package_audit_provenance_consistent
             ),
-            "bundle_relationship_consistent": (
-                bundle_relationship_consistent
-            ),
+            "bundle_relationship_consistent": (bundle_relationship_consistent),
             "source_consistency": source_consistency,
             "metadata_consistent": metadata_consistent,
             "consistency_issues": ordered_issues,
@@ -432,8 +400,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningRunExecutionApiAuditBundleConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -461,8 +428,7 @@ class ReasoningRunExecutionApiAuditBundleConsistencyService:
             raise ReasoningRunExecutionApiAuditBundleConsistencyContractError(
                 "BUNDLE_CONSISTENCY_SOURCE_MISMATCH",
                 "bundle_consistency_source is not the Task 054 "
-                "identifier: "
-                + repr(result["bundle_consistency_source"]),
+                "identifier: " + repr(result["bundle_consistency_source"]),
             )
         if result["bundle_consistent"] != (len(issues) == 0):
             raise ReasoningRunExecutionApiAuditBundleConsistencyContractError(

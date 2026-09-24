@@ -91,9 +91,7 @@ class DecisionInputBundleService:
 
     def __init__(
         self,
-        decision_candidate_set_service: (
-            DecisionCandidateSetService | None
-        ) = None,
+        decision_candidate_set_service: DecisionCandidateSetService | None = None,
         decision_candidate_assessment_service: (
             DecisionCandidateAssessmentService | None
         ) = None,
@@ -103,9 +101,7 @@ class DecisionInputBundleService:
         )
         self.decision_candidate_assessment_service = (
             decision_candidate_assessment_service
-            or DecisionCandidateAssessmentService(
-                self.decision_candidate_set_service
-            )
+            or DecisionCandidateAssessmentService(self.decision_candidate_set_service)
         )
 
     def build_for_session(
@@ -170,9 +166,7 @@ class DecisionInputBundleService:
             "candidate_order_preserved": order_preserved,
             "candidate_assessment_alignment_complete": alignment_complete,
             "input_structure_consistent": input_structure_consistent,
-            "input_source": (
-                INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
-            ),
+            "input_source": (INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037),
         }
         self._validate_result(result, cs, aset)
         return result
@@ -188,8 +182,7 @@ class DecisionInputBundleService:
         if not isinstance(candidate_set, Mapping):
             raise DecisionInputBundleContractError(
                 "CANDIDATE_SET_TYPE",
-                f"candidate_set is not a mapping: "
-                f"{type(candidate_set).__name__}",
+                f"candidate_set is not a mapping: " f"{type(candidate_set).__name__}",
             )
         for field in _CANDIDATE_SET_REQUIRED_FIELDS:
             if field not in candidate_set:
@@ -268,8 +261,7 @@ class DecisionInputBundleService:
         if not isinstance(assessment_set, Mapping):
             raise DecisionInputBundleContractError(
                 "ASSESSMENT_SET_TYPE",
-                f"assessment_set is not a mapping: "
-                f"{type(assessment_set).__name__}",
+                f"assessment_set is not a mapping: " f"{type(assessment_set).__name__}",
             )
         for field in _ASSESSMENT_SET_REQUIRED_FIELDS:
             if field not in assessment_set:
@@ -303,8 +295,7 @@ class DecisionInputBundleService:
         if count != len(assessments):
             raise DecisionInputBundleContractError(
                 "ASSESSMENT_SET_COUNT_MISMATCH",
-                f"candidate_count {count} != len(assessments) "
-                f"{len(assessments)}",
+                f"candidate_count {count} != len(assessments) " f"{len(assessments)}",
             )
         for entry in assessments:
             if not isinstance(entry, Mapping):
@@ -363,9 +354,7 @@ class DecisionInputBundleService:
                 f"candidate count {len(candidates)} != assessment count "
                 f"{len(assessments)}",
             )
-        for i, (c, a) in enumerate(
-            zip(candidates, assessments, strict=True)
-        ):
+        for i, (c, a) in enumerate(zip(candidates, assessments, strict=True)):
             if c["hypothesis_id"] != a["hypothesis_id"]:
                 raise DecisionInputBundleContractError(
                     "ID_MISMATCH", f"position {i}: hypothesis_id differs"
@@ -476,10 +465,7 @@ class DecisionInputBundleService:
                     f"count {count} != assessment count "
                     f"{len(assessment_set['assessments'])}",
                 )
-        if (
-            result["input_source"]
-            != INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037
-        ):
+        if result["input_source"] != INPUT_BUNDLE_SOURCE_DECISION_INPUT_BUNDLE_TASK_037:
             raise DecisionInputBundleContractError(
                 "INVALID_INPUT_SOURCE",
                 "input_source is not the Task 037 identifier: "
