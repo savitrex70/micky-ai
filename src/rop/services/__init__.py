@@ -315,6 +315,7 @@ __all__ = [
     "ReasoningRunExecutionAuditPackageService",
     "ReasoningRunExecutionBundleConsistencyContractError",
     "ReasoningRunExecutionBundleConsistencyService",
+    "ReasoningRunExecutionBundleService",
     "ReasoningRunExecutionBundleContractError",
     "ReasoningRunExecutionConsistencyContractError",
     "ReasoningRunExecutionConsistencyService",
