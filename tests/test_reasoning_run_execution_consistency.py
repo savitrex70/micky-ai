@@ -11,7 +11,6 @@ from __future__ import annotations
 import copy
 import inspect
 from typing import Any
-from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,18 +18,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from rop.database import Base, get_db
+from rop.database import Base
 from rop.main import app
 from rop.services import reasoning_run_execution_consistency as mod
-from rop.services.reasoning_run_execution import (
-    EXECUTION_STAGE_IDS,
-    EXECUTION_STAGE_SOURCES,
-    REASONING_RUN_EXECUTION_SOURCE_TASK_044,
-    ReasoningRunExecutionService,
-)
 from rop.services.reasoning_run_execution_consistency import (
     REASONING_RUN_EXECUTION_CONSISTENCY_SOURCE_TASK_045,
-    ReasoningRunExecutionConsistencyContractError,
     ReasoningRunExecutionConsistencyService,
 )
 

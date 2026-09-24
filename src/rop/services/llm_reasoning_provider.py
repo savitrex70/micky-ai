@@ -38,7 +38,7 @@ class LLMReasoningProvider(Protocol):
     model_name: str
 
     def generate_reasoning(
-        self, request: "LLMReasoningRequest"
+        self, request: LLMReasoningRequest
     ) -> LLMReasoningProviderResponse:
         ...
 

@@ -33,9 +33,6 @@ from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderResponse,
 )
 from rop.services.reasoning_context import ReasoningContextService
-from rop.services.reasoning_context_consistency import (
-    ReasoningContextConsistencyService,
-)
 
 engine = create_engine(
     "sqlite+pysqlite:///:memory:",

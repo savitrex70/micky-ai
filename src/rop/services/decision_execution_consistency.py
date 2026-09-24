@@ -16,7 +16,6 @@ from rop.services.decision_input_bundle import (
     DecisionInputBundleService,
 )
 from rop.services.decision_policy import (
-    POLICY_SOURCE_DECISION_POLICY_TASK_038,
     DecisionPolicyContractError,
     DecisionPolicyService,
 )

@@ -12,7 +12,6 @@ set to a reachable endpoint and an already-installed model.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Generator
 from uuid import UUID
 

@@ -21,7 +21,6 @@ from rop.services.reasoning_run_execution import (
     OUTCOME_FAILED,
     OUTCOME_SESSION_NOT_FOUND,
     REASONING_RUN_EXECUTION_SOURCE_TASK_044,
-    ReasoningRunExecutionService,
 )
 
 REASONING_RUN_EXECUTION_CONSISTENCY_SOURCE_TASK_045 = (

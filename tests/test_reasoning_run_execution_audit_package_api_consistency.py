@@ -454,7 +454,7 @@ def test_no_duplicate_issues() -> None:
     result = _service().build(
         session_id="not-a-uuid",
         method=method,
-        path=f"/sessions/not-a-uuid/reasoning-run/execute-fully-audited",
+        path="/sessions/not-a-uuid/reasoning-run/execute-fully-audited",
         status_code=200,
         response_body=tampered,
     )

@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from rop.database import Base, get_db
+from rop.database import Base
 from rop.main import app
 from rop.services import reasoning_run_execution_api_audit_bundle as mod
 from rop.services.reasoning_run_execution_api_audit_bundle import (

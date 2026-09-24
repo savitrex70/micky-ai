@@ -20,10 +20,8 @@ from sqlalchemy.pool import StaticPool
 from rop.database import Base, get_db
 from rop.main import app
 from rop.services.candidate_generation import CandidateGenerationService
-from rop.services.entity import EntityService
 from rop.services.evidence_evaluation import EvidenceEvaluationService
 from rop.services.missing_information import MissingInformationService
-from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
 from rop.services.reasoning_run import ReasoningRunService
 from rop.services.reasoning_run_consistency import (
@@ -32,7 +30,6 @@ from rop.services.reasoning_run_consistency import (
 from rop.services.reasoning_run_execution import (
     OUTCOME_COMPLETED,
     OUTCOME_FAILED,
-    OUTCOME_SESSION_NOT_FOUND,
     REASONING_RUN_EXECUTION_SOURCE_TASK_044,
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,

@@ -16,7 +16,9 @@ from sqlalchemy.pool import StaticPool
 
 from rop.database import Base, get_db
 from rop.main import app
-from rop.services import reasoning_handoff_fully_audited_api_audit_bundle_consistency as mod
+from rop.services import (
+    reasoning_handoff_fully_audited_api_audit_bundle_consistency as mod,
+)
 from rop.services.reasoning_handoff_fully_audited_api_audit_bundle import (
     ReasoningHandoffFullyAuditedApiAuditBundleService,
 )

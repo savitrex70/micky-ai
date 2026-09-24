@@ -7,12 +7,9 @@ returns its result unchanged.
 
 from __future__ import annotations
 
-import copy
 import inspect
-from typing import Any
 from uuid import UUID, uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -20,7 +17,6 @@ from sqlalchemy.pool import StaticPool
 
 from rop.database import Base, get_db
 from rop.main import app
-from rop.services import reasoning_run_execution_audit_package as mod
 from rop.services.reasoning_run_execution_audit_package import (
     REASONING_RUN_EXECUTION_AUDIT_PACKAGE_SOURCE_TASK_048,
     ReasoningRunExecutionAuditPackageContractError,
