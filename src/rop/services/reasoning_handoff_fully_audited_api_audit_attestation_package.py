@@ -35,6 +35,7 @@ _PACKAGE_REQUIRED_FIELDS = (
     "attestation_consistency",
     "package_source",
     "package_fingerprint",
+    "audited_package_fingerprint",
 )
 
 _PACKAGE_BOOLEAN_FIELDS = ("available", "package_consistent")
@@ -287,6 +288,16 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageService:
                 f"package_fingerprint is not 64-char hex: {fp!r}",
             )
 
+        audited_fp = result.get("audited_package_fingerprint")
+        if not isinstance(audited_fp, str) or not re.fullmatch(
+            r"^[0-9a-f]{64}$", audited_fp
+        ):
+            raise _ContractError(
+                "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
+                "audited_package_fingerprint is not 64-char lowercase "
+                f"hex: {audited_fp!r}",
+            )
+
         # Validate nested contracts
         try:
             ReasoningHandoffFullyAuditedApiAuditAttestationService._validate_result(  # noqa: E501
@@ -325,6 +336,18 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageService:
                 "audited_attestation_fingerprint mismatch",
             )
 
+        # Derived-field binding: recompute package_consistent from the
+        # nested attestation values, never trust the declared flag.
+        expected_package_consistent = bool(
+            result["attestation"].get("attestation_consistent", False)
+            and result["attestation_consistency"].get("attestation_consistent", False)
+        )
+        if result["package_consistent"] != expected_package_consistent:
+            raise _ContractError(
+                "PACKAGE_CONSISTENT_MISMATCH",
+                "package_consistent does not match the nested " "attestation values",
+            )
+
         # Recomputed package fingerprint
         core = {
             "session_id": str(result["session_id"]),
@@ -342,4 +365,12 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageService:
             raise _ContractError(
                 "PACKAGE_FINGERPRINT_MISMATCH",
                 "package_fingerprint does not match contents",
+            )
+
+        # Self-authenticating binding: the audited fingerprint must
+        # exactly equal the (verified) package fingerprint.
+        if result["audited_package_fingerprint"] != result["package_fingerprint"]:
+            raise _ContractError(
+                "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
+                "audited_package_fingerprint does not equal " "package_fingerprint",
             )
