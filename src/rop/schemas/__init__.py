@@ -66,6 +66,46 @@ from rop.schemas.reasoning_context import ReasoningContextRead
 from rop.schemas.reasoning_context_consistency import (
     ReasoningContextConsistencyRead,
 )
+from rop.schemas.reasoning_handoff import ReasoningHandoffRead
+from rop.schemas.reasoning_handoff_api_audit_bundle import (
+    ReasoningHandoffApiAuditBundleRead,
+)
+from rop.schemas.reasoning_handoff_api_audit_bundle_consistency import (
+    ReasoningHandoffApiAuditBundleConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_api_audit_package import (
+    ReasoningHandoffApiAuditPackageRead,
+)
+from rop.schemas.reasoning_handoff_api_audit_package_consistency import (
+    ReasoningHandoffApiAuditPackageConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_api_consistency import (
+    ReasoningHandoffApiConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation import (
+    ReasoningHandoffFullyAuditedApiAuditAttestationRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_package import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_bundle import (
+    ReasoningHandoffFullyAuditedApiAuditBundleRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_bundle_consistency import (
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_package import (
+    ReasoningHandoffFullyAuditedApiAuditPackageRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_package_consistency import (
+    ReasoningHandoffFullyAuditedApiAuditPackageConsistencyRead,
+)
+from rop.schemas.reasoning_handoff_fully_audited_api_consistency import (
+    ReasoningHandoffFullyAuditedApiConsistencyRead,
+)
 from rop.schemas.reasoning_pipeline import (
     ReasoningPipelineRead,
     ReasoningPipelineStageRead,
@@ -156,6 +196,20 @@ __all__ = [
     "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
+    "ReasoningHandoffApiAuditBundleConsistencyRead",
+    "ReasoningHandoffApiAuditBundleRead",
+    "ReasoningHandoffApiAuditPackageConsistencyRead",
+    "ReasoningHandoffApiAuditPackageRead",
+    "ReasoningHandoffApiConsistencyRead",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyRead",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationPackageRead",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationRead",
+    "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyRead",
+    "ReasoningHandoffFullyAuditedApiAuditBundleRead",
+    "ReasoningHandoffFullyAuditedApiAuditPackageConsistencyRead",
+    "ReasoningHandoffFullyAuditedApiAuditPackageRead",
+    "ReasoningHandoffFullyAuditedApiConsistencyRead",
+    "ReasoningHandoffRead",
     "ReasoningPipelineRead",
     "ReasoningPipelineStageRead",
     "ReasoningRunConsistencyRead",

@@ -64,6 +64,7 @@ RESULT_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "context_consistency_source",
+    "audited_context_fingerprint",
 )
 
 
@@ -276,10 +277,7 @@ def test_invalid_nested_audit_reported() -> None:
     broken = copy.deepcopy(ctx)
     del broken["reasoning_run_consistency"]["run_consistency_source"]
     result = _service().build(context=broken)
-    assert (
-        "INVALID_NESTED_REASONING_RUN_CONSISTENCY"
-        in result["consistency_issues"]
-    )
+    assert "INVALID_NESTED_REASONING_RUN_CONSISTENCY" in result["consistency_issues"]
     assert result["nested_reasoning_run_audit_consistent"] is False
 
 
@@ -288,10 +286,7 @@ def test_non_mapping_audit_reported() -> None:
     broken = dict(ctx)
     broken["reasoning_run_consistency"] = "not-a-mapping"
     result = _service().build(context=broken)
-    assert (
-        "INVALID_REASONING_RUN_CONSISTENCY_TYPE"
-        in result["consistency_issues"]
-    )
+    assert "INVALID_REASONING_RUN_CONSISTENCY_TYPE" in result["consistency_issues"]
 
 
 # ---------------------------------------------------------------------------
@@ -315,9 +310,7 @@ def test_stale_audit_from_other_session_rejected() -> None:
 def test_tampered_fingerprint_rejected() -> None:
     ctx = _valid_context()
     broken = copy.deepcopy(ctx)
-    original = broken["reasoning_run_consistency"][
-        "audited_run_fingerprint"
-    ]
+    original = broken["reasoning_run_consistency"]["audited_run_fingerprint"]
     broken["reasoning_run_consistency"]["audited_run_fingerprint"] = (
         "0" * 64 if original != "0" * 64 else "1" * 64
     )
@@ -332,13 +325,9 @@ def test_fingerprint_compute_failure_reported(monkeypatch) -> None:
     def boom(*args, **kwargs):
         raise RuntimeError("fingerprint computation forced to fail")
 
-    monkeypatch.setattr(
-        ReasoningRunConsistencyService, "_run_fingerprint", boom
-    )
+    monkeypatch.setattr(ReasoningRunConsistencyService, "_run_fingerprint", boom)
     result = _service().build(context=ctx)
-    assert (
-        "AUDIT_PROVENANCE_COMPUTE_FAILED" in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_COMPUTE_FAILED" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
     assert result["context_consistent"] is False
 
@@ -348,9 +337,7 @@ def test_provenance_mismatch_does_not_touch_nested_validity() -> None:
     contracts themselves remain structurally valid."""
     ctx = _valid_context()
     broken = copy.deepcopy(ctx)
-    broken["reasoning_run_consistency"]["audited_run_fingerprint"] = (
-        "f" * 64
-    )
+    broken["reasoning_run_consistency"]["audited_run_fingerprint"] = "f" * 64
     result = _service().build(context=broken)
     assert result["nested_reasoning_run_consistent"] is True
     assert result["nested_reasoning_run_audit_consistent"] is True
@@ -389,14 +376,10 @@ def test_audit_does_not_invoke_task055_build(monkeypatch) -> None:
     ctx = _valid_context()
 
     def boom(*args, **kwargs):
-        raise AssertionError(
-            "Task 055 build path was called during Task 056 audit"
-        )
+        raise AssertionError("Task 055 build path was called during Task 056 audit")
 
     monkeypatch.setattr(ReasoningContextService, "build", boom)
-    monkeypatch.setattr(
-        ReasoningContextService, "build_for_session", boom
-    )
+    monkeypatch.setattr(ReasoningContextService, "build_for_session", boom)
     # Should still succeed, proving the audit runs purely off the
     # supplied context mapping.
     result = _service().build(context=ctx)
@@ -419,12 +402,8 @@ def test_issue_ordering_is_deterministic() -> None:
     issues = result["consistency_issues"]
     assert issues == sorted(issues, key=lambda i: _issue_rank(i))
     # And specific early issues appear before later ones.
-    assert issues.index("CONTEXT_NOT_AVAILABLE") < issues.index(
-        "INVALID_SESSION_ID"
-    )
-    assert issues.index("INVALID_SESSION_ID") < issues.index(
-        "INVALID_CONTEXT_SOURCE"
-    )
+    assert issues.index("CONTEXT_NOT_AVAILABLE") < issues.index("INVALID_SESSION_ID")
+    assert issues.index("INVALID_SESSION_ID") < issues.index("INVALID_CONTEXT_SOURCE")
 
 
 # Read the issue order directly from the service so the test cannot
@@ -447,9 +426,7 @@ def test_duplicate_issue_prevention() -> None:
     broken["context_source"] = "WRONG"
     broken["context_source"] = "WRONG"  # no-op but proves dedupe
     result = _service().build(context=broken)
-    assert (
-        result["consistency_issues"].count("INVALID_CONTEXT_SOURCE") == 1
-    )
+    assert result["consistency_issues"].count("INVALID_CONTEXT_SOURCE") == 1
 
 
 def test_no_duplicate_issues_anywhere() -> None:
@@ -497,9 +474,7 @@ def test_does_not_mutate_context() -> None:
     assert id(ctx["reasoning_pipeline"]) == pipeline_id
     assert id(ctx["reasoning_run_consistency"]) == audit_id
     assert list(ctx["reasoning_pipeline"].keys()) == pipeline_keys_before
-    assert (
-        list(ctx["reasoning_run_consistency"].keys()) == audit_keys_before
-    )
+    assert list(ctx["reasoning_run_consistency"].keys()) == audit_keys_before
 
 
 def test_exact_nested_objects_preserved() -> None:
@@ -627,6 +602,7 @@ def test_no_llm_or_decision_logic() -> None:
     for token in substring_tokens:
         assert token not in code, token
 
+
 # ---------------------------------------------------------------------------
 # Blocker fixes: unperformed checks must not be reported as passing
 # ---------------------------------------------------------------------------
@@ -637,10 +613,7 @@ def test_provenance_unavailable_when_audit_missing() -> None:
     broken = dict(ctx)
     del broken["reasoning_run_consistency"]
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
     assert result["context_consistent"] is False
 
@@ -650,10 +623,7 @@ def test_provenance_unavailable_when_audit_non_mapping() -> None:
     broken = dict(ctx)
     broken["reasoning_run_consistency"] = "not-a-mapping"
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
 
 
@@ -662,10 +632,7 @@ def test_provenance_unavailable_when_audit_invalid() -> None:
     broken = copy.deepcopy(ctx)
     del broken["reasoning_run_consistency"]["run_consistency_source"]
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
 
 
@@ -674,10 +641,7 @@ def test_provenance_unavailable_when_run_missing() -> None:
     broken = dict(ctx)
     del broken["reasoning_pipeline"]
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
 
 
@@ -686,10 +650,7 @@ def test_provenance_unavailable_when_run_non_mapping() -> None:
     broken = dict(ctx)
     broken["reasoning_pipeline"] = "not-a-mapping"
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
 
 
@@ -698,10 +659,7 @@ def test_provenance_unavailable_when_run_invalid() -> None:
     broken = copy.deepcopy(ctx)
     del broken["reasoning_pipeline"]["run_source"]
     result = _service().build(context=broken)
-    assert (
-        "AUDIT_PROVENANCE_CHECK_UNAVAILABLE"
-        in result["consistency_issues"]
-    )
+    assert "AUDIT_PROVENANCE_CHECK_UNAVAILABLE" in result["consistency_issues"]
     assert result["audit_provenance_consistent"] is False
 
 
@@ -731,6 +689,7 @@ def test_valid_candidate_state_flags_true() -> None:
     assert result["candidate_state_consistent"] is True
     assert result["candidate_count_consistent"] is True
 
+
 # ---------------------------------------------------------------------------
 # Per-element contract validation
 # ---------------------------------------------------------------------------
@@ -759,9 +718,7 @@ def test_malformed_missing_information_item_reported() -> None:
     broken = dict(ctx)
     broken["missing_information"] = [{"missing": "all required fields"}]
     result = _service().build(context=broken)
-    assert (
-        "INVALID_MISSING_INFORMATION_ITEM" in result["consistency_issues"]
-    )
+    assert "INVALID_MISSING_INFORMATION_ITEM" in result["consistency_issues"]
     assert result["context_consistent"] is False
 
 
@@ -832,10 +789,7 @@ def test_missing_information_from_other_session_reported() -> None:
     broken = dict(ctx)
     broken["missing_information"] = list(ctx["missing_information"]) + [fake]
     result = _service().build(context=broken)
-    assert (
-        "MISSING_INFORMATION_SESSION_MISMATCH"
-        in result["consistency_issues"]
-    )
+    assert "MISSING_INFORMATION_SESSION_MISMATCH" in result["consistency_issues"]
     assert result["context_consistent"] is False
 
 
@@ -912,3 +866,195 @@ def test_element_validation_does_not_mutate_inputs() -> None:
     assert [id(x) for x in ctx["observations"]] == obs_ids_before
     assert [id(x) for x in ctx["candidate_state"]] == cand_ids_before
 
+
+# ---------------------------------------------------------------------------
+# Task 058: audited_context_fingerprint provenance
+# ---------------------------------------------------------------------------
+
+
+def test_audited_context_fingerprint_present() -> None:
+    result = _service().build(context=_valid_context())
+    fp = result["audited_context_fingerprint"]
+    assert isinstance(fp, str)
+    assert len(fp) == 64
+    assert all(c in "0123456789abcdef" for c in fp)
+
+
+def test_audited_context_fingerprint_deterministic() -> None:
+    ctx = _valid_context()
+    a = _service().build(context=ctx)
+    b = _service().build(context=ctx)
+    assert a["audited_context_fingerprint"] == b["audited_context_fingerprint"]
+
+
+def test_fingerprint_changes_with_session_id() -> None:
+    ctx = _valid_context()
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    ctx2 = dict(ctx)
+    ctx2["session_id"] = uuid4()
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx2)
+    assert a != b
+
+
+def test_fingerprint_changes_with_observations() -> None:
+    ctx = _valid_context()
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    ctx2 = dict(ctx)
+    ctx2["observations"] = list(ctx["observations"]) + [
+        {
+            "id": str(uuid4()),
+            "session_id": str(ctx["session_id"]),
+            "text": "extra",
+            "type": "symptom",
+            "confidence": 0.5,
+            "source": "test",
+            "timestamp": "2026-01-01T00:00:00",
+        }
+    ]
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx2)
+    assert a != b
+
+
+def test_fingerprint_changes_with_candidate_state() -> None:
+    ctx = _valid_context()
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    ctx2 = dict(ctx)
+    ctx2["candidate_state"] = list(ctx["candidate_state"]) + [
+        {
+            "id": str(uuid4()),
+            "session_id": str(ctx["session_id"]),
+            "name": "injected",
+            "category": "test",
+            "trigger_reason": "test",
+            "initial_score": 1.0,
+            "confidence": 0.5,
+            "supporting_observations": [],
+            "contradicting_observations": [],
+            "missing_information": [],
+            "status": "pending",
+            "created_at": "2026-01-01T00:00:00",
+        }
+    ]
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx2)
+    assert a != b
+
+
+def test_fingerprint_changes_with_reasoning_pipeline() -> None:
+    ctx = _valid_context()
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    ctx2 = dict(ctx)
+    ctx2["reasoning_pipeline"] = dict(ctx["reasoning_pipeline"])
+    ctx2["reasoning_pipeline"]["stage_count"] = (
+        ctx2["reasoning_pipeline"]["stage_count"] + 1
+    )
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx2)
+    assert a != b
+
+
+def test_fingerprint_changes_with_reasoning_run_consistency() -> None:
+    ctx = _valid_context()
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    ctx2 = dict(ctx)
+    ctx2["reasoning_run_consistency"] = dict(ctx["reasoning_run_consistency"])
+    ctx2["reasoning_run_consistency"]["audited_run_fingerprint"] = "a" * 64
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx2)
+    assert a != b
+
+
+def test_fingerprint_does_not_mutate_input() -> None:
+    ctx = _valid_context()
+    snap = {
+        name: (id(ctx[name]), len(ctx[name]))
+        for name in (
+            "observations",
+            "entities",
+            "missing_information",
+            "template_context",
+            "candidate_state",
+        )
+    }
+    pipeline_keys = list(ctx["reasoning_pipeline"].keys())
+    audit_keys = list(ctx["reasoning_run_consistency"].keys())
+    mod.ReasoningContextConsistencyService._context_fingerprint(ctx)
+    for name, (lst_id, length) in snap.items():
+        assert id(ctx[name]) == lst_id
+        assert len(ctx[name]) == length
+    assert list(ctx["reasoning_pipeline"].keys()) == pipeline_keys
+    assert list(ctx["reasoning_run_consistency"].keys()) == audit_keys
+
+
+def test_fingerprint_computed_from_exact_supplied_context() -> None:
+    ctx_a = _valid_context("Task 058 fingerprint session A")
+    ctx_b = _valid_context("Task 058 fingerprint session B")
+    a = mod.ReasoningContextConsistencyService._context_fingerprint(ctx_a)
+    b = mod.ReasoningContextConsistencyService._context_fingerprint(ctx_b)
+    assert a != b
+
+
+def test_rejects_missing_fingerprint_in_result() -> None:
+    result = _service().build(context=_valid_context())
+    del result["audited_context_fingerprint"]
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "MISSING_RESULT_FIELD"
+
+
+def test_rejects_none_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = None
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_TYPE"
+
+
+def test_rejects_integer_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = 12345
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_TYPE"
+
+
+def test_rejects_empty_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = ""
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_FORMAT"
+
+
+def test_rejects_short_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = "a" * 63
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_FORMAT"
+
+
+def test_rejects_long_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = "a" * 65
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_FORMAT"
+
+
+def test_rejects_uppercase_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = "A" * 64
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_FORMAT"
+
+
+def test_rejects_non_hex_fingerprint() -> None:
+    result = _service().build(context=_valid_context())
+    result["audited_context_fingerprint"] = "g" * 64
+    with pytest.raises(ReasoningContextConsistencyContractError) as ei:
+        mod.ReasoningContextConsistencyService._validate_result(result)
+    assert ei.value.invariant == "AUDITED_CONTEXT_FINGERPRINT_FORMAT"
+
+
+def test_valid_lowercase_hex_fingerprint_accepted() -> None:
+    result = _service().build(context=_valid_context())
+    mod.ReasoningContextConsistencyService._validate_result(result)

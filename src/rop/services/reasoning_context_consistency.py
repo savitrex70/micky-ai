@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -8,6 +11,7 @@ from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.entity import EntityRead
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import ObservationRead
+from rop.schemas.reasoning_context import ReasoningContextRead
 from rop.schemas.template_match import TemplateMatchRead
 from rop.services.reasoning_run import (
     ReasoningRunService,
@@ -16,10 +20,10 @@ from rop.services.reasoning_run_consistency import (
     ReasoningRunConsistencyService,
 )
 
-REASONING_CONTEXT_CONSISTENCY_SOURCE_TASK_056 = (
-    "REASONING_CONTEXT_CONSISTENCY_TASK_056"
-)
+REASONING_CONTEXT_CONSISTENCY_SOURCE_TASK_056 = "REASONING_CONTEXT_CONSISTENCY_TASK_056"
 """Fixed structural-contract identifier for Task 056 results."""
+
+_CONTEXT_FINGERPRINT_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _CONTEXT_REQUIRED_FIELDS = (
     "available",
@@ -50,6 +54,7 @@ _RESULT_REQUIRED_FIELDS = (
     "metadata_consistent",
     "consistency_issues",
     "context_consistency_source",
+    "audited_context_fingerprint",
 )
 
 _RESULT_BOOLEAN_FIELDS = (
@@ -179,8 +184,7 @@ class ReasoningContextConsistencyService:
         if not isinstance(context, Mapping):
             raise ReasoningContextConsistencyContractError(
                 "CONTEXT_TYPE",
-                "context is not a mapping: "
-                + type(context).__name__,
+                "context is not a mapping: " + type(context).__name__,
             )
 
         issues: list[str] = []
@@ -249,9 +253,7 @@ class ReasoningContextConsistencyService:
             _add("INVALID_NESTED_REASONING_RUN")
         else:
             try:
-                ReasoningRunService._validate_result(
-                    dict(reasoning_pipeline)
-                )
+                ReasoningRunService._validate_result(dict(reasoning_pipeline))
                 pipeline_valid = True
             except Exception:
                 _add("INVALID_NESTED_REASONING_RUN")
@@ -279,10 +281,8 @@ class ReasoningContextConsistencyService:
             _add("AUDIT_PROVENANCE_CHECK_UNAVAILABLE")
         else:
             try:
-                expected_fingerprint = (
-                    ReasoningRunConsistencyService._run_fingerprint(
-                        reasoning_pipeline
-                    )
+                expected_fingerprint = ReasoningRunConsistencyService._run_fingerprint(
+                    reasoning_pipeline
                 )
             except Exception:
                 _add("AUDIT_PROVENANCE_COMPUTE_FAILED")
@@ -297,18 +297,12 @@ class ReasoningContextConsistencyService:
         # A missing or non-list candidate_state means the relationship
         # cannot be checked, so both dedicated flags must be False.
         candidate_state_present = "candidate_state" in context
-        candidate_state_is_list = isinstance(
-            context.get("candidate_state"), list
-        )
+        candidate_state_is_list = isinstance(context.get("candidate_state"), list)
         candidate_state_consistent = (
-            candidate_state_present
-            and candidate_state_is_list
-            and candidate_items_ok
+            candidate_state_present and candidate_state_is_list and candidate_items_ok
         )
         candidate_count_consistent = False
-        if candidate_state_consistent and isinstance(
-            reasoning_pipeline, Mapping
-        ):
+        if candidate_state_consistent and isinstance(reasoning_pipeline, Mapping):
             pipeline_count = reasoning_pipeline.get("candidate_count")
             if (
                 isinstance(pipeline_count, int)
@@ -347,9 +341,7 @@ class ReasoningContextConsistencyService:
             "available": True,
             "context_consistent": context_consistent,
             "session_consistent": session_consistent,
-            "nested_reasoning_run_consistent": (
-                nested_reasoning_run_consistent
-            ),
+            "nested_reasoning_run_consistent": (nested_reasoning_run_consistent),
             "nested_reasoning_run_audit_consistent": (
                 nested_reasoning_run_audit_consistent
             ),
@@ -363,8 +355,60 @@ class ReasoningContextConsistencyService:
                 REASONING_CONTEXT_CONSISTENCY_SOURCE_TASK_056
             ),
         }
+        # Provenance: SHA-256 of the exact context supplied to this
+        # audit. Computed once, from the actual input, before any
+        # validation of the final result.
+        result["audited_context_fingerprint"] = (
+            ReasoningContextConsistencyService._context_fingerprint(context)
+        )
         self._validate_result(result)
         return result
+
+    @staticmethod
+    def _canonicalize(value: Any) -> Any:
+        """Return a deterministic, JSON-serializable canonical form."""
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(k): ReasoningContextConsistencyService._canonicalize(v)
+                for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+            }
+        if isinstance(value, list):
+            return [
+                ReasoningContextConsistencyService._canonicalize(item) for item in value
+            ]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _context_fingerprint(context: Mapping[str, Any]) -> str:
+        """SHA-256 hex digest of the canonicalized Task 055 context.
+
+        The supplied context may carry ORM objects and nested typed
+        models. ``ReasoningContextRead.model_validate`` normalizes
+        them into a JSON-safe form deterministically; the JSON-safe
+        form is used internally for hashing only and is never returned
+        or exposed to callers.
+        """
+        try:
+            typed = ReasoningContextRead.model_validate(dict(context))
+            serialized = typed.model_dump(mode="json")
+        except Exception:
+            # Malformed context (missing fields, wrong types, etc.).
+            # The audit still needs a fingerprint -- it flags the
+            # malformation through consistency_issues rather than
+            # refusing to produce a result -- so fall back to
+            # canonicalizing the raw mapping. The fallback is less
+            # canonical than the typed path, but the input is already
+            # flagged as inconsistent by the caller.
+            serialized = ReasoningContextConsistencyService._canonicalize(context)
+        canonical = ReasoningContextConsistencyService._canonicalize(serialized)
+        payload = json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), default=str
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _validate_result(result: dict[str, Any]) -> None:
@@ -383,8 +427,7 @@ class ReasoningContextConsistencyService:
         if not isinstance(issues, list):
             raise ReasoningContextConsistencyContractError(
                 "ISSUES_TYPE",
-                "consistency_issues is not a list: "
-                + type(issues).__name__,
+                "consistency_issues is not a list: " + type(issues).__name__,
             )
         for issue in issues:
             if not isinstance(issue, str) or not issue:
@@ -403,8 +446,7 @@ class ReasoningContextConsistencyService:
         if issues != expected_order:
             raise ReasoningContextConsistencyContractError(
                 "ISSUES_ORDER",
-                "consistency_issues is not in fixed order: "
-                + repr(issues),
+                "consistency_issues is not in fixed order: " + repr(issues),
             )
         if (
             result["context_consistency_source"]
@@ -413,11 +455,22 @@ class ReasoningContextConsistencyService:
             raise ReasoningContextConsistencyContractError(
                 "INVALID_SOURCE",
                 "context_consistency_source is not the Task 056 "
-                "identifier: "
-                + repr(result["context_consistency_source"]),
+                "identifier: " + repr(result["context_consistency_source"]),
             )
         if result["context_consistent"] != (len(issues) == 0):
             raise ReasoningContextConsistencyContractError(
                 "CONTEXT_CONSISTENT_MISMATCH",
                 "context_consistent does not match consistency_issues",
+            )
+        fingerprint = result["audited_context_fingerprint"]
+        if not isinstance(fingerprint, str):
+            raise ReasoningContextConsistencyContractError(
+                "AUDITED_CONTEXT_FINGERPRINT_TYPE",
+                "audited_context_fingerprint is not a string: " + repr(fingerprint),
+            )
+        if not _CONTEXT_FINGERPRINT_HEX_RE.fullmatch(fingerprint):
+            raise ReasoningContextConsistencyContractError(
+                "AUDITED_CONTEXT_FINGERPRINT_FORMAT",
+                "audited_context_fingerprint is not a 64-character "
+                "lowercase hexadecimal SHA-256 digest: " + repr(fingerprint),
             )
