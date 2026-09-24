@@ -332,6 +332,22 @@ def test_tampered_audited_package_fingerprint_rejected() -> None:
     assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
 
 
+def test_tampered_package_fingerprint_rejected() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    tampered = copy.deepcopy(pkg)
+    tampered["package_fingerprint"] = "0" * 64
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
+    ) as ei:
+        _service()._validate_result(tampered)
+    assert ei.value.invariant == "PACKAGE_FINGERPRINT_MISMATCH"
+
+
 def test_invalid_audited_package_fingerprint_format_rejected() -> None:
     sid, att, cons = _real_attestation_and_consistency()
     pkg = _service().build(
@@ -376,9 +392,10 @@ def test_tampered_package_consistent_rejected() -> None:
         attestation=att,
         attestation_consistency=cons,
     )
-    assert pkg["package_consistent"] is True
     tampered = copy.deepcopy(pkg)
-    tampered["package_consistent"] = False
+    # Derived-flag integrity: flipping the declared flag must be
+    # caught (for these consistent fixtures this flips True -> False).
+    tampered["package_consistent"] = not tampered["package_consistent"]
     with pytest.raises(
         ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
     ) as ei:
