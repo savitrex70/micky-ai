@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -302,6 +303,87 @@ def test_fingerprint_mismatch_rejected() -> None:
             attestation_consistency=broken_cons,
         )
     assert ei.value.invariant == "AUDITED_ATTESTATION_FINGERPRINT_MISMATCH"
+
+
+def test_audited_package_fingerprint_binds_to_package_fingerprint() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    assert pkg["audited_package_fingerprint"] == pkg["package_fingerprint"]
+    assert len(pkg["audited_package_fingerprint"]) == 64
+
+
+def test_tampered_audited_package_fingerprint_rejected() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    tampered = copy.deepcopy(pkg)
+    tampered["audited_package_fingerprint"] = "0" * 64
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
+    ) as ei:
+        _service()._validate_result(tampered)
+    assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_MISMATCH"
+
+
+def test_invalid_audited_package_fingerprint_format_rejected() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    for bad in ("AB" * 32, "0" * 63, None, 123):
+        tampered = copy.deepcopy(pkg)
+        tampered["audited_package_fingerprint"] = bad
+        with pytest.raises(
+            ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
+        ) as ei:
+            _service()._validate_result(tampered)
+        assert ei.value.invariant == "AUDITED_PACKAGE_FINGERPRINT_FORMAT"
+
+
+def test_missing_audited_package_fingerprint_rejected() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    tampered = copy.deepcopy(pkg)
+    del tampered["audited_package_fingerprint"]
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
+    ) as ei:
+        _service()._validate_result(tampered)
+    assert ei.value.invariant == "MISSING_PACKAGE_FIELD"
+    with pytest.raises(ValidationError):
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageRead.model_validate(
+            tampered
+        )
+
+
+def test_tampered_package_consistent_rejected() -> None:
+    sid, att, cons = _real_attestation_and_consistency()
+    pkg = _service().build(
+        session_id=sid,
+        attestation=att,
+        attestation_consistency=cons,
+    )
+    assert pkg["package_consistent"] is True
+    tampered = copy.deepcopy(pkg)
+    tampered["package_consistent"] = False
+    with pytest.raises(
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError
+    ) as ei:
+        _service()._validate_result(tampered)
+    assert ei.value.invariant == "PACKAGE_CONSISTENT_MISMATCH"
 
 
 def test_forced_fingerprint_compute_failure() -> None:

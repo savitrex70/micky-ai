@@ -26,4 +26,6 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageRead(BaseModel):
     )
     package_source: str
     package_fingerprint: str
-    audited_package_fingerprint: str | None = None
+    # Self-authenticating provenance: mandatory, a lowercase 64-char
+    # SHA-256 hex string, and exactly equal to package_fingerprint.
+    audited_package_fingerprint: str
