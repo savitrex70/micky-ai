@@ -206,11 +206,6 @@ def test_task048_result_passed_through_unchanged(monkeypatch) -> None:
 
 
 def _strip_uuids(obj):
-    import re as _re
-    uuid_re = _re.compile(
-        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-        _re.I,
-    )
     if isinstance(obj, UUID):
         return str(obj)
     if isinstance(obj, str):

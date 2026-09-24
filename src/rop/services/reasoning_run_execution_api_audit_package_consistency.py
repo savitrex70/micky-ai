@@ -220,7 +220,6 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
 
         # --- Nested Task 048 response ---
         response = package.get("response")
-        response_valid = False
         if not isinstance(response, Mapping):
             issues.append("NESTED_RESPONSE_MISMATCH")
         else:
@@ -229,7 +228,6 @@ class ReasoningRunExecutionApiAuditPackageConsistencyService:
                 ReasoningRunExecutionAuditPackageService._validate_result(
                     response_for_validation
                 )
-                response_valid = True
             except Exception:
                 issues.append("NESTED_RESPONSE_MISMATCH")
 
