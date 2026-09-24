@@ -7,18 +7,17 @@ import inspect
 from collections.abc import Generator
 from typing import Any
 from unittest.mock import patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from rop.database import Base, get_db
 from rop.main import app
-from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_package_consistency import (
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_package_consistency import (  # noqa: E501
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyRead,
 )
 from rop.services import (
@@ -27,13 +26,13 @@ from rop.services import (
 from rop.services.reasoning_handoff_fully_audited_api_audit_attestation import (
     ReasoningHandoffFullyAuditedApiAuditAttestationService,
 )
-from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (  # noqa: E501
     ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyService,
 )
 from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package import (
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageService,
 )
-from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package_consistency import (
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package_consistency import (  # noqa: E501
     REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService,
@@ -72,7 +71,9 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 
-def _service() -> ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
+def _service() -> (
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService
+):
     return ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService()
 
 
@@ -130,8 +131,10 @@ def _valid_package() -> tuple[UUID, dict[str, Any]]:
         response=body,
         api_consistency=api_audit,
     )
-    package_audit = ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(
-        package=api_package
+    package_audit = (
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService().build(
+            package=api_package
+        )
     )
     bundle = ReasoningHandoffFullyAuditedApiAuditBundleService().build(
         session_id=sid,
@@ -177,7 +180,7 @@ def test_valid_shape_and_self_authenticating_pair() -> None:
     assert result["package_fingerprint"] == expected
     assert len(result["package_fingerprint"]) == 64
 
-    model = ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyRead.model_validate(
+    model = ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyRead.model_validate(  # noqa: E501
         result
     )
     assert model.package_fingerprint == model.audited_package_fingerprint
@@ -423,5 +426,5 @@ def test_service_has_no_database_or_http_dependencies() -> None:
 def test_canonical_source_constant_value() -> None:
     assert (
         REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074
-        == "REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_TASK_074"
+        == "REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_TASK_074"  # noqa: E501
     )

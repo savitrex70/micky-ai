@@ -17,18 +17,22 @@ from rop.services.reasoning_handoff_fully_audited_api_audit_attestation import (
     REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_SOURCE_TASK_071,
     ReasoningHandoffFullyAuditedApiAuditAttestationService,
 )
-from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_consistency import (  # noqa: E501
     REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_CONSISTENCY_SOURCE_TASK_072,
     ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyService,
 )
 from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package import (
     REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_SOURCE_TASK_073,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageService,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package import (
     _canonicalize as _task073_canonicalize,
+)
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_package import (
     _compute_package_fingerprint as _task073_compute_package_fingerprint,
 )
 
-REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074 = (
+REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074 = (  # noqa: E501
     "REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_TASK_074"
 )
 
@@ -164,9 +168,7 @@ _ContractError = (
 class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
     """Task 074: pure consistency audit of a Task 073 package."""
 
-    def build(
-        self, *, package: Mapping[str, Any] | None = None
-    ) -> dict[str, Any]:
+    def build(self, *, package: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """Audit a Task 073 package without mutating or rebuilding it."""
         if package is None:
             raise _ContractError("MISSING_PACKAGE", "package is required")
@@ -241,13 +243,13 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
         if isinstance(attestation_consistency, Mapping):
             if (
                 attestation_consistency.get("attestation_consistency_source")
-                != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_CONSISTENCY_SOURCE_TASK_072
+                != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_CONSISTENCY_SOURCE_TASK_072  # noqa: E501
             ):
                 _add("ATTESTATION_CONSISTENCY_SOURCE_MISMATCH")
 
         if (
             package.get("package_source")
-            != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_SOURCE_TASK_073
+            != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_SOURCE_TASK_073  # noqa: E501
         ):
             _add("PACKAGE_SOURCE_MISMATCH")
 
@@ -264,7 +266,11 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
             _add("PACKAGE_FINGERPRINT_FORMAT")
         if not audited_package_fp_valid:
             _add("AUDITED_PACKAGE_FINGERPRINT_FORMAT")
-        if package_fp_valid and audited_package_fp_valid and package_fp != audited_package_fp:
+        if (
+            package_fp_valid
+            and audited_package_fp_valid
+            and package_fp != audited_package_fp
+        ):
             _add("PACKAGE_FINGERPRINT_PAIR_MISMATCH")
 
         try:
@@ -301,7 +307,9 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
         session_consistent = not any(
             i in unique_issues for i in ("SESSION_ID_INVALID", "SESSION_ID_MISMATCH")
         )
-        nested_attestation_consistent = "NESTED_ATTESTATION_MISMATCH" not in unique_issues
+        nested_attestation_consistent = (
+            "NESTED_ATTESTATION_MISMATCH" not in unique_issues
+        )
         nested_attestation_consistency_consistent = (
             "NESTED_ATTESTATION_CONSISTENCY_MISMATCH" not in unique_issues
         )
@@ -351,7 +359,7 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
             "source_consistency": source_consistency,
             "metadata_consistent": metadata_consistent,
             "consistency_issues": ordered_issues,
-            "package_consistency_source": REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074,
+            "package_consistency_source": REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074,  # noqa: E501
             "package_fingerprint": expected_fp,
             "audited_package_fingerprint": expected_fp,
         }
@@ -401,14 +409,21 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
         if any(not isinstance(issue, str) or not issue for issue in issues):
             raise _ContractError("ISSUE_TYPE", "every issue must be a non-empty string")
         if len(set(issues)) != len(issues):
-            raise _ContractError("DUPLICATE_ISSUE", "consistency_issues contains duplicates")
+            raise _ContractError(
+                "DUPLICATE_ISSUE", "consistency_issues contains duplicates"
+            )
 
         expected_order = [i for i in _ISSUE_ORDER if i in set(issues)]
         expected_order.extend(sorted(set(issues) - set(_ISSUE_ORDER)))
         if issues != expected_order:
-            raise _ContractError("ISSUES_ORDER", "consistency_issues is not in fixed order")
+            raise _ContractError(
+                "ISSUES_ORDER", "consistency_issues is not in fixed order"
+            )
 
-        if result["package_consistency_source"] != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074:
+        if (
+            result["package_consistency_source"]
+            != REASONING_HANDOFF_FULLY_AUDITED_API_AUDIT_ATTESTATION_PACKAGE_CONSISTENCY_SOURCE_TASK_074  # noqa: E501
+        ):
             raise _ContractError(
                 "INVALID_SOURCE",
                 "package_consistency_source is not the Task 074 identifier",
@@ -422,17 +437,20 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
 
         package_fp = result["package_fingerprint"]
         audited_package_fp = result["audited_package_fingerprint"]
-        if not isinstance(package_fp, str) or not _PACKAGE_FINGERPRINT_HEX_RE.fullmatch(package_fp):
+        if not isinstance(package_fp, str) or not _PACKAGE_FINGERPRINT_HEX_RE.fullmatch(
+            package_fp
+        ):
             raise _ContractError(
                 "PACKAGE_FINGERPRINT_FORMAT",
                 "package_fingerprint is not a lowercase 64-character SHA-256 string",
             )
-        if not isinstance(audited_package_fp, str) or not _PACKAGE_FINGERPRINT_HEX_RE.fullmatch(
-            audited_package_fp
-        ):
+        if not isinstance(
+            audited_package_fp, str
+        ) or not _PACKAGE_FINGERPRINT_HEX_RE.fullmatch(audited_package_fp):
             raise _ContractError(
                 "AUDITED_PACKAGE_FINGERPRINT_FORMAT",
-                "audited_package_fingerprint is not a lowercase 64-character SHA-256 string",
+                "audited_package_fingerprint is not a lowercase 64-character "
+                "SHA-256 string",
             )
 
         if package is not None:
@@ -446,12 +464,14 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
             if result["package_fingerprint"] != expected:
                 raise _ContractError(
                     "PACKAGE_FINGERPRINT_MISMATCH",
-                    "package_fingerprint does not match the exact Task 073 package definition",
+                    "package_fingerprint does not match the exact Task 073 "
+                    "package definition",
                 )
             if result["audited_package_fingerprint"] != expected:
                 raise _ContractError(
                     "AUDITED_PACKAGE_FINGERPRINT_MISMATCH",
-                    "audited_package_fingerprint does not match the exact Task 073 package definition",
+                    "audited_package_fingerprint does not match the exact "
+                    "Task 073 package definition",
                 )
 
         if package_fp != audited_package_fp:
@@ -486,7 +506,8 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
         ):
             raise _ContractError(
                 "NESTED_ATTESTATION_CONSISTENCY_CONSISTENT_MISMATCH",
-                "nested_attestation_consistency_consistent does not match consistency_issues",
+                "nested_attestation_consistency_consistent does not match "
+                "consistency_issues",
             )
 
         expected_provenance = not any(
@@ -528,7 +549,8 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyService:
             )
 
         expected_metadata = not any(
-            i in issue_set for i in ("MISSING_PACKAGE_FIELD", "INVALID_PACKAGE_AVAILABLE")
+            i in issue_set
+            for i in ("MISSING_PACKAGE_FIELD", "INVALID_PACKAGE_AVAILABLE")
         )
         if result["metadata_consistent"] != expected_metadata:
             raise _ContractError(
