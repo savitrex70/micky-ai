@@ -327,8 +327,10 @@ def test_wrong_bundle_source() -> None:
     sid, bundle, consistency = _real_bundle_and_consistency()
     broken = copy.deepcopy(bundle)
     broken["bundle_source"] = "WRONG"
-    # Need to make consistency still match the original bundle's fingerprint? No, bundle_source mismatch should be caught before fingerprint
-    # But to avoid fingerprint mismatch, we need to keep consistency's fingerprint consistent with original bundle
+    # Need to make consistency still match the original bundle's fingerprint? No,
+    # bundle_source mismatch should be caught before fingerprint
+    # But to avoid fingerprint mismatch, we need to keep consistency's fingerprint
+    # consistent with original bundle
     # So this test will raise BUNDLE_SOURCE_MISMATCH
     with pytest.raises(
         ReasoningHandoffFullyAuditedApiAuditAttestationContractError
@@ -443,13 +445,16 @@ def test_forced_attestation_fingerprint_compute_failure() -> None:
 def _real_legitimate_defect() -> (
     tuple[UUID, dict[str, Any], dict[str, Any], dict[str, Any]]
 ):
-    """Create a coherent defect chain: bundle False, consistency True, attestation True."""
+    """Create a coherent defect chain: bundle False, consistency True,
+    attestation True.
+    """
     sid, bundle, _ = _real_bundle_and_consistency()
     # Create a defect Task 068 audit: package_consistent=False with a single issue
     # This will make Task 069 bundle_consistent=False but still valid
     orig_audit = bundle["api_audit_package_consistency"]
     defect_audit = copy.deepcopy(orig_audit)
-    # Set the audit to report a defect: package_consistent=False, nested_response_consistent=False
+    # Set the audit to report a defect: package_consistent=False,
+    # nested_response_consistent=False
     defect_audit["consistency_issues"] = ["NESTED_RESPONSE_MISMATCH"]
     defect_audit["package_consistent"] = False
     defect_audit["nested_response_consistent"] = False
@@ -464,11 +469,13 @@ def _real_legitimate_defect() -> (
     defect_audit["package_relationship_consistent"] = True
     defect_audit["source_consistency"] = True
     defect_audit["metadata_consistent"] = True
-    # Validate the defect audit is still internally consistent (it correctly reports a defect)
+    # Validate the defect audit is still internally consistent (it correctly reports a
+    # defect)
     ReasoningHandoffFullyAuditedApiAuditPackageConsistencyService._validate_result(
         defect_audit
     )
-    # Now build a Task 069 bundle with this defect audit - it should have bundle_consistent=False
+    # Now build a Task 069 bundle with this defect audit - it should have
+    # bundle_consistent=False
     package = bundle["api_audit_package"]
     defect_bundle = ReasoningHandoffFullyAuditedApiAuditBundleService().build(
         session_id=sid,
@@ -476,7 +483,8 @@ def _real_legitimate_defect() -> (
         api_audit_package_consistency=defect_audit,
     )
     assert defect_bundle["bundle_consistent"] is False
-    # Now audit this defect bundle with Task 070 - it should be coherent (True) because the bundle correctly reports the defect
+    # Now audit this defect bundle with Task 070 - it should be coherent (True) because
+    # the bundle correctly reports the defect
     defect_consistency = (
         ReasoningHandoffFullyAuditedApiAuditBundleConsistencyService().build(
             bundle=defect_bundle
