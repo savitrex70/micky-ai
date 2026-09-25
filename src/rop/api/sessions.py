@@ -47,6 +47,7 @@ from rop.schemas import (
     ObservationExtractionResponse,
     ObservationRead,
     ReasoningHandoffApiAuditBundleRead,
+    ReasoningHandoffFullyAuditedApiAuditAttestationApiRead,
     ReasoningHandoffRead,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
@@ -114,6 +115,17 @@ from rop.services import (
     ReasoningHandoffApiConsistencyContractError,
     ReasoningHandoffApiService,
     ReasoningHandoffContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationApiContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationApiService,
+    ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditBundleContractError,
+    ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditPackageContractError,
+    ReasoningHandoffFullyAuditedApiConsistencyContractError,
     ReasoningHandoffFullyAuditedApiService,
     ReasoningPipelineContractError,
     ReasoningPipelineService,
@@ -198,6 +210,9 @@ reasoning_run_execution_audit_package_service = (
 )
 reasoning_handoff_api_service = ReasoningHandoffApiService()
 reasoning_handoff_fully_audited_api_service = ReasoningHandoffFullyAuditedApiService()
+reasoning_handoff_fully_audited_api_audit_attestation_api_service = (
+    ReasoningHandoffFullyAuditedApiAuditAttestationApiService()
+)
 
 
 @router.post(
@@ -2310,4 +2325,76 @@ def get_reasoning_handoff_fully_audited(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=("Internal reasoning-handoff fully-audited contract violation"),
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-handoff/fully-audited/attestation",
+    response_model=ReasoningHandoffFullyAuditedApiAuditAttestationApiRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_handoff_fully_audited_attestation_api(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 075: fully audited attestation API.
+
+    Returns the Task 073 attestation package and its Task 074 package
+    consistency audit for the requested session, bundled as the final
+    fully audited attestation API response. This is a composition of the
+    canonical Task 071 attestation, Task 072 audit, Task 073 package, and
+    Task 074 audit. The response's ``api_consistent`` derives
+    deterministically from Task 074's ``package_consistent``.
+
+    Delegates exclusively to
+    ``ReasoningHandoffFullyAuditedApiAuditAttestationApiService``, which
+    reuses the Task 065 fully audited API exactly once and derives
+    Tasks 066-074 from that exact object without any internal HTTP call.
+    This endpoint does not itself build context, audit, package, or
+    bundle, and makes no internal HTTP call.
+
+    Strictly read-only: no candidates are generated or regenerated, no
+    observations or entities are written, no session state is mutated,
+    no transaction is committed. Repeated GETs on an unchanged session
+    return identical results. A valid result whose underlying attestation
+    legitimately reports ``attestation_consistent = False`` still
+    produces a valid 200 response because Task 072-074 faithfully
+    represent it.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_handoff_fully_audited_api_audit_attestation_api_service.build_for_session(  # noqa: E501
+            db, session_id
+        )
+    except (
+        ReasoningContextContractError,
+        ReasoningContextConsistencyContractError,
+        ReasoningHandoffContractError,
+        ReasoningHandoffApiConsistencyContractError,
+        ReasoningHandoffApiAuditPackageContractError,
+        ReasoningHandoffApiAuditPackageConsistencyContractError,
+        ReasoningHandoffApiAuditBundleContractError,
+        ReasoningHandoffFullyAuditedApiConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditPackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditBundleContractError,
+        ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationApiContractError,
+    ) as exc:
+        # Tasks 055-075: an internal contract violation, never medical
+        # or client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Internal reasoning-handoff fully-audited attestation api "  # noqa: E501
+                "contract violation"
+            ),
         ) from exc
