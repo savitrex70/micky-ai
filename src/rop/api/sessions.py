@@ -120,6 +120,7 @@ from rop.services import (
     ReasoningHandoffContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationService,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
@@ -2658,6 +2659,7 @@ def get_reasoning_handoff_fully_audited_attestation_final(
         ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleContractError,
         ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleConsistencyContractError,
         ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationConsistencyContractError,
     ) as exc:
         # Tasks 055-082: internal contract violation; never leak detail.
         raise HTTPException(
