@@ -123,6 +123,8 @@ from rop.services import (
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyService,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageConsistencyService,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageService,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseService,
@@ -223,6 +225,8 @@ reasoning_handoff_fully_audited_api_audit_attestation_response_package_service =
     reasoning_handoff_fully_audited_api_audit_attestation_response_consistency_service=ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyService(),  # noqa: E501
 )
     reasoning_handoff_fully_audited_api_audit_attestation_response_package_service=reasoning_handoff_fully_audited_api_audit_attestation_response_package_service,  # noqa: E501
+    reasoning_handoff_fully_audited_api_audit_attestation_response_package_consistency_service=ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageConsistencyService(),  # noqa: E501
+)
 
 
 @router.post(
@@ -2480,6 +2484,7 @@ def get_reasoning_handoff_fully_audited_attestation_response_package(
         ReasoningHandoffFullyAuditedApiAuditAttestationResponseContractError,
         ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyContractError,
         ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageConsistencyContractError,
     ) as exc:
         # Tasks 055-078: internal contract violation; never leak detail.
         raise HTTPException(
