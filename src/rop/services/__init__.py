@@ -145,6 +145,10 @@ from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_response
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyService,
 )
+from rop.services.reasoning_handoff_fully_audited_api_audit_attestation_response_package import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageService,
+)
 from rop.services.reasoning_handoff_fully_audited_api_audit_bundle import (
     ReasoningHandoffFullyAuditedApiAuditBundleContractError,
     ReasoningHandoffFullyAuditedApiAuditBundleService,
@@ -295,6 +299,8 @@ __all__ = [
     "ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyContractError",
     "ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyService",
     "ReasoningHandoffFullyAuditedApiAuditAttestationResponseContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageContractError",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageService",
     "ReasoningHandoffFullyAuditedApiAuditAttestationResponseService",
     "ReasoningHandoffFullyAuditedApiAuditAttestationService",
     "ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError",
