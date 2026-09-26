@@ -48,6 +48,7 @@ from rop.schemas import (
     ObservationRead,
     ReasoningHandoffApiAuditBundleRead,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationRead,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseRead,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleRead,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageRead,
     ReasoningHandoffFullyAuditedApiAuditAttestationResponseRead,
@@ -120,8 +121,14 @@ from rop.services import (
     ReasoningHandoffContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageConsistencyContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageContractError,
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseContractError,  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseService,
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationService,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
     ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError,
@@ -240,6 +247,9 @@ reasoning_handoff_fully_audited_api_audit_attestation_response_bundle_service = 
 reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_service = ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationService(  # noqa: E501
     reasoning_handoff_fully_audited_api_audit_attestation_response_bundle_service=reasoning_handoff_fully_audited_api_audit_attestation_response_bundle_service,  # noqa: E501
     reasoning_handoff_fully_audited_api_audit_attestation_response_bundle_consistency_service=ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleConsistencyService(),  # noqa: E501
+)
+reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_response_service = (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseService()
 )
 
 
@@ -2667,5 +2677,92 @@ def get_reasoning_handoff_fully_audited_attestation_final(
             detail=(
                 "Internal reasoning-handoff fully-audited attestation "
                 "final contract violation"
+            ),
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-handoff/fully-audited/attestation/final-response",
+    response_model=ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseRead,  # noqa: E501
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_handoff_fully_audited_attestation_final_response(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 087: expose the Task 085/086 final-attestation bundle response.
+
+    Returns the deterministic Task 087 final-attestation response -- the
+    exact Task 085 final attestation bundle together with the exact
+    Task 086 independent consistency audit of that bundle -- for the
+    requested session.
+
+    Delegates to
+    ``ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseService``,
+    which first builds Task 085 exactly once (via its own orchestrator)
+    and then derives Task 086 from that exact bundle. This endpoint does
+    not itself build context, audit, package, bundle, or attest, and
+    makes no internal HTTP call.
+
+    A valid result whose underlying chain legitimately reports a defect
+    at any layer still produces a valid 200 response: the defect is
+    preserved unchanged rather than converted into a false success.
+
+    Strictly read-only: no candidates are generated or regenerated, no
+    observations or entities are written, no session state is mutated,
+    no transaction is committed. Repeated GETs on an unchanged session
+    return identical results.
+
+    Does not modify the behavior or fields of the existing Task 075
+    ``/reasoning-handoff/fully-audited/attestation`` or Task 081
+    ``/reasoning-handoff/fully-audited/attestation/final`` endpoints --
+    this is an additional, additive derived view.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_response_service.build_for_session(  # noqa: E501
+            db, session_id
+        )
+    except (
+        ReasoningContextContractError,
+        ReasoningContextConsistencyContractError,
+        ReasoningHandoffContractError,
+        ReasoningHandoffApiConsistencyContractError,
+        ReasoningHandoffApiAuditPackageContractError,
+        ReasoningHandoffApiAuditPackageConsistencyContractError,
+        ReasoningHandoffApiAuditBundleContractError,
+        ReasoningHandoffFullyAuditedApiConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditPackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditPackageConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditBundleContractError,
+        ReasoningHandoffFullyAuditedApiAuditBundleConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponseContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponseConsistencyContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponsePackageConsistencyContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationResponseBundleConsistencyContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationContractError,
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationConsistencyContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageConsistencyContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleConsistencyContractError,  # noqa: E501
+        ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationResponseContractError,  # noqa: E501
+    ) as exc:
+        # Tasks 055-087: internal contract violation; never leak detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Internal reasoning-handoff fully-audited attestation "
+                "final-response contract violation"
             ),
         ) from exc
