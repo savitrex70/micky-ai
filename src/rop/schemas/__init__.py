@@ -89,6 +89,9 @@ from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_final_att
 from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_bundle import (  # noqa: E501
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleRead,
 )
+from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_bundle_consistency import (  # noqa: E501
+    ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleConsistencyRead,
+)
 from rop.schemas.reasoning_handoff_fully_audited_api_audit_attestation_final_attestation_consistency import (  # noqa: E501
     ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationConsistencyRead,
 )
@@ -243,6 +246,7 @@ __all__ = [
     "ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageConsistencyRead",
     "ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationRead",
     "ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleRead",
+    "ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationBundleConsistencyRead",
     "ReasoningHandoffFullyAuditedApiAuditAttestationPackageRead",
     "ReasoningHandoffFullyAuditedApiAuditAttestationPackageConsistencyRead",
     "ReasoningHandoffFullyAuditedApiAuditAttestationRead",
