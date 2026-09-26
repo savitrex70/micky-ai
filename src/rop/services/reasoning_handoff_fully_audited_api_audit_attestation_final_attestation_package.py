@@ -325,9 +325,8 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageServ
             )
 
         package_consistent = bool(
-            final_attestation_consistency.get(
-                "final_attestation_consistent", False
-            )  # noqa: E501
+            final_attestation.get("final_attestation_consistent", False)
+            and final_attestation_consistency.get("final_attestation_consistent", False)
         )
 
         package_core = {
@@ -468,14 +467,15 @@ class ReasoningHandoffFullyAuditedApiAuditAttestationFinalAttestationPackageServ
             )
 
         expected_package_consistent = bool(
-            result["final_attestation_consistency"].get(
+            result["final_attestation"].get("final_attestation_consistent", False)
+            and result["final_attestation_consistency"].get(
                 "final_attestation_consistent", False
             )
         )
         if result["package_consistent"] != expected_package_consistent:
             raise _ContractError(
                 "PACKAGE_CONSISTENT_MISMATCH",
-                "package_consistent does not match the nested consistency value",  # noqa: E501
+                "package_consistent does not match the nested attestation values",  # noqa: E501
             )
 
         try:
