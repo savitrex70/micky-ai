@@ -21,8 +21,6 @@ validation. There is no persistence and no HTTP endpoint here.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -30,20 +28,20 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
-from rop.schemas.entity import EntityRead
 from rop.schemas.llm_reasoning import (
     LLMReasoningProposalRead,
     ReasoningCandidateAssessmentRead,
     _RawLLMReasoningProposal,
 )
-from rop.schemas.missing_information import MissingInformationRead
-from rop.schemas.observation import ObservationRead
-from rop.schemas.template_match import TemplateMatchRead
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProvider,
     LLMReasoningProviderError,
     LLMReasoningRequest,
+)
+from rop.services.llm_request_serialization import (
+    compute_fingerprint,
+    serialize_context,
+    to_json_safe,
 )
 from rop.services.reasoning_context import (
     ReasoningContextContractError,
@@ -52,33 +50,13 @@ from rop.services.reasoning_context import (
 from rop.services.reasoning_context_consistency import (
     ReasoningContextConsistencyService,
 )
-from rop.services.reasoning_run_consistency import (
-    ReasoningRunConsistencyService,
-)
 
 LLM_REASONING_TASK_057 = "LLM_REASONING_TASK_057"
 """Fixed structural-contract identifier for Task 057 results."""
 
-# Context lists and the Read schemas that serialize each element for
-# the model. Reused, not duplicated.
-_ELEMENT_SERIALIZERS = (
-    ("observations", ObservationRead),
-    ("entities", EntityRead),
-    ("missing_information", MissingInformationRead),
-    ("template_context", TemplateMatchRead),
-    ("candidate_state", CandidateHypothesisRead),
-)
-
-# Fields the model is allowed to receive. Nothing else is exposed.
-_ALLOWED_PAYLOAD_FIELDS = (
-    "session_id",
-    "observations",
-    "entities",
-    "missing_information",
-    "template_context",
-    "candidate_state",
-    "reasoning_pipeline",
-)
+# Serialization constants and helpers live in Task 104's hardened
+# boundary (rop.services.llm_request_serialization) and are reused
+# here without duplication.
 
 _OUTCOME_INPUT_UNAVAILABLE = "INPUT_UNAVAILABLE"
 _OUTCOME_INPUT_INCONSISTENT = "INPUT_INCONSISTENT"
@@ -314,50 +292,31 @@ class LLMReasoningService:
     ) -> dict[str, Any]:
         """Project the context into a JSON-safe, model-safe payload.
 
-        Only the seven allowed fields are emitted. Each list element is
-        normalized through its own Read schema; anything else in the
-        context (ORM internals, private attributes) is never exposed.
+        Delegates to Task 104's canonical boundary. Only the allowed
+        fields are emitted; anything else in the context (ORM
+        internals, private attributes) is never exposed.
         """
-        payload: dict[str, Any] = {
-            "session_id": str(context["session_id"]),
-            "observations": [],
-            "entities": [],
-            "missing_information": [],
-            "template_context": [],
-            "candidate_state": [],
-            "reasoning_pipeline": dict(context["reasoning_pipeline"]),
-        }
-        for field, schema in _ELEMENT_SERIALIZERS:
-            for item in context[field]:
-                validated = schema.model_validate(item)
-                payload[field].append(validated.model_dump(mode="json"))
-        return LLMReasoningService._to_json_safe(payload)
+        try:
+            return serialize_context(context)
+        except TypeError as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "unsupported value in context during serialization: " + str(exc),
+            ) from exc
 
     @staticmethod
     def _to_json_safe(value: Any) -> Any:
-        if isinstance(value, UUID):
-            return str(value)
-        if isinstance(value, Mapping):
-            return {
-                str(k): LLMReasoningService._to_json_safe(v) for k, v in value.items()
-            }
-        if isinstance(value, list):
-            return [LLMReasoningService._to_json_safe(v) for v in value]
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-        raise LLMReasoningContractError(
-            _OUTCOME_INPUT_INCONSISTENT,
-            "unsupported value in context during serialization: "
-            + type(value).__name__,
-        )
+        try:
+            return to_json_safe(value)
+        except TypeError as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "unsupported value in context during serialization: " + str(exc),
+            ) from exc
 
     @staticmethod
     def _fingerprint(serialized: Mapping[str, Any]) -> str:
-        canonical = ReasoningRunConsistencyService._canonicalize(serialized)
-        payload = json.dumps(
-            canonical, sort_keys=True, separators=(",", ":"), default=str
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return compute_fingerprint(serialized)
 
     @staticmethod
     def _validate_references(

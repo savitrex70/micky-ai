@@ -80,6 +80,15 @@ from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderResponse,
     LLMReasoningRequest,
 )
+from rop.services.llm_request_serialization import (
+    ALLOWED_PAYLOAD_FIELDS,
+    ELEMENT_SERIALIZERS,
+    LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104,
+    compute_fingerprint,
+    serialize_context,
+    to_json_safe,
+    validate_payload,
+)
 from rop.services.medical_entity_recognition import MedicalEntityRecognitionService
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
@@ -349,6 +358,13 @@ __all__ = [
     "LLMReasoningContractError",
     "LLMReasoningAuditContractError",
     "LLMReasoningAuditService",
+    "ALLOWED_PAYLOAD_FIELDS",
+    "ELEMENT_SERIALIZERS",
+    "LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104",
+    "compute_fingerprint",
+    "serialize_context",
+    "to_json_safe",
+    "validate_payload",
     "LLMReasoningProvider",
     "LLMReasoningProviderError",
     "LLMReasoningProviderResponse",
