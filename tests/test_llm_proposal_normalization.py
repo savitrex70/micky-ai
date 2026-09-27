@@ -11,6 +11,7 @@ import json
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -20,6 +21,7 @@ from rop.database import Base, get_db
 from rop.main import app
 from rop.services.llm_proposal_normalization import (
     LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106,
+    LLMProposalNormalizationContractError,
     compute_normalized_fingerprint,
     normalize_proposal,
     validate_normalized,
@@ -439,12 +441,91 @@ def test_normalize_proposal_handles_empty_candidate_assessments() -> None:
 
 
 def test_normalize_proposal_handles_none_session_id() -> None:
-    """Normalization handles None session_id gracefully."""
+    """Normalization rejects None session_id instead of fabricating null."""
     proposal = _get_task057_proposal()
     proposal["session_id"] = None
 
-    normalized = normalize_proposal(proposal)
-    assert normalized["session_id"] is None
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "INVALID_ID"
+
+
+def test_normalize_rejects_missing_top_field() -> None:
+    proposal = _get_task057_proposal()
+    del proposal["provider"]
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "MISSING_FIELD"
+
+
+def test_normalize_rejects_extra_top_field() -> None:
+    proposal = _get_task057_proposal()
+    proposal["winner"] = "candidate-x"
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "UNEXPECTED_FIELD"
+
+
+def test_normalize_rejects_non_mapping() -> None:
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(None)  # type: ignore[arg-type]
+    assert ei.value.invariant == "INPUT_UNAVAILABLE"
+
+
+def test_normalize_rejects_malformed_nested_assessment() -> None:
+    proposal = _get_task057_proposal()
+    proposal["candidate_assessments"][0] = "not-a-mapping"
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "MALFORMED_ASSESSMENT"
+
+
+def test_normalize_rejects_nested_missing_field() -> None:
+    proposal = _get_task057_proposal()
+    del proposal["candidate_assessments"][0]["explanation"]
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "MISSING_FIELD"
+
+
+def test_normalize_rejects_nested_extra_field() -> None:
+    proposal = _get_task057_proposal()
+    proposal["candidate_assessments"][0]["tool_call"] = "x"
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "UNEXPECTED_FIELD"
+
+
+def test_normalize_rejects_invalid_candidate_id() -> None:
+    proposal = _get_task057_proposal()
+    proposal["candidate_assessments"][0]["candidate_id"] = "not-a-uuid"
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "INVALID_ID"
+
+
+def test_normalize_rejects_invalid_assessment_value() -> None:
+    proposal = _get_task057_proposal()
+    proposal["candidate_assessments"][0]["assessment"] = "DEFINITELY"
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "INVALID_ASSESSMENT"
+
+
+def test_normalize_rejects_empty_explanation() -> None:
+    proposal = _get_task057_proposal()
+    proposal["candidate_assessments"][0]["explanation"] = "  "
+
+    with pytest.raises(LLMProposalNormalizationContractError) as ei:
+        normalize_proposal(proposal)
+    assert ei.value.invariant == "INVALID_EXPLANATION"
 
 
 def test_compute_normalized_fingerprint_uses_canonical_json() -> None:

@@ -212,7 +212,7 @@ def _get_chain() -> dict[str, Any]:
     raw_text = _valid_model_output(context)
     provider = FakeProvider(response_text=raw_text)
     proposal = LLMReasoningService(provider=provider).build(context=context)
-    audit = LLMReasoningAuditService.build(proposal=proposal)
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
     serialized = serialize_context(context)
     fingerprint = compute_fingerprint(serialized)
     normalized = normalize_proposal(proposal)
@@ -252,7 +252,7 @@ def _get_empty_chain() -> dict[str, Any]:
     unavailable["context_consistent"] = False
     provider = FakeProvider(response_text="")
     proposal = LLMReasoningService(provider=provider).build(context=unavailable)
-    audit = LLMReasoningAuditService.build(proposal=proposal)
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=unavailable)
     inspection = _build_inspection(proposal)
     _EMPTY_CACHE.update(
         {
@@ -581,7 +581,7 @@ def test_release_malformed_audit_missing_field_false() -> None:
     chain = _get_chain()
     tampered = copy.deepcopy(chain["proposal"])
     del tampered["session_id"]
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=chain["context"])
     assert audit["proposal_consistent"] is False
     assert audit["metadata_consistent"] is False
     assert len(audit["consistency_issues"]) > 0
@@ -591,7 +591,7 @@ def test_release_malformed_audit_bad_fingerprint_false() -> None:
     chain = _get_chain()
     tampered = copy.deepcopy(chain["proposal"])
     tampered["context_fingerprint"] = "g" * 64
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=chain["context"])
     assert audit["fingerprint_consistent"] is False
     assert audit["proposal_consistent"] is False
     assert "invalid_fingerprint_format" in audit["consistency_issues"]
@@ -601,7 +601,7 @@ def test_release_malformed_audit_bad_source_false() -> None:
     chain = _get_chain()
     tampered = copy.deepcopy(chain["proposal"])
     tampered["llm_reasoning_source"] = "WRONG"
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=chain["context"])
     assert audit["provenance_consistent"] is False
     assert audit["proposal_consistent"] is False
 
@@ -610,7 +610,7 @@ def test_release_malformed_audit_empty_explanation_false() -> None:
     chain = _get_chain()
     tampered = copy.deepcopy(chain["proposal"])
     tampered["candidate_assessments"][0]["explanation"] = ""
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=chain["context"])
     assert audit["candidate_assessments_consistent"] is False
     assert audit["proposal_consistent"] is False
 
@@ -733,7 +733,7 @@ def test_release_no_caller_input_mutation() -> None:
     assert serialized == frozen_serialized
     validate_payload(serialized)
     assert serialized == frozen_serialized
-    LLMReasoningAuditService.build(proposal=proposal)
+    LLMReasoningAuditService.build(proposal=proposal, context=context)
     assert proposal == frozen_proposal
     normalize_proposal(proposal)
     assert proposal == frozen_proposal
@@ -762,7 +762,7 @@ def test_release_no_db_writes_in_pure_services() -> None:
     validate_payload(serialized)
     to_json_safe({"a": [UUID(chain["session_id"])]})
     validate_raw_proposal(json.loads(_valid_model_output(context)), context)
-    LLMReasoningAuditService.build(proposal=proposal)
+    LLMReasoningAuditService.build(proposal=proposal, context=context)
     normalize_proposal(proposal)
     compute_normalized_fingerprint(normalized)
     validate_normalized(normalized)
@@ -960,7 +960,9 @@ def test_release_chain_deterministic_independently_auditable() -> None:
     provider = FakeProvider(response_text=_valid_model_output(context))
     second_proposal = LLMReasoningService(provider=provider).build(context=context)
     assert second_proposal == snapshot_proposal
-    second_audit = LLMReasoningAuditService.build(proposal=second_proposal)
+    second_audit = LLMReasoningAuditService.build(
+        proposal=second_proposal, context=context
+    )
     assert second_audit == snapshot_audit
     assert normalize_proposal(second_proposal) == snapshot_normalized
     assert (

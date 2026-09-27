@@ -11,9 +11,48 @@ import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106 = "LLM_PROPOSAL_NORMALIZATION_TASK_106"
 """Fixed structural-contract identifier for Task 106 normalization."""
+
+# Exact Task 057 field set. No more, no less.
+_REQUIRED_TOP_FIELDS = (
+    "session_id",
+    "context_fingerprint",
+    "provider",
+    "model",
+    "candidate_assessments",
+    "available",
+    "proposal_consistent",
+    "llm_reasoning_source",
+)
+
+_REQUIRED_ASSESSMENT_FIELDS = (
+    "candidate_id",
+    "assessment",
+    "supporting_evidence_ids",
+    "contradicting_evidence_ids",
+    "unresolved_information_ids",
+    "explanation",
+    "uncertainty_flags",
+)
+
+_VALID_ASSESSMENTS = ("SUPPORTS", "WEAKENS", "UNCLEAR")
+
+
+class LLMProposalNormalizationContractError(Exception):
+    """Task 106: the proposal cannot be normalized.
+
+    Raised when the input is not a mapping, misses required fields,
+    carries unexpected fields, or holds a malformed nested assessment.
+    Normalization never invents missing values and never silently
+    discards unexpected ones.
+    """
+
+    def __init__(self, invariant: str, detail: str) -> None:
+        self.invariant = invariant
+        super().__init__(f"[{invariant}] {detail}")
 
 
 def normalize_proposal(proposal: Mapping[str, Any]) -> dict[str, Any]:
@@ -38,66 +77,167 @@ def normalize_proposal(proposal: Mapping[str, Any]) -> dict[str, Any]:
 
     Args:
         proposal: A Task 057 LLMReasoningProposalRead dict (mode="json").
+            Must hold exactly the Task 057 field set with well-formed
+            nested assessments.
 
     Returns:
         A canonical normalized dict with all values JSON-safe.
+
+    Raises:
+        LLMProposalNormalizationContractError: If the input is not a
+            mapping, misses required fields, carries unexpected fields,
+            or holds a malformed nested assessment.
     """
+    if not isinstance(proposal, Mapping):
+        raise LLMProposalNormalizationContractError(
+            "INPUT_UNAVAILABLE",
+            "proposal is required and must be a mapping",
+        )
+    missing = [f for f in _REQUIRED_TOP_FIELDS if f not in proposal]
+    if missing:
+        raise LLMProposalNormalizationContractError(
+            "MISSING_FIELD",
+            "proposal is missing required fields: " + ", ".join(missing),
+        )
+    unexpected = [k for k in proposal.keys() if k not in _REQUIRED_TOP_FIELDS]
+    if unexpected:
+        raise LLMProposalNormalizationContractError(
+            "UNEXPECTED_FIELD",
+            "proposal carries unexpected top-level fields: "
+            + ", ".join(str(k) for k in unexpected),
+        )
+
+    def _require_uuid(value: Any, where: str) -> str:
+        text = value if isinstance(value, str) else None
+        if text is None:
+            try:
+                text = str(value)
+            except Exception:
+                text = ""
+        try:
+            UUID(text)
+        except (ValueError, AttributeError, TypeError):
+            raise LLMProposalNormalizationContractError(
+                "INVALID_ID",
+                f"{where} is not a valid UUID: {value!r}",
+            ) from None
+        return text
+
+    session_id = proposal["session_id"]
+    if not isinstance(session_id, (str, UUID)):
+        raise LLMProposalNormalizationContractError(
+            "INVALID_ID", f"session_id is not a valid UUID: {session_id!r}"
+        )
+    for field in ("context_fingerprint", "provider", "model", "llm_reasoning_source"):
+        if not isinstance(proposal[field], str):
+            raise LLMProposalNormalizationContractError(
+                "INVALID_TYPE", f"{field} must be a string"
+            )
+    for field in ("available", "proposal_consistent"):
+        if not isinstance(proposal[field], bool):
+            raise LLMProposalNormalizationContractError(
+                "INVALID_TYPE", f"{field} must be a bool"
+            )
+
+    raw_assessments = proposal["candidate_assessments"]
+    if not isinstance(raw_assessments, list):
+        raise LLMProposalNormalizationContractError(
+            "INVALID_TYPE", "candidate_assessments must be a list"
+        )
+
     normalized: dict[str, Any] = {}
 
     # session_id -> string
-    session_id = proposal.get("session_id")
-    normalized["session_id"] = str(session_id) if session_id is not None else None
+    normalized["session_id"] = _require_uuid(session_id, "session_id")
 
     # context_fingerprint as-is
-    normalized["context_fingerprint"] = proposal.get("context_fingerprint")
+    normalized["context_fingerprint"] = proposal["context_fingerprint"]
 
     # provider, model as-is
-    normalized["provider"] = proposal.get("provider")
-    normalized["model"] = proposal.get("model")
+    normalized["provider"] = proposal["provider"]
+    normalized["model"] = proposal["model"]
 
     # available, proposal_consistent as-is
-    normalized["available"] = proposal.get("available")
-    normalized["proposal_consistent"] = proposal.get("proposal_consistent")
+    normalized["available"] = proposal["available"]
+    normalized["proposal_consistent"] = proposal["proposal_consistent"]
 
     # llm_reasoning_source as-is
-    normalized["llm_reasoning_source"] = proposal.get("llm_reasoning_source")
+    normalized["llm_reasoning_source"] = proposal["llm_reasoning_source"]
 
-    # candidate_assessments: preserve EXACT order, normalize each
-    raw_assessments = proposal.get("candidate_assessments", [])
+    # candidate_assessments: preserve EXACT order, normalize each.
+    # Every assessment must be complete and well-formed; nothing is
+    # invented and nothing unexpected is discarded.
+    raw_assessments = proposal["candidate_assessments"]
     normalized_assessments = []
-    for assessment in raw_assessments:
+    for index, assessment in enumerate(raw_assessments):
+        where = f"candidate_assessments[{index}]"
+        if not isinstance(assessment, Mapping):
+            raise LLMProposalNormalizationContractError(
+                "MALFORMED_ASSESSMENT", f"{where} must be a mapping"
+            )
+        missing_nested = [f for f in _REQUIRED_ASSESSMENT_FIELDS if f not in assessment]
+        if missing_nested:
+            raise LLMProposalNormalizationContractError(
+                "MISSING_FIELD",
+                f"{where} is missing required fields: " + ", ".join(missing_nested),
+            )
+        unexpected_nested = [
+            k for k in assessment.keys() if k not in _REQUIRED_ASSESSMENT_FIELDS
+        ]
+        if unexpected_nested:
+            raise LLMProposalNormalizationContractError(
+                "UNEXPECTED_FIELD",
+                f"{where} carries unexpected fields: "
+                + ", ".join(str(k) for k in unexpected_nested),
+            )
         norm_assessment: dict[str, Any] = {}
 
-        # candidate_id -> string
-        candidate_id = assessment.get("candidate_id")
-        norm_assessment["candidate_id"] = (
-            str(candidate_id) if candidate_id is not None else None
+        # candidate_id -> string (must be a valid UUID)
+        norm_assessment["candidate_id"] = _require_uuid(
+            assessment["candidate_id"], f"{where}.candidate_id"
         )
 
-        # assessment as-is
-        norm_assessment["assessment"] = assessment.get("assessment")
+        # assessment as-is (must be a valid enum value)
+        if assessment["assessment"] not in _VALID_ASSESSMENTS:
+            raise LLMProposalNormalizationContractError(
+                "INVALID_ASSESSMENT",
+                f"{where}.assessment must be one of " + ", ".join(_VALID_ASSESSMENTS),
+            )
+        norm_assessment["assessment"] = assessment["assessment"]
 
-        # supporting_evidence_ids -> list[str] (preserve order)
-        norm_assessment["supporting_evidence_ids"] = [
-            str(eid) for eid in assessment.get("supporting_evidence_ids", [])
-        ]
+        # evidence id lists -> list[str] (preserve order, UUID-validated)
+        for list_field in (
+            "supporting_evidence_ids",
+            "contradicting_evidence_ids",
+            "unresolved_information_ids",
+        ):
+            raw_ids = assessment[list_field]
+            if not isinstance(raw_ids, list):
+                raise LLMProposalNormalizationContractError(
+                    "INVALID_TYPE", f"{where}.{list_field} must be a list"
+                )
+            norm_assessment[list_field] = [
+                _require_uuid(eid, f"{where}.{list_field}") for eid in raw_ids
+            ]
 
-        # contradicting_evidence_ids -> list[str] (preserve order)
-        norm_assessment["contradicting_evidence_ids"] = [
-            str(eid) for eid in assessment.get("contradicting_evidence_ids", [])
-        ]
-
-        # unresolved_information_ids -> list[str] (preserve order)
-        norm_assessment["unresolved_information_ids"] = [
-            str(eid) for eid in assessment.get("unresolved_information_ids", [])
-        ]
-
-        # explanation as-is
-        norm_assessment["explanation"] = assessment.get("explanation")
+        # explanation as-is (must be a non-empty string)
+        explanation = assessment["explanation"]
+        if not isinstance(explanation, str) or not explanation.strip():
+            raise LLMProposalNormalizationContractError(
+                "INVALID_EXPLANATION", f"{where}.explanation must be non-empty"
+            )
+        norm_assessment["explanation"] = explanation
 
         # uncertainty_flags -> list[str] sorted alphabetically
-        uncertainty_flags = assessment.get("uncertainty_flags", [])
-        norm_assessment["uncertainty_flags"] = sorted(str(f) for f in uncertainty_flags)
+        uncertainty_flags = assessment["uncertainty_flags"]
+        if not isinstance(uncertainty_flags, list) or any(
+            not isinstance(f, str) for f in uncertainty_flags
+        ):
+            raise LLMProposalNormalizationContractError(
+                "INVALID_TYPE",
+                f"{where}.uncertainty_flags must be a list of strings",
+            )
+        norm_assessment["uncertainty_flags"] = sorted(uncertainty_flags)
 
         normalized_assessments.append(norm_assessment)
 

@@ -83,6 +83,7 @@ from rop.services.llm_proposal_inspection import (
 )
 from rop.services.llm_proposal_normalization import (
     LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106,
+    LLMProposalNormalizationContractError,
     compute_normalized_fingerprint,
     normalize_proposal,
     validate_normalized,
@@ -390,6 +391,7 @@ __all__ = [
     "LLMProposalInspectionContractError",
     "LLMProposalInspectionService",
     "LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106",
+    "LLMProposalNormalizationContractError",
     "compute_normalized_fingerprint",
     "normalize_proposal",
     "validate_normalized",

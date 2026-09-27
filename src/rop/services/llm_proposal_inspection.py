@@ -24,6 +24,7 @@ from rop.schemas.llm_proposal_normalization import (
     NormalizedLLMReasoningProposalRead,
 )
 from rop.services.llm_proposal_normalization import (
+    LLMProposalNormalizationContractError,
     compute_normalized_fingerprint,
     normalize_proposal,
 )
@@ -100,7 +101,19 @@ class LLMProposalInspectionService:
 
         provided_fingerprint = snapshot.get("proposal_fingerprint")
 
-        normalized = normalize_proposal(snapshot)
+        # Strip Task 109's own envelope fields before delegating: Task 106
+        # validates the exact Task 057 field set, and these two keys are
+        # 109-level passthrough (already captured above), not 057 content.
+        snapshot.pop("proposal_fingerprint", None)
+        snapshot.pop("inspection_source", None)
+
+        try:
+            normalized = normalize_proposal(snapshot)
+        except LLMProposalNormalizationContractError as exc:
+            raise LLMProposalInspectionContractError(
+                "INPUT_INCONSISTENT",
+                "proposal failed normalization: " + str(exc),
+            ) from exc
 
         try:
             validated = NormalizedLLMReasoningProposalRead.model_validate(normalized)

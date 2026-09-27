@@ -263,7 +263,7 @@ def _get_chain() -> dict[str, Any]:
     fingerprint = compute_fingerprint(serialized)
     provider = FakeProvider(response_text=_valid_model_output(context))
     proposal = LLMReasoningService(provider=provider).build(context=context)
-    audit = LLMReasoningAuditService.build(proposal=proposal)
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
     normalized = normalize_proposal(proposal)
     normalized_fp = compute_normalized_fingerprint(normalized)
     _CHAIN_CACHE.update(
@@ -299,7 +299,7 @@ def _get_empty_chain() -> dict[str, Any]:
     unavailable["context_consistent"] = False
     provider = FakeProvider(response_text="")
     proposal = LLMReasoningService(provider=provider).build(context=unavailable)
-    audit = LLMReasoningAuditService.build(proposal=proposal)
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=unavailable)
     _EMPTY_CACHE.update(
         {
             "session_id": sid,
@@ -520,7 +520,7 @@ def test_no_fallback_tampered_fingerprint_rejected_at_audit() -> None:
     proposal = chain["proposal"]
     tampered = copy.deepcopy(proposal)
     tampered["context_fingerprint"] = "g" * 64
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=chain["context"])
     assert audit["fingerprint_consistent"] is False
     assert audit["proposal_consistent"] is False
     assert "invalid_fingerprint_format" in audit["consistency_issues"]
@@ -547,7 +547,7 @@ def test_tampered_fingerprint_swap_never_repaired() -> None:
         tampered["context_fingerprint"] = "f" * 64
     recomputed = compute_fingerprint(serialize_context(context))
     assert tampered["context_fingerprint"] != recomputed
-    audit = LLMReasoningAuditService.build(proposal=tampered)
+    audit = LLMReasoningAuditService.build(proposal=tampered, context=context)
     assert audit["available"] == proposal["available"]
     assert tampered["context_fingerprint"] != recomputed
 
@@ -590,7 +590,9 @@ def test_deterministic_repeated_full_chain_twice_equal() -> None:
     assert second_proposal == snapshot
     assert second_proposal == first["proposal"]
 
-    second_audit = LLMReasoningAuditService.build(proposal=second_proposal)
+    second_audit = LLMReasoningAuditService.build(
+        proposal=second_proposal, context=context
+    )
     assert second_audit == first["audit"]
     assert normalize_proposal(second_proposal) == first["normalized"]
     assert (
@@ -630,7 +632,7 @@ def test_input_immutability_deepcopy_before_after_each_stage() -> None:
     validate_raw_proposal(json.loads(_valid_model_output(context)), context)
     assert _freeze(context) == frozen_context
 
-    LLMReasoningAuditService.build(proposal=proposal)
+    LLMReasoningAuditService.build(proposal=proposal, context=context)
     assert proposal == frozen_proposal
 
     normalize_proposal(proposal)
@@ -666,7 +668,7 @@ def test_no_db_writes_from_pure_stages() -> None:
     validate_payload(serialized)
     to_json_safe({"a": [UUID(chain["session_id"])]})
     validate_raw_proposal(json.loads(_valid_model_output(context)), context)
-    LLMReasoningAuditService.build(proposal=proposal)
+    LLMReasoningAuditService.build(proposal=proposal, context=context)
     normalize_proposal(proposal)
     compute_normalized_fingerprint(normalized)
     validate_normalized(normalized)

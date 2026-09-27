@@ -21,6 +21,7 @@ validation. There is no persistence and no HTTP endpoint here.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
@@ -33,6 +34,8 @@ from rop.schemas.llm_reasoning import (
     ReasoningCandidateAssessmentRead,
     _RawLLMReasoningProposal,
 )
+from rop.services.llm_output_validation import validate_raw_proposal
+from rop.services.llm_provider_isolation import ProviderFailureBoundary
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProvider,
     LLMReasoningProviderError,
@@ -42,6 +45,7 @@ from rop.services.llm_request_serialization import (
     compute_fingerprint,
     serialize_context,
     to_json_safe,
+    validate_payload,
 )
 from rop.services.reasoning_context import (
     ReasoningContextContractError,
@@ -189,6 +193,18 @@ class LLMReasoningService:
         serialized = self._serialize_context(context)
         fingerprint = self._fingerprint(serialized)
 
+        # Task 104 enforcement: the provider-bound payload must contain
+        # exactly the allowed fields. serialize_context only emits those,
+        # so a non-empty result here means the boundary was tampered
+        # with -- fail before any provider invocation.
+        unexpected_fields = validate_payload(serialized)
+        if unexpected_fields:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "serialized payload violates the Task 104 allowed-field "
+                "contract: " + ", ".join(sorted(unexpected_fields)),
+            )
+
         request = LLMReasoningRequest(
             payload=serialized, context_fingerprint=fingerprint
         )
@@ -207,27 +223,64 @@ class LLMReasoningService:
                 _OUTCOME_MODEL_UNAVAILABLE, str(exc)
             ) from exc
         except Exception as exc:
+            # Task 107 classifies unexpected provider failures; the
+            # boundary never lets an arbitrary exception bypass the
+            # contract outcomes.
+            outcome = ProviderFailureBoundary.normalize_failure(exc)
             raise LLMReasoningContractError(
-                _OUTCOME_MODEL_UNAVAILABLE,
+                outcome,
                 "provider raised unexpectedly: " + str(exc),
             ) from exc
 
-        # Strict output parsing: no regex, no heuristic repair.
-        try:
-            raw = _RawLLMReasoningProposal.model_validate_json(provider_response.text)
-        except ValidationError as exc:
+        # Task 107 provider-metadata gate: provider/model strings are
+        # validated through the canonical boundary before exposure.
+        # ROP-controlled fields below are never taken from the provider.
+        metadata_issues = ProviderFailureBoundary.validate_provider_metadata(
+            provider_response, fingerprint
+        )
+        if metadata_issues:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
-                "provider output failed schema validation: " + str(exc),
-            ) from exc
+                "provider metadata failed validation: " + "; ".join(metadata_issues),
+            )
+
+        # Strict output parsing: no regex, no heuristic repair.
+        try:
+            raw_dict = json.loads(provider_response.text)
         except ValueError as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
                 "provider output was not valid JSON: " + str(exc),
             ) from exc
 
-        # Reference integrity against the canonical context.
-        self._validate_references(raw.candidate_assessments, context)
+        # Task 105 is the authoritative output-validation boundary:
+        # every reference, ordering, duplication, and content rule is
+        # enforced through it. Schema-shape failures stay INVALID;
+        # reference/content failures are INCONSISTENT.
+        output_issues = validate_raw_proposal(raw_dict, context)
+        if output_issues:
+            if any(
+                issue.startswith("Top-level schema validation failed")
+                for issue in output_issues
+            ):
+                raise LLMReasoningContractError(
+                    _OUTCOME_MODEL_OUTPUT_INVALID,
+                    "provider output failed schema validation: "
+                    + "; ".join(output_issues),
+                )
+            raise LLMReasoningContractError(
+                _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
+                "provider output failed reference validation: "
+                + "; ".join(output_issues),
+            )
+
+        try:
+            raw = _RawLLMReasoningProposal.model_validate(raw_dict)
+        except ValidationError as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_MODEL_OUTPUT_INVALID,
+                "provider output failed schema validation: " + str(exc),
+            ) from exc
 
         # Assemble the public result.
         candidate_assessments = [
@@ -317,64 +370,3 @@ class LLMReasoningService:
     @staticmethod
     def _fingerprint(serialized: Mapping[str, Any]) -> str:
         return compute_fingerprint(serialized)
-
-    @staticmethod
-    def _validate_references(
-        assessments: list[Any],
-        context: Mapping[str, Any],
-    ) -> None:
-        candidate_ids = {c.id for c in context["candidate_state"]}
-        observation_ids = {o.id for o in context["observations"]}
-        entity_ids = {e.id for e in context["entities"]}
-        evidence_ids = observation_ids | entity_ids
-        missing_info_ids = {m.id for m in context["missing_information"]}
-
-        seen_candidates: set[Any] = set()
-        for a in assessments:
-            if a.candidate_id not in candidate_ids:
-                raise LLMReasoningContractError(
-                    _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                    "candidate_id is not in the supplied context: "
-                    + str(a.candidate_id),
-                )
-            if a.candidate_id in seen_candidates:
-                raise LLMReasoningContractError(
-                    _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                    "duplicate candidate_assessment for: " + str(a.candidate_id),
-                )
-            seen_candidates.add(a.candidate_id)
-
-            for eid in a.supporting_evidence_ids:
-                if eid not in evidence_ids:
-                    raise LLMReasoningContractError(
-                        _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                        "supporting_evidence_id is not in the supplied "
-                        "context: " + str(eid),
-                    )
-            for eid in a.contradicting_evidence_ids:
-                if eid not in evidence_ids:
-                    raise LLMReasoningContractError(
-                        _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                        "contradicting_evidence_id is not in the "
-                        "supplied context: " + str(eid),
-                    )
-            for mid in a.unresolved_information_ids:
-                if mid not in missing_info_ids:
-                    raise LLMReasoningContractError(
-                        _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                        "unresolved_information_id is not in the "
-                        "supplied context: " + str(mid),
-                    )
-
-        expected_order = [c.id for c in context["candidate_state"]]
-        actual_order = [a.candidate_id for a in assessments]
-        if actual_order != expected_order:
-            raise LLMReasoningContractError(
-                _OUTCOME_MODEL_OUTPUT_INCONSISTENT,
-                "candidate_assessments do not match the supplied "
-                "candidate_state order (expected "
-                + ", ".join(str(x) for x in expected_order)
-                + "; got "
-                + ", ".join(str(x) for x in actual_order)
-                + ")",
-            )
