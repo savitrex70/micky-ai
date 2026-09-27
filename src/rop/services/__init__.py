@@ -76,6 +76,10 @@ from rop.services.llm_proposal_normalization import (
     normalize_proposal,
     validate_normalized,
 )
+from rop.services.llm_provider_isolation import (
+    LLM_PROVIDER_ISOLATION_SOURCE_TASK_107,
+    ProviderFailureBoundary,
+)
 from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
@@ -371,6 +375,8 @@ __all__ = [
     "compute_normalized_fingerprint",
     "normalize_proposal",
     "validate_normalized",
+    "LLM_PROVIDER_ISOLATION_SOURCE_TASK_107",
+    "ProviderFailureBoundary",
     "LLMReasoningContractError",
     "LLMReasoningAuditContractError",
     "LLMReasoningAuditService",

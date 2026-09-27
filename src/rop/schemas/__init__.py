@@ -51,6 +51,9 @@ from rop.schemas.llm_proposal_normalization import (
     NormalizedCandidateAssessmentRead,
     NormalizedLLMReasoningProposalRead,
 )
+from rop.schemas.llm_provider_isolation import (
+    LLM_PROVIDER_ISOLATION_SOURCE_TASK_107,
+)
 from rop.schemas.llm_reasoning import (
     LLMReasoningProposalRead,
     ReasoningCandidateAssessmentRead,
@@ -272,6 +275,7 @@ __all__ = [
     "LLMReasoningAuditRead",
     "NormalizedCandidateAssessmentRead",
     "NormalizedLLMReasoningProposalRead",
+    "LLM_PROVIDER_ISOLATION_SOURCE_TASK_107",
     "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
