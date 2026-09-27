@@ -70,6 +70,10 @@ from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
 )
+from rop.services.llm_reasoning_audit import (
+    LLMReasoningAuditContractError,
+    LLMReasoningAuditService,
+)
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProvider,
     LLMReasoningProviderError,
@@ -343,6 +347,8 @@ __all__ = [
     "ObservationService",
     "ObservationExtractionService",
     "LLMReasoningContractError",
+    "LLMReasoningAuditContractError",
+    "LLMReasoningAuditService",
     "LLMReasoningProvider",
     "LLMReasoningProviderError",
     "LLMReasoningProviderResponse",

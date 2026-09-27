@@ -51,6 +51,9 @@ from rop.schemas.llm_reasoning import (
     LLMReasoningProposalRead,
     ReasoningCandidateAssessmentRead,
 )
+from rop.schemas.llm_reasoning_audit import (
+    LLMReasoningAuditRead,
+)
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import (
     ObservationCreate,
@@ -262,6 +265,7 @@ __all__ = [
     "ObservationRead",
     "ObservationUpdate",
     "LLMReasoningProposalRead",
+    "LLMReasoningAuditRead",
     "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
