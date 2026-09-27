@@ -70,6 +70,12 @@ from rop.services.llm_output_validation import (
     LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
     validate_raw_proposal,
 )
+from rop.services.llm_proposal_normalization import (
+    LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106,
+    compute_normalized_fingerprint,
+    normalize_proposal,
+    validate_normalized,
+)
 from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
@@ -361,6 +367,10 @@ __all__ = [
     "ObservationExtractionService",
     "LLM_OUTPUT_VALIDATION_SOURCE_TASK_105",
     "validate_raw_proposal",
+    "LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106",
+    "compute_normalized_fingerprint",
+    "normalize_proposal",
+    "validate_normalized",
     "LLMReasoningContractError",
     "LLMReasoningAuditContractError",
     "LLMReasoningAuditService",

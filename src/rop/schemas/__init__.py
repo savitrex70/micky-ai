@@ -47,6 +47,10 @@ from rop.schemas.extraction import (
 )
 from rop.schemas.hypothesis import HypothesisCreate, HypothesisRead, HypothesisUpdate
 from rop.schemas.hypothesis_score import HypothesisScoreRead
+from rop.schemas.llm_proposal_normalization import (
+    NormalizedCandidateAssessmentRead,
+    NormalizedLLMReasoningProposalRead,
+)
 from rop.schemas.llm_reasoning import (
     LLMReasoningProposalRead,
     ReasoningCandidateAssessmentRead,
@@ -266,6 +270,8 @@ __all__ = [
     "ObservationUpdate",
     "LLMReasoningProposalRead",
     "LLMReasoningAuditRead",
+    "NormalizedCandidateAssessmentRead",
+    "NormalizedLLMReasoningProposalRead",
     "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",
