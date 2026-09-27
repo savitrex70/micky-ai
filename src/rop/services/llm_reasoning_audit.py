@@ -63,6 +63,7 @@ _ISSUE_ORDER = (
     "fingerprint_mismatch",
     "candidate_assessment_not_mapping",
     "unexpected_assessment_field",
+    "missing_assessment_field",
     "missing_candidate_id",
     "invalid_candidate_id_format",
     "duplicate_candidate_id",
@@ -383,7 +384,16 @@ class LLMReasoningAuditService:
                         _add("invalid_assessment_value")
                         candidate_assessments_consistent = False
 
-                    # supporting_evidence_ids: format + membership
+                    # supporting_evidence_ids: presence, format, membership.
+                    # A missing list must fail explicitly: the audit is
+                    # independent from Pydantic defaults and never
+                    # substitutes an empty list for an absent field. The
+                    # remaining checks still run on safe defaults so one
+                    # gap never hides another defect.
+                    if "supporting_evidence_ids" not in assessment:
+                        _add("missing_assessment_field:supporting_evidence_ids")
+                        candidate_assessments_consistent = False
+                        evidence_references_consistent = False
                     sup_ids = assessment.get("supporting_evidence_ids", [])
                     if not isinstance(sup_ids, list):
                         _add("supporting_evidence_not_list")
@@ -397,7 +407,11 @@ class LLMReasoningAuditService:
                                 _add("unknown_supporting_evidence_id")
                                 evidence_references_consistent = False
 
-                    # contradicting_evidence_ids: format + membership
+                    # contradicting_evidence_ids: presence, format, membership
+                    if "contradicting_evidence_ids" not in assessment:
+                        _add("missing_assessment_field:contradicting_evidence_ids")
+                        candidate_assessments_consistent = False
+                        evidence_references_consistent = False
                     con_ids = assessment.get("contradicting_evidence_ids", [])
                     if not isinstance(con_ids, list):
                         _add("contradicting_evidence_not_list")
@@ -411,7 +425,11 @@ class LLMReasoningAuditService:
                                 _add("unknown_contradicting_evidence_id")
                                 evidence_references_consistent = False
 
-                    # unresolved_information_ids: format + membership
+                    # unresolved_information_ids: presence, format, membership
+                    if "unresolved_information_ids" not in assessment:
+                        _add("missing_assessment_field:unresolved_information_ids")
+                        candidate_assessments_consistent = False
+                        unresolved_info_consistent = False
                     unres_ids = assessment.get("unresolved_information_ids", [])
                     if not isinstance(unres_ids, list):
                         _add("unresolved_info_not_list")
@@ -425,25 +443,33 @@ class LLMReasoningAuditService:
                                 _add("unknown_missing_info_id")
                                 unresolved_info_consistent = False
 
-                    # explanation
-                    explanation = assessment.get("explanation", "")
-                    if (
-                        not isinstance(explanation, str)
-                        or len(explanation.strip()) == 0
-                    ):
-                        _add("empty_explanation")
-                        candidate_assessments_consistent = False
-
-                    # uncertainty_flags
-                    uncert_flags = assessment.get("uncertainty_flags", [])
-                    if not isinstance(uncert_flags, list):
-                        _add("uncertainty_flags_not_list")
+                    # explanation: presence, then non-empty string
+                    if "explanation" not in assessment:
+                        _add("missing_assessment_field:explanation")
                         candidate_assessments_consistent = False
                     else:
-                        for flag in uncert_flags:
-                            if not isinstance(flag, str):
-                                _add("uncertainty_flag_not_string")
-                                candidate_assessments_consistent = False
+                        explanation = assessment["explanation"]
+                        if (
+                            not isinstance(explanation, str)
+                            or len(explanation.strip()) == 0
+                        ):
+                            _add("empty_explanation")
+                            candidate_assessments_consistent = False
+
+                    # uncertainty_flags: presence, then list of strings
+                    if "uncertainty_flags" not in assessment:
+                        _add("missing_assessment_field:uncertainty_flags")
+                        candidate_assessments_consistent = False
+                    else:
+                        uncert_flags = assessment["uncertainty_flags"]
+                        if not isinstance(uncert_flags, list):
+                            _add("uncertainty_flags_not_list")
+                            candidate_assessments_consistent = False
+                        else:
+                            for flag in uncert_flags:
+                                if not isinstance(flag, str):
+                                    _add("uncertainty_flag_not_string")
+                                    candidate_assessments_consistent = False
 
                 # Coverage: every canonical candidate assessed exactly once.
                 actual_id_set = set(actual_ids_in_order)

@@ -549,3 +549,65 @@ def test_live_non_string_provider_text_is_invalid() -> None:
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(_BadTextProvider()).build(context=ctx)
     assert ei.value.invariant == "MODEL_OUTPUT_INVALID"
+
+
+def test_live_available_proposal_on_unavailable_context_rejected() -> None:
+    """An available proposal cannot be certified against an unavailable
+    canonical context."""
+    from rop.services.llm_request_serialization import (
+        compute_fingerprint,
+        serialize_context,
+    )
+
+    ctx = _valid_context()
+    unavailable_ctx = dict(ctx)
+    unavailable_ctx["available"] = False
+    unavailable_ctx["context_consistent"] = False
+    proposal = {
+        "session_id": str(ctx["session_id"]),
+        "context_fingerprint": compute_fingerprint(serialize_context(unavailable_ctx)),
+        "provider": "fake",
+        "model": "fake-model",
+        "candidate_assessments": [],
+        "available": True,
+        "proposal_consistent": True,
+        "llm_reasoning_source": "LLM_REASONING_TASK_057",
+    }
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=unavailable_ctx)
+
+    assert audit["proposal_consistent"] is False
+    assert "availability_mismatch" in audit["consistency_issues"]
+
+
+def test_live_hostile_response_properties_become_invalid() -> None:
+    """A provider object whose metadata properties raise on access must
+    become MODEL_OUTPUT_INVALID, never a leaked raw exception."""
+
+    class _HostileResponse:
+        @property
+        def provider(self) -> str:
+            raise RuntimeError("property exploded")
+
+        @property
+        def model(self) -> str:
+            raise RuntimeError("property exploded")
+
+        @property
+        def text(self) -> str:
+            raise RuntimeError("property exploded")
+
+    hostile = _HostileResponse()
+    issues = ProviderFailureBoundary.validate_provider_metadata(hostile, "x" * 64)
+    assert any("provider field is empty" in i for i in issues)
+    assert any("model field is empty" in i for i in issues)
+    assert any("response text is not a string" in i for i in issues)
+
+    ctx = _valid_context()
+
+    class _HostileProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            return _HostileResponse()
+
+    with pytest.raises(LLMReasoningContractError) as ei:
+        _service_with(_HostileProvider()).build(context=ctx)
+    assert ei.value.invariant == "MODEL_OUTPUT_INVALID"

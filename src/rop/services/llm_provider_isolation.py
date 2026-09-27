@@ -166,33 +166,57 @@ class ProviderFailureBoundary:
     # -----------------------------------------------------------------
 
     @staticmethod
+    def _safe_read(response: Any, name: str) -> Any:
+        """Read one response attribute without ever leaking exceptions.
+
+        A hostile provider object may expose metadata as properties that
+        raise on access. The default in getattr() only suppresses
+        AttributeError, so any other exception is caught here and
+        reported as a missing value by the caller.
+        """
+        try:
+            return getattr(response, name, None)
+        except Exception:
+            return None
+
+    @staticmethod
     def validate_provider_metadata(
         response: LLMReasoningProviderResponse, expected_fingerprint: str
     ) -> list[str]:
         """Validate provider response metadata.
 
         Defensive by design: the response object itself is untrusted, so
-        every attribute is read with getattr-and-type-check and no
-        AttributeError/TypeError can escape. Checks:
+        every attribute is read without ever leaking AttributeError,
+        TypeError, or arbitrary provider-raised exceptions. Checks:
         - provider and model are non-empty strings
+        - text is a string (non-string text cannot reach json parsing)
         - context_fingerprint matches expected (if provided)
         - no extra fields in response beyond provider, model, text
         """
         issues: list[str] = []
+        _read = ProviderFailureBoundary._safe_read
 
-        # Check provider non-empty (missing attribute counts as empty)
-        provider_name = getattr(response, "provider", None)
+        # Check provider non-empty (missing/unreadable attribute counts
+        # as empty)
+        provider_name = _read(response, "provider")
         if not isinstance(provider_name, str) or not provider_name.strip():
             issues.append("provider field is empty or not a string")
 
-        # Check model non-empty (missing attribute counts as empty)
-        model_name = getattr(response, "model", None)
+        # Check model non-empty (missing/unreadable attribute counts
+        # as empty)
+        model_name = _read(response, "model")
         if not isinstance(model_name, str) or not model_name.strip():
             issues.append("model field is empty or not a string")
 
+        # Check text is a string (missing/unreadable/non-string text
+        # cannot proceed to JSON parsing)
+        text_value = _read(response, "text")
+        if not isinstance(text_value, str):
+            issues.append("response text is not a string")
+
         # Check fingerprint match if expected provided
-        if expected_fingerprint and hasattr(response, "context_fingerprint"):
-            actual_fp = getattr(response, "context_fingerprint", None)
+        if expected_fingerprint and _read(response, "context_fingerprint"):
+            actual_fp = _read(response, "context_fingerprint")
             if actual_fp != expected_fingerprint:
                 issues.append(
                     "context_fingerprint mismatch: expected "

@@ -319,6 +319,68 @@ def test_unexpected_nested_assessment_field_rejected() -> None:
     assert audit["proposal_consistent"] is False
 
 
+def test_missing_supporting_evidence_ids_rejected() -> None:
+    """A missing list field fails even though the schema would default it."""
+    proposal, context = _get_valid_proposal()
+    del proposal["candidate_assessments"][0]["supporting_evidence_ids"]
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert (
+        "missing_assessment_field:supporting_evidence_ids"
+        in audit["consistency_issues"]
+    )
+    assert audit["proposal_consistent"] is False
+
+
+def test_missing_contradicting_evidence_ids_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    del proposal["candidate_assessments"][0]["contradicting_evidence_ids"]
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert (
+        "missing_assessment_field:contradicting_evidence_ids"
+        in audit["consistency_issues"]
+    )
+    assert audit["proposal_consistent"] is False
+
+
+def test_missing_unresolved_information_ids_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    del proposal["candidate_assessments"][0]["unresolved_information_ids"]
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert (
+        "missing_assessment_field:unresolved_information_ids"
+        in audit["consistency_issues"]
+    )
+    assert audit["proposal_consistent"] is False
+
+
+def test_missing_uncertainty_flags_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    del proposal["candidate_assessments"][0]["uncertainty_flags"]
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert "missing_assessment_field:uncertainty_flags" in audit["consistency_issues"]
+    assert audit["proposal_consistent"] is False
+
+
+def test_missing_explanation_rejected_without_empty_explanation() -> None:
+    """A missing explanation fails presence exactly once (no double report)."""
+    proposal, context = _get_valid_proposal()
+    del proposal["candidate_assessments"][0]["explanation"]
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert "missing_assessment_field:explanation" in audit["consistency_issues"]
+    assert "empty_explanation" not in audit["consistency_issues"]
+    assert audit["proposal_consistent"] is False
+
+
 # ---------------------------------------------------------------------------
 # Missing fields
 # ---------------------------------------------------------------------------
