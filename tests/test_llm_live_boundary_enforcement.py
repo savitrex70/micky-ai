@@ -38,6 +38,7 @@ from rop.services.llm_reasoning_audit import LLMReasoningAuditService
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderError,
     LLMReasoningProviderResponse,
+    LLMReasoningRequest,
 )
 from rop.services.llm_request_serialization import (
     compute_fingerprint,
@@ -611,3 +612,80 @@ def test_live_hostile_response_properties_become_invalid() -> None:
     with pytest.raises(LLMReasoningContractError) as ei:
         _service_with(_HostileProvider()).build(context=ctx)
     assert ei.value.invariant == "MODEL_OUTPUT_INVALID"
+
+
+def test_live_response_read_exactly_once_per_field() -> None:
+    """Each response field is read exactly once, so a property that
+    raises on a second read can never be reached after validation."""
+    ctx = _valid_context()
+    reads: dict[str, int] = {"provider": 0, "model": 0, "text": 0}
+
+    def _counting(name: str, value: Any) -> None:
+        reads[name] += 1
+        if reads[name] > 1:
+            raise RuntimeError(f"{name} read twice")
+
+    class _OneShotResponse:
+        @property
+        def provider(self) -> str:
+            _counting("provider", None)
+            return "fake"
+
+        @property
+        def model(self) -> str:
+            _counting("model", None)
+            return "fake-model"
+
+        @property
+        def text(self) -> str:
+            _counting("text", None)
+            return _valid_model_output(ctx)
+
+    class _OneShotProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            return _OneShotResponse()
+
+    proposal = _service_with(_OneShotProvider()).build(context=ctx)
+
+    assert proposal["provider"] == "fake"
+    assert proposal["model"] == "fake-model"
+    assert reads == {"provider": 1, "model": 1, "text": 1}
+
+
+def test_live_metadata_extraction_returns_validated_values() -> None:
+    """Task 107's extractor is the single read point and hands back the
+    exact values 057 consumes."""
+    ctx = _valid_context()
+    provider = FakeProvider(response_text=_valid_model_output(ctx))
+    response = provider.generate_reasoning(
+        LLMReasoningRequest(payload={}, context_fingerprint="x" * 64)
+    )
+    metadata, issues = ProviderFailureBoundary.extract_provider_metadata(
+        response, "x" * 64
+    )
+    assert issues == []
+    assert metadata["provider"] == "fake"
+    assert metadata["model"] == "fake-model"
+    assert metadata["text"] == _valid_model_output(ctx)
+
+
+def test_live_soft_unavailable_path_tolerates_hostile_provider_metadata() -> None:
+    """A provider whose name properties raise cannot break the soft
+    unavailable path (no model call is made there)."""
+
+    class _HostileNameProvider(FakeProvider):
+        @property
+        def provider_name(self) -> str:
+            raise RuntimeError("property exploded")
+
+        @property
+        def model_name(self) -> str:
+            return 12345
+
+    ctx = _valid_context()
+    ctx["available"] = False
+    result = _service_with(_HostileNameProvider()).build(context=ctx)
+
+    assert result["available"] is False
+    assert result["provider"] == ""
+    assert result["model"] == ""

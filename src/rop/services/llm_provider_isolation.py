@@ -180,14 +180,22 @@ class ProviderFailureBoundary:
             return None
 
     @staticmethod
-    def validate_provider_metadata(
+    def extract_provider_metadata(
         response: LLMReasoningProviderResponse, expected_fingerprint: str
-    ) -> list[str]:
-        """Validate provider response metadata.
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Read and validate provider metadata in one defensive pass.
 
-        Defensive by design: the response object itself is untrusted, so
-        every attribute is read without ever leaking AttributeError,
-        TypeError, or arbitrary provider-raised exceptions. Checks:
+        Returns ``(metadata, issues)``. Each response attribute is read
+        exactly once through :meth:`_safe_read`, so the caller consumes
+        the returned values instead of touching the untrusted response
+        again. That removes the second-access hazard entirely: a
+        property that raises, changes type, or returns a different value
+        on re-read cannot be reached after validation.
+
+        A non-empty ``issues`` list means the metadata is untrustworthy
+        and the returned values must not be used.
+
+        Checks:
         - provider and model are non-empty strings
         - text is a string (non-string text cannot reach json parsing)
         - context_fingerprint matches expected (if provided)
@@ -215,8 +223,8 @@ class ProviderFailureBoundary:
             issues.append("response text is not a string")
 
         # Check fingerprint match if expected provided
-        if expected_fingerprint and _read(response, "context_fingerprint"):
-            actual_fp = _read(response, "context_fingerprint")
+        actual_fp = _read(response, "context_fingerprint")
+        if expected_fingerprint and actual_fp:
             if actual_fp != expected_fingerprint:
                 issues.append(
                     "context_fingerprint mismatch: expected "
@@ -254,6 +262,25 @@ class ProviderFailureBoundary:
         if extra:
             issues.append(f"response contains extra fields: {sorted(extra)}")
 
+        return (
+            {"provider": provider_name, "model": model_name, "text": text_value},
+            issues,
+        )
+
+    @staticmethod
+    def validate_provider_metadata(
+        response: LLMReasoningProviderResponse, expected_fingerprint: str
+    ) -> list[str]:
+        """Validate provider response metadata and return the issue list.
+
+        Thin wrapper over :meth:`extract_provider_metadata` for callers
+        that need the verdict only. Callers that also need the validated
+        provider/model/text values must use ``extract_provider_metadata``
+        so the untrusted response is never read a second time.
+        """
+        _metadata, issues = ProviderFailureBoundary.extract_provider_metadata(
+            response, expected_fingerprint
+        )
         return issues
 
     # -----------------------------------------------------------------

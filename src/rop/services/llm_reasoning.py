@@ -233,10 +233,12 @@ class LLMReasoningService:
                 "provider raised unexpectedly: " + str(exc),
             ) from exc
 
-        # Task 107 provider-metadata gate: provider/model strings are
-        # validated through the canonical boundary before exposure.
-        # ROP-controlled fields below are never taken from the provider.
-        metadata_issues = ProviderFailureBoundary.validate_provider_metadata(
+        # Task 107 provider-metadata gate: provider/model/text are read
+        # once, defensively, and the validated values are the ones used
+        # below. The untrusted response object is never accessed again
+        # after this point, so a property that raises or changes value
+        # on a second read cannot escape as a raw exception.
+        metadata, metadata_issues = ProviderFailureBoundary.extract_provider_metadata(
             provider_response, fingerprint
         )
         if metadata_issues:
@@ -246,9 +248,9 @@ class LLMReasoningService:
             )
 
         # Strict output parsing: no regex, no heuristic repair. The
-        # provider text must be a string; a malformed response object
-        # becomes MODEL_OUTPUT_INVALID, never a leaked TypeError.
-        raw_text = getattr(provider_response, "text", None)
+        # validated text is guaranteed to be a string by Task 107; the
+        # check is kept so a non-string can never reach json.loads.
+        raw_text = metadata["text"]
         if not isinstance(raw_text, str):
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
@@ -308,8 +310,8 @@ class LLMReasoningService:
         result_model = LLMReasoningProposalRead(
             session_id=session_id,
             context_fingerprint=fingerprint,
-            provider=provider_response.provider,
-            model=provider_response.model,
+            provider=metadata["provider"],
+            model=metadata["model"],
             candidate_assessments=candidate_assessments,
             available=True,
             proposal_consistent=True,
@@ -334,8 +336,18 @@ class LLMReasoningService:
         provider_name = ""
         model_name = ""
         if self.provider is not None:
-            provider_name = getattr(self.provider, "provider_name", "")
-            model_name = getattr(self.provider, "model_name", "")
+            # Defensive for the same reason as the response metadata: a
+            # provider may expose these as properties that raise or
+            # return a non-string, and neither may leak out of the
+            # soft-unavailable path.
+            raw_provider = ProviderFailureBoundary._safe_read(
+                self.provider, "provider_name"
+            )
+            if isinstance(raw_provider, str) and raw_provider.strip():
+                provider_name = raw_provider
+            raw_model = ProviderFailureBoundary._safe_read(self.provider, "model_name")
+            if isinstance(raw_model, str) and raw_model.strip():
+                model_name = raw_model
         result_model = LLMReasoningProposalRead(
             session_id=session_id,
             context_fingerprint=fingerprint,
