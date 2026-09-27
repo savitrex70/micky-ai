@@ -16,6 +16,7 @@ import copy
 import inspect
 import json
 from collections.abc import Generator, Mapping
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -445,3 +446,106 @@ def test_live_103_audit_binds_context_provenance() -> None:
     forged["context_fingerprint"] = "0" * 64
     forged_audit = LLMReasoningAuditService.build(proposal=forged, context=ctx)
     assert "fingerprint_mismatch" in forged_audit["consistency_issues"]
+
+
+# ---------------------------------------------------------------------------
+# Correction proofs: availability binding, exact field sets, provider
+# boundary completeness
+# ---------------------------------------------------------------------------
+
+
+def test_live_103_rejects_available_proposal_on_unavailable_context() -> None:
+    ctx = _valid_context()
+    provider = FakeProvider(response_text=_valid_model_output(ctx))
+    proposal = _service_with(provider).build(context=ctx)
+    assert proposal["available"] is True
+
+    unavailable_ctx = dict(ctx)
+    unavailable_ctx["available"] = False
+    unavailable_ctx["context_consistent"] = False
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=unavailable_ctx)
+
+    assert audit["proposal_consistent"] is False
+    assert "availability_mismatch" in audit["consistency_issues"]
+
+
+def test_live_103_rejects_unexpected_top_level_field() -> None:
+    ctx = _valid_context()
+    provider = FakeProvider(response_text=_valid_model_output(ctx))
+    proposal = _service_with(provider).build(context=ctx)
+    proposal["winner"] = "candidate-x"
+
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=ctx)
+
+    assert audit["proposal_consistent"] is False
+    assert "unexpected_field:winner" in audit["consistency_issues"]
+
+
+def test_live_103_rejects_unexpected_nested_field() -> None:
+    ctx = _valid_context()
+    provider = FakeProvider(response_text=_valid_model_output(ctx))
+    proposal = _service_with(provider).build(context=ctx)
+    proposal["candidate_assessments"][0]["tool_call"] = "x"
+
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=ctx)
+
+    assert audit["proposal_consistent"] is False
+    assert "unexpected_assessment_field:tool_call" in audit["consistency_issues"]
+
+
+def test_live_provider_error_classified_through_107_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLMReasoningProviderError must flow through normalize_failure:
+    redirecting the boundary redirects the live outcome for this path
+    too -- no second competing classification exists."""
+    ctx = _valid_context()
+    control = FakeProvider(
+        raise_error=LLMReasoningProviderError("connection reset by peer")
+    )
+    with pytest.raises(LLMReasoningContractError) as ei_control:
+        _service_with(control).build(context=ctx)
+    assert ei_control.value.invariant == "MODEL_UNAVAILABLE"
+
+    provider = FakeProvider(
+        raise_error=LLMReasoningProviderError("connection reset by peer")
+    )
+    monkeypatch.setattr(
+        ProviderFailureBoundary,
+        "normalize_failure",
+        staticmethod(lambda exc: "MODEL_OUTPUT_INVALID"),
+    )
+    with pytest.raises(LLMReasoningContractError) as ei:
+        _service_with(provider).build(context=ctx)
+    assert ei.value.invariant == "MODEL_OUTPUT_INVALID"
+
+
+def test_live_malformed_response_missing_metadata_is_invalid() -> None:
+    """A provider object without provider/model metadata must become
+    MODEL_OUTPUT_INVALID, never an AttributeError leak."""
+    ctx = _valid_context()
+
+    class _NoMetaProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            return SimpleNamespace(text=_valid_model_output(ctx))
+
+    with pytest.raises(LLMReasoningContractError) as ei:
+        _service_with(_NoMetaProvider()).build(context=ctx)
+    assert ei.value.invariant == "MODEL_OUTPUT_INVALID"
+
+
+def test_live_non_string_provider_text_is_invalid() -> None:
+    """Non-string provider text must become MODEL_OUTPUT_INVALID, never
+    a raw TypeError leak from json.loads."""
+    ctx = _valid_context()
+
+    class _BadTextProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            response = super().generate_reasoning(request)
+            return SimpleNamespace(
+                provider=response.provider, model=response.model, text=12345
+            )
+
+    with pytest.raises(LLMReasoningContractError) as ei:
+        _service_with(_BadTextProvider()).build(context=ctx)
+    assert ei.value.invariant == "MODEL_OUTPUT_INVALID"

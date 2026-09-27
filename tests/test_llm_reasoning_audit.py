@@ -264,6 +264,61 @@ def test_foreign_evidence_detected() -> None:
     assert "unknown_supporting_evidence_id" in audit["consistency_issues"]
 
 
+def test_available_proposal_against_unavailable_context_rejected() -> None:
+    """A usable proposal cannot be certified against an unavailable context."""
+    proposal, context = _get_valid_proposal()
+    unavailable_ctx = dict(context)
+    unavailable_ctx["available"] = False
+    unavailable_ctx["context_consistent"] = False
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=unavailable_ctx)
+
+    assert audit["proposal_consistent"] is False
+    assert "availability_mismatch" in audit["consistency_issues"]
+
+
+def test_unavailable_proposal_against_available_context_rejected() -> None:
+    """An unavailable proposal cannot be certified against a usable context."""
+    proposal, context = _get_valid_proposal()
+    proposal["available"] = False
+    proposal["proposal_consistent"] = False
+    proposal["candidate_assessments"] = []
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["proposal_consistent"] is False
+    assert "availability_mismatch" in audit["consistency_issues"]
+
+
+def test_context_source_mismatch_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    tampered_ctx = dict(context)
+    tampered_ctx["context_source"] = "WRONG"
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=tampered_ctx)
+
+    assert audit["provenance_consistent"] is False
+    assert "context_source_mismatch" in audit["consistency_issues"]
+    assert audit["proposal_consistent"] is False
+
+
+def test_unexpected_top_level_field_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    proposal["winner"] = "candidate-x"
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["metadata_consistent"] is False
+    assert "unexpected_field:winner" in audit["consistency_issues"]
+    assert audit["proposal_consistent"] is False
+
+
+def test_unexpected_nested_assessment_field_rejected() -> None:
+    proposal, context = _get_valid_proposal()
+    proposal["candidate_assessments"][0]["tool_call"] = "x"
+    audit = LLMReasoningAuditService.build(proposal=proposal, context=context)
+
+    assert audit["candidate_assessments_consistent"] is False
+    assert "unexpected_assessment_field:tool_call" in audit["consistency_issues"]
+    assert audit["proposal_consistent"] is False
+
+
 # ---------------------------------------------------------------------------
 # Missing fields
 # ---------------------------------------------------------------------------
@@ -839,7 +894,7 @@ def test_input_immutability() -> None:
 
 
 def test_unavailable_proposal_audit() -> None:
-    """Unavailable proposal (available=False) produces clean audit with
+    """Unavailable proposal (available=False) produces a truthful audit with
     legitimate False states, not errors."""
     ctx = _valid_context()
     # Create an unavailable proposal by using a context with available=False
@@ -868,7 +923,10 @@ def test_unavailable_proposal_audit() -> None:
     assert audit["unresolved_info_consistent"] is True
     assert audit["candidate_order_consistent"] is True
     assert audit["provenance_consistent"] is True
-    assert audit["consistency_issues"] == []
+    # The unavailable context is itself inconsistent: reporting that
+    # truthfully is not a spurious failure.
+    assert audit["consistency_issues"] == ["context_inconsistent"]
+    assert audit["proposal_consistent"] is False
 
 
 def test_available_false_but_has_assessments() -> None:

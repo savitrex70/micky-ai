@@ -171,21 +171,23 @@ class ProviderFailureBoundary:
     ) -> list[str]:
         """Validate provider response metadata.
 
-        Checks:
+        Defensive by design: the response object itself is untrusted, so
+        every attribute is read with getattr-and-type-check and no
+        AttributeError/TypeError can escape. Checks:
         - provider and model are non-empty strings
         - context_fingerprint matches expected (if provided)
         - no extra fields in response beyond provider, model, text
-
-        Returns list of issues (empty if all valid).
         """
         issues: list[str] = []
 
-        # Check provider non-empty
-        if not isinstance(response.provider, str) or not response.provider.strip():
+        # Check provider non-empty (missing attribute counts as empty)
+        provider_name = getattr(response, "provider", None)
+        if not isinstance(provider_name, str) or not provider_name.strip():
             issues.append("provider field is empty or not a string")
 
-        # Check model non-empty
-        if not isinstance(response.model, str) or not response.model.strip():
+        # Check model non-empty (missing attribute counts as empty)
+        model_name = getattr(response, "model", None)
+        if not isinstance(model_name, str) or not model_name.strip():
             issues.append("model field is empty or not a string")
 
         # Check fingerprint match if expected provided

@@ -30,6 +30,7 @@ from rop.services.llm_request_serialization import (
     compute_fingerprint,
     serialize_context,
 )
+from rop.services.reasoning_context import REASONING_CONTEXT_SOURCE_TASK_055
 
 LLM_REASONING_AUDIT_TASK_103 = "LLM_REASONING_AUDIT_TASK_103"
 """Fixed structural-contract identifier for Task 103 audit results."""
@@ -52,11 +53,16 @@ _ISSUE_ORDER = (
     "wrong_type",
     "invalid_uuid",
     "invalid_session_id_format",
+    "unexpected_field",
     "session_mismatch",
+    "availability_mismatch",
+    "context_source_mismatch",
+    "context_inconsistent",
     "invalid_fingerprint_format",
     "fingerprint_compute_failed",
     "fingerprint_mismatch",
     "candidate_assessment_not_mapping",
+    "unexpected_assessment_field",
     "missing_candidate_id",
     "invalid_candidate_id_format",
     "duplicate_candidate_id",
@@ -202,9 +208,17 @@ class LLMReasoningAuditService:
                     _add(f"wrong_type:{field}")
                     metadata_consistent = False
 
+        # Exact top-level field set: the Task 057 proposal contract.
+        # Unexpected fields are never silently accepted.
+        for name in sorted(str(k) for k in proposal.keys()):
+            if name not in required_fields:
+                _add(f"unexpected_field:{name}")
+                metadata_consistent = False
+
         # If critical fields are missing or wrong type, we can't proceed
         # with deeper checks, but we still return the audit with flags set
         if not metadata_consistent:
+            ordered_early = sorted(set(issues), key=_issue_order_key)
             return LLMReasoningAuditService._build_result(
                 proposal=proposal,
                 available=available,
@@ -217,7 +231,7 @@ class LLMReasoningAuditService:
                 candidate_order_consistent=candidate_order_consistent,
                 provenance_consistent=provenance_consistent,
                 metadata_consistent=metadata_consistent,
-                issues=issues,
+                issues=ordered_early,
             )
 
         # -----------------------------------------------------------------
@@ -236,6 +250,24 @@ class LLMReasoningAuditService:
                 "canonical context has no valid session_id",
             )
         context_session_id = str(context_session_raw)
+
+        # -----------------------------------------------------------------
+        # Canonical context provenance and availability binding. A
+        # proposal cannot claim usable LLM reasoning unless the exact
+        # canonical context agrees it is available, carries the fixed
+        # Task 055 source, and is internally consistent.
+        # -----------------------------------------------------------------
+        if context.get("context_source") != REASONING_CONTEXT_SOURCE_TASK_055:
+            _add("context_source_mismatch")
+            provenance_consistent = False
+            proposal_consistent = False
+        if context.get("context_consistent") is not True:
+            _add("context_inconsistent")
+            proposal_consistent = False
+        context_available = context.get("available")
+        if available != context_available:
+            _add("availability_mismatch")
+            proposal_consistent = False
 
         # -----------------------------------------------------------------
         # session identity: exact match against the canonical context
@@ -309,6 +341,21 @@ class LLMReasoningAuditService:
                         _add("candidate_assessment_not_mapping")
                         candidate_assessments_consistent = False
                         continue
+
+                    # Exact nested field set: no invented, discarded, or
+                    # smuggled assessment fields.
+                    for name in sorted(str(k) for k in assessment.keys()):
+                        if name not in (
+                            "candidate_id",
+                            "assessment",
+                            "supporting_evidence_ids",
+                            "contradicting_evidence_ids",
+                            "unresolved_information_ids",
+                            "explanation",
+                            "uncertainty_flags",
+                        ):
+                            _add(f"unexpected_assessment_field:{name}")
+                            candidate_assessments_consistent = False
 
                     # candidate_id: format, membership, duplicates
                     cand_id = assessment.get("candidate_id")

@@ -549,7 +549,9 @@ def test_release_legitimate_unavailable_states_stay_so() -> None:
     assert provider.calls == 0
     assert audit["available"] is False
     assert audit["proposal_consistent"] is False
-    assert audit["consistency_issues"] == []
+    # The unavailable canonical context is itself inconsistent: the audit
+    # reports that truthfully rather than certifying a clean bill.
+    assert audit["consistency_issues"] == ["context_inconsistent"]
     assert audit["candidate_assessments_consistent"] is True
     assert audit["metadata_consistent"] is True
     assert audit["session_consistent"] is True

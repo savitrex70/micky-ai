@@ -219,9 +219,10 @@ class LLMReasoningService:
         try:
             provider_response = provider.generate_reasoning(request)
         except LLMReasoningProviderError as exc:
-            raise LLMReasoningContractError(
-                _OUTCOME_MODEL_UNAVAILABLE, str(exc)
-            ) from exc
+            # Task 107 is authoritative for ALL provider-call failures:
+            # no second competing classification path exists.
+            outcome = ProviderFailureBoundary.normalize_failure(exc)
+            raise LLMReasoningContractError(outcome, str(exc)) from exc
         except Exception as exc:
             # Task 107 classifies unexpected provider failures; the
             # boundary never lets an arbitrary exception bypass the
@@ -244,9 +245,17 @@ class LLMReasoningService:
                 "provider metadata failed validation: " + "; ".join(metadata_issues),
             )
 
-        # Strict output parsing: no regex, no heuristic repair.
+        # Strict output parsing: no regex, no heuristic repair. The
+        # provider text must be a string; a malformed response object
+        # becomes MODEL_OUTPUT_INVALID, never a leaked TypeError.
+        raw_text = getattr(provider_response, "text", None)
+        if not isinstance(raw_text, str):
+            raise LLMReasoningContractError(
+                _OUTCOME_MODEL_OUTPUT_INVALID,
+                "provider response text is not a string",
+            )
         try:
-            raw_dict = json.loads(provider_response.text)
+            raw_dict = json.loads(raw_text)
         except ValueError as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
