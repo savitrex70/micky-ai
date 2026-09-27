@@ -14,12 +14,22 @@ from uuid import UUID
 
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.entity import EntityRead
+from rop.schemas.llm_request_serialization import (
+    LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104,
+)
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import ObservationRead
 from rop.schemas.template_match import TemplateMatchRead
 
-LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104 = "LLM_REQUEST_SERIALIZATION_TASK_104"
-"""Fixed structural-contract identifier for Task 104 serialization."""
+__all__ = [
+    "LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104",
+    "ALLOWED_PAYLOAD_FIELDS",
+    "ELEMENT_SERIALIZERS",
+    "serialize_context",
+    "to_json_safe",
+    "compute_fingerprint",
+    "validate_payload",
+]
 
 # Fields the model is allowed to receive. Nothing else is exposed.
 # Same seven fields as Task 057.

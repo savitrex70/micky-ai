@@ -47,6 +47,12 @@ from rop.schemas.extraction import (
 )
 from rop.schemas.hypothesis import HypothesisCreate, HypothesisRead, HypothesisUpdate
 from rop.schemas.hypothesis_score import HypothesisScoreRead
+from rop.schemas.llm_output_validation import (
+    LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
+)
+from rop.schemas.llm_privacy_boundary import (
+    LLM_PRIVACY_BOUNDARY_SOURCE_TASK_108,
+)
 from rop.schemas.llm_proposal_normalization import (
     NormalizedCandidateAssessmentRead,
     NormalizedLLMReasoningProposalRead,
@@ -60,6 +66,9 @@ from rop.schemas.llm_reasoning import (
 )
 from rop.schemas.llm_reasoning_audit import (
     LLMReasoningAuditRead,
+)
+from rop.schemas.llm_request_serialization import (
+    LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104,
 )
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import (
@@ -276,6 +285,9 @@ __all__ = [
     "NormalizedCandidateAssessmentRead",
     "NormalizedLLMReasoningProposalRead",
     "LLM_PROVIDER_ISOLATION_SOURCE_TASK_107",
+    "LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104",
+    "LLM_OUTPUT_VALIDATION_SOURCE_TASK_105",
+    "LLM_PRIVACY_BOUNDARY_SOURCE_TASK_108",
     "ReasoningCandidateAssessmentRead",
     "ReasoningContextConsistencyRead",
     "ReasoningContextRead",

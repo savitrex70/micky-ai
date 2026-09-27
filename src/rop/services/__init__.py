@@ -70,6 +70,12 @@ from rop.services.llm_output_validation import (
     LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
     validate_raw_proposal,
 )
+from rop.services.llm_privacy_boundary import (
+    LLM_PRIVACY_BOUNDARY_SOURCE_TASK_108,
+    check_adversarial_text,
+    check_payload_privacy,
+    validate_llm_input_boundary,
+)
 from rop.services.llm_proposal_normalization import (
     LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106,
     compute_normalized_fingerprint,
@@ -371,6 +377,10 @@ __all__ = [
     "ObservationExtractionService",
     "LLM_OUTPUT_VALIDATION_SOURCE_TASK_105",
     "validate_raw_proposal",
+    "LLM_PRIVACY_BOUNDARY_SOURCE_TASK_108",
+    "check_adversarial_text",
+    "check_payload_privacy",
+    "validate_llm_input_boundary",
     "LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106",
     "compute_normalized_fingerprint",
     "normalize_proposal",

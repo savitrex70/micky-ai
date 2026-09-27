@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from rop.schemas.llm_provider_isolation import (
+    LLM_PROVIDER_ISOLATION_SOURCE_TASK_107,
+)
 from rop.services.llm_reasoning_provider import LLMReasoningProviderResponse
 
-LLM_PROVIDER_ISOLATION_SOURCE_TASK_107 = "LLM_PROVIDER_ISOLATION_TASK_107"
-"""Fixed structural-contract identifier for Task 107 results."""
+__all__ = ["LLM_PROVIDER_ISOLATION_SOURCE_TASK_107", "ProviderFailureBoundary"]
 
 
 class ProviderFailureBoundary:

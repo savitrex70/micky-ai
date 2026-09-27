@@ -11,10 +11,12 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from rop.schemas.llm_output_validation import (
+    LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
+)
 from rop.schemas.llm_reasoning import _RawLLMReasoningProposal
 
-LLM_OUTPUT_VALIDATION_SOURCE_TASK_105 = "LLM_OUTPUT_VALIDATION_TASK_105"
-"""Fixed structural-contract identifier for Task 105 validation results."""
+__all__ = ["LLM_OUTPUT_VALIDATION_SOURCE_TASK_105", "validate_raw_proposal"]
 
 
 def validate_raw_proposal(
