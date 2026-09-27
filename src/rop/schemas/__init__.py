@@ -53,6 +53,9 @@ from rop.schemas.llm_output_validation import (
 from rop.schemas.llm_privacy_boundary import (
     LLM_PRIVACY_BOUNDARY_SOURCE_TASK_108,
 )
+from rop.schemas.llm_proposal_inspection import (
+    LLMProposalInspectionRead,
+)
 from rop.schemas.llm_proposal_normalization import (
     NormalizedCandidateAssessmentRead,
     NormalizedLLMReasoningProposalRead,
@@ -284,6 +287,7 @@ __all__ = [
     "LLMReasoningAuditRead",
     "NormalizedCandidateAssessmentRead",
     "NormalizedLLMReasoningProposalRead",
+    "LLMProposalInspectionRead",
     "LLM_PROVIDER_ISOLATION_SOURCE_TASK_107",
     "LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104",
     "LLM_OUTPUT_VALIDATION_SOURCE_TASK_105",

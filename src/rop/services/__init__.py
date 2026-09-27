@@ -76,6 +76,11 @@ from rop.services.llm_privacy_boundary import (
     check_payload_privacy,
     validate_llm_input_boundary,
 )
+from rop.services.llm_proposal_inspection import (
+    LLM_PROPOSAL_INSPECTION_SOURCE_TASK_109,
+    LLMProposalInspectionContractError,
+    LLMProposalInspectionService,
+)
 from rop.services.llm_proposal_normalization import (
     LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106,
     compute_normalized_fingerprint,
@@ -381,6 +386,9 @@ __all__ = [
     "check_adversarial_text",
     "check_payload_privacy",
     "validate_llm_input_boundary",
+    "LLM_PROPOSAL_INSPECTION_SOURCE_TASK_109",
+    "LLMProposalInspectionContractError",
+    "LLMProposalInspectionService",
     "LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106",
     "compute_normalized_fingerprint",
     "normalize_proposal",
