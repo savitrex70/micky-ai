@@ -66,6 +66,10 @@ from rop.services.hypothesis_scoring import (
     HypothesisScoreContractError,
     HypothesisScoringService,
 )
+from rop.services.llm_output_validation import (
+    LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
+    validate_raw_proposal,
+)
 from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
@@ -355,6 +359,8 @@ __all__ = [
     "MissingInformationService",
     "ObservationService",
     "ObservationExtractionService",
+    "LLM_OUTPUT_VALIDATION_SOURCE_TASK_105",
+    "validate_raw_proposal",
     "LLMReasoningContractError",
     "LLMReasoningAuditContractError",
     "LLMReasoningAuditService",
