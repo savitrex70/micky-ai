@@ -43,6 +43,7 @@ from rop.services.llm_boundary_contract import (
     OUTCOME_MODEL_UNAVAILABLE,
 )
 from rop.services.llm_output_validation import validate_raw_proposal
+from rop.services.llm_privacy_boundary import check_payload_privacy
 from rop.services.llm_provider_isolation import ProviderFailureBoundary
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProvider,
@@ -228,6 +229,21 @@ class LLMReasoningService:
                 _OUTCOME_INPUT_INCONSISTENT,
                 "serialized payload violates the Task 104 allowed-field "
                 "contract: " + ", ".join(sorted(unexpected_fields)),
+            )
+
+        # Task 118: live structural privacy gate. The serialized payload
+        # is scanned with the Task 108 structural helper BEFORE any
+        # provider invocation. Only structural leakage (credentials,
+        # tokens, env refs, filesystem/DB internals, ORM handles, object
+        # reprs) is rejected here -- deliberately NOT the broad
+        # adversarial keyword set, so ordinary clinical language
+        # ("delete", "override", "bypass", "system", ...) still passes.
+        privacy_violations = check_payload_privacy(serialized)
+        if privacy_violations:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "serialized payload failed structural privacy screening: "
+                + "; ".join(sorted(set(privacy_violations))),
             )
 
         request = LLMReasoningRequest(

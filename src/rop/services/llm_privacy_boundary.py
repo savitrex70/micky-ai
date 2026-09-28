@@ -110,6 +110,13 @@ _ORM_REFERENCE_PATTERNS = (
 # Private dunder attributes
 _DUNDER_PATTERNS = (r"__\w+__",)  # Any __dunder__ attribute
 
+# Python object representations (memory addresses and instance reprs that
+# leak runtime internals; legitimate clinical text never contains these)
+_PYTHON_REPR_PATTERNS = (
+    r"<[\w.]+\s+object\s+at\s+0x[0-9a-fA-F]+>",  # <Foo object at 0x7f...>
+    r"0x[0-9a-fA-F]{8,}",  # raw memory addresses
+)
+
 # Combine all forbidden patterns with descriptive labels
 _FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     # (label, regex)
@@ -135,6 +142,7 @@ _FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     *[(f"db_connection:{i}", pat) for i, pat in enumerate(_DB_CONNECTION_PATTERNS)],
     *[(f"orm_reference:{i}", pat) for i, pat in enumerate(_ORM_REFERENCE_PATTERNS)],
     *[(f"dunder_attribute:{i}", pat) for i, pat in enumerate(_DUNDER_PATTERNS)],
+    *[(f"python_object_repr:{i}", pat) for i, pat in enumerate(_PYTHON_REPR_PATTERNS)],
 )
 
 # Pre-compile all regexes for performance
