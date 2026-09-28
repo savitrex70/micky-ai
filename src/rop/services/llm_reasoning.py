@@ -21,6 +21,7 @@ validation. There is no persistence and no HTTP endpoint here.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -157,7 +158,24 @@ class LLMReasoningService:
                 "context is required and must be a mapping",
             )
 
-        session_id = context.get("session_id")
+        # Task 115: operate on one deterministic snapshot of the approved
+        # Task 055 context. The caller's mapping may be mutable or even
+        # adversarial (values changing between reads), so every later
+        # step -- session check, availability, Task 056 audit,
+        # serialization, fingerprint, request -- reads this snapshot and
+        # nothing else. Keys are preserved exactly; no extra fields are
+        # introduced and the context is never reconstructed a second time.
+        try:
+            snapshot: dict[str, Any] = {
+                key: copy.deepcopy(value) for key, value in dict(context).items()
+            }
+        except Exception as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "context snapshot could not be produced: " + str(exc),
+            ) from exc
+
+        session_id = snapshot.get("session_id")
         if not isinstance(session_id, UUID):
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_UNAVAILABLE,
@@ -167,12 +185,12 @@ class LLMReasoningService:
         # Soft unavailable: Task 055 itself declined to produce a
         # usable context. No model call, no exception -- a fully typed
         # result with available=False.
-        if context.get("available") is not True:
-            return self._soft_unavailable_result(context, session_id)
+        if snapshot.get("available") is not True:
+            return self._soft_unavailable_result(snapshot, session_id)
 
-        # Task 056 audit of the exact supplied context.
+        # Task 056 audit of the canonical snapshot.
         try:
-            audit = self.reasoning_context_consistency_service.build(context=context)
+            audit = self.reasoning_context_consistency_service.build(context=snapshot)
         except Exception as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
@@ -195,9 +213,9 @@ class LLMReasoningService:
                 "Task 056 audit reports inconsistent provenance",
             )
 
-        # Serialize the exact context the model will see, and compute
-        # the fingerprint of that serialization.
-        serialized = self._serialize_context(context)
+        # Serialize the canonical snapshot the model will see, and
+        # compute the fingerprint of that serialization.
+        serialized = self._serialize_context(snapshot)
         fingerprint = self._fingerprint(serialized)
 
         # Task 104 enforcement: the provider-bound payload must contain
@@ -274,11 +292,12 @@ class LLMReasoningService:
                 "provider output was not valid JSON: " + str(exc),
             ) from exc
 
-        # Task 105 is the authoritative output-validation boundary:
-        # every reference, ordering, duplication, and content rule is
-        # enforced through it. Schema-shape failures stay INVALID;
-        # reference/content failures are INCONSISTENT.
-        output_issues = validate_raw_proposal(raw_dict, context)
+        # Task 105 is the authoritative output-validation boundary, applied
+        # to the same canonical snapshot: every reference, ordering,
+        # duplication, and content rule is enforced through it.
+        # Schema-shape failures stay INVALID; reference/content failures
+        # are INCONSISTENT.
+        output_issues = validate_raw_proposal(raw_dict, snapshot)
         if output_issues:
             if any(
                 issue.startswith("Top-level schema validation failed")
