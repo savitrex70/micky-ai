@@ -15,6 +15,7 @@ from rop.schemas.llm_output_validation import (
     LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
 )
 from rop.schemas.llm_reasoning import _RawLLMReasoningProposal
+from rop.services.llm_boundary_contract import VALID_ASSESSMENTS
 
 __all__ = ["LLM_OUTPUT_VALIDATION_SOURCE_TASK_105", "validate_raw_proposal"]
 
@@ -74,7 +75,7 @@ def validate_raw_proposal(
 
         # assessment must be a valid enum value (already enforced by schema,
         # but we re-verify for completeness)
-        if a.assessment not in ("SUPPORTS", "WEAKENS", "UNCLEAR"):
+        if a.assessment not in VALID_ASSESSMENTS:
             issues.append(
                 f"{prefix}: invalid assessment value '{a.assessment}' "
                 f"(expected one of SUPPORTS, WEAKENS, UNCLEAR)"

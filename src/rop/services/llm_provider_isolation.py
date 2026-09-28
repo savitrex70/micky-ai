@@ -11,6 +11,13 @@ from typing import Any
 from rop.schemas.llm_provider_isolation import (
     LLM_PROVIDER_ISOLATION_SOURCE_TASK_107,
 )
+from rop.services.llm_boundary_contract import (
+    OUTCOME_INPUT_INCONSISTENT,
+    OUTCOME_MODEL_OUTPUT_INCONSISTENT,
+    OUTCOME_MODEL_OUTPUT_INVALID,
+    OUTCOME_MODEL_UNAVAILABLE,
+    PROVIDER_RESPONSE_KNOWN_FIELDS,
+)
 from rop.services.llm_reasoning_provider import LLMReasoningProviderResponse
 
 __all__ = ["LLM_PROVIDER_ISOLATION_SOURCE_TASK_107", "ProviderFailureBoundary"]
@@ -63,7 +70,7 @@ class ProviderFailureBoundary:
                 "tls",
             )
         ):
-            return "MODEL_UNAVAILABLE"
+            return OUTCOME_MODEL_UNAVAILABLE
 
         # Config/missing provider errors
         if any(
@@ -83,7 +90,7 @@ class ProviderFailureBoundary:
                 "unauthorized",
             )
         ):
-            return "MODEL_UNAVAILABLE"
+            return OUTCOME_MODEL_UNAVAILABLE
 
         # Provider-specific error types that indicate unavailability
         if exc_type in (
@@ -94,7 +101,7 @@ class ProviderFailureBoundary:
             "IOError",
             "PermissionError",
         ):
-            return "MODEL_UNAVAILABLE"
+            return OUTCOME_MODEL_UNAVAILABLE
 
         # INPUT_INCONSISTENT: the input pipeline (context, audit,
         # fingerprint, serialization) is at fault. Checked before
@@ -116,7 +123,7 @@ class ProviderFailureBoundary:
                 "inconsistent context",
             )
         ):
-            return "INPUT_INCONSISTENT"
+            return OUTCOME_INPUT_INCONSISTENT
 
         # MODEL_OUTPUT_INCONSISTENT: reference failures (validated downstream)
         if any(
@@ -133,7 +140,7 @@ class ProviderFailureBoundary:
                 "inconsistent",
             )
         ):
-            return "MODEL_OUTPUT_INCONSISTENT"
+            return OUTCOME_MODEL_OUTPUT_INCONSISTENT
 
         # MODEL_OUTPUT_INVALID: JSON/schema parsing errors
         if any(
@@ -152,14 +159,14 @@ class ProviderFailureBoundary:
                 "extra data",
             )
         ):
-            return "MODEL_OUTPUT_INVALID"
+            return OUTCOME_MODEL_OUTPUT_INVALID
 
         # Exception-type fallbacks (message carried no subject signal)
         if exc_type in ("ValidationError", "ValueError", "TypeError", "KeyError"):
-            return "MODEL_OUTPUT_INVALID"
+            return OUTCOME_MODEL_OUTPUT_INVALID
 
         # Default to MODEL_UNAVAILABLE for unknown provider exceptions
-        return "MODEL_UNAVAILABLE"
+        return OUTCOME_MODEL_UNAVAILABLE
 
     # -----------------------------------------------------------------
     # Provider metadata validation
@@ -231,12 +238,13 @@ class ProviderFailureBoundary:
                     f"{expected_fingerprint}, got {actual_fp}"
                 )
 
-        # Check for extra fields. The known response surface is provider,
-        # model, text, plus the optional context_fingerprint metadata the
-        # fingerprint check above already understands. Anything else --
-        # whether declared on a dataclass or attached as a plain
-        # attribute -- is untrusted provider surface.
-        allowed_fields = {"provider", "model", "text", "context_fingerprint"}
+        # Check for extra fields. The known response surface is the
+        # canonical Task 113 set: provider, model, text, plus the
+        # optional context_fingerprint metadata the fingerprint check
+        # above already understands. Anything else -- whether declared
+        # on a dataclass or attached as a plain attribute -- is
+        # untrusted provider surface.
+        allowed_fields = set(PROVIDER_RESPONSE_KNOWN_FIELDS)
         extra: set[str] = set()
         if hasattr(response, "__dataclass_fields__"):
             try:

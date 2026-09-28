@@ -34,6 +34,13 @@ from rop.schemas.llm_reasoning import (
     ReasoningCandidateAssessmentRead,
     _RawLLMReasoningProposal,
 )
+from rop.services.llm_boundary_contract import (
+    OUTCOME_INPUT_INCONSISTENT,
+    OUTCOME_INPUT_UNAVAILABLE,
+    OUTCOME_MODEL_OUTPUT_INCONSISTENT,
+    OUTCOME_MODEL_OUTPUT_INVALID,
+    OUTCOME_MODEL_UNAVAILABLE,
+)
 from rop.services.llm_output_validation import validate_raw_proposal
 from rop.services.llm_provider_isolation import ProviderFailureBoundary
 from rop.services.llm_reasoning_provider import (
@@ -62,11 +69,11 @@ LLM_REASONING_TASK_057 = "LLM_REASONING_TASK_057"
 # boundary (rop.services.llm_request_serialization) and are reused
 # here without duplication.
 
-_OUTCOME_INPUT_UNAVAILABLE = "INPUT_UNAVAILABLE"
-_OUTCOME_INPUT_INCONSISTENT = "INPUT_INCONSISTENT"
-_OUTCOME_MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
-_OUTCOME_MODEL_OUTPUT_INVALID = "MODEL_OUTPUT_INVALID"
-_OUTCOME_MODEL_OUTPUT_INCONSISTENT = "MODEL_OUTPUT_INCONSISTENT"
+_OUTCOME_INPUT_UNAVAILABLE = OUTCOME_INPUT_UNAVAILABLE
+_OUTCOME_INPUT_INCONSISTENT = OUTCOME_INPUT_INCONSISTENT
+_OUTCOME_MODEL_UNAVAILABLE = OUTCOME_MODEL_UNAVAILABLE
+_OUTCOME_MODEL_OUTPUT_INVALID = OUTCOME_MODEL_OUTPUT_INVALID
+_OUTCOME_MODEL_OUTPUT_INCONSISTENT = OUTCOME_MODEL_OUTPUT_INCONSISTENT
 
 
 class LLMReasoningContractError(Exception):

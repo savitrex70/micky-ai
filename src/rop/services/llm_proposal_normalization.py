@@ -13,32 +13,22 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from rop.services.llm_boundary_contract import (
+    ASSESSMENT_FIELDS,
+    PROPOSAL_TOP_FIELDS,
+    VALID_ASSESSMENTS,
+)
+
 LLM_PROPOSAL_NORMALIZATION_SOURCE_TASK_106 = "LLM_PROPOSAL_NORMALIZATION_TASK_106"
 """Fixed structural-contract identifier for Task 106 normalization."""
 
-# Exact Task 057 field set. No more, no less.
-_REQUIRED_TOP_FIELDS = (
-    "session_id",
-    "context_fingerprint",
-    "provider",
-    "model",
-    "candidate_assessments",
-    "available",
-    "proposal_consistent",
-    "llm_reasoning_source",
-)
+# Exact Task 057 field set. No more, no less. Canonical Task 113
+# definitions; the private aliases preserve local names.
+_REQUIRED_TOP_FIELDS = PROPOSAL_TOP_FIELDS
 
-_REQUIRED_ASSESSMENT_FIELDS = (
-    "candidate_id",
-    "assessment",
-    "supporting_evidence_ids",
-    "contradicting_evidence_ids",
-    "unresolved_information_ids",
-    "explanation",
-    "uncertainty_flags",
-)
+_REQUIRED_ASSESSMENT_FIELDS = ASSESSMENT_FIELDS
 
-_VALID_ASSESSMENTS = ("SUPPORTS", "WEAKENS", "UNCLEAR")
+_VALID_ASSESSMENTS = VALID_ASSESSMENTS
 
 
 class LLMProposalNormalizationContractError(Exception):
@@ -296,17 +286,8 @@ def validate_normalized(normalized: Mapping[str, Any]) -> list[str]:
     """
     errors = []
 
-    # Required top-level fields
-    required_fields = (
-        "session_id",
-        "context_fingerprint",
-        "provider",
-        "model",
-        "candidate_assessments",
-        "available",
-        "proposal_consistent",
-        "llm_reasoning_source",
-    )
+    # Required top-level fields (canonical Task 113 order).
+    required_fields = _REQUIRED_TOP_FIELDS
     for field in required_fields:
         if field not in normalized:
             errors.append(f"missing required field: {field}")
@@ -359,7 +340,7 @@ def validate_normalized(normalized: Mapping[str, Any]) -> list[str]:
 
         if "assessment" not in assessment:
             errors.append(f"candidate_assessments[{i}] missing assessment")
-        elif assessment["assessment"] not in ("SUPPORTS", "WEAKENS", "UNCLEAR"):
+        elif assessment["assessment"] not in _VALID_ASSESSMENTS:
             errors.append(
                 f"candidate_assessments[{i}].assessment must be "
                 "SUPPORTS/WEAKENS/UNCLEAR"

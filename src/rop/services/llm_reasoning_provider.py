@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from rop.services.llm_boundary_contract import PROVIDER_RESPONSE_REQUIRED_FIELDS
+
 
 @dataclass(frozen=True)
 class LLMReasoningProviderResponse:
@@ -19,6 +21,13 @@ class LLMReasoningProviderResponse:
     provider: str
     model: str
     text: str
+
+
+# Loud rather than silent: the declared response shape must match the
+# canonical Task 113 registry exactly.
+assert tuple(LLMReasoningProviderResponse.__dataclass_fields__) == tuple(
+    PROVIDER_RESPONSE_REQUIRED_FIELDS
+)
 
 
 class LLMReasoningProviderError(Exception):

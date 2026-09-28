@@ -25,6 +25,11 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from rop.services.llm_boundary_contract import (
+    ASSESSMENT_FIELDS,
+    PROPOSAL_TOP_FIELDS,
+    VALID_ASSESSMENTS,
+)
 from rop.services.llm_reasoning import LLM_REASONING_TASK_057
 from rop.services.llm_request_serialization import (
     compute_fingerprint,
@@ -35,8 +40,14 @@ from rop.services.reasoning_context import REASONING_CONTEXT_SOURCE_TASK_055
 LLM_REASONING_AUDIT_TASK_103 = "LLM_REASONING_AUDIT_TASK_103"
 """Fixed structural-contract identifier for Task 103 audit results."""
 
-# Valid assessment values from the Assessment enum
-_VALID_ASSESSMENTS = {"SUPPORTS", "WEAKENS", "UNCLEAR"}
+# Valid assessment values. Canonical Task 113 tuple; the set preserves
+# the audit's membership-check semantics.
+_VALID_ASSESSMENTS = set(VALID_ASSESSMENTS)
+
+# Canonical Task 113 field sets; the audit consumes them directly so a
+# drifted literal cannot silently fork the contract.
+_REQUIRED_TOP_FIELDS = PROPOSAL_TOP_FIELDS
+_REQUIRED_NESTED_FIELDS = ASSESSMENT_FIELDS
 
 # UUID regex pattern for validation
 _UUID_PATTERN = re.compile(
@@ -174,9 +185,11 @@ class LLMReasoningAuditService:
         metadata_consistent = True
 
         # -----------------------------------------------------------------
-        # Required fields and types
+        # Required fields and types. Names come from the canonical
+        # Task 113 registry; only the per-field type expectations are
+        # local to the audit.
         # -----------------------------------------------------------------
-        required_fields = {
+        _FIELD_TYPES: dict[str, tuple[type, ...]] = {
             "session_id": (str, UUID),
             "context_fingerprint": (str,),
             "provider": (str,),
@@ -186,6 +199,8 @@ class LLMReasoningAuditService:
             "proposal_consistent": (bool,),
             "llm_reasoning_source": (str,),
         }
+        assert set(_FIELD_TYPES) == set(_REQUIRED_TOP_FIELDS)
+        required_fields = {field: _FIELD_TYPES[field] for field in _REQUIRED_TOP_FIELDS}
 
         for field, expected_types in required_fields.items():
             if field not in proposal:
@@ -344,17 +359,9 @@ class LLMReasoningAuditService:
                         continue
 
                     # Exact nested field set: no invented, discarded, or
-                    # smuggled assessment fields.
+                    # smuggled assessment fields. Canonical Task 113 set.
                     for name in sorted(str(k) for k in assessment.keys()):
-                        if name not in (
-                            "candidate_id",
-                            "assessment",
-                            "supporting_evidence_ids",
-                            "contradicting_evidence_ids",
-                            "unresolved_information_ids",
-                            "explanation",
-                            "uncertainty_flags",
-                        ):
+                        if name not in _REQUIRED_NESTED_FIELDS:
                             _add(f"unexpected_assessment_field:{name}")
                             candidate_assessments_consistent = False
 

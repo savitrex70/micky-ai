@@ -20,6 +20,7 @@ from rop.schemas.llm_request_serialization import (
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import ObservationRead
 from rop.schemas.template_match import TemplateMatchRead
+from rop.services.llm_boundary_contract import PAYLOAD_FIELDS
 
 __all__ = [
     "LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104",
@@ -32,16 +33,9 @@ __all__ = [
 ]
 
 # Fields the model is allowed to receive. Nothing else is exposed.
-# Same seven fields as Task 057.
-ALLOWED_PAYLOAD_FIELDS = (
-    "session_id",
-    "observations",
-    "entities",
-    "missing_information",
-    "template_context",
-    "candidate_state",
-    "reasoning_pipeline",
-)
+# Canonical Task 113 definition; this alias preserves the Task 104
+# public name for backward compatibility.
+ALLOWED_PAYLOAD_FIELDS = PAYLOAD_FIELDS
 
 # Context lists and the Read schemas that serialize each element for
 # the model. Reused, not duplicated.
