@@ -33,17 +33,21 @@ class ReasoningCandidateAssessmentRead(BaseModel):
     hidden chain-of-thought and MUST NOT contain private deliberation.
     Every ID referenced here is validated against the canonical Task
     055 context by the service before this object is exposed.
+
+    Task 116: strict boundary. Unexpected fields are rejected
+    (``extra="forbid"``) and every structural field requires explicit
+    presence -- no permissive defaults substitute for absent data.
     """
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     candidate_id: UUID
     assessment: Assessment
-    supporting_evidence_ids: list[UUID] = Field(default_factory=list)
-    contradicting_evidence_ids: list[UUID] = Field(default_factory=list)
-    unresolved_information_ids: list[UUID] = Field(default_factory=list)
+    supporting_evidence_ids: list[UUID]
+    contradicting_evidence_ids: list[UUID]
+    unresolved_information_ids: list[UUID]
     explanation: str = Field(min_length=1)
-    uncertainty_flags: list[str] = Field(default_factory=list)
+    uncertainty_flags: list[str]
 
 
 class _RawCandidateAssessment(BaseModel):
@@ -89,9 +93,14 @@ class LLMReasoningProposalRead(BaseModel):
     MODEL_OUTPUT_INVALID, MODEL_OUTPUT_INCONSISTENT), which raise.
 
     ``llm_reasoning_source`` is a fixed structural identifier.
+
+    Task 116: strict boundary. Unexpected top-level fields are rejected
+    (``extra="forbid"``) so no winner, score, ranking, recommendation,
+    treatment, diagnosis, tool-call, or execution field can enter the
+    Task 057 proposal contract.
     """
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     session_id: UUID
     context_fingerprint: str
