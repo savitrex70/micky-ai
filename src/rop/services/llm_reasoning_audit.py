@@ -25,6 +25,9 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
+
+from rop.schemas.llm_reasoning_audit import LLMReasoningAuditRead
 from rop.services.llm_boundary_contract import (
     ASSESSMENT_FIELDS,
     PROPOSAL_TOP_FIELDS,
@@ -559,7 +562,22 @@ class LLMReasoningAuditService:
         metadata_consistent: bool,
         issues: list[str],
     ) -> dict[str, Any]:
-        """Construct the final audit result dict."""
+        """Construct the final audit result dict.
+
+        Task 117: the result is validated before it leaves the boundary.
+        Every issue must belong to the defined Task 103 vocabulary and
+        the full shape must satisfy the strict audit schema. A violation
+        here is an internal programming error, so it raises instead of
+        returning a misleading audit.
+        """
+        vocabulary = set(_ISSUE_ORDER)
+        for issue in issues:
+            root = issue.split(":", 1)[0]
+            if root not in vocabulary:
+                raise LLMReasoningAuditContractError(
+                    "AUDIT_VOCABULARY_VIOLATION",
+                    f"audit issue is outside the Task 103 vocabulary: {issue!r}",
+                )
         # Derive overall consistency flags from issues
         # A proposal is "consistent" overall if all checks pass
         all_consistent = all(
@@ -575,7 +593,7 @@ class LLMReasoningAuditService:
             ]
         )
 
-        return {
+        result = {
             "available": available,
             "proposal_consistent": proposal_consistent and all_consistent,
             "session_consistent": session_consistent,
@@ -589,3 +607,11 @@ class LLMReasoningAuditService:
             "consistency_issues": issues,
             "audit_source": LLM_REASONING_AUDIT_TASK_103,
         }
+        try:
+            validated = LLMReasoningAuditRead.model_validate(result)
+        except ValidationError as exc:
+            raise LLMReasoningAuditContractError(
+                "AUDIT_RESULT_INVALID",
+                "audit result failed schema validation: " + str(exc),
+            ) from exc
+        return validated.model_dump()

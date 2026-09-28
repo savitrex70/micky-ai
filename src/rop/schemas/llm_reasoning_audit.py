@@ -22,9 +22,13 @@ class LLMReasoningAuditRead(BaseModel):
     ``consistency_issues`` is a deterministically ordered, deduplicated
     list of any violations found. ``audit_source`` is a fixed structural
     identifier.
+
+    Task 117: strict boundary. Unexpected output fields are rejected
+    (``extra="forbid"``); the service validates every audit result
+    through this schema before returning it.
     """
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     available: bool
     proposal_consistent: bool
