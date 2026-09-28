@@ -276,11 +276,13 @@ class LLMReasoningService:
         except Exception as exc:
             # Task 107 classifies unexpected provider failures; the
             # boundary never lets an arbitrary exception bypass the
-            # contract outcomes.
+            # contract outcomes. The message is rendered defensively so
+            # a hostile __str__ cannot escape either.
             outcome = ProviderFailureBoundary.normalize_failure(exc)
             raise LLMReasoningContractError(
                 outcome,
-                "provider raised unexpectedly: " + str(exc),
+                "provider raised unexpectedly: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
         # Task 107 provider-metadata gate: provider/model/text are read
@@ -344,30 +346,43 @@ class LLMReasoningService:
                 "provider output failed schema validation: " + str(exc),
             ) from exc
 
-        # Assemble the public result.
-        candidate_assessments = [
-            ReasoningCandidateAssessmentRead(
-                candidate_id=a.candidate_id,
-                assessment=a.assessment,
-                supporting_evidence_ids=list(a.supporting_evidence_ids),
-                contradicting_evidence_ids=list(a.contradicting_evidence_ids),
-                unresolved_information_ids=list(a.unresolved_information_ids),
-                explanation=a.explanation,
-                uncertainty_flags=list(a.uncertainty_flags),
-            )
-            for a in raw.candidate_assessments
-        ]
+        # Assemble the public result. Task 120: construction of the
+        # public schemas is itself a boundary -- a value that passed raw
+        # parsing but violates the strict public contract (for example an
+        # empty explanation) becomes MODEL_OUTPUT_INVALID, never a raw
+        # Pydantic or TypeError escape.
+        try:
+            candidate_assessments = [
+                ReasoningCandidateAssessmentRead(
+                    candidate_id=a.candidate_id,
+                    assessment=a.assessment,
+                    supporting_evidence_ids=list(a.supporting_evidence_ids),
+                    contradicting_evidence_ids=list(a.contradicting_evidence_ids),
+                    unresolved_information_ids=list(a.unresolved_information_ids),
+                    explanation=a.explanation,
+                    uncertainty_flags=list(a.uncertainty_flags),
+                )
+                for a in raw.candidate_assessments
+            ]
 
-        result_model = LLMReasoningProposalRead(
-            session_id=session_id,
-            context_fingerprint=fingerprint,
-            provider=metadata["provider"],
-            model=metadata["model"],
-            candidate_assessments=candidate_assessments,
-            available=True,
-            proposal_consistent=True,
-            llm_reasoning_source=LLM_REASONING_TASK_057,
-        )
+            result_model = LLMReasoningProposalRead(
+                session_id=session_id,
+                context_fingerprint=fingerprint,
+                provider=metadata["provider"],
+                model=metadata["model"],
+                candidate_assessments=candidate_assessments,
+                available=True,
+                proposal_consistent=True,
+                llm_reasoning_source=LLM_REASONING_TASK_057,
+            )
+        except LLMReasoningContractError:
+            raise
+        except Exception as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_MODEL_OUTPUT_INVALID,
+                "provider output failed public result construction: "
+                + ProviderFailureBoundary.describe_failure(exc),
+            ) from exc
         return result_model.model_dump(mode="json")
 
     # -----------------------------------------------------------------
@@ -423,22 +438,44 @@ class LLMReasoningService:
         """
         try:
             return serialize_context(context)
-        except TypeError as exc:
+        except LLMReasoningContractError:
+            raise
+        except Exception as exc:
+            # Task 120: serialization can fail with KeyError (missing
+            # field), pydantic ValidationError (malformed element), or
+            # TypeError (unsupported value). Each is an input-pipeline
+            # fault attributable to this layer, never a raw escape.
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
-                "unsupported value in context during serialization: " + str(exc),
+                "context serialization failed: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
     @staticmethod
     def _to_json_safe(value: Any) -> Any:
         try:
             return to_json_safe(value)
-        except TypeError as exc:
+        except LLMReasoningContractError:
+            raise
+        except Exception as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
-                "unsupported value in context during serialization: " + str(exc),
+                "unsupported value in context during serialization: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
     @staticmethod
     def _fingerprint(serialized: Mapping[str, Any]) -> str:
-        return compute_fingerprint(serialized)
+        # Task 120: fingerprinting is its own attributable layer. Any
+        # failure here (unsupported value, unserializable structure) is
+        # an input-pipeline fault, never a raw escape.
+        try:
+            return compute_fingerprint(serialized)
+        except LLMReasoningContractError:
+            raise
+        except Exception as exc:
+            raise LLMReasoningContractError(
+                _OUTCOME_INPUT_INCONSISTENT,
+                "context fingerprint computation failed: "
+                + ProviderFailureBoundary.describe_failure(exc),
+            ) from exc

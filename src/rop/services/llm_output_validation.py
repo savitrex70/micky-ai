@@ -49,12 +49,21 @@ def validate_raw_proposal(
 
     assessments = proposal.candidate_assessments
 
-    # 2. Build reference sets from context.
-    candidate_ids = {c.id for c in context.get("candidate_state", [])}
-    observation_ids = {o.id for o in context.get("observations", [])}
-    entity_ids = {e.id for e in context.get("entities", [])}
-    evidence_ids = observation_ids | entity_ids
-    missing_info_ids = {m.id for m in context.get("missing_information", [])}
+    # 2. Build reference sets from context. Task 120: context elements
+    # are untrusted for attribute access (a hostile .id property must
+    # become a validation issue, never a raw escape).
+    try:
+        candidate_ids = {c.id for c in context.get("candidate_state", [])}
+        observation_ids = {o.id for o in context.get("observations", [])}
+        entity_ids = {e.id for e in context.get("entities", [])}
+        evidence_ids = observation_ids | entity_ids
+        missing_info_ids = {m.id for m in context.get("missing_information", [])}
+    except Exception as exc:
+        issues.append(
+            "context reference extraction failed: "
+            + f"{type(exc).__name__}: {exc!s}"[:200]
+        )
+        return issues
 
     # 3. Validate each assessment.
     seen_candidates: set[UUID] = set()
@@ -123,7 +132,15 @@ def validate_raw_proposal(
                     break
 
     # 4. Validate candidate assessment order matches context candidate_state order.
-    expected_order = [c.id for c in context.get("candidate_state", [])]
+    # Task 120: same hostile-attribute protection as step 2.
+    try:
+        expected_order = [c.id for c in context.get("candidate_state", [])]
+    except Exception as exc:
+        issues.append(
+            "context candidate order extraction failed: "
+            + f"{type(exc).__name__}: {exc!s}"[:200]
+        )
+        return issues
     actual_order = [a.candidate_id for a in assessments]
     if actual_order != expected_order:
         issues.append(

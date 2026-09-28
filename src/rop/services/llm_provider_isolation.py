@@ -34,6 +34,20 @@ class ProviderFailureBoundary:
     # -----------------------------------------------------------------
 
     @staticmethod
+    def describe_failure(exc: Exception) -> str:
+        """Render an exception as text without ever leaking exceptions.
+
+        A hostile exception may raise from ``__str__`` itself; fall back
+        to the bare type name so the boundary always has a message.
+        """
+        try:
+            text = str(exc)
+        except Exception:
+            text = ""
+        label = type(exc).__name__ or "Exception"
+        return f"{label}: {text}" if text else label
+
+    @staticmethod
     def normalize_failure(exc: Exception) -> str:
         """Map any provider exception to one of 4 hard outcomes.
 
@@ -49,9 +63,15 @@ class ProviderFailureBoundary:
         MODEL_UNAVAILABLE default. Keyword checks precede type checks
         so a specific message is never shadowed by a generic type.
         """
-        # MODEL_UNAVAILABLE: network, timeout, config, connection errors
+        # MODEL_UNAVAILABLE: network, timeout, config, connection errors.
+        # Task 120: the exception message itself is untrusted (a hostile
+        # __str__ must not escape the boundary), so it is rendered
+        # defensively.
         exc_type = type(exc).__name__
-        exc_msg = str(exc).lower()
+        try:
+            exc_msg = str(exc).lower()
+        except Exception:
+            exc_msg = ""
 
         # Network/timeout/connection errors
         if any(
