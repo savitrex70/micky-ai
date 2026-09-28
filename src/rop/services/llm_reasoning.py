@@ -105,6 +105,12 @@ class LLMReasoningService:
     candidate assessments come from outside the deterministic system.
     The service never mutates the supplied context, never touches the
     database, and never exposes raw model text.
+
+    Task 119: provider activation lockdown. A concrete provider is NEVER
+    selected automatically -- not from imports, environment variables,
+    API keys, or application startup. The provider must be explicitly
+    injected here; without one, available contexts fail closed with
+    MODEL_UNAVAILABLE and unavailable contexts return the soft result.
     """
 
     def __init__(
