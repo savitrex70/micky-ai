@@ -8,6 +8,7 @@ needs a running model server.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -58,14 +59,32 @@ class LLMReasoningRequest:
     Built exclusively from a validated Task 055 canonical context.
     Contains no database handles, no filesystem paths, no environment
     variables, no credentials, and no Python objects.
+
+    Task 114: the request is a defensive snapshot. The payload is
+    deep-copied at construction, so later mutation of the caller's dict
+    (or of shared nested structures) cannot change what the provider
+    sees. Hand the provider ``snapshot()``, never the ROP-owned
+    instance, so provider-side mutation cannot reach ROP state either.
+    The dataclass stays frozen, so the fingerprint binding cannot be
+    replaced after construction.
     """
 
     payload: dict[str, Any]
     context_fingerprint: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", copy.deepcopy(self.payload))
+
+    def snapshot(self) -> LLMReasoningRequest:
+        """Return an independent copy for exactly one provider handoff."""
+        return LLMReasoningRequest(
+            payload=copy.deepcopy(self.payload),
+            context_fingerprint=self.context_fingerprint,
+        )
+
     def to_model_json(self) -> dict[str, Any]:
-        """Return the payload the provider serializes for the model."""
+        """Return a fresh copy of the payload the provider serializes."""
         return {
-            **self.payload,
+            **copy.deepcopy(self.payload),
             "context_fingerprint": self.context_fingerprint,
         }

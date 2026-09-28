@@ -224,7 +224,10 @@ class LLMReasoningService:
             )
 
         try:
-            provider_response = provider.generate_reasoning(request)
+            # Task 114: the provider receives a defensive snapshot, never
+            # the ROP-owned request. In-place mutation of the snapshot
+            # cannot reach ROP state or alter the approved fingerprint.
+            provider_response = provider.generate_reasoning(request.snapshot())
         except LLMReasoningProviderError as exc:
             # Task 107 is authoritative for ALL provider-call failures:
             # no second competing classification path exists.
