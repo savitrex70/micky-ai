@@ -15,6 +15,9 @@ from rop.services.reasoning_run import ReasoningRunService
 from rop.services.reasoning_run_consistency import (
     ReasoningRunConsistencyService,
 )
+from rop.services.reasoning_run_input_snapshot import (
+    ReasoningRunInputSnapshotService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.template_match import TemplateMatchService
 
@@ -124,6 +127,9 @@ class ReasoningRunExecutionService:
         evidence_evaluation_service: EvidenceEvaluationService | None = None,
         reasoning_run_service: ReasoningRunService | None = None,
         reasoning_run_consistency_service: ReasoningRunConsistencyService | None = None,
+        reasoning_run_input_snapshot_service: (
+            ReasoningRunInputSnapshotService | None
+        ) = None,
     ) -> None:
         self.reasoning_session_service = (
             reasoning_session_service or ReasoningSessionService()
@@ -147,6 +153,9 @@ class ReasoningRunExecutionService:
         self.reasoning_run_consistency_service = (
             reasoning_run_consistency_service or ReasoningRunConsistencyService()
         )
+        self.reasoning_run_input_snapshot_service = (
+            reasoning_run_input_snapshot_service or ReasoningRunInputSnapshotService()
+        )
 
     def execute_for_session(
         self,
@@ -168,7 +177,23 @@ class ReasoningRunExecutionService:
                 "SESSION_NOT_FOUND", "session does not exist"
             )
 
-        state: dict[str, Any] = {}
+        # Task 124: one canonical input snapshot, read exactly once
+        # before any execution stage runs. Every downstream stage draws
+        # its pre-existing state from this snapshot where it does not
+        # itself write, so later database mutations cannot alter what
+        # the run was approved against.
+        try:
+            input_snapshot = self.reasoning_run_input_snapshot_service.build_snapshot(
+                db, session_id
+            )
+        except Exception as exc:
+            raise ReasoningRunExecutionContractError(
+                "INPUT_SNAPSHOT_FAILED",
+                "reasoning-run input snapshot could not be established: "
+                + type(exc).__name__,
+            ) from exc
+
+        state: dict[str, Any] = {"input_snapshot": input_snapshot}
         completed_ids: list[str] = ["SESSION_VERIFIED"]
         failed_id: str | None = None
 
@@ -203,11 +228,10 @@ class ReasoningRunExecutionService:
     # ------------------------------------------------------------------
 
     def _stage_observations(self, db, session, session_id, state):
-        existing = self._paginate(
-            lambda off: self.observation_service.list_by_session(
-                db, session_id, offset=off, limit=_STATE_PAGE_SIZE
-            )
-        )
+        # Task 124: the pre-existing observation state comes from the
+        # canonical snapshot, not a fresh read. Only extraction writes;
+        # after a write the stage re-reads so state reflects the write.
+        existing = state.get("input_snapshot", {}).get("observations", [])
         # Reuse existing observation state on repeat execution; only
         # extract when none exists yet.
         if not existing:
@@ -231,7 +255,9 @@ class ReasoningRunExecutionService:
         )
 
     def _stage_template_matching(self, db, session, session_id, state):
-        existing = self.template_match_service.list_by_session(db, session_id)
+        # Task 124: pre-existing template state comes from the canonical
+        # snapshot. Only a fresh match writes; afterwards re-read.
+        existing = state.get("input_snapshot", {}).get("template_matches", [])
         # Same idempotency rule as observations -- do not append a
         # second template match when one already exists.
         if not existing:

@@ -348,6 +348,11 @@ from rop.services.reasoning_run_execution_consistency import (
     ReasoningRunExecutionConsistencyContractError,
     ReasoningRunExecutionConsistencyService,
 )
+from rop.services.reasoning_run_input_snapshot import (
+    REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
+    ReasoningRunInputSnapshotContractError,
+    ReasoningRunInputSnapshotService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -541,6 +546,9 @@ __all__ = [
     "ReasoningRunExecutionConsistencyService",
     "ReasoningRunExecutionContractError",
     "ReasoningRunExecutionService",
+    "REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124",
+    "ReasoningRunInputSnapshotContractError",
+    "ReasoningRunInputSnapshotService",
     "ReasoningRunContractError",
     "ReasoningRunService",
     "ReasoningSessionService",
