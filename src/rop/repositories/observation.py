@@ -36,11 +36,17 @@ class ObservationRepository:
             )
             for item in data
         ]
-        db.add_all(observations)
-        db.commit()
-        for observation in observations:
-            db.refresh(observation)
-        return observations
+        # Task 126: one commit with rollback -- a failed extraction
+        # leaves no partial observation rows behind.
+        try:
+            db.add_all(observations)
+            db.commit()
+            for observation in observations:
+                db.refresh(observation)
+            return observations
+        except Exception:
+            db.rollback()
+            raise
 
     def get(self, db: Session, observation_id: UUID) -> Observation | None:
         return db.get(Observation, observation_id)

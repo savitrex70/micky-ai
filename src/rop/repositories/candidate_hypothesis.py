@@ -13,6 +13,13 @@ class CandidateHypothesisRepository:
     def create_many(
         self, db: Session, session_id: UUID, candidates: tuple[GeneratedCandidate, ...]
     ) -> list[CandidateHypothesis]:
+        """Stage candidate records without committing.
+
+        Task 126: the owning service commits exactly once after the full
+        delete+generate+create sequence succeeds, so a mid-sequence
+        failure rolls everything back instead of stranding a partial
+        candidate set.
+        """
         records = []
         for candidate in candidates:
             record = CandidateHypothesis(
@@ -29,7 +36,7 @@ class CandidateHypothesisRepository:
             db.add(record)
             records.append(record)
 
-        db.commit()
+        db.flush()
         for record in records:
             db.refresh(record)
 
@@ -56,8 +63,13 @@ class CandidateHypothesisRepository:
         return db.get(CandidateHypothesis, candidate_id)
 
     def delete_by_session(self, db: Session, session_id: UUID) -> None:
+        """Delete staged candidates without committing.
+
+        Task 126: pairs with :meth:`create_many` -- the owning service
+        commits once after regeneration succeeds.
+        """
         statement = CandidateHypothesis.__table__.delete().where(
             CandidateHypothesis.session_id == session_id
         )
         db.execute(statement)
-        db.commit()
+        db.flush()

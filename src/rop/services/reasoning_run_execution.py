@@ -221,6 +221,16 @@ class ReasoningRunExecutionService:
             try:
                 method(db, session, session_id, state)
             except Exception:
+                # Task 126: clear any uncommitted stage work so the
+                # failure leaves no invalid partial state behind and
+                # the session stays usable for inspection or retry.
+                # Previously committed stages hold independently valid
+                # state (reused verbatim on retry); only the failed
+                # stage's in-flight work is discarded here.
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
                 failed_id = stage_id
                 break
             completed_ids.append(stage_id)

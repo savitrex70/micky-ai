@@ -10,10 +10,15 @@ class TemplateMatchRepository:
     """Database operations for template match records."""
 
     def create(self, db: Session, data: TemplateMatch) -> TemplateMatch:
-        db.add(data)
-        db.commit()
-        db.refresh(data)
-        return data
+        # Task 126: rollback guard -- a failed match leaves no partial row.
+        try:
+            db.add(data)
+            db.commit()
+            db.refresh(data)
+            return data
+        except Exception:
+            db.rollback()
+            raise
 
     def list_by_session(
         self,

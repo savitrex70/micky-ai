@@ -34,20 +34,31 @@ class CandidateGenerationService:
             list[MissingInformationRead] | list[dict[str, Any]] | None
         ) = None,
     ) -> list[CandidateHypothesis]:
-        self.repository.delete_by_session(db, session_id)
+        # Task 126: candidate regeneration is one atomic unit. Delete,
+        # generate, and recreate stage inside a single transaction with
+        # exactly one commit; any failure rolls the whole sequence back
+        # so a deleted-but-unrecreated candidate set can never persist.
+        try:
+            self.repository.delete_by_session(db, session_id)
 
-        candidates = self.generator.generate(
-            session_id=session_id,
-            observations=observations,
-            entities=entities,
-            template=template,
-            missing_information=missing_information,
-        )
+            candidates = self.generator.generate(
+                session_id=session_id,
+                observations=observations,
+                entities=entities,
+                template=template,
+                missing_information=missing_information,
+            )
 
-        if not candidates:
-            return []
+            if not candidates:
+                db.commit()
+                return []
 
-        return self.repository.create_many(db, session_id, candidates)
+            records = self.repository.create_many(db, session_id, candidates)
+            db.commit()
+            return records
+        except Exception:
+            db.rollback()
+            raise
 
     def list_by_session(
         self,
