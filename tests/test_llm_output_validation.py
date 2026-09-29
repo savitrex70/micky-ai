@@ -229,18 +229,20 @@ def test_missing_assessment_field_explanation(
     assert any("Top-level schema validation failed" in i for i in issues)
 
 
-def test_missing_optional_field_defaults_to_empty(
+def test_missing_structural_field_fails_validation(
     valid_context: dict[str, Any], valid_proposal: dict[str, Any]
 ) -> None:
-    """Optional fields default to empty list when missing (Pydantic default_factory)."""
+    """Task 116 correction: required structural fields have no silent
+    defaults. An omitted list field fails schema validation instead of
+    becoming an empty list."""
     raw = copy.deepcopy(valid_proposal)
     del raw["candidate_assessments"][0]["supporting_evidence_ids"]
     del raw["candidate_assessments"][0]["contradicting_evidence_ids"]
     del raw["candidate_assessments"][0]["unresolved_information_ids"]
     del raw["candidate_assessments"][0]["uncertainty_flags"]
     issues = validate_raw_proposal(raw, valid_context)
-    # Should pass because defaults are applied
-    assert issues == []
+    # Must fail because explicit presence is required.
+    assert any("Top-level schema validation failed" in i for i in issues)
 
 
 # ---------------------------------------------------------------------------

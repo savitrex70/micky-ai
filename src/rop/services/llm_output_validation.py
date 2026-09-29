@@ -16,6 +16,7 @@ from rop.schemas.llm_output_validation import (
 )
 from rop.schemas.llm_reasoning import _RawLLMReasoningProposal
 from rop.services.llm_boundary_contract import VALID_ASSESSMENTS
+from rop.services.llm_provider_isolation import ProviderFailureBoundary
 
 __all__ = ["LLM_OUTPUT_VALIDATION_SOURCE_TASK_105", "validate_raw_proposal"]
 
@@ -61,7 +62,7 @@ def validate_raw_proposal(
     except Exception as exc:
         issues.append(
             "context reference extraction failed: "
-            + f"{type(exc).__name__}: {exc!s}"[:200]
+            + ProviderFailureBoundary.describe_failure(exc)[:200]
         )
         return issues
 
@@ -138,7 +139,7 @@ def validate_raw_proposal(
     except Exception as exc:
         issues.append(
             "context candidate order extraction failed: "
-            + f"{type(exc).__name__}: {exc!s}"[:200]
+            + ProviderFailureBoundary.describe_failure(exc)[:200]
         )
         return issues
     actual_order = [a.candidate_id for a in assessments]

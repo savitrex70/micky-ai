@@ -249,13 +249,30 @@ class ProviderFailureBoundary:
         if not isinstance(text_value, str):
             issues.append("response text is not a string")
 
-        # Check fingerprint match if expected provided
-        actual_fp = _read(response, "context_fingerprint")
-        if expected_fingerprint and actual_fp:
-            if actual_fp != expected_fingerprint:
+        # Check fingerprint match if expected provided. Task 120: the
+        # echoed value is untrusted -- comparison, truthiness, and
+        # rendering must not let a hostile __eq__/__bool__/__str__
+        # escape. An unreadable or unverifiable fingerprint becomes a
+        # validation issue, never a raw exception.
+        try:
+            actual_fp = _read(response, "context_fingerprint")
+            fingerprint_present = bool(expected_fingerprint and actual_fp)
+        except Exception:
+            actual_fp = None
+            fingerprint_present = False
+        if fingerprint_present:
+            try:
+                fingerprint_matches = actual_fp == expected_fingerprint
+            except Exception:
+                fingerprint_matches = False
+            if not fingerprint_matches:
+                try:
+                    rendered_fp = str(actual_fp)
+                except Exception:
+                    rendered_fp = f"<unrenderable {type(actual_fp).__name__} value>"
                 issues.append(
                     "context_fingerprint mismatch: expected "
-                    f"{expected_fingerprint}, got {actual_fp}"
+                    f"{expected_fingerprint}, got {rendered_fp}"
                 )
 
         # Check for extra fields. The known response surface is the

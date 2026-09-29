@@ -21,6 +21,7 @@ from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
 )
+from rop.services.llm_reasoning_provider import LLMReasoningProviderError
 
 ALLOWED = {
     "INPUT_UNAVAILABLE",
@@ -344,3 +345,108 @@ def test_mutated_caller_mapping_after_audit_is_contained() -> None:
 class _Undeepcopyable:
     def __deepcopy__(self, memo: Any) -> Any:
         raise RuntimeError("cannot snapshot this")
+
+
+class _HostileStrError(Exception):
+    """An exception whose own stringification explodes."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("str exploded")
+
+
+class _HostileProviderError(LLMReasoningProviderError):
+    """A provider error whose own stringification explodes."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("str exploded")
+
+
+def test_hostile_provider_error_str_is_contained() -> None:
+    """A custom LLMReasoningProviderError with a raising __str__ must
+    resolve to a deterministic outcome, never leak raw."""
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_context,
+    )
+
+    class _BadProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            raise _HostileProviderError()
+
+    outcome = _expect_contained(
+        _service_with(_BadProvider()).build, context=_valid_context()
+    )
+    assert outcome == "MODEL_UNAVAILABLE"
+
+
+def test_hostile_task_055_error_str_is_contained() -> None:
+    """A hostile Task 055 context error with a raising __str__ must be
+    contained by the Task 055 failure path."""
+    from uuid import uuid4
+
+    from rop.services.reasoning_context import ReasoningContextContractError
+
+    class _HostileContextError(ReasoningContextContractError):
+        def __str__(self) -> str:
+            raise RuntimeError("str exploded")
+
+    class _StubContextService:
+        def build_for_session(self, db: Any, session_id: Any) -> Any:
+            raise _HostileContextError("SESSION_NOT_FOUND", "gone")
+
+    service = LLMReasoningService(
+        reasoning_context_service=_StubContextService(),  # type: ignore[arg-type]
+    )
+    outcome = _expect_contained(
+        service.build_for_session, None, uuid4()  # type: ignore[arg-type]
+    )
+    assert outcome == "INPUT_UNAVAILABLE"
+
+
+def test_hostile_task_056_error_str_is_contained() -> None:
+    """A hostile Task 056 audit error with a raising __str__ must be
+    contained by the audit-failure path."""
+    from tests.test_llm_live_boundary_enforcement import _valid_context
+
+    ctx = _valid_context()
+    service = LLMReasoningService(provider=None)
+    service.reasoning_context_consistency_service.build = (  # type: ignore[method-assign]
+        lambda context: (_ for _ in ()).throw(_HostileStrError())
+    )
+    outcome = _expect_contained(service.build, context=ctx)
+    assert outcome == "INPUT_INCONSISTENT"
+
+
+def test_hostile_task_105_extraction_error_str_is_contained() -> None:
+    """A hostile context-reference error with a raising __str__ must
+    become validation issues, never a raw escape -- at unit level and
+    on the live path."""
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_context,
+        _valid_model_output,
+    )
+
+    ctx = _valid_context()
+    raw = json.loads(_valid_model_output(ctx))
+
+    class _BoobyId:
+        @property
+        def id(self) -> Any:
+            raise _HostileStrError()
+
+    hostile = dict(ctx)
+    hostile["candidate_state"] = [_BoobyId()]
+    issues = validate_raw_proposal(raw, hostile)
+    assert issues != []
+    assert any("extraction failed" in issue for issue in issues)
+
+    live_hostile = dict(ctx)
+    live_hostile["candidate_state"] = [_BoobyId()]
+    outcome = _expect_contained(
+        _service_with(FakeProvider(response_text=_valid_model_output(ctx))).build,
+        context=live_hostile,
+    )
+    assert outcome in ALLOWED

@@ -51,17 +51,23 @@ class ReasoningCandidateAssessmentRead(BaseModel):
 
 
 class _RawCandidateAssessment(BaseModel):
-    """Parse-only wrapper for one entry in the raw model output."""
+    """Parse-only wrapper for one entry in the raw model output.
+
+    Task 116 correction: every structural field requires explicit
+    presence. No permissive defaults substitute for absent data -- a
+    model that omits a list field fails schema validation instead of
+    silently receiving an empty list.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: UUID
     assessment: Assessment
-    supporting_evidence_ids: list[UUID] = Field(default_factory=list)
-    contradicting_evidence_ids: list[UUID] = Field(default_factory=list)
-    unresolved_information_ids: list[UUID] = Field(default_factory=list)
+    supporting_evidence_ids: list[UUID]
+    contradicting_evidence_ids: list[UUID]
+    unresolved_information_ids: list[UUID]
     explanation: str
-    uncertainty_flags: list[str] = Field(default_factory=list)
+    uncertainty_flags: list[str]
 
 
 class _RawLLMReasoningProposal(BaseModel):

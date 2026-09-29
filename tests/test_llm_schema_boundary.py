@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from rop.schemas.llm_reasoning import (
     LLMReasoningProposalRead,
     ReasoningCandidateAssessmentRead,
+    _RawCandidateAssessment,
 )
 
 FORBIDDEN_TOP_FIELDS = (
@@ -199,3 +200,47 @@ def test_live_service_result_still_validates() -> None:
     )
     validated = LLMReasoningProposalRead.model_validate(result)
     assert validated.available is True
+
+
+RAW_REQUIRED_NESTED_FIELDS = (
+    "supporting_evidence_ids",
+    "contradicting_evidence_ids",
+    "unresolved_information_ids",
+    "uncertainty_flags",
+    "explanation",
+)
+
+
+@pytest.mark.parametrize("field", RAW_REQUIRED_NESTED_FIELDS)
+def test_raw_schema_rejects_omitted_nested_field(field: str) -> None:
+    """Task 116 correction: the raw model parser must not silently
+    default an omitted structural field to an empty list/value."""
+    assessment = _valid_assessment_dict()
+    del assessment[field]
+    with pytest.raises(ValidationError):
+        _RawCandidateAssessment.model_validate(assessment)
+
+
+@pytest.mark.parametrize("field", RAW_REQUIRED_NESTED_FIELDS)
+def test_live_path_rejects_omitted_nested_field(field: str) -> None:
+    """The REAL Task 057 live path rejects raw provider output missing
+    each required nested field with MODEL_OUTPUT_INVALID -- the omitted
+    field never silently becomes an empty list."""
+    import json
+
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_context,
+        _valid_model_output,
+    )
+
+    from rop.services.llm_reasoning import LLMReasoningContractError
+
+    ctx = _valid_context()
+    raw = json.loads(_valid_model_output(ctx))
+    del raw["candidate_assessments"][0][field]
+    provider = FakeProvider(response_text=json.dumps(raw))
+    with pytest.raises(LLMReasoningContractError) as exc_info:
+        _service_with(provider).build(context=ctx)
+    assert exc_info.value.invariant == "MODEL_OUTPUT_INVALID"

@@ -433,3 +433,95 @@ def test_gate_20_no_decision_authority_introduced() -> None:
         LLMReasoningProviderResponse(provider="fake", model="fake-model", text="{}"),
         LLMReasoningProviderResponse,
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "supporting_evidence_ids",
+        "contradicting_evidence_ids",
+        "unresolved_information_ids",
+        "uncertainty_flags",
+        "explanation",
+    ),
+)
+def test_gate_21_raw_output_missing_nested_field_rejected(field: str) -> None:
+    """Task 122 correction: raw provider output missing each required
+    nested Task 057 field is rejected (MODEL_OUTPUT_INVALID) before it
+    can become a public proposal -- nothing silently defaults."""
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_model_output,
+    )
+
+    ctx, _, _ = _live_chain()
+    raw = json.loads(_valid_model_output(ctx))
+    del raw["candidate_assessments"][0][field]
+    with pytest.raises(LLMReasoningContractError) as exc_info:
+        _service_with(FakeProvider(response_text=json.dumps(raw))).build(context=ctx)
+    assert exc_info.value.invariant == "MODEL_OUTPUT_INVALID"
+
+
+def test_gate_22_hostile_exceptions_stay_contained() -> None:
+    """Task 122 correction: hostile exceptions (including raising
+    __str__) at the provider, audit, and metadata layers resolve to
+    deterministic outcomes -- raw schema strictness, Task 105
+    validation, public schema strictness, and Task 120 containment
+    hold together."""
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_context,
+    )
+
+    class _HostileStrError(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("str exploded")
+
+    class _HostileProviderError(LLMReasoningProviderError):
+        def __str__(self) -> str:
+            raise RuntimeError("str exploded")
+
+    class _BadProvider(FakeProvider):
+        def __init__(self, error: Exception) -> None:
+            super().__init__()
+            self._error = error
+
+        def generate_reasoning(self, request: Any) -> Any:
+            raise self._error
+
+    provider = _BadProvider(_HostileProviderError())
+    with pytest.raises(LLMReasoningContractError) as exc_info:
+        _service_with(provider).build(context=_valid_context())
+    assert exc_info.value.invariant == "MODEL_UNAVAILABLE"
+
+    audit_error = _HostileStrError("audit exploded")
+    service = LLMReasoningService(provider=None)
+    service.reasoning_context_consistency_service.build = (  # type: ignore[method-assign]
+        lambda context, _error=audit_error: (_ for _ in ()).throw(_error)
+    )
+    with pytest.raises(LLMReasoningContractError) as exc_info:
+        service.build(context=_valid_context())
+    assert exc_info.value.invariant == "INPUT_INCONSISTENT"
+
+    class _HostileResponse:
+        @property
+        def provider(self) -> str:
+            raise _HostileStrError()
+
+        @property
+        def model(self) -> str:
+            raise _HostileStrError()
+
+        @property
+        def text(self) -> str:
+            raise _HostileStrError()
+
+    class _HostileResponseProvider(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            return _HostileResponse()
+
+    with pytest.raises(LLMReasoningContractError) as exc_info:
+        _service_with(_HostileResponseProvider()).build(context=_valid_context())
+    assert exc_info.value.invariant == "MODEL_OUTPUT_INVALID"

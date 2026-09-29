@@ -149,7 +149,8 @@ class LLMReasoningService:
                 outcome = _OUTCOME_INPUT_INCONSISTENT
             raise LLMReasoningContractError(
                 outcome,
-                "Task 055 context could not be produced: " + str(exc),
+                "Task 055 context could not be produced: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
         return self.build(context=context)
 
@@ -179,7 +180,8 @@ class LLMReasoningService:
         except Exception as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
-                "context snapshot could not be produced: " + str(exc),
+                "context snapshot could not be produced: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
         session_id = snapshot.get("session_id")
@@ -201,7 +203,8 @@ class LLMReasoningService:
         except Exception as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_INPUT_INCONSISTENT,
-                "Task 056 audit could not be produced: " + str(exc),
+                "Task 056 audit could not be produced: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
         if audit.get("available") is not True:
@@ -270,9 +273,13 @@ class LLMReasoningService:
             provider_response = provider.generate_reasoning(request.snapshot())
         except LLMReasoningProviderError as exc:
             # Task 107 is authoritative for ALL provider-call failures:
-            # no second competing classification path exists.
+            # no second competing classification path exists. The message
+            # is rendered with the defensive Task 107 helper so a hostile
+            # __str__ cannot escape the boundary.
             outcome = ProviderFailureBoundary.normalize_failure(exc)
-            raise LLMReasoningContractError(outcome, str(exc)) from exc
+            raise LLMReasoningContractError(
+                outcome, ProviderFailureBoundary.describe_failure(exc)
+            ) from exc
         except Exception as exc:
             # Task 107 classifies unexpected provider failures; the
             # boundary never lets an arbitrary exception bypass the
@@ -313,7 +320,8 @@ class LLMReasoningService:
         except ValueError as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
-                "provider output was not valid JSON: " + str(exc),
+                "provider output was not valid JSON: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
         # Task 105 is the authoritative output-validation boundary, applied
@@ -343,7 +351,8 @@ class LLMReasoningService:
         except ValidationError as exc:
             raise LLMReasoningContractError(
                 _OUTCOME_MODEL_OUTPUT_INVALID,
-                "provider output failed schema validation: " + str(exc),
+                "provider output failed schema validation: "
+                + ProviderFailureBoundary.describe_failure(exc),
             ) from exc
 
         # Assemble the public result. Task 120: construction of the
