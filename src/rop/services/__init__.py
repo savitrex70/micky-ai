@@ -134,6 +134,11 @@ from rop.services.medical_entity_recognition import MedicalEntityRecognitionServ
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
+from rop.services.reasoning_chain_audit import (
+    REASONING_CHAIN_AUDIT_SOURCE_TASK_129,
+    ReasoningChainAuditContractError,
+    ReasoningChainAuditService,
+)
 from rop.services.reasoning_context import (
     ReasoningContextContractError,
     ReasoningContextService,
@@ -533,6 +538,9 @@ __all__ = [
     "ReasoningHandoffService",
     "ReasoningPipelineContractError",
     "ReasoningPipelineService",
+    "ReasoningChainAuditContractError",
+    "ReasoningChainAuditService",
+    "REASONING_CHAIN_AUDIT_SOURCE_TASK_129",
     "ReasoningRunConsistencyContractError",
     "ReasoningRunConsistencyService",
     "ReasoningRunExecutionApiAuditBundleConsistencyContractError",
