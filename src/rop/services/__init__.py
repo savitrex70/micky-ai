@@ -349,6 +349,14 @@ from rop.services.reasoning_run_execution_consistency import (
     ReasoningRunExecutionConsistencyService,
 )
 from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
+from rop.services.reasoning_run_idempotency import (
+    DISPOSITION_EXECUTED_NEW,
+    DISPOSITION_REUSED_IDENTICAL,
+    DISPOSITION_STALE_CHANGED,
+    ReasoningRunIdempotencyContractError,
+    ReasoningRunIdempotencyService,
+    derive_run_identity,
+)
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
     ReasoningRunInputSnapshotContractError,
@@ -548,6 +556,12 @@ __all__ = [
     "ReasoningRunExecutionContractError",
     "ReasoningRunExecutionService",
     "compute_snapshot_fingerprint",
+    "DISPOSITION_EXECUTED_NEW",
+    "DISPOSITION_REUSED_IDENTICAL",
+    "DISPOSITION_STALE_CHANGED",
+    "ReasoningRunIdempotencyContractError",
+    "ReasoningRunIdempotencyService",
+    "derive_run_identity",
     "REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124",
     "ReasoningRunInputSnapshotContractError",
     "ReasoningRunInputSnapshotService",

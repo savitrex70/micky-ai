@@ -1,0 +1,183 @@
+"""Task 127: deterministic reasoning-run idempotency.
+
+Canonical run identity is ``(session_id, input_fingerprint)``: the
+session locates the run, the Task 125 fingerprint pins its exact
+approved inputs. Re-running unchanged inputs never rewrites state --
+the current state is recomposed read-only and reported as
+``REUSED_IDENTICAL``. Changed inputs are reported as ``STALE_CHANGED``
+without executing, so a changed fingerprint is never treated as the
+same run. No queues, workers, history deletion, or external services.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from rop.schemas.reasoning_run_idempotency import (
+    ReasoningRunIdempotentExecutionRead,
+)
+from rop.services.reasoning_run import ReasoningRunService
+from rop.services.reasoning_run_consistency import (
+    ReasoningRunConsistencyService,
+)
+from rop.services.reasoning_run_execution import (
+    EXECUTION_STAGE_IDS,
+    ReasoningRunExecutionService,
+)
+from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
+from rop.services.reasoning_run_input_snapshot import (
+    ReasoningRunInputSnapshotService,
+)
+
+DISPOSITION_EXECUTED_NEW = "EXECUTED_NEW"
+DISPOSITION_REUSED_IDENTICAL = "REUSED_IDENTICAL"
+DISPOSITION_STALE_CHANGED = "STALE_CHANGED"
+
+_VALID_DISPOSITIONS = (
+    DISPOSITION_EXECUTED_NEW,
+    DISPOSITION_REUSED_IDENTICAL,
+    DISPOSITION_STALE_CHANGED,
+)
+
+
+class ReasoningRunIdempotencyContractError(Exception):
+    """Task 127: the idempotent request could not be evaluated."""
+
+    def __init__(self, invariant: str, detail: str) -> None:
+        self.invariant = invariant
+        super().__init__(f"[{invariant}] {detail}")
+
+
+def derive_run_identity(session_id: UUID, input_fingerprint: str) -> str:
+    """Return the canonical identity key for a reasoning run."""
+    return f"{session_id}:{input_fingerprint}"
+
+
+class ReasoningRunIdempotencyService:
+    """Idempotency-aware entry point over the deterministic executor.
+
+    The caller supplies the fingerprint it last observed
+    (``known_input_fingerprint``), typically the fingerprint recorded
+    from a completed run's post-state or a just-read snapshot:
+
+    - ``None`` -- observe nothing, execute unconditionally (``EXECUTED_NEW``);
+    - equal to the current fingerprint -- inputs are unchanged since the
+      caller last observed them, so the current state is recomposed
+      read-only without rewriting anything (``REUSED_IDENTICAL``);
+    - different -- inputs moved under the caller; nothing executes and
+      the caller must decide explicitly (``STALE_CHANGED``).
+
+    A changed fingerprint is therefore never treated as the same run,
+    and repeat calls create no duplicate state: reuse performs zero
+    writes, and every execution path funnels through the atomic
+    replace-semantics executor.
+    """
+
+    def __init__(
+        self,
+        execution_service: ReasoningRunExecutionService | None = None,
+        snapshot_service: ReasoningRunInputSnapshotService | None = None,
+        reasoning_run_service: ReasoningRunService | None = None,
+        reasoning_run_consistency_service: ReasoningRunConsistencyService | None = None,
+    ) -> None:
+        self.execution_service = execution_service or ReasoningRunExecutionService()
+        self.snapshot_service = snapshot_service or ReasoningRunInputSnapshotService()
+        self.reasoning_run_service = reasoning_run_service or ReasoningRunService()
+        self.reasoning_run_consistency_service = (
+            reasoning_run_consistency_service or ReasoningRunConsistencyService()
+        )
+
+    def execute_idempotent(
+        self,
+        db: Session,
+        session_id: UUID,
+        *,
+        known_input_fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute once, reuse when identical, or report stale input."""
+        try:
+            snapshot = self.snapshot_service.build_snapshot(db, session_id)
+            current_fingerprint = compute_snapshot_fingerprint(snapshot)
+        except Exception as exc:
+            raise ReasoningRunIdempotencyContractError(
+                "INPUT_SNAPSHOT_FAILED",
+                "idempotent input state could not be established: "
+                + type(exc).__name__,
+            ) from exc
+
+        if (
+            known_input_fingerprint is not None
+            and known_input_fingerprint != current_fingerprint
+        ):
+            return self._envelope(
+                disposition=DISPOSITION_STALE_CHANGED,
+                session_id=session_id,
+                known_input_fingerprint=known_input_fingerprint,
+                current_fingerprint=current_fingerprint,
+                result=None,
+            )
+
+        if known_input_fingerprint is not None:
+            reused = self._try_reuse(db, session_id, current_fingerprint)
+            if reused is not None:
+                return self._envelope(
+                    disposition=DISPOSITION_REUSED_IDENTICAL,
+                    session_id=session_id,
+                    known_input_fingerprint=known_input_fingerprint,
+                    current_fingerprint=current_fingerprint,
+                    result=reused,
+                )
+
+        result = self.execution_service.execute_for_session(db, session_id)
+        return self._envelope(
+            disposition=DISPOSITION_EXECUTED_NEW,
+            session_id=session_id,
+            known_input_fingerprint=known_input_fingerprint,
+            current_fingerprint=current_fingerprint,
+            result=result,
+        )
+
+    def _try_reuse(
+        self, db: Session, session_id: UUID, current_fingerprint: str
+    ) -> dict[str, Any] | None:
+        """Recompose the current state read-only; None when unusable."""
+        try:
+            run = self.reasoning_run_service.build_for_session(db, session_id)
+            audit = self.reasoning_run_consistency_service.build_for_session(
+                db, session_id
+            )
+        except Exception:
+            return None
+        if not isinstance(run, dict) or not isinstance(audit, dict):
+            return None
+        if audit.get("run_consistent") is not True:
+            return None
+        return ReasoningRunExecutionService._build_result(
+            session_id=session_id,
+            input_fingerprint=current_fingerprint,
+            completed_ids=list(EXECUTION_STAGE_IDS),
+            failed_id=None,
+            run=run,
+            audit=audit,
+        )
+
+    @staticmethod
+    def _envelope(
+        *,
+        disposition: str,
+        session_id: UUID,
+        known_input_fingerprint: str | None,
+        current_fingerprint: str,
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        envelope = {
+            "disposition": disposition,
+            "session_id": str(session_id),
+            "known_input_fingerprint": known_input_fingerprint,
+            "current_input_fingerprint": current_fingerprint,
+            "result": result,
+        }
+        return ReasoningRunIdempotentExecutionRead.model_validate(envelope).model_dump()

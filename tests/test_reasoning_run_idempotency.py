@@ -1,0 +1,196 @@
+"""Task 127: deterministic reasoning-run idempotency tests.
+
+Proves canonical identity, identical-input reuse without state churn,
+changed-input staleness, failed-first retry, and determinism. No
+queues, workers, history deletion, or external services.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from typing import Any
+from uuid import UUID
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from rop.database import Base, get_db
+from rop.main import app
+from rop.services.candidate_generation import CandidateGenerationService
+from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+from rop.services.reasoning_run_idempotency import (
+    DISPOSITION_EXECUTED_NEW,
+    DISPOSITION_REUSED_IDENTICAL,
+    DISPOSITION_STALE_CHANGED,
+    ReasoningRunIdempotencyService,
+    derive_run_identity,
+)
+
+engine = create_engine(
+    "sqlite+pysqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+Base.metadata.create_all(engine)
+TestingSessionLocal = sessionmaker(bind=engine)
+
+
+def override_get_db() -> Generator[Session, None, None]:
+    with TestingSessionLocal() as db:
+        yield db
+
+
+app.dependency_overrides[get_db] = override_get_db
+client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _ensure_own_db_override() -> Generator[None, None, None]:
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+
+
+def _create_session(user_input: str) -> str:
+    r = client.post(
+        "/sessions",
+        json={
+            "status": "created",
+            "domain": "testing",
+            "user_input": user_input,
+            "current_stage": "initial",
+            "metadata": {"source": "idempotency-test"},
+        },
+    )
+    assert r.status_code == 201
+    return str(r.json()["id"])
+
+
+def _add_observation(session_id: str, text: str) -> None:
+    o = client.post(
+        f"/sessions/{session_id}/observations",
+        json={
+            "text": text,
+            "type": "symptom",
+            "confidence": 0.9,
+            "source": "unit_test",
+        },
+    )
+    assert o.status_code == 201
+
+
+def _candidate_ids(session_id: str) -> list[str]:
+    with TestingSessionLocal() as db:
+        return sorted(
+            str(c.id)
+            for c in CandidateGenerationService().list_by_session(db, UUID(session_id))
+        )
+
+
+def _idempotent(session_id: str, known: str | None = None) -> dict[str, Any]:
+    with TestingSessionLocal() as db:
+        return ReasoningRunIdempotencyService().execute_idempotent(
+            db, UUID(session_id), known_input_fingerprint=known
+        )
+
+
+def test_identity_derivation_is_canonical() -> None:
+    sid = UUID("12345678-1234-5678-1234-567812345678")
+    assert derive_run_identity(sid, "a" * 64) == f"{sid}:{'a' * 64}"
+    assert derive_run_identity(sid, "a" * 64) != derive_run_identity(sid, "b" * 64)
+
+
+def test_first_run_executes_new() -> None:
+    sid = _create_session("Patient reports chest pain")
+    envelope = _idempotent(sid)
+    assert envelope["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert envelope["result"]["outcome"] == "COMPLETED"
+    assert (
+        envelope["current_input_fingerprint"] == envelope["result"]["input_fingerprint"]
+    )
+
+
+def _current_fingerprint(session_id: str) -> str:
+    from rop.services.reasoning_run_fingerprint import (
+        compute_snapshot_fingerprint,
+    )
+    from rop.services.reasoning_run_input_snapshot import (
+        ReasoningRunInputSnapshotService,
+    )
+
+    with TestingSessionLocal() as db:
+        snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, UUID(session_id)
+        )
+    return compute_snapshot_fingerprint(snapshot)
+
+
+def test_identical_rerun_reuses_without_churn() -> None:
+    sid = _create_session("Patient reports steady chest pain")
+    first = _idempotent(sid)
+    assert first["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert first["result"]["outcome"] == "COMPLETED"
+    # Observe the completed state, then re-request against it: inputs
+    # are unchanged, so the run is reused with zero writes.
+    known = _current_fingerprint(sid)
+    ids_before = _candidate_ids(sid)
+
+    second = _idempotent(sid, known)
+    assert second["disposition"] == DISPOSITION_REUSED_IDENTICAL
+    assert second["result"]["outcome"] == "COMPLETED"
+    assert second["result"]["input_fingerprint"] == known
+    # Nothing was rewritten: identical candidate identities.
+    assert _candidate_ids(sid) == ids_before
+
+
+def test_changed_input_is_stale_not_same_run() -> None:
+    sid = _create_session("Patient reports chest pain")
+    first = _idempotent(sid)
+    known = first["current_input_fingerprint"]
+    _add_observation(sid, "Patient reports new dizziness")
+
+    stale = _idempotent(sid, known)
+    assert stale["disposition"] == DISPOSITION_STALE_CHANGED
+    assert stale["result"] is None
+    assert stale["current_input_fingerprint"] != known
+
+    fresh = _idempotent(sid)
+    assert fresh["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert fresh["result"]["outcome"] == "COMPLETED"
+
+
+def test_failed_first_run_then_retry() -> None:
+    from rop.services.evidence_evaluation import EvidenceEvaluationService
+
+    sid = _create_session("Patient reports chest pain and chills")
+
+    class _BoomEvidence(EvidenceEvaluationService):
+        def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("evaluation exploded")
+
+    with TestingSessionLocal() as db:
+        failed = ReasoningRunIdempotencyService(
+            execution_service=ReasoningRunExecutionService(
+                evidence_evaluation_service=_BoomEvidence()
+            )
+        ).execute_idempotent(db, UUID(sid))
+    assert failed["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert failed["result"]["outcome"] == "FAILED"
+
+    retried = _idempotent(sid)
+    assert retried["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert retried["result"]["outcome"] == "COMPLETED"
+
+
+def test_reuse_is_deterministic() -> None:
+    sid = _create_session("Patient reports repeatable chest pain")
+    first = _idempotent(sid)
+    assert first["disposition"] == DISPOSITION_EXECUTED_NEW
+    known = _current_fingerprint(sid)
+    again = _idempotent(sid, known)
+    third = _idempotent(sid, known)
+    assert again["disposition"] == DISPOSITION_REUSED_IDENTICAL
+    assert third["disposition"] == DISPOSITION_REUSED_IDENTICAL
+    assert again["result"] == third["result"]
