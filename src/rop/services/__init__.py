@@ -61,6 +61,11 @@ from rop.services.entity import EntityService
 from rop.services.evidence import EvidenceService
 from rop.services.evidence_aggregation import EvidenceAggregationService
 from rop.services.evidence_evaluation import EvidenceEvaluationService
+from rop.services.evidence_hypothesis_lineage import (
+    EVIDENCE_HYPOTHESIS_LINEAGE_SOURCE_TASK_130,
+    EvidenceHypothesisLineageContractError,
+    EvidenceHypothesisLineageService,
+)
 from rop.services.hypothesis import HypothesisService
 from rop.services.hypothesis_scoring import (
     HypothesisScoreContractError,
@@ -404,6 +409,9 @@ __all__ = [
     "EntityService",
     "EvidenceAggregationService",
     "EvidenceEvaluationService",
+    "EVIDENCE_HYPOTHESIS_LINEAGE_SOURCE_TASK_130",
+    "EvidenceHypothesisLineageContractError",
+    "EvidenceHypothesisLineageService",
     "EvidenceService",
     "HypothesisScoreContractError",
     "HypothesisScoringService",
