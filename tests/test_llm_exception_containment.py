@@ -342,6 +342,42 @@ def test_mutated_caller_mapping_after_audit_is_contained() -> None:
     assert outcome in ALLOWED
 
 
+def test_hostile_schema_validation_error_str_is_contained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostile exception from the raw schema-validation call itself
+    (raising __str__) must become a deterministic issue at unit level
+    and MODEL_OUTPUT_INVALID on the live path -- never a raw escape."""
+    from tests.test_llm_live_boundary_enforcement import (
+        FakeProvider,
+        _service_with,
+        _valid_context,
+    )
+
+    import rop.services.llm_output_validation as validation_mod
+
+    class _Boom(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("str exploded")
+
+    def _raise(raw: Any) -> Any:
+        raise _Boom("validation exploded")
+
+    monkeypatch.setattr(
+        validation_mod._RawLLMReasoningProposal, "model_validate", _raise
+    )
+
+    issues = validate_raw_proposal({"candidate_assessments": []}, {})
+    assert len(issues) == 1
+    assert issues[0].startswith("Top-level schema validation failed")
+    assert "Boom" in issues[0]
+
+    ctx = _valid_context()
+    provider = FakeProvider(response_text='{"candidate_assessments": []}')
+    outcome = _expect_contained(_service_with(provider).build, context=ctx)
+    assert outcome == "MODEL_OUTPUT_INVALID"
+
+
 class _Undeepcopyable:
     def __deepcopy__(self, memo: Any) -> Any:
         raise RuntimeError("cannot snapshot this")

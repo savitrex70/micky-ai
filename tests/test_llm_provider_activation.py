@@ -64,18 +64,35 @@ def test_no_provider_unavailable_context_returns_soft_result() -> None:
 def test_env_vars_never_select_a_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OLLAMA_REASONING_MODEL", "sneaky-model")
+    monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "sneaky-model")
+    monkeypatch.setenv("ROP_OLLAMA_BASE_URL", "http://sneaky:11434")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-sneaky")
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    assert LLMReasoningService().provider is None
+    get_settings.cache_clear()
+    try:
+        assert LLMReasoningService().provider is None
+    finally:
+        get_settings.cache_clear()
 
 
-def test_settings_carry_no_api_key_or_provider_selection() -> None:
+def test_settings_carry_no_api_key_or_provider_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings carry no API keys and select no provider. A legitimately
+    configured model setting is NOT automatic activation: even with it
+    set, the service still requires explicit injection."""
     settings = get_settings()
     names = [name for name in dir(settings) if not name.startswith("_")]
     assert not any("api_key" in name.lower() for name in names)
     assert not any("provider" in name.lower() for name in names)
-    assert getattr(settings, "ollama_reasoning_model", None) is None
+
+    monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
+    get_settings.cache_clear()
+    try:
+        assert LLMReasoningService().provider is None
+    finally:
+        get_settings.cache_clear()
+    assert LLMReasoningService().provider is None
 
 
 def test_constructing_concrete_provider_touches_no_network(
@@ -92,6 +109,31 @@ def test_constructing_concrete_provider_touches_no_network(
     provider = OllamaReasoningProvider()
     assert provider.provider_name == "ollama"
     assert provider.model_name == ""
+
+
+def test_explicit_construction_with_config_is_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured model setting is legitimate opt-in configuration:
+    explicit construction picks it up, still without network, and still
+    selects no provider for the service."""
+    import httpx
+
+    from rop.services.ollama_reasoning_provider import OllamaReasoningProvider
+
+    monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
+    get_settings.cache_clear()
+    try:
+
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("network contacted during construction")
+
+        monkeypatch.setattr(httpx, "Client", _boom)
+        provider = OllamaReasoningProvider()
+        assert provider.model_name == "configured-model"
+        assert LLMReasoningService().provider is None
+    finally:
+        get_settings.cache_clear()
 
 
 def test_unconfigured_concrete_provider_fails_closed(

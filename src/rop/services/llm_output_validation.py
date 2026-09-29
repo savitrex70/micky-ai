@@ -42,10 +42,16 @@ def validate_raw_proposal(
 
     # 1. Validate top-level structure using the parse-only schema.
     #    This enforces ConfigDict(extra="forbid") -- no extra keys allowed.
+    #    Task 120 final correction: the message is rendered with the safe
+    #    Task 107 helper so even a hostile validation exception whose
+    #    __str__ raises becomes a deterministic issue, never a raw escape.
     try:
         proposal = _RawLLMReasoningProposal.model_validate(raw)
     except Exception as exc:
-        issues.append(f"Top-level schema validation failed: {exc}")
+        issues.append(
+            "Top-level schema validation failed: "
+            + ProviderFailureBoundary.describe_failure(exc)
+        )
         return issues
 
     assessments = proposal.candidate_assessments

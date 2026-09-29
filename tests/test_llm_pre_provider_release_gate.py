@@ -289,14 +289,25 @@ def test_gate_14_provider_activation_requires_injection() -> None:
     assert exc_info.value.invariant == "MODEL_UNAVAILABLE"
 
 
-def test_gate_15_no_automatic_network_model_or_key_behavior() -> None:
+def test_gate_15_no_automatic_network_model_or_key_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No automatic provider activation -- while a configured model
+    setting remains legitimate opt-in configuration, not activation."""
     from rop.config import get_settings
 
     settings = get_settings()
-    assert getattr(settings, "ollama_reasoning_model", None) is None
+    assert getattr(settings, "ollama_base_url", "") != ""
     names = [n for n in dir(settings) if not n.startswith("_")]
     assert not any("api_key" in n.lower() for n in names)
     assert LLMReasoningService().provider is None
+
+    monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
+    get_settings.cache_clear()
+    try:
+        assert LLMReasoningService().provider is None
+    finally:
+        get_settings.cache_clear()
 
 
 def test_gate_16_no_rop_state_mutated() -> None:
