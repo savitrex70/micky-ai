@@ -134,9 +134,6 @@ from rop.services.medical_entity_recognition import MedicalEntityRecognitionServ
 from rop.services.missing_information import MissingInformationService
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
-from rop.services.ollama_reasoning_provider import (
-    OllamaReasoningProvider,
-)
 from rop.services.reasoning_context import (
     ReasoningContextContractError,
     ReasoningContextService,
@@ -440,7 +437,6 @@ __all__ = [
     "LLMReasoningProviderResponse",
     "LLMReasoningRequest",
     "LLMReasoningService",
-    "OllamaReasoningProvider",
     "ReasoningContextConsistencyContractError",
     "ReasoningContextConsistencyService",
     "ReasoningContextContractError",

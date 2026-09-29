@@ -29,12 +29,10 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -m 'not ollama_smoke'"
+addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = [
-    "ollama_smoke: opt-in live test against a running Ollama server",
-]
+markers = []
 
 [tool.ruff]
 line-length = 88

@@ -292,19 +292,29 @@ def test_gate_14_provider_activation_requires_injection() -> None:
 def test_gate_15_no_automatic_network_model_or_key_behavior(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No automatic provider activation -- while a configured model
-    setting remains legitimate opt-in configuration, not activation."""
+    """Task 123 realignment: settings carry no model runtime, provider,
+    or API-key configuration at all, so configuration alone can never
+    activate, select, or execute a provider."""
     from rop.config import get_settings
 
     settings = get_settings()
-    assert getattr(settings, "ollama_base_url", "") != ""
-    names = [n for n in dir(settings) if not n.startswith("_")]
-    assert not any("api_key" in n.lower() for n in names)
+    fields = list(type(settings).model_fields.keys())
+    lowered = [name.lower() for name in fields]
+    assert not any("api_key" in name for name in lowered)
+    assert not any("apikey" in name for name in lowered)
+    assert not any("provider" in name for name in lowered)
+    assert not any("ollama" in name for name in lowered)
+    assert not any("openai" in name for name in lowered)
+    assert not any("gemini" in name for name in lowered)
+    assert not any("anthropic" in name for name in lowered)
+    assert not any("model" in name for name in lowered)
     assert LLMReasoningService().provider is None
 
     monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-configured")
     get_settings.cache_clear()
     try:
+        # Unknown env vars are ignored and select nothing.
         assert LLMReasoningService().provider is None
     finally:
         get_settings.cache_clear()

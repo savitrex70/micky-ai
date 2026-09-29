@@ -1,7 +1,7 @@
 """Tests for Task 103 LLM reasoning audit.
 
 All tests use an injected fake provider. The unit suite never needs a
-running Ollama server. Tests follow existing patterns from test_llm_reasoning.py:
+running model server. Tests follow existing patterns from test_llm_reasoning.py:
 sqlite-memory TestClient, seed via POST /sessions + observations + generate-candidates
 + evaluate-evidence, use real services.
 """

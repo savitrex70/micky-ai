@@ -26,10 +26,9 @@ SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "rop"
 LLM_SERVICE_FILES = sorted((SRC_ROOT / "services").glob("llm_*.py"))
 LLM_SCHEMA_FILES = sorted((SRC_ROOT / "schemas").glob("llm_*.py"))
 
-# Omitted from the network-import ban: the isolated concrete Ollama
-# provider, which may import httpx but must never touch it outside
-# generate_reasoning (proven by the Task 119 tests).
-_NETWORK_OK_FILES = {"ollama_reasoning_provider.py"}
+# Task 123 realignment: no LLM boundary file is exempt from the
+# network-import ban. No concrete model provider ships with ROP, so no
+# llm_* module may import any network client at all.
 
 _BANNED_SOURCE_PATTERNS = (
     r"\bimport\s+socket\b",
@@ -169,24 +168,11 @@ def test_no_llm_http_endpoints_exposed() -> None:
 def test_llm_modules_have_no_hidden_persistence_or_network_paths() -> None:
     offenders: list[str] = []
     for path in (*LLM_SERVICE_FILES, *LLM_SCHEMA_FILES):
-        if path.name in _NETWORK_OK_FILES:
-            continue
         source = path.read_text(encoding="utf-8")
         for pattern in _COMPILED_BANNED:
             if pattern.search(source):
                 offenders.append(f"{path.name}: {pattern.pattern}")
     assert offenders == []
-
-
-def test_ollama_provider_network_is_call_time_only() -> None:
-    source = (SRC_ROOT / "services" / "ollama_reasoning_provider.py").read_text(
-        encoding="utf-8"
-    )
-    httpx_uses = [i for i, line in enumerate(source.splitlines()) if "httpx" in line]
-    # Module import + client construction + error type inside
-    # generate_reasoning only -- three legitimate references, no other
-    # network surface.
-    assert len(httpx_uses) == 3, httpx_uses
 
 
 def test_no_raw_provider_text_or_prompt_persisted() -> None:

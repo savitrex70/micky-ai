@@ -1,8 +1,8 @@
 """Tests for Task 057 LLM reasoning boundary.
 
 All tests use an injected fake provider. The unit suite never needs a
-running Ollama server. A separate opt-in smoke test (marked
-`ollama_smoke`) exercises the concrete Ollama provider.
+running model server: ROP is model-agnostic and ships no concrete model
+integration.
 """
 
 from __future__ import annotations
@@ -617,44 +617,27 @@ def test_to_json_safe_accepts_supported_values() -> None:
     assert LLMReasoningService._to_json_safe({"a": [u]}) == {"a": [str(u)]}
 
 
-def test_ollama_provider_construction_does_not_raise_without_model() -> None:
-    from rop.services.ollama_reasoning_provider import (
-        OllamaReasoningProvider,
-    )
+def test_no_concrete_provider_module_shipped() -> None:
+    """Task 123 realignment: no concrete model provider module exists in
+    the ROP architecture. Explicit injection of test fakes is the only
+    provider mechanism."""
+    from pathlib import Path
 
-    provider = OllamaReasoningProvider(model_name="")
-    assert provider.model_name == ""
+    import rop.services as services_pkg
 
-
-def test_ollama_provider_generate_raises_without_model() -> None:
-    from rop.services.llm_reasoning_provider import (
-        LLMReasoningProviderError,
-        LLMReasoningRequest,
-    )
-    from rop.services.ollama_reasoning_provider import (
-        OllamaReasoningProvider,
-    )
-
-    provider = OllamaReasoningProvider(model_name="")
-    request = LLMReasoningRequest(payload={}, context_fingerprint="0" * 64)
-    with pytest.raises(LLMReasoningProviderError):
-        provider.generate_reasoning(request)
+    package_dir = Path(services_pkg.__file__).resolve().parent
+    assert not (package_dir / "ollama_reasoning_provider.py").exists()
+    try:
+        __import__("rop.services.ollama_reasoning_provider")
+    except ModuleNotFoundError:
+        pass
+    else:
+        raise AssertionError("concrete provider module is still importable")
 
 
-def test_ollama_provider_without_model_maps_to_model_unavailable() -> None:
-    from rop.services.ollama_reasoning_provider import (
-        OllamaReasoningProvider,
-    )
-
-    ctx = _valid_context()
-    provider = OllamaReasoningProvider(model_name="")
-    service = LLMReasoningService(provider=provider)
-    with pytest.raises(LLMReasoningContractError) as ei:
-        service.build(context=ctx)
-    assert ei.value.invariant == "MODEL_UNAVAILABLE"
-
-
-def test_pyproject_excludes_ollama_smoke_by_default() -> None:
+def test_pyproject_has_no_model_smoke_markers() -> None:
+    """Task 123 realignment: no model-smoke marker or deselection flag
+    remains now that no real-model test path exists."""
     import tomllib
     from pathlib import Path
 
@@ -663,7 +646,6 @@ def test_pyproject_excludes_ollama_smoke_by_default() -> None:
         data = tomllib.load(f)
     ini = data["tool"]["pytest"]["ini_options"]
     addopts = ini["addopts"]
-    assert "-m" in addopts
-    assert "not ollama_smoke" in addopts
-    markers = ini["markers"]
-    assert any("ollama_smoke" in m for m in markers)
+    markers = ini.get("markers", [])
+    assert "ollama_smoke" not in addopts
+    assert not any("ollama_smoke" in m for m in markers)

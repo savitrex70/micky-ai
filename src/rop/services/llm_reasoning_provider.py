@@ -1,9 +1,9 @@
 """Task 057: provider abstraction for the LLM reasoning boundary.
 
 A minimal Protocol -- not a framework. The Task 057 service depends
-only on this interface; the concrete Ollama implementation lives in a
-separate module. Tests inject a fake provider so the unit suite never
-needs a running model server.
+only on this interface. ROP itself stays model-agnostic: no concrete
+model runtime is part of the architecture, and tests inject a fake
+provider so the unit suite never needs a running model server.
 """
 
 from __future__ import annotations

@@ -64,10 +64,13 @@ def test_no_provider_unavailable_context_returns_soft_result() -> None:
 def test_env_vars_never_select_a_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Task 123 realignment: no environment variable -- model-flavored
+    or otherwise -- can select or instantiate a provider."""
     monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "sneaky-model")
     monkeypatch.setenv("ROP_OLLAMA_BASE_URL", "http://sneaky:11434")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-sneaky")
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("MODEL_NAME", "sneaky-model")
     get_settings.cache_clear()
     try:
         assert LLMReasoningService().provider is None
@@ -75,74 +78,58 @@ def test_env_vars_never_select_a_provider(
         get_settings.cache_clear()
 
 
-def test_settings_carry_no_api_key_or_provider_selection(
+def test_settings_carry_no_model_or_provider_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Settings carry no API keys and select no provider. A legitimately
-    configured model setting is NOT automatic activation: even with it
-    set, the service still requires explicit injection."""
+    """Task 123 realignment: settings carry no model runtime, provider,
+    or API-key configuration of any kind -- so configuration alone can
+    never activate, select, or execute a provider."""
     settings = get_settings()
-    names = [name for name in dir(settings) if not name.startswith("_")]
-    assert not any("api_key" in name.lower() for name in names)
-    assert not any("provider" in name.lower() for name in names)
+    fields = list(type(settings).model_fields.keys())
+    lowered = [name.lower() for name in fields]
+    assert not any("api_key" in name for name in lowered)
+    assert not any("apikey" in name for name in lowered)
+    assert not any("provider" in name for name in lowered)
+    assert not any("ollama" in name for name in lowered)
+    assert not any("openai" in name for name in lowered)
+    assert not any("gemini" in name for name in lowered)
+    assert not any("anthropic" in name for name in lowered)
+    assert not any("model" in name for name in lowered)
 
     monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-configured")
     get_settings.cache_clear()
     try:
+        # Unknown env vars are ignored (extra="ignore") and select nothing.
         assert LLMReasoningService().provider is None
     finally:
         get_settings.cache_clear()
     assert LLMReasoningService().provider is None
 
 
-def test_constructing_concrete_provider_touches_no_network(
+def test_no_concrete_provider_class_to_construct() -> None:
+    """Task 123 realignment: there is no concrete provider class left to
+    construct. The generic Protocol interface exists as a boundary for
+    explicitly injected test fakes only."""
+    from pathlib import Path
+
+    import rop.services as services_pkg
+
+    package_dir = Path(services_pkg.__file__).resolve().parent
+    assert not (package_dir / "ollama_reasoning_provider.py").exists()
+    assert not hasattr(services_pkg, "OllamaReasoningProvider")
+    assert LLMReasoningService().provider is None
+
+
+def test_injected_fake_fails_closed_without_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An explicitly injected fake that cannot produce a response fails
+    closed through the Task 107 boundary without any network use."""
     import httpx
-
-    from rop.services.ollama_reasoning_provider import OllamaReasoningProvider
-
-    def _boom(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("network contacted during provider construction")
-
-    monkeypatch.setattr(httpx, "Client", _boom)
-    provider = OllamaReasoningProvider()
-    assert provider.provider_name == "ollama"
-    assert provider.model_name == ""
-
-
-def test_explicit_construction_with_config_is_opt_in(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A configured model setting is legitimate opt-in configuration:
-    explicit construction picks it up, still without network, and still
-    selects no provider for the service."""
-    import httpx
-
-    from rop.services.ollama_reasoning_provider import OllamaReasoningProvider
-
-    monkeypatch.setenv("ROP_OLLAMA_REASONING_MODEL", "configured-model")
-    get_settings.cache_clear()
-    try:
-
-        def _boom(*args: Any, **kwargs: Any) -> Any:
-            raise AssertionError("network contacted during construction")
-
-        monkeypatch.setattr(httpx, "Client", _boom)
-        provider = OllamaReasoningProvider()
-        assert provider.model_name == "configured-model"
-        assert LLMReasoningService().provider is None
-    finally:
-        get_settings.cache_clear()
-
-
-def test_unconfigured_concrete_provider_fails_closed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import httpx
+    from tests.test_llm_live_boundary_enforcement import FakeProvider
 
     from rop.services.llm_reasoning_provider import LLMReasoningRequest
-    from rop.services.ollama_reasoning_provider import OllamaReasoningProvider
 
     called: list[str] = []
 
@@ -157,7 +144,16 @@ def test_unconfigured_concrete_provider_fails_closed(
             return False
 
     monkeypatch.setattr(httpx, "Client", _GuardClient)
-    provider = OllamaReasoningProvider()
+
+    class _FailingFake(FakeProvider):
+        def generate_reasoning(self, request: Any) -> Any:
+            from rop.services.llm_reasoning_provider import (
+                LLMReasoningProviderError,
+            )
+
+            raise LLMReasoningProviderError("fake provider is not configured")
+
+    provider = _FailingFake()
     with pytest.raises(Exception) as exc_info:
         provider.generate_reasoning(
             LLMReasoningRequest(payload={}, context_fingerprint="x" * 64)
@@ -167,16 +163,15 @@ def test_unconfigured_concrete_provider_fails_closed(
 
 
 def test_imports_perform_no_activation() -> None:
-    """Fresh interpreter: importing ROP modules instantiates nothing and
-    contacts nothing."""
+    """Fresh interpreter: importing ROP modules instantiates no provider
+    and contacts nothing. No concrete provider module exists to import."""
     env = {**os.environ, **_CLEAN_ENV}
     code = (
-        "import rop.services, rop.main,"
-        " rop.services.ollama_reasoning_provider as o;"
+        "import rop.services, rop.main;"
         "from rop.services.llm_reasoning import LLMReasoningService;"
         "assert LLMReasoningService().provider is None;"
-        "assert not any(isinstance(v, o.OllamaReasoningProvider)"
-        " for v in list(globals().values()));"
+        "import rop.services as s;"
+        "assert not hasattr(s, 'OllamaReasoningProvider');"
         "print('IMPORT_CLEAN')"
     )
     proc = subprocess.run(
