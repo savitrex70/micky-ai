@@ -58,6 +58,7 @@ RESULT_FIELDS = (
     "outcome",
     "execution_consistent",
     "session_id",
+    "input_fingerprint",
     "completed_stage_count",
     "stage_count",
     "stages",
@@ -501,19 +502,21 @@ _UUID_RE = __import__("re").compile(
 
 
 def _strip_run_fingerprint(obj: object) -> object:
-    """Recursively drop ``audited_run_fingerprint`` from any dict.
+    """Recursively drop per-execution fingerprints from any dict.
 
     Two separate executions of the same session produce different
     candidate UUIDs, which cascade into different Task 042 runs and
-    therefore different fingerprints. The fingerprint is provenance
-    data -- its value is expected to differ between calls -- so it is
-    not part of the structural contract this test asserts.
+    therefore different fingerprints. Task 125's ``input_fingerprint``
+    likewise binds the exact pre-run input state of its own execution.
+    Both fingerprints are provenance data -- their values are expected
+    to differ between calls -- so they are not part of the structural
+    contract this test asserts.
     """
     if isinstance(obj, dict):
         return {
             k: _strip_run_fingerprint(v)
             for k, v in obj.items()
-            if k != "audited_run_fingerprint"
+            if k not in ("audited_run_fingerprint", "input_fingerprint")
         }
     if isinstance(obj, list):
         return [_strip_run_fingerprint(x) for x in obj]

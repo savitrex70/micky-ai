@@ -15,6 +15,7 @@ from rop.services.reasoning_run import ReasoningRunService
 from rop.services.reasoning_run_consistency import (
     ReasoningRunConsistencyService,
 )
+from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     ReasoningRunInputSnapshotService,
 )
@@ -64,6 +65,7 @@ _RESULT_REQUIRED_FIELDS = (
     "outcome",
     "execution_consistent",
     "session_id",
+    "input_fingerprint",
     "completed_stage_count",
     "stage_count",
     "stages",
@@ -194,6 +196,14 @@ class ReasoningRunExecutionService:
             ) from exc
 
         state: dict[str, Any] = {"input_snapshot": input_snapshot}
+        try:
+            state["input_fingerprint"] = compute_snapshot_fingerprint(input_snapshot)
+        except Exception as exc:
+            raise ReasoningRunExecutionContractError(
+                "INPUT_FINGERPRINT_FAILED",
+                "reasoning-run input fingerprint could not be computed: "
+                + type(exc).__name__,
+            ) from exc
         completed_ids: list[str] = ["SESSION_VERIFIED"]
         failed_id: str | None = None
 
@@ -217,6 +227,7 @@ class ReasoningRunExecutionService:
 
         return self._build_result(
             session_id=session_id,
+            input_fingerprint=state["input_fingerprint"],
             completed_ids=completed_ids,
             failed_id=failed_id,
             run=state.get("run"),
@@ -333,6 +344,7 @@ class ReasoningRunExecutionService:
     def _build_result(
         *,
         session_id: UUID,
+        input_fingerprint: str,
         completed_ids: list[str],
         failed_id: str | None,
         run: dict[str, Any] | None,
@@ -378,6 +390,7 @@ class ReasoningRunExecutionService:
             "outcome": outcome,
             "execution_consistent": execution_consistent,
             "session_id": session_id,
+            "input_fingerprint": input_fingerprint,
             "completed_stage_count": completed_stage_count,
             "stage_count": len(stages),
             "stages": stages,
@@ -419,6 +432,13 @@ class ReasoningRunExecutionService:
             raise ReasoningRunExecutionContractError(
                 "SESSION_ID_TYPE",
                 "session_id is not a UUID: " + type(result["session_id"]).__name__,
+            )
+        if not isinstance(result.get("input_fingerprint"), str) or (
+            len(result["input_fingerprint"]) != 64
+        ):
+            raise ReasoningRunExecutionContractError(
+                "INPUT_FINGERPRINT_TYPE",
+                "input_fingerprint is not a 64-char hex string",
             )
         for field in ("completed_stage_count", "stage_count"):
             value = result[field]

@@ -47,6 +47,7 @@ class ReasoningRunExecutionRead(BaseModel):
     outcome: str
     execution_consistent: bool
     session_id: UUID
+    input_fingerprint: str
     completed_stage_count: int
     stage_count: int
     stages: list[ReasoningRunExecutionStageRead]

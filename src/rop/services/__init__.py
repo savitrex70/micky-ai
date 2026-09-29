@@ -348,6 +348,7 @@ from rop.services.reasoning_run_execution_consistency import (
     ReasoningRunExecutionConsistencyContractError,
     ReasoningRunExecutionConsistencyService,
 )
+from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
     ReasoningRunInputSnapshotContractError,
@@ -546,6 +547,7 @@ __all__ = [
     "ReasoningRunExecutionConsistencyService",
     "ReasoningRunExecutionContractError",
     "ReasoningRunExecutionService",
+    "compute_snapshot_fingerprint",
     "REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124",
     "ReasoningRunInputSnapshotContractError",
     "ReasoningRunInputSnapshotService",
