@@ -169,7 +169,9 @@ class ReasoningRunIdempotencyService:
                         result=reused,
                     )
 
-        result = self.execution_service.execute_for_session(db, session_id)
+        result = self.execution_service.execute_for_session(
+            db, session_id, input_snapshot=snapshot
+        )
         return self._envelope(
             disposition=DISPOSITION_EXECUTED_NEW,
             session_id=session_id,

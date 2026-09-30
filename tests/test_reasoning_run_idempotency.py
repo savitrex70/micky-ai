@@ -270,3 +270,36 @@ def test_reuse_is_deterministic() -> None:
     assert again["disposition"] == DISPOSITION_REUSED_IDENTICAL
     assert third["disposition"] == DISPOSITION_REUSED_IDENTICAL
     assert again["result"] == third["result"]
+
+
+def test_executed_path_passes_evaluated_snapshot() -> None:
+    """TOCTOU guarantee: the EXECUTED_NEW path hands execution the
+    exact snapshot it already evaluated -- execution must not rebuild
+    a second snapshot that a concurrent change could diverge."""
+    from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+    from rop.services.reasoning_run_fingerprint import (
+        compute_snapshot_fingerprint,
+    )
+
+    sid = _seeded_session("Patient reports handoff chest pain")
+    seen: dict[str, Any] = {}
+    original = ReasoningRunExecutionService.execute_for_session
+
+    def _spy(self: Any, db: Any, session_id: Any, **kwargs: Any) -> Any:
+        seen["snapshot"] = kwargs.get("input_snapshot")
+        return original(self, db, session_id, **kwargs)
+
+    ReasoningRunExecutionService.execute_for_session = _spy  # type: ignore[method-assign]
+    try:
+        envelope = _idempotent(sid)
+    finally:
+        ReasoningRunExecutionService.execute_for_session = original  # type: ignore[method-assign]
+    assert envelope["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert seen["snapshot"] is not None
+    assert (
+        compute_snapshot_fingerprint(seen["snapshot"])
+        == envelope["current_input_fingerprint"]
+    )
+    assert (
+        envelope["result"]["input_fingerprint"] == envelope["current_input_fingerprint"]
+    )
