@@ -137,6 +137,11 @@ from rop.services.llm_request_serialization import (
 )
 from rop.services.medical_entity_recognition import MedicalEntityRecognitionService
 from rop.services.missing_information import MissingInformationService
+from rop.services.missing_information_lifecycle import (
+    MISSING_INFORMATION_LIFECYCLE_SOURCE_TASK_131,
+    MissingInformationLifecycleContractError,
+    MissingInformationLifecycleService,
+)
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
 from rop.services.reasoning_chain_audit import (
@@ -418,6 +423,9 @@ __all__ = [
     "HypothesisService",
     "MedicalEntityRecognitionService",
     "MissingInformationService",
+    "MISSING_INFORMATION_LIFECYCLE_SOURCE_TASK_131",
+    "MissingInformationLifecycleContractError",
+    "MissingInformationLifecycleService",
     "ObservationService",
     "ObservationExtractionService",
     "ALLOWED_BOUNDARY_OUTCOMES",
