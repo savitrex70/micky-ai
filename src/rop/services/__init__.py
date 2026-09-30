@@ -377,6 +377,11 @@ from rop.services.reasoning_run_input_snapshot import (
     ReasoningRunInputSnapshotContractError,
     ReasoningRunInputSnapshotService,
 )
+from rop.services.reasoning_run_orchestration import (
+    REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132,
+    ReasoningRunOrchestrationContractError,
+    ReasoningRunOrchestrationService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -586,6 +591,9 @@ __all__ = [
     "ReasoningRunIdempotencyContractError",
     "ReasoningRunIdempotencyService",
     "derive_run_identity",
+    "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
+    "ReasoningRunOrchestrationContractError",
+    "ReasoningRunOrchestrationService",
     "REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124",
     "ReasoningRunInputSnapshotContractError",
     "ReasoningRunInputSnapshotService",
