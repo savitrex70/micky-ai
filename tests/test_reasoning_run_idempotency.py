@@ -157,6 +157,22 @@ def test_identical_rerun_reuses_without_churn() -> None:
     assert second["disposition"] == DISPOSITION_REUSED_IDENTICAL
     assert second["result"]["outcome"] == "COMPLETED"
     assert second["result"]["input_fingerprint"] == known
+    # The reused result reports the recorded canonical identity -- not
+    # the current full snapshot fingerprint, which legitimately covers
+    # newly generated derived state and therefore differs.
+    from rop.services.reasoning_run_fingerprint import (
+        compute_snapshot_fingerprint,
+    )
+    from rop.services.reasoning_run_input_snapshot import (
+        ReasoningRunInputSnapshotService,
+    )
+
+    with TestingSessionLocal() as db:
+        current_full = compute_snapshot_fingerprint(
+            ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
+        )
+    assert current_full != known
+    assert second["result"]["input_fingerprint"] != current_full
     # Nothing was rewritten: identical candidate identities, and reuse
     # wrote no second receipt.
     assert _candidate_ids(sid) == ids_before

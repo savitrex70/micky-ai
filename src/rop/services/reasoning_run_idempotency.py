@@ -179,9 +179,18 @@ class ReasoningRunIdempotencyService:
         )
 
     def _try_reuse(
-        self, db: Session, session_id: UUID, current_fingerprint: str
+        self, db: Session, session_id: UUID, known_input_fingerprint: str
     ) -> dict[str, Any] | None:
-        """Recompose the current state read-only; None when unusable."""
+        """Recompose the current state read-only; None when unusable.
+
+        The recomposed result is stamped with the recorded canonical
+        input fingerprint (``known_input_fingerprint``) -- never the
+        current full snapshot fingerprint, which legitimately includes
+        newly generated derived state. The three fingerprint roles stay
+        distinct: ``current_input_fingerprint`` for comparison/reporting,
+        ``result.input_fingerprint`` and ``receipt.input_fingerprint``
+        for the recorded canonical identity.
+        """
         try:
             run = self.reasoning_run_service.build_for_session(db, session_id)
             audit = self.reasoning_run_consistency_service.build_for_session(
@@ -195,7 +204,7 @@ class ReasoningRunIdempotencyService:
             return None
         return ReasoningRunExecutionService._build_result(
             session_id=session_id,
-            input_fingerprint=current_fingerprint,
+            input_fingerprint=known_input_fingerprint,
             completed_ids=list(EXECUTION_STAGE_IDS),
             failed_id=None,
             run=run,
