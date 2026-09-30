@@ -59,6 +59,7 @@ from rop.schemas import (
     ReasoningRunExecutionAuditPackageRead,
     ReasoningRunExecutionBundleRead,
     ReasoningRunExecutionRead,
+    ReasoningRunIdempotencyConsistencyRead,
     ReasoningRunIdempotentExecutionRead,
     ReasoningRunIdempotentExecutionRequest,
     ReasoningRunRead,
@@ -173,6 +174,7 @@ from rop.services import (
     ReasoningRunExecutionBundleService,
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,
+    ReasoningRunIdempotencyConsistencyService,
     ReasoningRunIdempotencyContractError,
     ReasoningRunIdempotencyService,
     ReasoningRunService,
@@ -242,6 +244,9 @@ reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
 reasoning_run_idempotency_service = ReasoningRunIdempotencyService()
+reasoning_run_idempotency_consistency_service = (
+    ReasoningRunIdempotencyConsistencyService()
+)
 reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
 reasoning_run_execution_audit_package_service = (
     ReasoningRunExecutionAuditPackageService()
@@ -2222,6 +2227,42 @@ def execute_reasoning_run_idempotent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-idempotency contract violation",
         ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/idempotency-consistency",
+    response_model=ReasoningRunIdempotencyConsistencyRead,
+    status_code=status.HTTP_200_OK,
+)
+def get_reasoning_run_idempotency_consistency(
+    session_id: UUID,
+    request: ReasoningRunIdempotentExecutionRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 135: audit the idempotency API result for contract compliance.
+
+    Validates that a Task 134 idempotency envelope conforms to the
+    deterministic contract: session identity, disposition vocabulary,
+    fingerprint shapes, disposition/result coherence, fingerprint
+    bindings, and nested execution structural validity. Returns the
+    audit result with a deterministic issue list.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    if request is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request body with idempotency envelope is required",
+        )
+
+    envelope = request.model_dump()
+    audit = reasoning_run_idempotency_consistency_service.build(
+        envelope=envelope, session_id=session_id
+    )
+    return audit
 
 
 @router.post(
