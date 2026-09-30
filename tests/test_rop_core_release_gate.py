@@ -600,6 +600,36 @@ def test_gate_api_stable_schema_contracts() -> None:
     assert payload["execution_source"] == "REASONING_RUN_EXECUTION_TASK_044"
 
 
+def test_gate_api_idempotent_execution_boundary() -> None:
+    """Task 134: the idempotency API stays deterministic, model-free,
+    and consistent with Task 127 through HTTP."""
+    sid = _create_session()
+    _add_observation(sid)
+    first = client.post(f"/sessions/{sid}/reasoning-run/execute-idempotent").json()
+    assert first["disposition"] == "EXECUTED_NEW"
+    assert first["result"]["outcome"] == "COMPLETED"
+    known = first["result"]["input_fingerprint"]
+
+    second = client.post(
+        f"/sessions/{sid}/reasoning-run/execute-idempotent",
+        json={"known_input_fingerprint": known},
+    ).json()
+    assert second["disposition"] == "REUSED_IDENTICAL"
+    assert second["result"]["input_fingerprint"] == known
+
+    assert (
+        client.post(
+            f"/sessions/{sid}/reasoning-run/execute-idempotent",
+            json={"known_input_fingerprint": "ZZZ"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(f"/sessions/{uuid4()}/reasoning-run/execute-idempotent").status_code
+        == 404
+    )
+
+
 def test_gate_api_http_failure_mapping() -> None:
     missing = str(uuid4())
     assert client.post(f"/sessions/{missing}/reasoning-run/execute").status_code == (

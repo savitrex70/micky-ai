@@ -59,6 +59,8 @@ from rop.schemas import (
     ReasoningRunExecutionAuditPackageRead,
     ReasoningRunExecutionBundleRead,
     ReasoningRunExecutionRead,
+    ReasoningRunIdempotentExecutionRead,
+    ReasoningRunIdempotentExecutionRequest,
     ReasoningRunRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -171,6 +173,8 @@ from rop.services import (
     ReasoningRunExecutionBundleService,
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,
+    ReasoningRunIdempotencyContractError,
+    ReasoningRunIdempotencyService,
     ReasoningRunService,
     ReasoningSessionService,
     ReasoningStepService,
@@ -237,6 +241,7 @@ reasoning_pipeline_service = ReasoningPipelineService()
 reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
+reasoning_run_idempotency_service = ReasoningRunIdempotencyService()
 reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
 reasoning_run_execution_audit_package_service = (
     ReasoningRunExecutionAuditPackageService()
@@ -2174,6 +2179,48 @@ def execute_reasoning_run(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-execution contract violation",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/reasoning-run/execute-idempotent",
+    response_model=ReasoningRunIdempotentExecutionRead,
+    status_code=status.HTTP_200_OK,
+)
+def execute_reasoning_run_idempotent(
+    session_id: UUID,
+    request: ReasoningRunIdempotentExecutionRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 134: thin idempotency adapter over the Task 127 service.
+
+    Validates the request, verifies the session exists, and delegates
+    to ``ReasoningRunIdempotencyService.execute_idempotent`` unchanged.
+    All dispositions (``EXECUTED_NEW``, ``REUSED_IDENTICAL``,
+    ``STALE_CHANGED``) are valid deterministic results returned with
+    HTTP 200; only a missing session (404) or an internal contract
+    violation (500) becomes an HTTP error. No snapshot, fingerprint,
+    receipt, or reuse logic lives here.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_idempotency_service.execute_idempotent(
+            db,
+            session_id,
+            known_input_fingerprint=(
+                request.known_input_fingerprint if request is not None else None
+            ),
+        )
+    except ReasoningRunIdempotencyContractError as exc:
+        # Task 127: an internal contract violation, never medical or
+        # client-input error -- never leak the raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-idempotency contract violation",
         ) from exc
 
 
