@@ -307,3 +307,144 @@ def test_retry_after_failure_succeeds() -> None:
     retried = _execute(sid)
     assert retried["outcome"] == "COMPLETED"
     assert retried["execution_consistent"] is True
+
+
+def _collision_error() -> Any:
+    from sqlalchemy.exc import IntegrityError
+
+    return IntegrityError(
+        "INSERT INTO reasoning_run_receipts",
+        {},
+        Exception(
+            "UNIQUE constraint failed: "
+            "reasoning_run_receipts.session_id, "
+            "reasoning_run_receipts.input_fingerprint"
+        ),
+    )
+
+
+def test_collision_adopts_winner_without_duplicate_receipt() -> None:
+    """Faithful sequential simulation of an identical concurrent
+    completion: the loser presents the exact pre-state the winner
+    already committed, so its receipt insert hits the real unique
+    constraint. The loser rolls back fully, then adopts the winner's
+    completed run. Exactly one durable receipt exists."""
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
+    from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+    from rop.services.reasoning_run_input_snapshot import (
+        ReasoningRunInputSnapshotService,
+    )
+
+    sid = _create_session("Patient reports collision chest pain")
+    _add_observation(sid, "Patient reports collision chest pain")
+    with TestingSessionLocal() as db:
+        pre_snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
+    winner = _execute(sid)
+    assert winner["outcome"] == "COMPLETED"
+    with TestingSessionLocal() as db:
+        winner_candidates = {
+            str(c.id)
+            for c in CandidateGenerationService().list_by_session(db, UUID(sid))
+        }
+
+    # Loser runs against the identical pre-state: its receipt insert
+    # collides for real on the unique (session_id, input_fingerprint).
+    with TestingSessionLocal() as db:
+        adopted = ReasoningRunExecutionService().execute_for_session(
+            db, UUID(sid), input_snapshot=pre_snapshot
+        )
+    assert adopted["outcome"] == "COMPLETED"
+    assert adopted["execution_consistent"] is True
+    assert adopted["input_fingerprint"] == winner["input_fingerprint"]
+    with TestingSessionLocal() as db:
+        assert ReasoningRunReceiptRepository().count_by_session(db, UUID(sid)) == 1
+        adopted_candidates = {
+            str(c.id)
+            for c in CandidateGenerationService().list_by_session(db, UUID(sid))
+        }
+    # Loser wrote nothing: the adopted run is the winner's state.
+    assert adopted_candidates == winner_candidates
+
+
+def test_collision_without_winner_raises_for_retry() -> None:
+    """A collision with no completed run behind it is an internal
+    failure the caller retries cleanly -- never fabricated success."""
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
+    from rop.services.reasoning_run_execution import (
+        ReasoningRunExecutionContractError,
+        ReasoningRunExecutionService,
+    )
+
+    sid = _create_session("Patient reports lonely collision pain")
+    _add_observation(sid, "Patient reports lonely collision pain")
+
+    real_record = ReasoningRunReceiptRepository.record_completed
+
+    def _boom_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise _collision_error()
+
+    ReasoningRunReceiptRepository.record_completed = _boom_record  # type: ignore[method-assign]
+    try:
+        with TestingSessionLocal() as db:
+            with pytest.raises(ReasoningRunExecutionContractError):
+                ReasoningRunExecutionService().execute_for_session(db, UUID(sid))
+    finally:
+        ReasoningRunReceiptRepository.record_completed = real_record  # type: ignore[method-assign]
+    retried = _execute(sid)
+    assert retried["outcome"] == "COMPLETED"
+
+
+def test_unrelated_integrity_error_not_swallowed() -> None:
+    """A non-receipt integrity failure stays an internal failure and
+    never takes the winner-adoption path."""
+    from sqlalchemy.exc import IntegrityError
+
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
+    from rop.services.reasoning_run_execution import (
+        ReasoningRunExecutionContractError,
+        ReasoningRunExecutionService,
+    )
+
+    sid = _create_session("Patient reports foreign key pain")
+    _add_observation(sid, "Patient reports foreign key pain")
+
+    real_record = ReasoningRunReceiptRepository.record_completed
+
+    def _boom_record(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise IntegrityError(
+            "INSERT INTO candidate_hypotheses",
+            {},
+            Exception("FOREIGN KEY constraint failed"),
+        )
+
+    ReasoningRunReceiptRepository.record_completed = _boom_record  # type: ignore[method-assign]
+    try:
+        with TestingSessionLocal() as db:
+            with pytest.raises(ReasoningRunExecutionContractError) as exc_info:
+                ReasoningRunExecutionService().execute_for_session(db, UUID(sid))
+        assert exc_info.value.invariant == "RUN_COMMIT_FAILED"
+    finally:
+        ReasoningRunReceiptRepository.record_completed = real_record  # type: ignore[method-assign]
+
+
+def test_distinct_fingerprints_preserve_history() -> None:
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
+
+    sid = _create_session("Patient reports historic chest pain")
+    _add_observation(sid, "Patient reports historic chest pain")
+    first = _execute(sid)
+    assert first["outcome"] == "COMPLETED"
+    _add_observation(sid, "Patient reports historic dizziness")
+    second = _execute(sid)
+    assert second["outcome"] == "COMPLETED"
+    assert first["input_fingerprint"] != second["input_fingerprint"]
+    with TestingSessionLocal() as db:
+        assert ReasoningRunReceiptRepository().count_by_session(db, UUID(sid)) == 2

@@ -372,6 +372,11 @@ from rop.services.reasoning_run_idempotency import (
     ReasoningRunIdempotencyService,
     derive_run_identity,
 )
+from rop.services.reasoning_run_idempotency_consistency import (
+    REASONING_RUN_IDEMPOTENCY_CONSISTENCY_SOURCE_TASK_135,
+    ReasoningRunIdempotencyConsistencyContractError,
+    ReasoningRunIdempotencyConsistencyService,
+)
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
     ReasoningRunInputSnapshotContractError,
@@ -597,6 +602,9 @@ __all__ = [
     "ReasoningRunIdempotencyContractError",
     "ReasoningRunIdempotencyService",
     "derive_run_identity",
+    "REASONING_RUN_IDEMPOTENCY_CONSISTENCY_SOURCE_TASK_135",
+    "ReasoningRunIdempotencyConsistencyContractError",
+    "ReasoningRunIdempotencyConsistencyService",
     "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",

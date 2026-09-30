@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from rop.repositories.reasoning_run_receipt import (
@@ -97,6 +98,25 @@ _STATE_PAGE_SIZE = 1000
 # rather than copying divergent values.
 EXECUTION_STAGE_IDS = _EXECUTION_STAGE_IDS
 EXECUTION_STAGE_SOURCES = _STAGE_SOURCES
+
+
+def _is_receipt_identity_collision(exc: IntegrityError) -> bool:
+    """True only for the canonical receipt identity collision.
+
+    Task 136: concurrent identical completions collide on the unique
+    ``(session_id, input_fingerprint)`` receipt identity. Any other
+    integrity failure (foreign keys, checks, other tables) is an
+    unrelated internal error and must not take the reuse path.
+    """
+    message = ""
+    try:
+        message = str(getattr(exc, "orig", exc))
+    except Exception:
+        message = ""
+    lowered = message.lower()
+    if "reasoning_run_receipts" not in lowered:
+        return False
+    return "unique" in lowered or "duplicate" in lowered or "23505" in lowered
 
 
 class ReasoningRunExecutionContractError(Exception):
@@ -293,6 +313,28 @@ class ReasoningRunExecutionService:
                     exogenous_projection(state["input_snapshot"]),
                 )
                 db.commit()
+            except IntegrityError as exc:
+                # Task 136: a concurrent identical execution may have
+                # committed the canonical receipt first. Roll back this
+                # attempt's writes completely (whole-run atomicity holds
+                # for the loser too), then adopt the winner's completed
+                # run -- but only when it is really there and genuinely
+                # consistent. Anything else stays an internal failure.
+                if not _is_receipt_identity_collision(exc):
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    raise ReasoningRunExecutionContractError(
+                        "RUN_COMMIT_FAILED",
+                        "reasoning-run transaction could not be committed: "
+                        + type(exc).__name__,
+                    ) from exc
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                return self._adopt_winner_result(db, session_id, state, exc)
             except Exception as exc:
                 try:
                     db.rollback()
@@ -311,6 +353,60 @@ class ReasoningRunExecutionService:
             failed_id=failed_id,
             run=state.get("run"),
             audit=state.get("audit"),
+        )
+
+    def _adopt_winner_result(
+        self,
+        db: Session,
+        session_id: UUID,
+        state: dict[str, Any],
+        exc: Exception,
+    ) -> dict[str, Any]:
+        """Adopt a concurrently completed identical run, read-only.
+
+        Called only after this attempt fully rolled back. Establishes
+        the winner's COMPLETED receipt for this exact identity and
+        recomposes the current (winner's) state without writing. Any
+        gap -- no receipt, inconsistent recomposition -- raises instead
+        of fabricating success, so a failed execution can never become
+        reusable and the caller retries cleanly.
+        """
+        receipt = self.reasoning_run_receipt_repository.find_completed(
+            db, session_id, state["input_fingerprint"]
+        )
+        if receipt is None:
+            raise ReasoningRunExecutionContractError(
+                "RUN_COMMIT_COLLISION_WITHOUT_WINNER",
+                "receipt identity collision with no completed run behind it: "
+                + type(exc).__name__,
+            ) from exc
+        try:
+            run = self.reasoning_run_service.build_for_session(db, session_id)
+            audit = self.reasoning_run_consistency_service.build_for_session(
+                db, session_id
+            )
+        except Exception as recompose_exc:
+            raise ReasoningRunExecutionContractError(
+                "RUN_COMMIT_COLLISION_UNREADABLE",
+                "winning run could not be recomposed read-only: "
+                + type(recompose_exc).__name__,
+            ) from recompose_exc
+        if (
+            not isinstance(run, dict)
+            or not isinstance(audit, dict)
+            or audit.get("run_consistent") is not True
+        ):
+            raise ReasoningRunExecutionContractError(
+                "RUN_COMMIT_COLLISION_INCONSISTENT",
+                "winning run did not recompose to a consistent run",
+            ) from exc
+        return self._build_result(
+            session_id=session_id,
+            input_fingerprint=state["input_fingerprint"],
+            completed_ids=list(_EXECUTION_STAGE_IDS),
+            failed_id=None,
+            run=run,
+            audit=audit,
         )
 
     # ------------------------------------------------------------------

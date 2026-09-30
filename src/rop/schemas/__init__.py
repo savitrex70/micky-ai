@@ -237,6 +237,9 @@ from rop.schemas.reasoning_run_execution_consistency import (
 from rop.schemas.reasoning_run_idempotency import (
     ReasoningRunIdempotentExecutionRead,
 )
+from rop.schemas.reasoning_run_idempotency_consistency import (
+    ReasoningRunIdempotencyConsistencyRead,
+)
 from rop.schemas.reasoning_run_idempotency_request import (
     ReasoningRunIdempotentExecutionRequest,
 )
@@ -354,6 +357,7 @@ __all__ = [
     "ReasoningRunExecutionStageRead",
     "ReasoningRunIdempotentExecutionRead",
     "ReasoningRunIdempotentExecutionRequest",
+    "ReasoningRunIdempotencyConsistencyRead",
     "ReasoningRunRead",
     "ReasoningRunStageRead",
     "ReasoningSessionCreate",

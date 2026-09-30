@@ -630,6 +630,29 @@ def test_gate_api_idempotent_execution_boundary() -> None:
     )
 
 
+def test_gate_api_idempotency_consistency_audit() -> None:
+    """Task 135: the idempotency API audit accepts faithful envelopes
+    and rejects corruption, read-only."""
+    from rop.services.reasoning_run_idempotency_consistency import (
+        ReasoningRunIdempotencyConsistencyService,
+    )
+
+    sid = _create_session()
+    _add_observation(sid)
+    envelope = client.post(f"/sessions/{sid}/reasoning-run/execute-idempotent").json()
+    audit = ReasoningRunIdempotencyConsistencyService().build(
+        envelope=envelope, session_id=UUID(sid)
+    )
+    assert audit["audit_consistent"] is True
+
+    tampered = dict(envelope)
+    tampered["disposition"] = "REUSED_IDENTICAL"
+    tampered_audit = ReasoningRunIdempotencyConsistencyService().build(
+        envelope=tampered, session_id=UUID(sid)
+    )
+    assert tampered_audit["audit_consistent"] is False
+
+
 def test_gate_api_http_failure_mapping() -> None:
     missing = str(uuid4())
     assert client.post(f"/sessions/{missing}/reasoning-run/execute").status_code == (
