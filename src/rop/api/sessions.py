@@ -59,6 +59,7 @@ from rop.schemas import (
     ReasoningRunExecutionAuditPackageRead,
     ReasoningRunExecutionBundleRead,
     ReasoningRunExecutionRead,
+    ReasoningRunIdempotencyAuditRequest,
     ReasoningRunIdempotencyConsistencyRead,
     ReasoningRunIdempotentExecutionRead,
     ReasoningRunIdempotentExecutionRequest,
@@ -2236,7 +2237,7 @@ def execute_reasoning_run_idempotent(
 )
 def get_reasoning_run_idempotency_consistency(
     session_id: UUID,
-    request: ReasoningRunIdempotentExecutionRequest | None = None,
+    request: ReasoningRunIdempotencyAuditRequest | None = None,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Task 135: audit the idempotency API result for contract compliance.

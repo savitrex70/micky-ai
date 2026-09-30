@@ -387,7 +387,6 @@ from rop.services.reasoning_run_orchestration import (
     ReasoningRunOrchestrationContractError,
     ReasoningRunOrchestrationService,
 )
-from rop.services.reasoning_run_receipt import ReasoningRunReceiptService
 from rop.services.reasoning_run_replay import (
     REASONING_RUN_REPLAY_SOURCE_TASK_128,
     ReasoningRunReplayContractError,
@@ -610,7 +609,6 @@ __all__ = [
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",
     "REASONING_RUN_REPLAY_SOURCE_TASK_128",
-    "ReasoningRunReceiptService",
     "ReasoningRunReplayContractError",
     "ReasoningRunReplayService",
     "exogenous_projection",

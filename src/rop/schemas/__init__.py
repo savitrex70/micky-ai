@@ -237,13 +237,15 @@ from rop.schemas.reasoning_run_execution_consistency import (
 from rop.schemas.reasoning_run_idempotency import (
     ReasoningRunIdempotentExecutionRead,
 )
+from rop.schemas.reasoning_run_idempotency_audit_request import (
+    ReasoningRunIdempotencyAuditRequest,
+)
 from rop.schemas.reasoning_run_idempotency_consistency import (
     ReasoningRunIdempotencyConsistencyRead,
 )
 from rop.schemas.reasoning_run_idempotency_request import (
     ReasoningRunIdempotentExecutionRequest,
 )
-from rop.schemas.reasoning_run_receipt import ReasoningRunReceiptRead
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -358,8 +360,8 @@ __all__ = [
     "ReasoningRunExecutionStageRead",
     "ReasoningRunIdempotentExecutionRead",
     "ReasoningRunIdempotentExecutionRequest",
+    "ReasoningRunIdempotencyAuditRequest",
     "ReasoningRunIdempotencyConsistencyRead",
-    "ReasoningRunReceiptRead",
     "ReasoningRunRead",
     "ReasoningRunStageRead",
     "ReasoningSessionCreate",
