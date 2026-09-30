@@ -3,8 +3,15 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from rop.repositories.reasoning_run_receipt import (
+    ReasoningRunReceiptRepository,
+)
+from rop.schemas.reasoning_run_input_snapshot import (
+    ReasoningRunInputSnapshotRead,
+)
 from rop.services.candidate_generation import CandidateGenerationService
 from rop.services.entity import EntityService
 from rop.services.evidence_evaluation import EvidenceEvaluationService
@@ -132,6 +139,7 @@ class ReasoningRunExecutionService:
         reasoning_run_input_snapshot_service: (
             ReasoningRunInputSnapshotService | None
         ) = None,
+        reasoning_run_receipt_repository: ReasoningRunReceiptRepository | None = None,
     ) -> None:
         self.reasoning_session_service = (
             reasoning_session_service or ReasoningSessionService()
@@ -158,13 +166,33 @@ class ReasoningRunExecutionService:
         self.reasoning_run_input_snapshot_service = (
             reasoning_run_input_snapshot_service or ReasoningRunInputSnapshotService()
         )
+        self.reasoning_run_receipt_repository = (
+            reasoning_run_receipt_repository or ReasoningRunReceiptRepository()
+        )
 
     def execute_for_session(
         self,
         db: Session,
         session_id: UUID,
+        *,
+        input_snapshot: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the deterministic reasoning workflow end-to-end.
+
+        Task 126 correction: the executor owns the transaction boundary
+        for the entire logical reasoning run. Every participating stage
+        service stages inside this transaction (``commit=False``); one
+        ``db.commit()`` persists the complete run, and any required-stage
+        failure rolls back all writes from this attempt -- including
+        earlier stages of the same attempt. Previously committed
+        historical state is never touched by the rollback.
+
+        ``input_snapshot`` carries the canonical Task 124 snapshot
+        established by the caller (e.g. orchestration, Task 132). When
+        provided it is validated and used instead of rebuilding a second
+        snapshot, closing the snapshot/execution TOCTOU gap; the result
+        fingerprint is the passed snapshot's fingerprint. When omitted,
+        the executor builds its own snapshot exactly as before.
 
         Every stage delegates to the established service that owns it.
         A stage failure is caught and represented as a FAILED execution
@@ -179,31 +207,45 @@ class ReasoningRunExecutionService:
                 "SESSION_NOT_FOUND", "session does not exist"
             )
 
-        # Task 124: one canonical input snapshot, read exactly once
-        # before any execution stage runs. Every downstream stage draws
-        # its pre-existing state from this snapshot where it does not
-        # itself write, so later database mutations cannot alter what
-        # the run was approved against.
+        # Task 124/132: one canonical input snapshot. Rebuild only when
+        # the caller did not establish one; never silently substitute a
+        # different snapshot between validation and execution.
+        if input_snapshot is None:
+            try:
+                input_snapshot = (
+                    self.reasoning_run_input_snapshot_service.build_snapshot(
+                        db, session_id
+                    )
+                )
+            except Exception as exc:
+                raise ReasoningRunExecutionContractError(
+                    "INPUT_SNAPSHOT_FAILED",
+                    "reasoning-run input snapshot could not be established: "
+                    + type(exc).__name__,
+                ) from exc
+        else:
+            try:
+                validated = ReasoningRunInputSnapshotRead.model_validate(input_snapshot)
+                input_snapshot = validated.model_dump(mode="json")
+            except ValidationError as exc:
+                raise ReasoningRunExecutionContractError(
+                    "INPUT_SNAPSHOT_INVALID",
+                    "caller-supplied input snapshot failed validation: "
+                    + type(exc).__name__,
+                ) from exc
         try:
-            input_snapshot = self.reasoning_run_input_snapshot_service.build_snapshot(
-                db, session_id
-            )
-        except Exception as exc:
-            raise ReasoningRunExecutionContractError(
-                "INPUT_SNAPSHOT_FAILED",
-                "reasoning-run input snapshot could not be established: "
-                + type(exc).__name__,
-            ) from exc
-
-        state: dict[str, Any] = {"input_snapshot": input_snapshot}
-        try:
-            state["input_fingerprint"] = compute_snapshot_fingerprint(input_snapshot)
+            input_fingerprint = compute_snapshot_fingerprint(input_snapshot)
         except Exception as exc:
             raise ReasoningRunExecutionContractError(
                 "INPUT_FINGERPRINT_FAILED",
                 "reasoning-run input fingerprint could not be computed: "
                 + type(exc).__name__,
             ) from exc
+
+        state: dict[str, Any] = {
+            "input_snapshot": input_snapshot,
+            "input_fingerprint": input_fingerprint,
+        }
         completed_ids: list[str] = ["SESSION_VERIFIED"]
         failed_id: str | None = None
 
@@ -221,12 +263,11 @@ class ReasoningRunExecutionService:
             try:
                 method(db, session, session_id, state)
             except Exception:
-                # Task 126: clear any uncommitted stage work so the
-                # failure leaves no invalid partial state behind and
-                # the session stays usable for inspection or retry.
-                # Previously committed stages hold independently valid
-                # state (reused verbatim on retry); only the failed
-                # stage's in-flight work is discarded here.
+                # Task 126 correction: the executor owns the whole-run
+                # transaction, so this rollback discards ALL writes from
+                # this attempt -- including earlier stages of the same
+                # attempt. Previously committed historical state is
+                # untouched, and the session stays usable for retry.
                 try:
                     db.rollback()
                 except Exception:
@@ -234,6 +275,36 @@ class ReasoningRunExecutionService:
                 failed_id = stage_id
                 break
             completed_ids.append(stage_id)
+
+        if failed_id is None:
+            # One commit for the complete logical run, including its
+            # COMPLETED receipt. The receipt fingerprints the full state
+            # the run produced (rebuilt read-only here: the session sees
+            # its own flushed writes), binding (session_id, fingerprint)
+            # to this completed execution inside the same transaction so
+            # idempotent reuse can establish -- never merely trust --
+            # the prior run.
+            try:
+                completed_snapshot = (
+                    self.reasoning_run_input_snapshot_service.build_snapshot(
+                        db, session_id
+                    )
+                )
+                completed_fingerprint = compute_snapshot_fingerprint(completed_snapshot)
+                self.reasoning_run_receipt_repository.record_completed(
+                    db, session_id, completed_fingerprint
+                )
+                db.commit()
+            except Exception as exc:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise ReasoningRunExecutionContractError(
+                    "RUN_COMMIT_FAILED",
+                    "reasoning-run transaction could not be committed: "
+                    + type(exc).__name__,
+                ) from exc
 
         return self._build_result(
             session_id=session_id,
@@ -254,10 +325,10 @@ class ReasoningRunExecutionService:
         # after a write the stage re-reads so state reflects the write.
         existing = state.get("input_snapshot", {}).get("observations", [])
         # Reuse existing observation state on repeat execution; only
-        # extract when none exists yet.
+        # extract when none exists yet. Staged in the run transaction.
         if not existing:
             self.observation_extraction_service.extract_and_store(
-                db, session_id, session.user_input
+                db, session_id, session.user_input, commit=False
             )
         state["observations"] = self._paginate(
             lambda off: self.observation_service.list_by_session(
@@ -272,7 +343,7 @@ class ReasoningRunExecutionService:
 
     def _stage_missing_information(self, db, session, session_id, state):
         self.missing_information_service.detect_and_store(
-            db, session_id, state["observations"]
+            db, session_id, state["observations"], commit=False
         )
 
     def _stage_template_matching(self, db, session, session_id, state):
@@ -283,7 +354,11 @@ class ReasoningRunExecutionService:
         # second template match when one already exists.
         if not existing:
             self.template_match_service.match(
-                db, session_id, state["observations"], state["entities"]
+                db,
+                session_id,
+                state["observations"],
+                state["entities"],
+                commit=False,
             )
         state["template_matches"] = self.template_match_service.list_by_session(
             db, session_id
@@ -301,6 +376,7 @@ class ReasoningRunExecutionService:
             entities=state["entities"],
             template=template,
             missing_information=missing_information,
+            commit=False,
         )
         state["candidates"] = self._paginate(
             lambda off: self.candidate_generation_service.list_by_session(
@@ -315,6 +391,7 @@ class ReasoningRunExecutionService:
             candidates=state["candidates"],
             observations=state["observations"],
             entities=state["entities"],
+            commit=False,
         )
 
     def _stage_reasoning_run(self, db, session, session_id, state):

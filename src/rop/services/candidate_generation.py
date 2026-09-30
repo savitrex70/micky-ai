@@ -33,11 +33,15 @@ class CandidateGenerationService:
         missing_information: (
             list[MissingInformationRead] | list[dict[str, Any]] | None
         ) = None,
+        *,
+        commit: bool = True,
     ) -> list[CandidateHypothesis]:
-        # Task 126: candidate regeneration is one atomic unit. Delete,
-        # generate, and recreate stage inside a single transaction with
-        # exactly one commit; any failure rolls the whole sequence back
-        # so a deleted-but-unrecreated candidate set can never persist.
+        # Task 126 correction: candidate regeneration is one atomic unit
+        # owned by this service by default, or by the top-level
+        # transaction when commit=False. Delete, generate, and recreate
+        # stage together with exactly one commit; any failure rolls the
+        # whole sequence back so a deleted-but-unrecreated candidate set
+        # can never persist.
         try:
             self.repository.delete_by_session(db, session_id)
 
@@ -50,11 +54,17 @@ class CandidateGenerationService:
             )
 
             if not candidates:
-                db.commit()
+                if commit:
+                    db.commit()
+                else:
+                    db.flush()
                 return []
 
             records = self.repository.create_many(db, session_id, candidates)
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             return records
         except Exception:
             db.rollback()

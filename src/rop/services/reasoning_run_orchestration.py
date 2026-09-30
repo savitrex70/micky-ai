@@ -74,7 +74,14 @@ class ReasoningRunOrchestrationService:
                 "orchestration input could not be established: " + type(exc).__name__,
             ) from exc
 
-        execution = self.execution_service.execute_for_session(db, session_id)
+        # Task 132 correction: the exact canonical snapshot established
+        # here is passed into execution. Execution validates and uses it
+        # instead of rebuilding a second snapshot, so the reported
+        # fingerprint is provably the fingerprint execution ran under --
+        # no TOCTOU gap between validation and execution.
+        execution = self.execution_service.execute_for_session(
+            db, session_id, input_snapshot=snapshot
+        )
         failure_stage = self._first_failed_stage(execution)
 
         chain_audit: dict[str, Any] | None = None

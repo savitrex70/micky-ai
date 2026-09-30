@@ -395,10 +395,14 @@ def test_gate_integrity_replay() -> None:
 
 
 def test_gate_integrity_idempotent_execution() -> None:
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
     from rop.services.reasoning_run_fingerprint import (
         compute_snapshot_fingerprint,
     )
     from rop.services.reasoning_run_idempotency import (
+        DISPOSITION_EXECUTED_NEW,
         DISPOSITION_REUSED_IDENTICAL,
         ReasoningRunIdempotencyService,
     )
@@ -411,10 +415,33 @@ def test_gate_integrity_idempotent_execution() -> None:
         known = compute_snapshot_fingerprint(
             ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
         )
+        # A stored COMPLETED run binds this exact identity.
+        assert (
+            ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
+            is not None
+        )
         envelope = ReasoningRunIdempotencyService().execute_idempotent(
             db, UUID(sid), known_input_fingerprint=known
         )
     assert envelope["disposition"] == DISPOSITION_REUSED_IDENTICAL
+    with TestingSessionLocal() as db:
+        # Reuse wrote nothing: exactly one receipt in history.
+        assert ReasoningRunReceiptRepository().count_by_session(db, UUID(sid)) == 1
+    # A matching fingerprint with no completed run behind it executes.
+    fresh = _create_session()
+    _add_observation(fresh)
+    with TestingSessionLocal() as db:
+        observed = compute_snapshot_fingerprint(
+            ReasoningRunInputSnapshotService().build_snapshot(db, UUID(fresh))
+        )
+        assert (
+            ReasoningRunReceiptRepository().find_completed(db, UUID(fresh), observed)
+            is None
+        )
+        envelope = ReasoningRunIdempotencyService().execute_idempotent(
+            db, UUID(fresh), known_input_fingerprint=observed
+        )
+    assert envelope["disposition"] == DISPOSITION_EXECUTED_NEW
 
 
 def test_gate_integrity_atomicity() -> None:
@@ -438,15 +465,52 @@ def test_gate_integrity_atomicity() -> None:
             evidence_evaluation_service=_BoomEvidence()
         ).execute_for_session(db, UUID(sid))
     assert failed["outcome"] == "FAILED"
-    # The failed stage's own writes rolled back: the prior evidence set
-    # is intact. (Earlier stages legitimately committed their valid
-    # state before the failure; the executor reports it as FAILED.)
+    # Whole-run rollback: the failed attempt persisted nothing, so the
+    # previously committed evidence set is byte-identical.
     with TestingSessionLocal() as db:
         evidence_after = {
             str(e.id)
             for e in EvidenceEvaluationService().list_by_session(db, UUID(sid))
         }
     assert evidence_after == evidence_before
+
+
+def test_gate_integrity_whole_run_rollback() -> None:
+    """A late-stage failure rolls back earlier writes from the same
+    attempt, while pre-existing committed state survives."""
+    from rop.services.evidence_evaluation import EvidenceEvaluationService
+    from rop.services.observation import ObservationService
+    from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+
+    class _BoomEvidence(EvidenceEvaluationService):
+        def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("evaluation exploded")
+
+    sid = _create_session()
+    with TestingSessionLocal() as db:
+        failed = ReasoningRunExecutionService(
+            evidence_evaluation_service=_BoomEvidence()
+        ).execute_for_session(db, UUID(sid))
+    assert failed["outcome"] == "FAILED"
+    with TestingSessionLocal() as db:
+        assert ObservationService().list_by_session(db, UUID(sid)) == []
+        assert EvidenceEvaluationService().list_by_session(db, UUID(sid)) == []
+
+    seeded = _create_session()
+    _add_observation(seeded)
+    with TestingSessionLocal() as db:
+        before = [
+            str(o.id) for o in ObservationService().list_by_session(db, UUID(seeded))
+        ]
+        failed = ReasoningRunExecutionService(
+            evidence_evaluation_service=_BoomEvidence()
+        ).execute_for_session(db, UUID(seeded))
+    assert failed["outcome"] == "FAILED"
+    with TestingSessionLocal() as db:
+        after = [
+            str(o.id) for o in ObservationService().list_by_session(db, UUID(seeded))
+        ]
+    assert after == before
 
 
 def test_gate_integrity_failure_containment() -> None:
@@ -669,16 +733,44 @@ def test_gate_reproducibility_fingerprint_and_order() -> None:
     sid, first = _executed()
     gen, db = _db()
     try:
-        snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
+        first_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, UUID(sid)
+        )
+    finally:
+        gen.close()
+    gen, db = _db()
+    try:
+        # Independently reconstructed snapshots of the same state hash
+        # identically: reproducibility across reconstructions, not a
+        # snapshot hashing equal to itself.
+        second_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, UUID(sid)
+        )
         first_audit = ReasoningChainAuditService().audit_session(db, UUID(sid))
         second_audit = ReasoningChainAuditService().audit_session(db, UUID(sid))
     finally:
         gen.close()
-    assert compute_snapshot_fingerprint(snapshot) == compute_snapshot_fingerprint(
-        snapshot
+    assert first_snapshot == second_snapshot
+    assert compute_snapshot_fingerprint(first_snapshot) == compute_snapshot_fingerprint(
+        second_snapshot
     )
     assert first_audit["consistency_issues"] == second_audit["consistency_issues"]
     assert first["completed_stage_count"] == 8
+
+
+def test_gate_single_canonical_snapshot() -> None:
+    """Orchestration reports exactly the fingerprint its nested
+    execution ran under: one canonical snapshot, no silent rebuild."""
+    sid = _create_session()
+    _add_observation(sid)
+    with TestingSessionLocal() as db:
+        from rop.services.reasoning_run_orchestration import (
+            ReasoningRunOrchestrationService,
+        )
+
+        result = ReasoningRunOrchestrationService().orchestrate(db, UUID(sid))
+    assert result["orchestration_consistent"] is True
+    assert result["input_fingerprint"] == result["execution"]["input_fingerprint"]
 
 
 def test_gate_reproducibility_replay_result() -> None:

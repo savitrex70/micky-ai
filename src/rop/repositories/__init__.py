@@ -7,6 +7,7 @@ from rop.repositories.evidence import EvidenceRepository
 from rop.repositories.hypothesis import HypothesisRepository
 from rop.repositories.missing_information import MissingInformationRepository
 from rop.repositories.observation import ObservationRepository
+from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
 from rop.repositories.reasoning_session import ReasoningSessionRepository
 from rop.repositories.reasoning_step import ReasoningStepRepository
 from rop.repositories.template_match import TemplateMatchRepository
@@ -19,6 +20,7 @@ __all__ = [
     "HypothesisRepository",
     "MissingInformationRepository",
     "ObservationRepository",
+    "ReasoningRunReceiptRepository",
     "ReasoningSessionRepository",
     "ReasoningStepRepository",
     "TemplateMatchRepository",

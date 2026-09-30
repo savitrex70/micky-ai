@@ -174,6 +174,52 @@ def test_modified_state_diverges() -> None:
     assert replayed["replay_consistent"] is False
 
 
+def test_derived_state_change_diverges_despite_identical_stage_metadata() -> None:
+    """A rule-output change that keeps stage IDs, order, and sources
+    identical must still be detected via the canonicalized run state."""
+    from rop.models import EvaluatedEvidence
+
+    sid, pre_snapshot = _seed_exogenous_session("Patient reports chest pain")
+    result = _execute(sid)
+    with TestingSessionLocal() as db:
+        rows = (
+            db.query(EvaluatedEvidence)
+            .filter(EvaluatedEvidence.session_id == UUID(sid))
+            .all()
+        )
+        assert rows
+        db.delete(rows[0])
+        db.commit()
+    replayed = _replay(sid, result, pre_snapshot)
+
+    assert replayed["input_match"] is True
+    assert (
+        "DERIVED_RUN_STATE_DIVERGED" in replayed["divergences"]
+        or "DERIVED_AUDIT_STATE_DIVERGED" in replayed["divergences"]
+    )
+    assert replayed["replay_consistent"] is False
+
+
+def test_recorded_stage_tamper_diverges() -> None:
+    """Altering recorded stage sources or order is detected even when
+    current state is pristine."""
+    sid, pre_snapshot = _seed_exogenous_session("Patient reports chest pain")
+    result = _execute(sid)
+
+    tampered_source = copy.deepcopy(result)
+    tampered_source["reasoning_run"]["stages"][0]["stage_source"] = "FORGED_SOURCE"
+    replayed = _replay(sid, tampered_source, pre_snapshot)
+    assert any(issue.startswith("STAGE_DIVERGED") for issue in replayed["divergences"])
+    assert replayed["replay_consistent"] is False
+
+    tampered_order = copy.deepcopy(result)
+    stages = tampered_order["reasoning_run"]["stages"]
+    stages[0], stages[1] = stages[1], stages[0]
+    replayed = _replay(sid, tampered_order, pre_snapshot)
+    assert any(issue.startswith("STAGE_DIVERGED") for issue in replayed["divergences"])
+    assert replayed["replay_consistent"] is False
+
+
 def test_tampered_recording_rejected() -> None:
     sid, Bolt1 = _seed_exogenous_session("Patient reports chest pain")
     result = _execute(sid)

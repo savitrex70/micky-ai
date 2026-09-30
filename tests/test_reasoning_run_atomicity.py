@@ -68,6 +68,19 @@ def _create_session(user_input: str) -> str:
     return str(r.json()["id"])
 
 
+def _add_observation(session_id: str, text: str) -> None:
+    o = client.post(
+        f"/sessions/{session_id}/observations",
+        json={
+            "text": text,
+            "type": "symptom",
+            "confidence": 0.9,
+            "source": "unit_test",
+        },
+    )
+    assert o.status_code == 201
+
+
 def _counts(session_id: str) -> dict[str, int]:
     sid = UUID(session_id)
     with TestingSessionLocal() as db:
@@ -124,13 +137,11 @@ def test_extraction_failure_leaves_no_observations() -> None:
     assert _counts(sid)["observations"] == 0
 
 
-def test_missing_information_failure_rolls_back_replace() -> None:
+def test_missing_information_failure_rolls_back_whole_attempt() -> None:
     from rop.services.missing_information import MissingInformationService
 
     class _BoomMissing(MissingInformationService):
         def detect_and_store(self, *args: Any, **kwargs: Any) -> Any:
-            # Simulate a failure after the delete half of a replace:
-            # the rollback guard must leave prior state intact.
             raise RuntimeError("detection exploded")
 
     sid = _create_session("Patient reports chest pain")
@@ -138,10 +149,13 @@ def test_missing_information_failure_rolls_back_replace() -> None:
     assert result["outcome"] == "FAILED"
     failed = [s for s in result["stages"] if s["status"] == "FAILED"]
     assert [s["stage_id"] for s in failed] == ["MISSING_INFORMATION"]
-    assert _counts(sid)["missing"] == 0
+    # Whole-attempt rollback: even the earlier extraction write is gone.
+    counts = _counts(sid)
+    assert counts["missing"] == 0
+    assert counts["observations"] == 0
 
 
-def test_template_failure_leaves_no_template() -> None:
+def test_template_failure_rolls_back_whole_attempt() -> None:
     from rop.services.template_match import TemplateMatchService
 
     class _BoomTemplate(TemplateMatchService):
@@ -153,7 +167,10 @@ def test_template_failure_leaves_no_template() -> None:
     assert result["outcome"] == "FAILED"
     failed = [s for s in result["stages"] if s["status"] == "FAILED"]
     assert [s["stage_id"] for s in failed] == ["TEMPLATE_MATCHING"]
-    assert _counts(sid)["templates"] == 0
+    counts = _counts(sid)
+    assert counts["templates"] == 0
+    assert counts["observations"] == 0
+    assert counts["missing"] == 0
 
 
 def test_candidate_failure_keeps_prior_candidates() -> None:
@@ -200,7 +217,8 @@ def test_evidence_failure_keeps_prior_evidence() -> None:
     sid = _create_session("Patient reports chest pain and sweating")
     first = _execute(sid)
     assert first["outcome"] == "COMPLETED"
-    assert _counts(sid)["evidence"] > 0
+    before = _counts(sid)
+    assert before["evidence"] > 0
 
     class _BoomEvidence(EvidenceEvaluationService):
         def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
@@ -210,8 +228,49 @@ def test_evidence_failure_keeps_prior_evidence() -> None:
     assert result["outcome"] == "FAILED"
     failed = [s for s in result["stages"] if s["status"] == "FAILED"]
     assert [s["stage_id"] for s in failed] == ["EVIDENCE_EVALUATION"]
-    # Prior evidence set is intact, not half-deleted.
-    assert _counts(sid)["evidence"] > 0
+    # The failed attempt wrote nothing: previously committed historical
+    # state is byte-identical, not half-regenerated.
+    assert _counts(sid) == before
+
+
+def test_late_failure_rolls_back_earlier_attempt_writes() -> None:
+    from rop.services.evidence_evaluation import EvidenceEvaluationService
+
+    class _BoomEvidence(EvidenceEvaluationService):
+        def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("evaluation exploded")
+
+    sid = _create_session("Patient reports chest pain")
+    result = _execute(sid, _failing({"evidence_evaluation_service": _BoomEvidence()}))
+    assert result["outcome"] == "FAILED"
+    # Nothing from this attempt persisted: extraction, missing-info,
+    # template, and candidate writes all rolled back together.
+    counts = _counts(sid)
+    assert counts["observations"] == 0
+    assert counts["missing"] == 0
+    assert counts["templates"] == 0
+    assert counts["candidates"] == 0
+    assert counts["evidence"] == 0
+
+
+def test_pre_existing_state_survives_failed_rerun() -> None:
+    from rop.services.evidence_evaluation import EvidenceEvaluationService
+
+    sid = _create_session("Patient reports chest pain")
+    _add_observation(sid, "Patient reports chest pain")
+    with TestingSessionLocal() as db:
+        seeded = ObservationService().list_by_session(db, UUID(sid))
+    assert len(seeded) == 1
+
+    class _BoomEvidence(EvidenceEvaluationService):
+        def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("evaluation exploded")
+
+    result = _execute(sid, _failing({"evidence_evaluation_service": _BoomEvidence()}))
+    assert result["outcome"] == "FAILED"
+    with TestingSessionLocal() as db:
+        remaining = ObservationService().list_by_session(db, UUID(sid))
+    assert [str(o.id) for o in remaining] == [str(seeded[0].id)]
 
 
 def test_unrelated_session_untouched_by_failure() -> None:

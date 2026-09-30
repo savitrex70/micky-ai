@@ -26,6 +26,11 @@ class ObservationRepository:
     def create_many(
         self, db: Session, data: list[ObservationCreate]
     ) -> list[Observation]:
+        """Stage observation records without committing.
+
+        The owning service commits once after its full sequence
+        succeeds, so the top-level execution transaction stays atomic.
+        """
         observations = [
             Observation(
                 session_id=item.session_id,
@@ -36,17 +41,11 @@ class ObservationRepository:
             )
             for item in data
         ]
-        # Task 126: one commit with rollback -- a failed extraction
-        # leaves no partial observation rows behind.
-        try:
-            db.add_all(observations)
-            db.commit()
-            for observation in observations:
-                db.refresh(observation)
-            return observations
-        except Exception:
-            db.rollback()
-            raise
+        db.add_all(observations)
+        db.flush()
+        for observation in observations:
+            db.refresh(observation)
+        return observations
 
     def get(self, db: Session, observation_id: UUID) -> Observation | None:
         return db.get(Observation, observation_id)

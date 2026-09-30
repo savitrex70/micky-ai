@@ -128,21 +128,69 @@ def _current_fingerprint(session_id: str) -> str:
 
 
 def test_identical_rerun_reuses_without_churn() -> None:
+    from rop.repositories.reasoning_run_receipt import (
+        ReasoningRunReceiptRepository,
+    )
+
     sid = _create_session("Patient reports steady chest pain")
     first = _idempotent(sid)
     assert first["disposition"] == DISPOSITION_EXECUTED_NEW
     assert first["result"]["outcome"] == "COMPLETED"
     # Observe the completed state, then re-request against it: inputs
-    # are unchanged, so the run is reused with zero writes.
+    # are unchanged and a COMPLETED receipt binds the identity, so the
+    # run is reused with zero writes.
     known = _current_fingerprint(sid)
     ids_before = _candidate_ids(sid)
+    with TestingSessionLocal() as db:
+        assert (
+            ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
+            is not None
+        )
 
     second = _idempotent(sid, known)
     assert second["disposition"] == DISPOSITION_REUSED_IDENTICAL
     assert second["result"]["outcome"] == "COMPLETED"
     assert second["result"]["input_fingerprint"] == known
-    # Nothing was rewritten: identical candidate identities.
+    # Nothing was rewritten: identical candidate identities, and reuse
+    # wrote no second receipt.
     assert _candidate_ids(sid) == ids_before
+    with TestingSessionLocal() as db:
+        assert ReasoningRunReceiptRepository().count_by_session(db, UUID(sid)) == 1
+
+
+def test_matching_fingerprint_without_completed_run_executes() -> None:
+    """A caller-supplied fingerprint matching current inputs proves
+    nothing by itself: with no stored COMPLETED run behind it, the
+    request executes anew instead of claiming reuse."""
+    sid = _create_session("Patient reports unobserved chest pain")
+    known = _current_fingerprint(sid)
+    with TestingSessionLocal() as db:
+        from rop.repositories.reasoning_run_receipt import (
+            ReasoningRunReceiptRepository,
+        )
+
+        assert (
+            ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known) is None
+        )
+
+    envelope = _idempotent(sid, known)
+    assert envelope["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert envelope["result"]["outcome"] == "COMPLETED"
+
+
+def test_fabricated_fingerprint_never_reuses() -> None:
+    sid = _create_session("Patient reports chest pain")
+    first = _idempotent(sid)
+    assert first["disposition"] == DISPOSITION_EXECUTED_NEW
+    fabricated = "f" * 64
+    assert fabricated != first["current_input_fingerprint"]
+
+    envelope = _idempotent(sid, fabricated)
+    assert envelope["disposition"] in (
+        DISPOSITION_STALE_CHANGED,
+        DISPOSITION_EXECUTED_NEW,
+    )
+    assert envelope["disposition"] != DISPOSITION_REUSED_IDENTICAL
 
 
 def test_changed_input_is_stale_not_same_run() -> None:
@@ -178,6 +226,12 @@ def test_failed_first_run_then_retry() -> None:
         ).execute_idempotent(db, UUID(sid))
     assert failed["disposition"] == DISPOSITION_EXECUTED_NEW
     assert failed["result"]["outcome"] == "FAILED"
+
+    # Retrying with the failed attempt's fingerprint must execute anew:
+    # no COMPLETED receipt binds it, so reuse is forbidden.
+    retry_known = _idempotent(sid, failed["result"]["input_fingerprint"])
+    assert retry_known["disposition"] == DISPOSITION_EXECUTED_NEW
+    assert retry_known["result"]["outcome"] == "COMPLETED"
 
     retried = _idempotent(sid)
     assert retried["disposition"] == DISPOSITION_EXECUTED_NEW

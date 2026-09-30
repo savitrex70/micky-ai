@@ -163,6 +163,7 @@ def test_stale_state_preserved_for_provenance() -> None:
             [MissingInformationItem("legacy-profile", "legacy-key", "Legacy")],
             template_name="legacy-profile",
         )
+        db.commit()
     record = _reconcile(sid)
     stale = [e for e in record["items"] if e["state"] == "STALE"]
     assert len(stale) == 1
@@ -200,6 +201,7 @@ def test_consistency_flags_unknown_template() -> None:
             [MissingInformationItem("no-such-profile", "x", "X")],
             template_name="no-such-profile",
         )
+        db.commit()
     with TestingSessionLocal() as db:
         service = MissingInformationLifecycleService()
         issues = service.check_consistency(db, UUID(sid), _observations(sid))

@@ -36,6 +36,8 @@ class EvidenceEvaluationService:
         candidates: list[CandidateHypothesis],
         observations: list[Observation],
         entities: list[Entity],
+        *,
+        commit: bool = True,
     ) -> list[EvaluatedEvidence]:
         """Re-evaluate a session's evidence as a single atomic operation.
 
@@ -44,6 +46,10 @@ class EvidenceEvaluationService:
         candidate fails, everything (including the delete of the old
         evidence) is rolled back, so the session is never left with a
         partially-evaluated or missing evidence set.
+
+        Task 126 correction: with ``commit=False`` the unit stages
+        inside the caller's top-level transaction instead of committing
+        itself.
         """
         try:
             self.repository.delete_by_session(db, session_id)
@@ -55,7 +61,10 @@ class EvidenceEvaluationService:
                 )
                 all_evidence.extend(evidence_items)
 
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
             for record in all_evidence:
                 db.refresh(record)
             return all_evidence

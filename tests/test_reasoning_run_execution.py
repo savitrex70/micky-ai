@@ -228,9 +228,9 @@ def test_delegates_observation_extraction(monkeypatch) -> None:
     calls = {"n": 0}
     original = ObservationExtractionService.extract_and_store
 
-    def spy(self, db, session_id, text):
+    def spy(self, db, session_id, text, commit=True):
         calls["n"] += 1
-        return original(self, db, session_id, text)
+        return original(self, db, session_id, text, commit=commit)
 
     monkeypatch.setattr(ObservationExtractionService, "extract_and_store", spy)
     sid = _seed_rich_session("Patient reports chest pain")
@@ -242,9 +242,9 @@ def test_delegates_missing_information(monkeypatch) -> None:
     calls = {"n": 0}
     original = MissingInformationService.detect_and_store
 
-    def spy(self, db, session_id, observations, profile_name=None):
+    def spy(self, db, session_id, observations, profile_name=None, commit=True):
         calls["n"] += 1
-        return original(self, db, session_id, observations, profile_name)
+        return original(self, db, session_id, observations, profile_name, commit=commit)
 
     monkeypatch.setattr(MissingInformationService, "detect_and_store", spy)
     sid = _seed_rich_session("Patient reports chest pain")
@@ -256,9 +256,9 @@ def test_delegates_template_matching(monkeypatch) -> None:
     calls = {"n": 0}
     original = TemplateMatchService.match
 
-    def spy(self, db, session_id, observations, entities):
+    def spy(self, db, session_id, observations, entities, commit=True):
         calls["n"] += 1
-        return original(self, db, session_id, observations, entities)
+        return original(self, db, session_id, observations, entities, commit=commit)
 
     monkeypatch.setattr(TemplateMatchService, "match", spy)
     sid = _seed_rich_session("Patient reports chest pain")

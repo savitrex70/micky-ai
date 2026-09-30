@@ -101,6 +101,9 @@ def test_full_workflow_orchestration() -> None:
     assert result["chain_audit"]["chain_consistent"] is True
     assert result["orchestration_source"] == REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132
     assert ReasoningRunOrchestrationRead.model_validate(result)
+    # One canonical snapshot: the orchestration fingerprint is exactly
+    # the fingerprint the nested execution ran under.
+    assert result["input_fingerprint"] == result["execution"]["input_fingerprint"]
 
 
 def test_failure_stage_explicit_and_no_progression() -> None:
@@ -158,3 +161,39 @@ def test_result_rejects_extra_and_authority_fields() -> None:
     tampered["diagnosis"] = "x"
     with pytest.raises(ValidationError):
         ReasoningRunOrchestrationRead.model_validate(tampered)
+
+
+def test_stale_snapshot_detected_not_silently_rebuilt() -> None:
+    """TOCTOU regression: a snapshot established before an underlying
+    mutation is passed through unchanged. The execution reports the
+    passed fingerprint exactly -- proving no silent rebuild -- while a
+    fresh fingerprint recomputed from live state visibly diverges,
+    proving the drift is detected rather than hidden."""
+    from rop.services.observation import ObservationService
+    from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+    from rop.services.reasoning_run_fingerprint import (
+        compute_snapshot_fingerprint,
+    )
+    from rop.services.reasoning_run_input_snapshot import (
+        ReasoningRunInputSnapshotService,
+    )
+
+    sid = _create_session("Patient reports chest pain")
+    _add_observation(sid, "Patient reports chest pain")
+    with TestingSessionLocal() as db:
+        stale_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, UUID(sid)
+        )
+        stale_fingerprint = compute_snapshot_fingerprint(stale_snapshot)
+        for observation in ObservationService().list_by_session(db, UUID(sid)):
+            ObservationService().delete(db, observation.id)
+
+    with TestingSessionLocal() as db:
+        result = ReasoningRunExecutionService().execute_for_session(
+            db, UUID(sid), input_snapshot=stale_snapshot
+        )
+        live_snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
+    # The reported fingerprint is exactly the passed one: no rebuild.
+    assert result["input_fingerprint"] == stale_fingerprint
+    # The drift is provable: live state fingerprints differently.
+    assert compute_snapshot_fingerprint(live_snapshot) != stale_fingerprint

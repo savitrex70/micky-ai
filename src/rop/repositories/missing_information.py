@@ -17,36 +17,34 @@ class MissingInformationRepository:
         items: list[MissingInformationItem],
         template_name: str | None = None,
     ) -> list[MissingInformation]:
+        """Stage a profile replacement without committing.
+
+        The owning service commits once after the full sequence
+        succeeds, so the top-level execution transaction stays atomic.
+        """
         template_names = {item.template for item in items}
         if template_name is not None:
             template_names.add(template_name)
-        # Task 126: profile replacement is one atomic unit with exactly
-        # one commit; a mid-replace failure rolls back instead of
-        # stranding a deleted-but-unrecreated profile state.
-        try:
-            if template_names:
-                db.execute(
-                    delete(MissingInformation).where(
-                        MissingInformation.session_id == session_id,
-                        MissingInformation.template.in_(template_names),
-                    )
+        if template_names:
+            db.execute(
+                delete(MissingInformation).where(
+                    MissingInformation.session_id == session_id,
+                    MissingInformation.template.in_(template_names),
                 )
-            records = [
-                MissingInformation(
-                    session_id=session_id,
-                    template=item.template,
-                    item=item.label,
-                )
-                for item in items
-            ]
-            db.add_all(records)
-            db.commit()
-            for record in records:
-                db.refresh(record)
-            return records
-        except Exception:
-            db.rollback()
-            raise
+            )
+        records = [
+            MissingInformation(
+                session_id=session_id,
+                template=item.template,
+                item=item.label,
+            )
+            for item in items
+        ]
+        db.add_all(records)
+        db.flush()
+        for record in records:
+            db.refresh(record)
+        return records
 
     def list_by_session(
         self, db: Session, session_id: UUID

@@ -7,6 +7,7 @@ from rop.models.evidence import Evidence
 from rop.models.hypothesis import Hypothesis
 from rop.models.missing_information import MissingInformation
 from rop.models.observation import Observation
+from rop.models.reasoning_run_receipt import ReasoningRunReceipt
 from rop.models.reasoning_session import ReasoningSession
 from rop.models.reasoning_step import ReasoningStep
 from rop.models.template_match import TemplateMatch
@@ -19,6 +20,7 @@ __all__ = [
     "Hypothesis",
     "MissingInformation",
     "Observation",
+    "ReasoningRunReceipt",
     "ReasoningSession",
     "ReasoningStep",
     "TemplateMatch",

@@ -16,6 +16,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from rop.repositories.reasoning_run_receipt import (
+    ReasoningRunReceiptRepository,
+)
 from rop.schemas.reasoning_run_idempotency import (
     ReasoningRunIdempotentExecutionRead,
 )
@@ -65,8 +68,11 @@ class ReasoningRunIdempotencyService:
 
     - ``None`` -- observe nothing, execute unconditionally (``EXECUTED_NEW``);
     - equal to the current fingerprint -- inputs are unchanged since the
-      caller last observed them, so the current state is recomposed
-      read-only without rewriting anything (``REUSED_IDENTICAL``);
+      caller last observed them. Reuse (``REUSED_IDENTICAL``) additionally
+      requires a stored COMPLETED receipt for the exact identity: the
+      prior run is established from history, never trusted from the
+      caller's word. Without a receipt, or when recomposition fails,
+      the request executes anew;
     - different -- inputs moved under the caller; nothing executes and
       the caller must decide explicitly (``STALE_CHANGED``).
 
@@ -82,6 +88,7 @@ class ReasoningRunIdempotencyService:
         snapshot_service: ReasoningRunInputSnapshotService | None = None,
         reasoning_run_service: ReasoningRunService | None = None,
         reasoning_run_consistency_service: ReasoningRunConsistencyService | None = None,
+        receipt_repository: ReasoningRunReceiptRepository | None = None,
     ) -> None:
         self.execution_service = execution_service or ReasoningRunExecutionService()
         self.snapshot_service = snapshot_service or ReasoningRunInputSnapshotService()
@@ -89,6 +96,7 @@ class ReasoningRunIdempotencyService:
         self.reasoning_run_consistency_service = (
             reasoning_run_consistency_service or ReasoningRunConsistencyService()
         )
+        self.receipt_repository = receipt_repository or ReasoningRunReceiptRepository()
 
     def execute_idempotent(
         self,
@@ -97,7 +105,15 @@ class ReasoningRunIdempotencyService:
         *,
         known_input_fingerprint: str | None = None,
     ) -> dict[str, Any]:
-        """Execute once, reuse when identical, or report stale input."""
+        """Execute once, reuse when identical, or report stale input.
+
+        Task 127 correction: ``REUSED_IDENTICAL`` additionally requires
+        a stored COMPLETED receipt for the exact ``(session_id,
+        fingerprint)`` identity. A caller-supplied fingerprint that
+        matches current inputs but has no completed run behind it
+        executes anew instead of claiming reuse; a failed run stays
+        retryable and never satisfies reuse.
+        """
         try:
             snapshot = self.snapshot_service.build_snapshot(db, session_id)
             current_fingerprint = compute_snapshot_fingerprint(snapshot)
@@ -121,15 +137,19 @@ class ReasoningRunIdempotencyService:
             )
 
         if known_input_fingerprint is not None:
-            reused = self._try_reuse(db, session_id, current_fingerprint)
-            if reused is not None:
-                return self._envelope(
-                    disposition=DISPOSITION_REUSED_IDENTICAL,
-                    session_id=session_id,
-                    known_input_fingerprint=known_input_fingerprint,
-                    current_fingerprint=current_fingerprint,
-                    result=reused,
-                )
+            receipt = self.receipt_repository.find_completed(
+                db, session_id, known_input_fingerprint
+            )
+            if receipt is not None:
+                reused = self._try_reuse(db, session_id, current_fingerprint)
+                if reused is not None:
+                    return self._envelope(
+                        disposition=DISPOSITION_REUSED_IDENTICAL,
+                        session_id=session_id,
+                        known_input_fingerprint=known_input_fingerprint,
+                        current_fingerprint=current_fingerprint,
+                        result=reused,
+                    )
 
         result = self.execution_service.execute_for_session(db, session_id)
         return self._envelope(

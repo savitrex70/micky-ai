@@ -24,6 +24,8 @@ class TemplateMatchService:
         session_id: object,
         observations: list[Observation],
         entities: list[Entity],
+        *,
+        commit: bool = True,
     ) -> TemplateMatch:
         from sqlalchemy.orm import Session
 
@@ -64,7 +66,19 @@ class TemplateMatchService:
             candidates=candidate_payloads,
         )
 
-        return self.repository.create(db, record)
+        # Task 126 correction: commit ownership. Standalone callers keep
+        # commit-on-success; transaction participants stage and let the
+        # top-level boundary commit once.
+        try:
+            staged = self.repository.create(db, record)
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            return staged
+        except Exception:
+            db.rollback()
+            raise
 
     def list_by_session(self, db: object, session_id: object) -> list[TemplateMatch]:
         from uuid import UUID
