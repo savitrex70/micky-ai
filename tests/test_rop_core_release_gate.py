@@ -410,20 +410,24 @@ def test_gate_integrity_idempotent_execution() -> None:
         ReasoningRunInputSnapshotService,
     )
 
-    sid, _ = _executed()
+    # The exact round-trip: the returned input fingerprint is usable
+    # directly on the next identical request.
+    sid = _create_session()
+    _add_observation(sid)
     with TestingSessionLocal() as db:
-        known = compute_snapshot_fingerprint(
-            ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
-        )
+        first = ReasoningRunIdempotencyService().execute_idempotent(db, UUID(sid))
+    assert first["disposition"] == DISPOSITION_EXECUTED_NEW
+    known = first["result"]["input_fingerprint"]
+    with TestingSessionLocal() as db:
         # A stored COMPLETED run binds this exact identity.
-        assert (
-            ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
-            is not None
-        )
+        receipt = ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
+        assert receipt is not None
+        assert receipt.input_fingerprint == known
         envelope = ReasoningRunIdempotencyService().execute_idempotent(
             db, UUID(sid), known_input_fingerprint=known
         )
     assert envelope["disposition"] == DISPOSITION_REUSED_IDENTICAL
+    assert envelope["result"]["input_fingerprint"] == known
     with TestingSessionLocal() as db:
         # Reuse wrote nothing: exactly one receipt in history.
         assert ReasoningRunReceiptRepository().count_by_session(db, UUID(sid)) == 1
@@ -797,6 +801,44 @@ def test_gate_reproducibility_replay_result() -> None:
     # snapshot is consistent.
     assert replayed["input_match"] is True
     assert replayed["replay_consistent"] is True
+
+
+def test_gate_reproducibility_replay_detects_derived_change() -> None:
+    """A derived-state change with identical stage metadata still
+    diverges replay: full equivalence, not metadata comparison."""
+    from rop.models import EvaluatedEvidence
+    from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+    from rop.services.reasoning_run_input_snapshot import (
+        ReasoningRunInputSnapshotService,
+    )
+    from rop.services.reasoning_run_replay import ReasoningRunReplayService
+
+    sid = _create_session()
+    _add_observation(sid)
+    gen, db = _db()
+    try:
+        pre = ReasoningRunInputSnapshotService().build_snapshot(db, UUID(sid))
+        result = ReasoningRunExecutionService().execute_for_session(db, UUID(sid))
+        assert result["outcome"] == "COMPLETED"
+        rows = (
+            db.query(EvaluatedEvidence)
+            .filter(EvaluatedEvidence.session_id == UUID(sid))
+            .all()
+        )
+        assert rows
+        db.delete(rows[0])
+        db.commit()
+        replayed = ReasoningRunReplayService().replay(
+            db, UUID(sid), original_result=result, original_snapshot=pre
+        )
+    finally:
+        gen.close()
+    assert replayed["input_match"] is True
+    assert (
+        "DERIVED_RUN_STATE_DIVERGED" in replayed["divergences"]
+        or "DERIVED_AUDIT_STATE_DIVERGED" in replayed["divergences"]
+    )
+    assert replayed["replay_consistent"] is False
 
 
 # ---------------------------------------------------------------------------

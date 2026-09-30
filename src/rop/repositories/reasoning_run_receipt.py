@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -15,16 +16,20 @@ class ReasoningRunReceiptRepository:
     """
 
     def record_completed(
-        self, db: Session, session_id: UUID, state_fingerprint: str
+        self,
+        db: Session,
+        session_id: UUID,
+        input_fingerprint: str,
+        exogenous_snapshot: dict[str, Any],
     ) -> ReasoningRunReceipt:
         """Stage a COMPLETED receipt without committing.
 
-        ``state_fingerprint`` is the fingerprint of the full state the
-        completed run produced. The caller owns the transaction boundary.
+        The caller owns the transaction boundary.
         """
         receipt = ReasoningRunReceipt(
             session_id=session_id,
-            state_fingerprint=state_fingerprint,
+            input_fingerprint=input_fingerprint,
+            exogenous_snapshot=exogenous_snapshot,
             outcome="COMPLETED",
         )
         db.add(receipt)
@@ -33,14 +38,14 @@ class ReasoningRunReceiptRepository:
         return receipt
 
     def find_completed(
-        self, db: Session, session_id: UUID, state_fingerprint: str
+        self, db: Session, session_id: UUID, input_fingerprint: str
     ) -> ReasoningRunReceipt | None:
         """Return the latest COMPLETED receipt for an exact identity."""
         statement = (
             select(ReasoningRunReceipt)
             .where(
                 ReasoningRunReceipt.session_id == session_id,
-                ReasoningRunReceipt.state_fingerprint == state_fingerprint,
+                ReasoningRunReceipt.input_fingerprint == input_fingerprint,
                 ReasoningRunReceipt.outcome == "COMPLETED",
             )
             .order_by(ReasoningRunReceipt.created_at.desc())

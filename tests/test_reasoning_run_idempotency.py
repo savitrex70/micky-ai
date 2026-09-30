@@ -102,6 +102,13 @@ def test_identity_derivation_is_canonical() -> None:
     assert derive_run_identity(sid, "a" * 64) != derive_run_identity(sid, "b" * 64)
 
 
+def _seeded_session(user_input: str) -> str:
+    """Pre-seed observations so exogenous inputs are stable across runs."""
+    sid = _create_session(user_input)
+    _add_observation(sid, user_input)
+    return sid
+
+
 def test_first_run_executes_new() -> None:
     sid = _create_session("Patient reports chest pain")
     envelope = _idempotent(sid)
@@ -132,20 +139,19 @@ def test_identical_rerun_reuses_without_churn() -> None:
         ReasoningRunReceiptRepository,
     )
 
-    sid = _create_session("Patient reports steady chest pain")
+    sid = _seeded_session("Patient reports steady chest pain")
     first = _idempotent(sid)
     assert first["disposition"] == DISPOSITION_EXECUTED_NEW
     assert first["result"]["outcome"] == "COMPLETED"
-    # Observe the completed state, then re-request against it: inputs
-    # are unchanged and a COMPLETED receipt binds the identity, so the
-    # run is reused with zero writes.
-    known = _current_fingerprint(sid)
+    # The round-trip contract: the returned fingerprint is usable
+    # directly on the next identical request.
+    known = first["result"]["input_fingerprint"]
+    assert known == first["current_input_fingerprint"]
     ids_before = _candidate_ids(sid)
     with TestingSessionLocal() as db:
-        assert (
-            ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
-            is not None
-        )
+        receipt = ReasoningRunReceiptRepository().find_completed(db, UUID(sid), known)
+        assert receipt is not None
+        assert receipt.input_fingerprint == known
 
     second = _idempotent(sid, known)
     assert second["disposition"] == DISPOSITION_REUSED_IDENTICAL
@@ -239,10 +245,10 @@ def test_failed_first_run_then_retry() -> None:
 
 
 def test_reuse_is_deterministic() -> None:
-    sid = _create_session("Patient reports repeatable chest pain")
+    sid = _seeded_session("Patient reports repeatable chest pain")
     first = _idempotent(sid)
     assert first["disposition"] == DISPOSITION_EXECUTED_NEW
-    known = _current_fingerprint(sid)
+    known = first["result"]["input_fingerprint"]
     again = _idempotent(sid, known)
     third = _idempotent(sid, known)
     assert again["disposition"] == DISPOSITION_REUSED_IDENTICAL

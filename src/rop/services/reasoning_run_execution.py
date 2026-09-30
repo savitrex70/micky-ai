@@ -25,6 +25,7 @@ from rop.services.reasoning_run_consistency import (
 from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     ReasoningRunInputSnapshotService,
+    exogenous_projection,
 )
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.template_match import TemplateMatchService
@@ -278,21 +279,18 @@ class ReasoningRunExecutionService:
 
         if failed_id is None:
             # One commit for the complete logical run, including its
-            # COMPLETED receipt. The receipt fingerprints the full state
-            # the run produced (rebuilt read-only here: the session sees
-            # its own flushed writes), binding (session_id, fingerprint)
+            # COMPLETED receipt. The receipt stores the exact input
+            # fingerprint this execution ran against plus the exogenous
+            # input projection, binding (session_id, input_fingerprint)
             # to this completed execution inside the same transaction so
             # idempotent reuse can establish -- never merely trust --
             # the prior run.
             try:
-                completed_snapshot = (
-                    self.reasoning_run_input_snapshot_service.build_snapshot(
-                        db, session_id
-                    )
-                )
-                completed_fingerprint = compute_snapshot_fingerprint(completed_snapshot)
                 self.reasoning_run_receipt_repository.record_completed(
-                    db, session_id, completed_fingerprint
+                    db,
+                    session_id,
+                    state["input_fingerprint"],
+                    exogenous_projection(state["input_snapshot"]),
                 )
                 db.commit()
             except Exception as exc:

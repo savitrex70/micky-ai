@@ -21,7 +21,8 @@ def upgrade() -> None:
         "reasoning_run_receipts",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("session_id", sa.Uuid(), nullable=False),
-        sa.Column("state_fingerprint", sa.String(length=64), nullable=False),
+        sa.Column("input_fingerprint", sa.String(length=64), nullable=False),
+        sa.Column("exogenous_snapshot", sa.JSON(), nullable=False),
         sa.Column("outcome", sa.String(length=20), nullable=False),
         sa.Column(
             "created_at",
@@ -43,8 +44,11 @@ def upgrade() -> None:
     op.create_index(
         "ix_reasoning_run_receipts_session_fingerprint",
         "reasoning_run_receipts",
-        ["session_id", "state_fingerprint"],
-        unique=False,
+        ["session_id", "input_fingerprint"],
+        # Canonical identities are unique: concurrent identical
+        # successful executions cannot duplicate them. History across
+        # distinct fingerprints is preserved (no two runs share inputs).
+        unique=True,
     )
 
 
