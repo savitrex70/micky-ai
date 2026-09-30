@@ -382,6 +382,12 @@ from rop.services.reasoning_run_orchestration import (
     ReasoningRunOrchestrationContractError,
     ReasoningRunOrchestrationService,
 )
+from rop.services.reasoning_run_replay import (
+    REASONING_RUN_REPLAY_SOURCE_TASK_128,
+    ReasoningRunReplayContractError,
+    ReasoningRunReplayService,
+    exogenous_projection,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -594,6 +600,10 @@ __all__ = [
     "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",
+    "REASONING_RUN_REPLAY_SOURCE_TASK_128",
+    "ReasoningRunReplayContractError",
+    "ReasoningRunReplayService",
+    "exogenous_projection",
     "REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124",
     "ReasoningRunInputSnapshotContractError",
     "ReasoningRunInputSnapshotService",
