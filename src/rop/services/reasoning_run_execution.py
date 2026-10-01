@@ -100,23 +100,67 @@ EXECUTION_STAGE_IDS = _EXECUTION_STAGE_IDS
 EXECUTION_STAGE_SOURCES = _STAGE_SOURCES
 
 
-def _is_receipt_identity_collision(exc: IntegrityError) -> bool:
-    """True only for the canonical receipt identity collision.
+_CANONICAL_RECEIPT_CONSTRAINT = "uq_reasoning_run_receipts_session_fingerprint"
 
-    Task 136: concurrent identical completions collide on the unique
-    ``(session_id, input_fingerprint)`` receipt identity. Any other
-    integrity failure (foreign keys, checks, other tables) is an
-    unrelated internal error and must not take the reuse path.
+def _is_receipt_identity_collision(exc: IntegrityError) -> bool:
+    """Return True only for the canonical receipt identity uniqueness race.
+
+    PostgreSQL exposes the violated constraint through ``orig.diag`` and
+    the SQLSTATE through ``orig.pgcode``. Prefer the exact canonical
+    constraint name when the driver provides it. When that diagnostic is
+    unavailable, accept SQLSTATE ``23505`` only when the exception text
+    also identifies the canonical receipt identity. SQLite and similar
+    drivers are handled through the equally narrow table-and-column text
+    fallback.
     """
-    message = ""
     try:
-        message = str(getattr(exc, "orig", exc))
+        orig = getattr(exc, "orig", exc)
+    except Exception:
+        orig = exc
+
+    try:
+        constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    except Exception:
+        constraint_name = None
+
+    if constraint_name is not None:
+        try:
+            constraint_name = str(constraint_name)
+        except Exception:
+            constraint_name = None
+        if constraint_name:
+            return constraint_name == _CANONICAL_RECEIPT_CONSTRAINT
+
+    try:
+        pgcode = getattr(orig, "pgcode", None)
+    except Exception:
+        pgcode = None
+
+    try:
+        message = str(orig).lower()
     except Exception:
         message = ""
-    lowered = message.lower()
-    if "reasoning_run_receipts" not in lowered:
-        return False
-    return "unique" in lowered or "duplicate" in lowered or "23505" in lowered
+
+    canonical_identity_evidence = (
+        _CANONICAL_RECEIPT_CONSTRAINT.lower() in message
+        or (
+            "reasoning_run_receipts" in message
+            and "session_id" in message
+            and "input_fingerprint" in message
+        )
+    )
+
+    if pgcode == "23505":
+        return canonical_identity_evidence
+
+    return (
+        canonical_identity_evidence
+        and (
+            "unique constraint failed" in message
+            or "duplicate key value" in message
+            or "unique constraint" in message
+        )
+    )
 
 
 class ReasoningRunExecutionContractError(Exception):

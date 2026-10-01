@@ -260,6 +260,22 @@ def test_collision_classifier_canonical_constraint_name_in_message() -> None:
     assert _is_receipt_identity_collision(exc) is True
 
 
+def test_collision_classifier_rejects_unrelated_postgres_unique_violation() -> None:
+    class _FakeDiag:
+        constraint_name = "uq_other_table_other_identity"
+
+    class _FakePgError(Exception):
+        def __init__(self) -> None:
+            self.diag = _FakeDiag()
+            self.pgcode = "23505"
+
+    exc = IntegrityError(
+        "INSERT INTO reasoning_run_receipts",
+        {},
+        _FakePgError("duplicate key value violates unique constraint"),
+    )
+    assert _is_receipt_identity_collision(exc) is False
+
 def test_collision_classifier_rejects_receipt_check_violation() -> None:
     exc = IntegrityError(
         "INSERT INTO reasoning_run_receipts",
