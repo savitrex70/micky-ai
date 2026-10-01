@@ -195,7 +195,7 @@ class ReasoningRunReceiptProvenanceAuditService:
                     issues.append("INPUT_SNAPSHOT_MALFORMED")
             if verify_snapshot_fingerprint(snapshot, fingerprint):
                 issues.append("FINGERPRINT_PROVENANCE_MISMATCH")
-                binding = "MISMATCH"
+                binding = "INVALID"
             else:
                 binding = "BOUND"
             if isinstance(snapshot, dict) and (

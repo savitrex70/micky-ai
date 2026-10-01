@@ -824,7 +824,7 @@ def test_audit_detects_fingerprint_provenance_mismatch() -> None:
     assert body["invalid_receipts"] == 1
     assert body["audit_consistent"] is False
     finding = body["findings"][0]
-    assert finding["fingerprint_binding"] == "MISMATCH"
+    assert finding["fingerprint_binding"] == "INVALID"
     assert "FINGERPRINT_PROVENANCE_MISMATCH" in finding["provenance_issues"]
     # Invalid, never silently missing: the receipt is still examined.
     assert finding["receipt_consistent"] is False

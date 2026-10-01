@@ -23,7 +23,7 @@ class ReasoningRunReceiptProvenanceFindingRead(BaseModel):
     ``fingerprint_binding`` is the canonical Task 125 verdict for the
     fingerprint-to-provenance binding: ``BOUND`` (the persisted
     canonical snapshot hash-verifies against the persisted
-    fingerprint), ``MISMATCH`` (hash verification failed -- an invalid
+    fingerprint), ``INVALID`` (hash verification failed -- an invalid
     receipt), or ``NOT_PERSISTED`` (the receipt predates persisted
     binding evidence; reported explicitly, never silently accepted as
     verified and never fabricated).
