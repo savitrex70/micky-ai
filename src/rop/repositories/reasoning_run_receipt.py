@@ -21,15 +21,20 @@ class ReasoningRunReceiptRepository:
         session_id: UUID,
         input_fingerprint: str,
         exogenous_snapshot: dict[str, Any],
+        input_snapshot: dict[str, Any] | None = None,
     ) -> ReasoningRunReceipt:
         """Stage a COMPLETED receipt without committing.
 
-        The caller owns the transaction boundary.
+        The caller owns the transaction boundary. ``input_snapshot`` is
+        the canonical Task 124 snapshot the fingerprint was computed
+        over, persisted so Task 125 provenance binding can be
+        hash-verified from persisted evidence (Task 139).
         """
         receipt = ReasoningRunReceipt(
             session_id=session_id,
             input_fingerprint=input_fingerprint,
             exogenous_snapshot=exogenous_snapshot,
+            input_snapshot=input_snapshot,
             outcome="COMPLETED",
         )
         db.add(receipt)

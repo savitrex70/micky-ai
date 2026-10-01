@@ -340,16 +340,18 @@ class ReasoningRunExecutionService:
             # One commit for the complete logical run, including its
             # COMPLETED receipt. The receipt stores the exact input
             # fingerprint this execution ran against plus the exogenous
-            # input projection, binding (session_id, input_fingerprint)
-            # to this completed execution inside the same transaction so
-            # idempotent reuse can establish -- never merely trust --
-            # the prior run.
+            # input projection and the canonical input snapshot the
+            # fingerprint was computed over, binding (session_id,
+            # input_fingerprint) to this completed execution inside the
+            # same transaction so idempotent reuse can establish --
+            # never merely trust -- the prior run.
             try:
                 self.reasoning_run_receipt_repository.record_completed(
                     db,
                     session_id,
                     state["input_fingerprint"],
                     exogenous_projection(state["input_snapshot"]),
+                    input_snapshot=state["input_snapshot"],
                 )
                 db.commit()
             except IntegrityError as exc:

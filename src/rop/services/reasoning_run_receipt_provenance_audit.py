@@ -6,18 +6,28 @@ provenance invariants: exact session binding, canonical 64-character
 lowercase SHA-256 input fingerprint, ``COMPLETED`` outcome,
 structurally valid ``exogenous_snapshot`` (the Task 124
 ``EXOGENOUS_SNAPSHOT_FIELDS`` projection), internal provenance
-consistency, and projectability onto the canonical Task 137 receipt
-read schema.
+consistency, projectability onto the canonical Task 137 receipt
+read schema, and the fingerprint-to-provenance binding verified with
+the canonical Task 125 ``verify_snapshot_fingerprint`` over the
+receipt's own persisted Task 124 input snapshot.
 
 Strictly read-only over persisted state: no execution, no replay, no
-candidate generation, no snapshot or fingerprint recomputation, no
-receipt creation or mutation, no transaction ownership, no
-provider/model calls. A persisted receipt is treated as historical
-evidence: invalid provenance is reported as an explicit invalid
-finding, never silently repaired, recomputed, or converted into
-missing history. Missing history (no completed receipts) is a
-distinct deterministic result. Reuses the Task 138 receipt
-repository query and the Task 137 read projection unchanged.
+candidate generation, no snapshot builds, no reads of mutable current
+session state, no receipt creation or mutation, no transaction
+ownership, no provider/model calls. Binding verification is a
+compare-only hash check of the receipt's OWN persisted snapshot
+against its OWN persisted fingerprint -- never a recomputation from
+current state, never a substitution of current session input, and
+never hash-of-exogenous-projection (the recorded fingerprint binds
+the full snapshot, not its projection). Receipts persisted before
+binding evidence existed report an explicit ``NOT_PERSISTED`` binding
+status: never silently verified, never fabricated. A persisted
+receipt is treated as historical evidence: invalid provenance is
+reported as an explicit invalid finding, never silently repaired,
+recomputed, or converted into missing history. Missing history (no
+completed receipts) is a distinct deterministic result. Reuses the
+Task 138 receipt repository query and the Task 137 read projection
+unchanged.
 """
 
 from __future__ import annotations
@@ -30,10 +40,15 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
+from rop.schemas.reasoning_run_input_snapshot import ReasoningRunInputSnapshotRead
 from rop.schemas.reasoning_run_receipt_provenance_audit import (
     ReasoningRunReceiptProvenanceAuditRead,
 )
-from rop.services.reasoning_run_input_snapshot import EXOGENOUS_SNAPSHOT_FIELDS
+from rop.services.reasoning_run_fingerprint import verify_snapshot_fingerprint
+from rop.services.reasoning_run_input_snapshot import (
+    EXOGENOUS_SNAPSHOT_FIELDS,
+    exogenous_projection,
+)
 from rop.services.reasoning_run_receipt import ReasoningRunReceiptService
 
 REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139 = (
@@ -81,7 +96,10 @@ class ReasoningRunReceiptProvenanceAuditService:
         valid_receipts = 0
         invalid_receipts = 0
         for receipt in receipts:
-            issues = sorted(set(self._provenance_issues(receipt, session_id)))
+            raw_issues, fingerprint_binding = self._provenance_issues(
+                receipt, session_id
+            )
+            issues = sorted(set(raw_issues))
             consistent = not issues
             if consistent:
                 valid_receipts += 1
@@ -95,6 +113,7 @@ class ReasoningRunReceiptProvenanceAuditService:
                         str(raw_fingerprint) if raw_fingerprint is not None else ""
                     ),
                     "receipt_consistent": consistent,
+                    "fingerprint_binding": fingerprint_binding,
                     "provenance_issues": issues,
                 }
             )
@@ -122,12 +141,15 @@ class ReasoningRunReceiptProvenanceAuditService:
         self,
         receipt: Any,
         session_id: UUID,
-    ) -> list[str]:
-        """Evaluate one persisted receipt against the provenance invariants.
+    ) -> tuple[list[str], str]:
+        """Evaluate one persisted receipt; return issues and binding verdict.
 
         Pure over persisted receipt state: reads the receipt's own
-        fields only, never current session state, never recomputes a
-        fingerprint or snapshot.
+        fields only, never current session state, never builds a
+        snapshot. The binding verdict is the canonical Task 125
+        comparison of the receipt's persisted input snapshot against
+        its persisted fingerprint -- a hash check over historical
+        evidence, not a recomputation from mutable state.
         """
         issues: list[str] = []
 
@@ -157,7 +179,31 @@ class ReasoningRunReceiptProvenanceAuditService:
         if projected is None:
             issues.append("RECEIPT_UNREADABLE")
 
-        return issues
+        snapshot = getattr(receipt, "input_snapshot", None)
+        if snapshot is None:
+            # Legacy receipt: binding evidence was never persisted.
+            # Explicit status -- never silently verified, never
+            # fabricated, and not itself an invented violation.
+            binding = "NOT_PERSISTED"
+        else:
+            if not isinstance(snapshot, dict):
+                issues.append("INPUT_SNAPSHOT_MALFORMED")
+            else:
+                try:
+                    ReasoningRunInputSnapshotRead.model_validate(snapshot)
+                except ValidationError:
+                    issues.append("INPUT_SNAPSHOT_MALFORMED")
+            if verify_snapshot_fingerprint(snapshot, fingerprint):
+                issues.append("FINGERPRINT_PROVENANCE_MISMATCH")
+                binding = "MISMATCH"
+            else:
+                binding = "BOUND"
+            if isinstance(snapshot, dict) and (
+                exogenous_projection(snapshot) != receipt.exogenous_snapshot
+            ):
+                issues.append("EXOGENOUS_PROJECTION_MISMATCH")
+
+        return issues, binding
 
     @staticmethod
     def _exogenous_shape_valid(snapshot: Any) -> bool:

@@ -20,6 +20,13 @@ class ReasoningRunReceiptProvenanceFindingRead(BaseModel):
     receipt exactly as historical evidence; ``provenance_issues`` is
     the deterministic sorted set of provenance invariant violations
     (empty exactly when ``receipt_consistent`` is true).
+    ``fingerprint_binding`` is the canonical Task 125 verdict for the
+    fingerprint-to-provenance binding: ``BOUND`` (the persisted
+    canonical snapshot hash-verifies against the persisted
+    fingerprint), ``MISMATCH`` (hash verification failed -- an invalid
+    receipt), or ``NOT_PERSISTED`` (the receipt predates persisted
+    binding evidence; reported explicitly, never silently accepted as
+    verified and never fabricated).
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -27,6 +34,7 @@ class ReasoningRunReceiptProvenanceFindingRead(BaseModel):
     receipt_id: str
     input_fingerprint: str
     receipt_consistent: bool
+    fingerprint_binding: str
     provenance_issues: list[str]
 
 

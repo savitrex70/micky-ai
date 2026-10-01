@@ -2361,10 +2361,12 @@ def audit_reasoning_run_receipt_provenance(
     requested session against the canonical provenance invariants:
     exact session binding, canonical 64-character lowercase SHA-256
     input fingerprint, ``COMPLETED`` outcome, structurally valid
-    ``exogenous_snapshot``, and projectability onto the canonical
-    receipt read schema. Strictly read-only: no execution, no replay,
-    no writes, no receipt creation or mutation, no fingerprint or
-    snapshot recomputation, no provider/model calls. Invalid receipts
+    ``exogenous_snapshot``, projectability onto the canonical receipt
+    read schema, and the Task 125 fingerprint-to-provenance binding
+    over the receipt's own persisted input snapshot. Strictly
+    read-only: no execution, no replay, no writes, no receipt
+    creation or mutation, no snapshot builds, no current-state
+    fingerprinting, no provider/model calls. Invalid receipts
     are reported as explicit invalid findings, never repaired,
     substituted, or converted into missing history; an empty
     completed history is a distinct deterministic result. Only

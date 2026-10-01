@@ -32,7 +32,10 @@ from rop.schemas.reasoning_run_receipt_provenance_audit import (
     ReasoningRunReceiptProvenanceFindingRead,
 )
 from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
-from rop.services.reasoning_run_input_snapshot import ReasoningRunInputSnapshotService
+from rop.services.reasoning_run_input_snapshot import (
+    REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
+    ReasoningRunInputSnapshotService,
+)
 from rop.services.reasoning_run_receipt import (
     REASONING_RUN_RECEIPT_SERVICE_SOURCE_TASK_137,
 )
@@ -76,6 +79,7 @@ FINDING_KEYS = {
     "receipt_id",
     "input_fingerprint",
     "receipt_consistent",
+    "fingerprint_binding",
     "provenance_issues",
 }
 RECEIPT_KEYS = {
@@ -121,12 +125,30 @@ def _valid_exogenous(session_id: UUID) -> dict[str, object]:
     }
 
 
+def _canonical_snapshot(session_id: UUID) -> dict[str, object]:
+    """A canonical Task 124 input snapshot with empty collections."""
+    return {
+        "session_id": str(session_id),
+        "user_input": "Patient reports chest pain",
+        "observations": [],
+        "entities": [],
+        "missing_information": [],
+        "template_matches": [],
+        "candidates": [],
+        "evidence": [],
+        "candidate_order": [],
+        "evidence_order": [],
+        "snapshot_source": REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
+    }
+
+
 def _insert_receipt(
     session_id: UUID,
     input_fingerprint: str,
     outcome: str = "COMPLETED",
     created_at: datetime | None = None,
     exogenous: dict[str, object] | None = None,
+    input_snapshot: dict[str, object] | None = None,
 ) -> ReasoningRunReceipt:
     row = ReasoningRunReceipt(
         session_id=session_id,
@@ -134,6 +156,7 @@ def _insert_receipt(
         exogenous_snapshot=(
             exogenous if exogenous is not None else _valid_exogenous(session_id)
         ),
+        input_snapshot=input_snapshot,
         outcome=outcome,
     )
     if created_at is not None:
@@ -767,3 +790,102 @@ def test_task_139_introduces_no_provider_or_model_integration() -> None:
         source = path.read_text(encoding="utf-8").lower()
         for token in banned:
             assert token not in source, f"{path.name} contains {token!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 139 correction: fingerprint-to-provenance binding (Task 125)
+# ---------------------------------------------------------------------------
+
+
+def test_audit_binds_fingerprint_to_persisted_snapshot() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    fingerprint = compute_snapshot_fingerprint(snapshot)
+    _insert_receipt(sid, fingerprint, input_snapshot=snapshot)
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    assert body["audit_consistent"] is True
+    finding = body["findings"][0]
+    assert finding["fingerprint_binding"] == "BOUND"
+    assert finding["provenance_issues"] == []
+    assert finding["input_fingerprint"] == fingerprint
+
+
+def test_audit_detects_fingerprint_provenance_mismatch() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    fingerprint = compute_snapshot_fingerprint(snapshot)
+    forged = hashlib.sha256(b"forged-provenance").hexdigest()
+    assert forged != fingerprint
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    assert body["completed_receipts_examined"] == 1
+    assert body["invalid_receipts"] == 1
+    assert body["audit_consistent"] is False
+    finding = body["findings"][0]
+    assert finding["fingerprint_binding"] == "MISMATCH"
+    assert "FINGERPRINT_PROVENANCE_MISMATCH" in finding["provenance_issues"]
+    # Invalid, never silently missing: the receipt is still examined.
+    assert finding["receipt_consistent"] is False
+
+
+def test_audit_detects_exogenous_projection_mismatch() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    fingerprint = compute_snapshot_fingerprint(snapshot)
+    tampered_exogenous = _valid_exogenous(sid)
+    tampered_exogenous["user_input"] = "Patient reports something else"
+    _insert_receipt(
+        sid,
+        fingerprint,
+        exogenous=tampered_exogenous,
+        input_snapshot=snapshot,
+    )
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    finding = body["findings"][0]
+    assert finding["fingerprint_binding"] == "BOUND"
+    assert "EXOGENOUS_PROJECTION_MISMATCH" in finding["provenance_issues"]
+    assert body["invalid_receipts"] == 1
+
+
+def test_audit_flags_malformed_persisted_input_snapshot() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    broken = dict(snapshot)
+    del broken["candidate_order"]  # fails the strict Task 124 schema
+    broken_fingerprint = compute_snapshot_fingerprint(broken)
+    _insert_receipt(sid, broken_fingerprint, input_snapshot=broken)
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    finding = body["findings"][0]
+    # The hash still binds the stored bytes; the structure is what fails.
+    assert finding["fingerprint_binding"] == "BOUND"
+    assert "INPUT_SNAPSHOT_MALFORMED" in finding["provenance_issues"]
+    assert body["invalid_receipts"] == 1
+
+
+def test_audit_legacy_receipt_binding_is_explicit_not_silent() -> None:
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "a" * 64)  # receipt predates persisted binding evidence
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    finding = body["findings"][0]
+    assert finding["fingerprint_binding"] == "NOT_PERSISTED"
+    assert finding["receipt_consistent"] is True
+    assert finding["provenance_issues"] == []
+    assert body["completed_receipts_examined"] == 1
+
+
+def test_audit_verifies_binding_for_real_execution_receipt() -> None:
+    sid = _create_session()
+    _add_observation(sid, "Patient reports chest pain")
+    fingerprint = _executed_fingerprint(sid)
+
+    body = client.get(AUDIT_URL.format(sid=sid)).json()
+    assert body["audit_consistent"] is True
+    finding = body["findings"][0]
+    assert finding["input_fingerprint"] == fingerprint
+    assert finding["fingerprint_binding"] == "BOUND"
+    assert finding["provenance_issues"] == []

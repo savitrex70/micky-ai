@@ -38,6 +38,14 @@ class ReasoningRunReceipt(Base):
     )
     input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     exogenous_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    #: The canonical Task 124 input snapshot the input_fingerprint was
+    #: computed over (Task 125), persisted so provenance binding can be
+    #: hash-verified from persisted evidence alone. NULL only for
+    #: receipts written before this column existed; their binding is
+    #: reported as explicitly not persisted, never fabricated.
+    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
