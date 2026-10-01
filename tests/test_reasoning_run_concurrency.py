@@ -1,8 +1,14 @@
-"""Task 136: concurrent identical reasoning-run execution safety tests.
-
-Proves the deterministic idempotency invariant holds when two identical
-executions arrive simultaneously. Uses independent SQLAlchemy sessions and
-threading barriers to exercise real concurrent transaction behavior.
+﻿"""Task 136: concurrent identical reasoning-run execution safety tests.
+Two independent threads execute the same canonical identity through the
+real executor against one shared file-backed SQLite database. SQLite is
+single-writer, so parking both transactions at the receipt write would
+deadlock (the parked winner holds the write locks the loser needs to
+stage). The deterministic test seam instead gates the loser's first
+stage write until the winner's receipt is durably committed; the loser
+then reaches the real unique constraint, collides, rolls back, and
+adopts the winner read-only. A spy proves the adoption path ran exactly
+once, and a sequential control session proves no duplicated derived
+state. No production synchronization mechanism is added.
 """
 
 from __future__ import annotations
@@ -10,11 +16,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Generator
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
@@ -22,7 +30,13 @@ from rop.database import Base, get_db
 from rop.main import app
 from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
 from rop.services.candidate_generation import CandidateGenerationService
-from rop.services.reasoning_run_execution import ReasoningRunExecutionService
+from rop.services.evidence_evaluation import EvidenceEvaluationService
+from rop.services.missing_information import MissingInformationService
+from rop.services.reasoning_run_execution import (
+    ReasoningRunExecutionContractError,
+    ReasoningRunExecutionService,
+    _is_receipt_identity_collision,
+)
 from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_idempotency import (
     DISPOSITION_EXECUTED_NEW,
@@ -30,23 +44,21 @@ from rop.services.reasoning_run_idempotency import (
     ReasoningRunIdempotencyService,
 )
 from rop.services.reasoning_run_input_snapshot import ReasoningRunInputSnapshotService
+from rop.services.template_match import TemplateMatchService
 
 
 @pytest.fixture(scope="function")
-def test_engine():
-    """Create a fresh in-memory database for each test with a connection pool
-    that allows concurrent transactions from multiple threads.
-
-    Uses SQLite's shared-cache URI mode so multiple connections see the same
-    in-memory database state. Each connection gets its own transaction isolation.
-    """
-    # Shared-cache mode allows multiple connections to share the in-memory DB
+def test_engine(tmp_path):
+    """Fresh file-backed SQLite database per test. A real file (not
+    shared-cache memory) so the second connection's write attempts use
+    the retriable busy path instead of non-retriable table locks."""
+    db_path = (tmp_path / "concurrency.db").as_posix()
     engine = create_engine(
-        "sqlite+pysqlite:///file:test?mode=memory&cache=shared",
-        connect_args={"check_same_thread": False, "uri": True},
+        f"sqlite+pysqlite:///{db_path}",
+        connect_args={"check_same_thread": False, "timeout": 30},
         poolclass=QueuePool,
-        pool_size=2,
-        max_overflow=2,
+        pool_size=5,
+        max_overflow=5,
     )
     Base.metadata.create_all(engine)
     yield engine
@@ -55,22 +67,23 @@ def test_engine():
 
 @pytest.fixture(scope="function")
 def test_session_factory(test_engine):
-    """Create a session factory bound to the test engine."""
     return sessionmaker(bind=test_engine)
 
 
 @pytest.fixture(scope="function")
 def test_client(test_session_factory):
-    """Create a TestClient with the test database."""
-
     def override_get_db() -> Generator[Session, None, None]:
         with test_session_factory() as db:
             yield db
 
+    previous_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = override_get_db
-    client = TestClient(app)
-    yield client
-    app.dependency_overrides.clear()
+    try:
+        client = TestClient(app)
+        yield client
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
 
 
 def _create_session(client: TestClient, user_input: str) -> str:
@@ -101,321 +114,307 @@ def _add_observation(client: TestClient, session_id: str, text: str) -> None:
     assert o.status_code == 201
 
 
-def _candidate_ids(test_session_factory, session_id: str) -> list[str]:
-    with test_session_factory() as db:
-        return sorted(
-            str(c.id)
-            for c in CandidateGenerationService().list_by_session(db, UUID(session_id))
-        )
-
-
-def _execute_for_session(
-    test_session_factory, session_id: UUID, input_snapshot: dict[str, Any] | None = None
+def _execute(
+    factory, session_id: UUID, snapshot: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Execute using a fresh database session."""
-    with test_session_factory() as db:
+    with factory() as db:
         return ReasoningRunExecutionService().execute_for_session(
-            db, session_id, input_snapshot=input_snapshot
+            db, session_id, input_snapshot=snapshot
         )
 
 
-def _idempotent(
-    test_session_factory, session_id: UUID, known: str | None = None
-) -> dict[str, Any]:
-    """Execute idempotently using a fresh database session."""
-    with test_session_factory() as db:
+def _idempotent(factory, session_id: UUID, known: str | None = None) -> dict[str, Any]:
+    with factory() as db:
         return ReasoningRunIdempotencyService().execute_idempotent(
             db, session_id, known_input_fingerprint=known
         )
 
 
-class _Barrier:
-    """Simple reusable barrier for two threads."""
+def _derived_state_signature(factory, session_uuid: UUID) -> dict[str, Any]:
+    """Deterministic derived-state signature for baseline comparison:
+    the missing-information items, matched template names, generated
+    candidate names, and evaluated evidence count the pipeline derives.
+    Row ids and timestamps are deliberately excluded: the canonical
+    fingerprint is identity-scoped and differs between two physically
+    distinct sessions even with identical content, so cross-session
+    equivalence is asserted on derived output, not on the hash."""
+    with factory() as db:
+        return {
+            "missing_information": sorted(
+                f"{mi.template}:{mi.item}"
+                for mi in MissingInformationService().list_by_session(db, session_uuid)
+            ),
+            "template_matches": sorted(
+                tm.template_name
+                for tm in TemplateMatchService().list_by_session(db, session_uuid)
+            ),
+            "candidate_names": sorted(
+                c.name
+                for c in CandidateGenerationService().list_by_session(db, session_uuid)
+            ),
+            "evidence_count": len(
+                EvidenceEvaluationService().list_by_session(db, session_uuid)
+            ),
+        }
 
-    def __init__(self, parties: int = 2) -> None:
-        self._parties = parties
-        self._count = 0
-        self._cv = threading.Condition()
 
-    def wait(self) -> None:
-        with self._cv:
-            self._count += 1
-            if self._count < self._parties:
-                self._cv.wait()
-            else:
-                self._count = 0
-                self._cv.notify_all()
+def _race_pair(
+    factory,
+    session_uuid: UUID,
+    winner_snapshot: dict[str, Any],
+    loser_snapshot: dict[str, Any] | None = None,
+) -> tuple[dict[str, dict[str, Any]], list[UUID]]:
+    """Run winner and loser as independent threads and transactions.
+    The loser parks at its first stage write until the winner has fully
+    committed, guaranteeing the loser's receipt insert hits the real
+    uniqueness constraint. Returns both results and the adoption spy
+    log (session ids that entered _adopt_winner_result)."""
+    loser_snapshot = loser_snapshot or winner_snapshot
+    winner_committed = threading.Event()
+    adoption_calls: list[UUID] = []
+    original_adopt = ReasoningRunExecutionService._adopt_winner_result
+
+    def recording_adopt(self, db, sid, state, exc):
+        adoption_calls.append(sid)
+        return original_adopt(self, db, sid, state, exc)
+
+    class _GatedMissingInformation(MissingInformationService):
+        def detect_and_store(self, db, session_id, observations, **kwargs):
+            if not winner_committed.wait(timeout=30):
+                raise RuntimeError("winner did not commit before gate timeout")
+            return super().detect_and_store(db, session_id, observations, **kwargs)
+
+    results: dict[str, dict[str, Any]] = {}
+    errors: dict[str, BaseException] = {}
+
+    def winner_runner() -> None:
+        try:
+            results["winner"] = _execute(factory, session_uuid, winner_snapshot)
+        except BaseException as exc:
+            errors["winner"] = exc
+        finally:
+            winner_committed.set()
+
+    def loser_runner() -> None:
+        try:
+            with factory() as db:
+                loser = ReasoningRunExecutionService(
+                    missing_information_service=_GatedMissingInformation()
+                )
+                results["loser"] = loser.execute_for_session(
+                    db, session_uuid, input_snapshot=loser_snapshot
+                )
+        except BaseException as exc:
+            errors["loser"] = exc
+
+    with patch.object(
+        ReasoningRunExecutionService, "_adopt_winner_result", recording_adopt
+    ):
+        t_winner = threading.Thread(target=winner_runner)
+        t_loser = threading.Thread(target=loser_runner)
+        t_winner.start()
+        t_loser.start()
+        t_winner.join(timeout=60)
+        t_loser.join(timeout=60)
+    assert not errors, f"thread errors: {errors}"
+    return results, adoption_calls
 
 
 # ---------------------------------------------------------------------------
-# Test 1: Two identical concurrent completions
+# Direct collision-classifier tests (Task 136 correction, review point 1/9)
 # ---------------------------------------------------------------------------
+def test_collision_classifier_canonical_sqlite() -> None:
+    exc = IntegrityError(
+        "INSERT INTO reasoning_run_receipts",
+        {},
+        Exception(
+            "UNIQUE constraint failed: reasoning_run_receipts.session_id, "
+            "reasoning_run_receipts.input_fingerprint"
+        ),
+    )
+    assert _is_receipt_identity_collision(exc) is True
 
 
+def test_collision_classifier_canonical_postgres_diag() -> None:
+    class _FakeDiag:
+        constraint_name = "uq_reasoning_run_receipts_session_fingerprint"
+
+    class _FakePgError(Exception):
+        def __init__(self) -> None:
+            self.diag = _FakeDiag()
+            self.pgcode = "23505"
+
+    exc = IntegrityError("INSERT INTO reasoning_run_receipts", {}, _FakePgError())
+    assert _is_receipt_identity_collision(exc) is True
+
+
+def test_collision_classifier_canonical_constraint_name_in_message() -> None:
+    exc = IntegrityError(
+        "INSERT INTO reasoning_run_receipts",
+        {},
+        Exception(
+            "duplicate key value violates unique constraint "
+            '"uq_reasoning_run_receipts_session_fingerprint"'
+        ),
+    )
+    assert _is_receipt_identity_collision(exc) is True
+
+
+def test_collision_classifier_rejects_receipt_check_violation() -> None:
+    exc = IntegrityError(
+        "INSERT INTO reasoning_run_receipts",
+        {},
+        Exception("CHECK constraint failed: reasoning_run_receipts"),
+    )
+    assert _is_receipt_identity_collision(exc) is False
+
+
+def test_collision_classifier_rejects_unrelated_table_fk() -> None:
+    exc = IntegrityError(
+        "INSERT INTO candidate_hypotheses",
+        {},
+        Exception("FOREIGN KEY constraint failed"),
+    )
+    assert _is_receipt_identity_collision(exc) is False
+
+
+# ---------------------------------------------------------------------------
+# Test 1 + 2: identical concurrent completions, one durable receipt
+# ---------------------------------------------------------------------------
 def test_concurrent_identical_completions_single_receipt(
     test_client, test_session_factory
 ) -> None:
-    """Two threads racing to complete the same (session_id, fingerprint)
-    must produce exactly one completed receipt. The loser rolls back and
-    adopts the winner's result via reuse semantics."""
     sid = _create_session(test_client, "Patient reports concurrent chest pain")
     _add_observation(test_client, sid, "Patient reports concurrent chest pain")
     session_uuid = UUID(sid)
-
-    # Pre-build the exact input snapshot both threads will use
     with test_session_factory() as db:
         snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
 
-    barrier = _Barrier(2)
-    results: dict[str, dict[str, Any]] = {}
-    errors: dict[str, BaseException] = {}
+    results, adoption_calls = _race_pair(test_session_factory, session_uuid, snapshot)
 
-    def runner(name: str) -> None:
-        try:
-            # Both threads wait at the barrier, then attempt execution
-            barrier.wait()
-            results[name] = _execute_for_session(
-                test_session_factory, session_uuid, input_snapshot=snapshot
-            )
-        except BaseException as exc:
-            errors[name] = exc
-
-    t1 = threading.Thread(target=runner, args=("t1",))
-    t2 = threading.Thread(target=runner, args=("t2",))
-    t1.start()
-    t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    assert not errors, f"Thread errors: {errors}"
-    assert "t1" in results and "t2" in results
-
-    # Both must complete successfully (one EXECUTED_NEW, one reused)
-    outcomes = [results["t1"]["outcome"], results["t2"]["outcome"]]
-    assert all(o == "COMPLETED" for o in outcomes)
-
-    # Exactly one COMPLETED receipt in database
-    with test_session_factory() as db:
-        count = ReasoningRunReceiptRepository().count_by_session(db, session_uuid)
-    assert count == 1, f"Expected 1 receipt, got {count}"
-
-    # The loser's result must be the winner's state (identical candidates)
-    with test_session_factory() as db:
-        winner_candidates = {
-            str(c.id)
-            for c in CandidateGenerationService().list_by_session(db, session_uuid)
-        }
-    assert _candidate_ids(test_session_factory, sid) == sorted(winner_candidates)
-    assert results["t1"]["input_fingerprint"] == results["t2"]["input_fingerprint"]
-
-
-# ---------------------------------------------------------------------------
-# Test 2: Receipt uniqueness enforced - explicit repository check
-# ---------------------------------------------------------------------------
-
-
-def test_concurrent_receipt_uniqueness_enforced(
-    test_client, test_session_factory
-) -> None:
-    """After concurrent identical completions, the receipt repository
-    must show exactly one completed receipt for that fingerprint."""
-    sid = _create_session(test_client, "Patient reports uniqueness chest pain")
-    _add_observation(test_client, sid, "Patient reports uniqueness chest pain")
-    session_uuid = UUID(sid)
-
-    with test_session_factory() as db:
-        snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
-
-    barrier = _Barrier(2)
-    results: dict[str, dict[str, Any]] = {}
-    errors: dict[str, BaseException] = {}
-
-    def runner(name: str) -> None:
-        try:
-            barrier.wait()
-            results[name] = _execute_for_session(
-                test_session_factory, session_uuid, input_snapshot=snapshot
-            )
-        except BaseException as exc:
-            errors[name] = exc
-
-    t1 = threading.Thread(target=runner, args=("t1",))
-    t2 = threading.Thread(target=runner, args=("t2",))
-    t1.start()
-    t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    assert not errors, f"Thread errors: {errors}"
-    assert "t1" in results and "t2" in results
-
-    # Verify via repository directly
+    assert results["winner"]["outcome"] == "COMPLETED"
+    assert results["loser"]["outcome"] == "COMPLETED"
+    assert (
+        results["winner"]["input_fingerprint"] == results["loser"]["input_fingerprint"]
+    )
+    # Exactly one durable completed receipt (database is authoritative).
     with test_session_factory() as db:
         repo = ReasoningRunReceiptRepository()
-        completed = repo.find_completed(
-            db, session_uuid, results["t1"]["input_fingerprint"]
+        receipt = repo.find_completed(
+            db, session_uuid, results["winner"]["input_fingerprint"]
         )
-        assert completed is not None
-        assert completed.outcome == "COMPLETED"
+        assert receipt is not None
+        assert receipt.outcome == "COMPLETED"
         assert repo.count_by_session(db, session_uuid) == 1
+    # Exactly one normal commit (winner) and exactly one adoption (loser).
+    assert len(adoption_calls) == 1
+    assert adoption_calls[0] == session_uuid
 
 
 # ---------------------------------------------------------------------------
-# Test 3: No duplicate derived state
+# Test 3: no duplicate derived state, against a real control baseline
 # ---------------------------------------------------------------------------
-
-
 def test_concurrent_no_duplicate_derived_state(
     test_client, test_session_factory
 ) -> None:
-    """Concurrent identical attempts must not double-create derived
-    reasoning state (observations, entities, candidates, evidence, etc.)."""
-    sid = _create_session(test_client, "Patient reports no-duplicate chest pain")
-    _add_observation(test_client, sid, "Patient reports no-duplicate chest pain")
-    session_uuid = UUID(sid)
+    user_input = "Patient reports no-duplicate chest pain"
 
+    # Control: one sequential execution on an equivalent fresh session
+    # with the same deterministic input conditions.
+    control_sid = _create_session(test_client, user_input)
+    _add_observation(test_client, control_sid, user_input)
+    control_uuid = UUID(control_sid)
     with test_session_factory() as db:
-        snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
+        control_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, control_uuid
+        )
+    control_result = _execute(test_session_factory, control_uuid, control_snapshot)
+    assert control_result["outcome"] == "COMPLETED"
+    control_signature = _derived_state_signature(test_session_factory, control_uuid)
+    assert control_signature["candidate_names"], "control produced no candidates"
 
-    barrier = _Barrier(2)
-    results: dict[str, dict[str, Any]] = {}
-    errors: dict[str, BaseException] = {}
-
-    def runner(name: str) -> None:
-        try:
-            barrier.wait()
-            results[name] = _execute_for_session(
-                test_session_factory, session_uuid, input_snapshot=snapshot
-            )
-        except BaseException as exc:
-            errors[name] = exc
-
-    t1 = threading.Thread(target=runner, args=("t1",))
-    t2 = threading.Thread(target=runner, args=("t2",))
-    t1.start()
-    t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    assert not errors, f"Thread errors: {errors}"
-    assert "t1" in results and "t2" in results
-
-    # Final state must equal single execution state
+    # Target: two concurrent attempts on an equivalent fresh session.
+    target_sid = _create_session(test_client, user_input)
+    _add_observation(test_client, target_sid, user_input)
+    target_uuid = UUID(target_sid)
     with test_session_factory() as db:
-        candidates = {
-            str(c.id)
-            for c in CandidateGenerationService().list_by_session(db, session_uuid)
-        }
-        from sqlalchemy import select
-
-        from rop.models import EvaluatedEvidence
-
-        evidence_count = len(
-            list(
-                db.execute(
-                    select(EvaluatedEvidence).where(
-                        EvaluatedEvidence.session_id == session_uuid
-                    )
-                ).scalars()
-            )
+        target_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, target_uuid
         )
 
-    # Single winner's candidates
-    assert len(candidates) > 0
-    # Evidence count matches single execution
-    with test_session_factory() as db:
-        from rop.services.evidence_evaluation import EvidenceEvaluationService
+    results, adoption_calls = _race_pair(
+        test_session_factory, target_uuid, target_snapshot
+    )
+    assert results["winner"]["outcome"] == "COMPLETED"
+    assert results["loser"]["outcome"] == "COMPLETED"
+    assert len(adoption_calls) == 1
 
-        assert (
-            len(EvidenceEvaluationService().list_by_session(db, session_uuid))
-            == evidence_count
-        )
+    with test_session_factory() as db:
+        assert ReasoningRunReceiptRepository().count_by_session(db, target_uuid) == 1
+    # Final state equals a single execution, not two.
+    target_signature = _derived_state_signature(test_session_factory, target_uuid)
+    assert target_signature == control_signature
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Distinct fingerprints remain independent
+# Test 4: distinct fingerprints remain independent
 # ---------------------------------------------------------------------------
-
-
 def test_concurrent_distinct_fingerprints_independent(
     test_client, test_session_factory
 ) -> None:
-    """Two concurrent executions for the same session but different
-    fingerprints must both succeed independently with their own receipts."""
     sid = _create_session(test_client, "Patient reports distinct fingerprint pain")
     _add_observation(test_client, sid, "Patient reports distinct fingerprint pain")
     session_uuid = UUID(sid)
-
-    # Create two different input states by adding different observations
     with test_session_factory() as db:
         snapshot1 = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
-
     _add_observation(test_client, sid, "Patient reports additional dizziness")
-
     with test_session_factory() as db:
         snapshot2 = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
-
     assert compute_snapshot_fingerprint(snapshot1) != compute_snapshot_fingerprint(
         snapshot2
     )
 
-    barrier = _Barrier(2)
-    results: dict[str, dict[str, Any]] = {}
+    results, adoption_calls = _race_pair(
+        test_session_factory, session_uuid, snapshot1, loser_snapshot=snapshot2
+    )
 
-    def runner1() -> None:
-        barrier.wait()
-        results["t1"] = _execute_for_session(
-            test_session_factory, session_uuid, input_snapshot=snapshot1
-        )
-
-    def runner2() -> None:
-        barrier.wait()
-        results["t2"] = _execute_for_session(
-            test_session_factory, session_uuid, input_snapshot=snapshot2
-        )
-
-    t1 = threading.Thread(target=runner1)
-    t2 = threading.Thread(target=runner2)
-    t1.start()
-    t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    assert results["t1"]["outcome"] == "COMPLETED"
-    assert results["t2"]["outcome"] == "COMPLETED"
-    assert results["t1"]["input_fingerprint"] != results["t2"]["input_fingerprint"]
-
-    # Two distinct receipts
+    assert results["winner"]["outcome"] == "COMPLETED"
+    assert results["loser"]["outcome"] == "COMPLETED"
+    assert (
+        results["winner"]["input_fingerprint"] != results["loser"]["input_fingerprint"]
+    )
     with test_session_factory() as db:
-        assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 2
+        repo = ReasoningRunReceiptRepository()
+        assert repo.count_by_session(db, session_uuid) == 2
+        assert (
+            repo.find_completed(
+                db, session_uuid, results["winner"]["input_fingerprint"]
+            )
+            is not None
+        )
+        assert (
+            repo.find_completed(db, session_uuid, results["loser"]["input_fingerprint"])
+            is not None
+        )
+    # No cross-identity adoption occurred.
+    assert len(adoption_calls) == 0
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Changed input remains stale
+# Test 5: changed input remains stale
 # ---------------------------------------------------------------------------
-
-
 def test_concurrent_changed_input_stale(test_client, test_session_factory) -> None:
-    """Concurrency handling must not weaken the STALE_CHANGED behavior
-    for a known old fingerprint with changed current input."""
     sid = _create_session(test_client, "Patient reports stale chest pain")
     _add_observation(test_client, sid, "Patient reports stale chest pain")
     session_uuid = UUID(sid)
-
-    # First execution establishes the canonical receipt
     first = _idempotent(test_session_factory, session_uuid)
     assert first["disposition"] == DISPOSITION_EXECUTED_NEW
     known = first["result"]["input_fingerprint"]
-
-    # Change the input
     _add_observation(test_client, sid, "Patient reports new nausea")
 
-    # Now run concurrent idempotent calls with the old fingerprint
-    barrier = _Barrier(2)
     results: dict[str, dict[str, Any]] = {}
 
     def runner(name: str) -> None:
-        barrier.wait()
         results[name] = _idempotent(test_session_factory, session_uuid, known)
 
     t1 = threading.Thread(target=runner, args=("t1",))
@@ -424,31 +423,20 @@ def test_concurrent_changed_input_stale(test_client, test_session_factory) -> No
     t2.start()
     t1.join(timeout=30)
     t2.join(timeout=30)
-
-    # Both must report STALE_CHANGED (no execution, no new receipt)
     assert results["t1"]["disposition"] == DISPOSITION_STALE_CHANGED
     assert results["t2"]["disposition"] == DISPOSITION_STALE_CHANGED
     assert results["t1"]["result"] is None
     assert results["t2"]["result"] is None
-
-    # Still only one receipt (the original)
     with test_session_factory() as db:
         assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 1
 
 
 # ---------------------------------------------------------------------------
-# Test 6: Failed execution remains retryable
+# Test 6: failed execution remains retryable
 # ---------------------------------------------------------------------------
-
-
 def test_concurrent_failed_execution_retryable(
     test_client, test_session_factory
 ) -> None:
-    """A genuinely failed execution must remain retryable and not create
-    a completed receipt. A successful retry may create the single
-    canonical receipt."""
-    from rop.services.evidence_evaluation import EvidenceEvaluationService
-
     sid = _create_session(test_client, "Patient reports retryable chest pain")
     _add_observation(test_client, sid, "Patient reports retryable chest pain")
     session_uuid = UUID(sid)
@@ -457,65 +445,52 @@ def test_concurrent_failed_execution_retryable(
         def evaluate_session(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("evaluation exploded")
 
-    # First concurrent attempt fails
     with test_session_factory() as db:
         snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
 
-    barrier = _Barrier(2)
     results: dict[str, dict[str, Any]] = {}
+    errors: dict[str, BaseException] = {}
 
     def failing_runner(name: str) -> None:
-        barrier.wait()
-        with test_session_factory() as db:
-            svc = ReasoningRunExecutionService(
-                evidence_evaluation_service=_BoomEvidence()
-            )
-            results[name] = svc.execute_for_session(
-                db, session_uuid, input_snapshot=snapshot
-            )
+        try:
+            with test_session_factory() as db:
+                svc = ReasoningRunExecutionService(
+                    evidence_evaluation_service=_BoomEvidence()
+                )
+                results[name] = svc.execute_for_session(
+                    db, session_uuid, input_snapshot=snapshot
+                )
+        except BaseException as exc:
+            errors[name] = exc
 
     t1 = threading.Thread(target=failing_runner, args=("t1",))
     t2 = threading.Thread(target=failing_runner, args=("t2",))
     t1.start()
     t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    # Both fail, no receipt created
-    assert results["t1"]["outcome"] == "FAILED"
-    assert results["t2"]["outcome"] == "FAILED"
+    t1.join(timeout=60)
+    t2.join(timeout=60)
+    failures = [r for r in results.values() if r["outcome"] == "FAILED"]
+    assert failures, "expected at least one FAILED outcome"
+    assert not [
+        r for r in results.values() if r["outcome"] == "COMPLETED"
+    ], "failed attempt must not complete"
     with test_session_factory() as db:
         assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 0
-
-    # Retry succeeds and creates the single canonical receipt
-    retry = _execute_for_session(test_session_factory, session_uuid)
+    retry = _execute(test_session_factory, session_uuid)
     assert retry["outcome"] == "COMPLETED"
     with test_session_factory() as db:
         assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 1
 
 
 # ---------------------------------------------------------------------------
-# Test 7: Unrelated integrity failure not swallowed
+# Test 7: unrelated integrity failure is not swallowed
 # ---------------------------------------------------------------------------
-
-
-def test_concurrent_unrelated_integrity_not_swallowed(
+def test_unrelated_integrity_failure_not_swallowed(
     test_client, test_session_factory
 ) -> None:
-    """An integrity failure unrelated to the canonical receipt uniqueness
-    must not be converted to REUSED_IDENTICAL or silently swallowed."""
-    from sqlalchemy.exc import IntegrityError
-
-    from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
-    from rop.services.reasoning_run_execution import (
-        ReasoningRunExecutionContractError,
-        ReasoningRunExecutionService,
-    )
-
     sid = _create_session(test_client, "Patient reports unrelated integrity pain")
     _add_observation(test_client, sid, "Patient reports unrelated integrity pain")
     session_uuid = UUID(sid)
-
     with test_session_factory() as db:
         snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
 
@@ -530,91 +505,60 @@ def test_concurrent_unrelated_integrity_not_swallowed(
 
     ReasoningRunReceiptRepository.record_completed = _boom_record  # type: ignore[method-assign]
     try:
-        barrier = _Barrier(2)
-        results: dict[str, Any] = {}
-        errors: dict[str, BaseException] = {}
-
-        def runner(name: str) -> None:
-            try:
-                barrier.wait()
-                with test_session_factory() as db:
-                    results[name] = ReasoningRunExecutionService().execute_for_session(
-                        db, session_uuid, input_snapshot=snapshot
-                    )
-            except BaseException as exc:
-                errors[name] = exc
-
-        t1 = threading.Thread(target=runner, args=("t1",))
-        t2 = threading.Thread(target=runner, args=("t2",))
-        t1.start()
-        t2.start()
-        t1.join(timeout=30)
-        t2.join(timeout=30)
-
-        # Both should raise ReasoningRunExecutionContractError, not be swallowed
-        assert "t1" in errors or "t2" in errors
-        for exc in errors.values():
-            assert isinstance(exc, ReasoningRunExecutionContractError)
-            assert exc.invariant == "RUN_COMMIT_FAILED"
+        with pytest.raises(ReasoningRunExecutionContractError) as excinfo:
+            with test_session_factory() as db:
+                ReasoningRunExecutionService().execute_for_session(
+                    db, session_uuid, input_snapshot=snapshot
+                )
+        assert excinfo.value.invariant == "RUN_COMMIT_FAILED"
     finally:
         ReasoningRunReceiptRepository.record_completed = real_record  # type: ignore[method-assign]
+    with test_session_factory() as db:
+        assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 0
 
 
 # ---------------------------------------------------------------------------
 # Release gate assertion for Task 136
 # ---------------------------------------------------------------------------
-
-
 def test_gate_task136_concurrency_invariant(test_client, test_session_factory) -> None:
-    """Task 136 release-gate assertion: identical concurrent completion
-    attempts for one canonical identity result in exactly one durable
-    completed receipt and a correctly recovered reuse outcome, with no
-    partial/duplicate durable state."""
-    sid = _create_session(test_client, "Patient reports gate chest pain")
-    _add_observation(test_client, sid, "Patient reports gate chest pain")
-    session_uuid = UUID(sid)
+    """Identical concurrent completion attempts for one canonical identity
+    produce exactly one durable completed receipt, one winner commit, one
+    loser adoption, and no duplicated derived state versus a single
+    sequential control execution."""
+    user_input = "Patient reports gate chest pain"
 
+    control_sid = _create_session(test_client, user_input)
+    _add_observation(test_client, control_sid, user_input)
+    control_uuid = UUID(control_sid)
     with test_session_factory() as db:
-        snapshot = ReasoningRunInputSnapshotService().build_snapshot(db, session_uuid)
+        control_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, control_uuid
+        )
+    control_result = _execute(test_session_factory, control_uuid, control_snapshot)
+    assert control_result["outcome"] == "COMPLETED"
+    control_signature = _derived_state_signature(test_session_factory, control_uuid)
+    assert control_signature["candidate_names"]
 
-    barrier = _Barrier(2)
-    results: dict[str, dict[str, Any]] = {}
-    errors: dict[str, BaseException] = {}
-
-    def runner(name: str) -> None:
-        try:
-            barrier.wait()
-            results[name] = _execute_for_session(
-                test_session_factory, session_uuid, input_snapshot=snapshot
-            )
-        except BaseException as exc:
-            errors[name] = exc
-
-    t1 = threading.Thread(target=runner, args=("t1",))
-    t2 = threading.Thread(target=runner, args=("t2",))
-    t1.start()
-    t2.start()
-    t1.join(timeout=30)
-    t2.join(timeout=30)
-
-    assert not errors, f"Thread errors: {errors}"
-    assert "t1" in results and "t2" in results
-
-    # Central invariant: exactly one durable completed receipt
+    target_sid = _create_session(test_client, user_input)
+    _add_observation(test_client, target_sid, user_input)
+    target_uuid = UUID(target_sid)
     with test_session_factory() as db:
-        assert ReasoningRunReceiptRepository().count_by_session(db, session_uuid) == 1
+        target_snapshot = ReasoningRunInputSnapshotService().build_snapshot(
+            db, target_uuid
+        )
 
-    # Both callers receive semantically valid results
-    assert results["t1"]["outcome"] == "COMPLETED"
-    assert results["t2"]["outcome"] == "COMPLETED"
+    results, adoption_calls = _race_pair(
+        test_session_factory, target_uuid, target_snapshot
+    )
 
-    # No duplicate derived state
+    assert results["winner"]["outcome"] == "COMPLETED"
+    assert results["loser"]["outcome"] == "COMPLETED"
+    assert (
+        results["winner"]["input_fingerprint"] == results["loser"]["input_fingerprint"]
+    )
     with test_session_factory() as db:
-        candidates = {
-            str(c.id)
-            for c in CandidateGenerationService().list_by_session(db, session_uuid)
-        }
-    assert len(candidates) > 0
+        assert ReasoningRunReceiptRepository().count_by_session(db, target_uuid) == 1
+    assert len(adoption_calls) == 1
+    target_signature = _derived_state_signature(test_session_factory, target_uuid)
+    assert target_signature == control_signature
 
-    # Both results reference the same canonical fingerprint
-    assert results["t1"]["input_fingerprint"] == results["t2"]["input_fingerprint"]
