@@ -64,6 +64,7 @@ from rop.schemas import (
     ReasoningRunIdempotentExecutionRead,
     ReasoningRunIdempotentExecutionRequest,
     ReasoningRunRead,
+    ReasoningRunReceiptInspectionRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
@@ -178,6 +179,8 @@ from rop.services import (
     ReasoningRunIdempotencyConsistencyService,
     ReasoningRunIdempotencyContractError,
     ReasoningRunIdempotencyService,
+    ReasoningRunReceiptContractError,
+    ReasoningRunReceiptService,
     ReasoningRunService,
     ReasoningSessionService,
     ReasoningStepService,
@@ -248,6 +251,7 @@ reasoning_run_idempotency_service = ReasoningRunIdempotencyService()
 reasoning_run_idempotency_consistency_service = (
     ReasoningRunIdempotencyConsistencyService()
 )
+reasoning_run_receipt_service = ReasoningRunReceiptService()
 reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
 reasoning_run_execution_audit_package_service = (
     ReasoningRunExecutionAuditPackageService()
@@ -2265,6 +2269,50 @@ def audit_reasoning_run_idempotency_consistency(
         envelope=envelope, session_id=session_id
     )
     return audit
+
+
+@router.get(
+    "/{session_id}/reasoning-run/receipt",
+    response_model=ReasoningRunReceiptInspectionRead,
+    status_code=status.HTTP_200_OK,
+)
+def inspect_reasoning_run_receipt(
+    session_id: UUID,
+    input_fingerprint: str = Query(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    ),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 137: inspect one canonical reasoning-run receipt identity.
+
+    Read-only inspection of the exact canonical completed receipt
+    identity ``(session_id, input_fingerprint)`` over the existing
+    append-only receipt repository. The lookup is exact -- session AND
+    fingerprint AND the persisted COMPLETED outcome must all match; a
+    different fingerprint, session, or outcome is never substituted,
+    and no "latest receipt" semantics apply. A valid but nonexistent
+    identity returns the explicit ``found=False`` result; a malformed
+    fingerprint fails request validation (HTTP 422) and is never
+    normalized. No execution, no replay, no writes, no receipt
+    creation or mutation.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_receipt_service.inspect(db, session_id, input_fingerprint)
+    except ReasoningRunReceiptContractError as exc:
+        # Task 137: a contract-level inspection failure (e.g. an
+        # unreadable persisted receipt) -- never medical or
+        # client-input error, never raw exception detail.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-receipt contract violation",
+        ) from exc
 
 
 @router.post(

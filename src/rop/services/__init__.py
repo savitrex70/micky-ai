@@ -387,6 +387,11 @@ from rop.services.reasoning_run_orchestration import (
     ReasoningRunOrchestrationContractError,
     ReasoningRunOrchestrationService,
 )
+from rop.services.reasoning_run_receipt import (
+    REASONING_RUN_RECEIPT_SERVICE_SOURCE_TASK_137,
+    ReasoningRunReceiptContractError,
+    ReasoningRunReceiptService,
+)
 from rop.services.reasoning_run_replay import (
     REASONING_RUN_REPLAY_SOURCE_TASK_128,
     ReasoningRunReplayContractError,
@@ -605,6 +610,9 @@ __all__ = [
     "REASONING_RUN_IDEMPOTENCY_CONSISTENCY_SOURCE_TASK_135",
     "ReasoningRunIdempotencyConsistencyContractError",
     "ReasoningRunIdempotencyConsistencyService",
+    "REASONING_RUN_RECEIPT_SERVICE_SOURCE_TASK_137",
+    "ReasoningRunReceiptContractError",
+    "ReasoningRunReceiptService",
     "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",
