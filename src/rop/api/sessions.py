@@ -64,6 +64,7 @@ from rop.schemas import (
     ReasoningRunIdempotentExecutionRead,
     ReasoningRunIdempotentExecutionRequest,
     ReasoningRunRead,
+    ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -2269,6 +2270,30 @@ def audit_reasoning_run_idempotency_consistency(
         envelope=envelope, session_id=session_id
     )
     return audit
+
+
+@router.get(
+    "/{session_id}/reasoning-run/history",
+    response_model=ReasoningRunReceiptHistoryRead,
+    status_code=status.HTTP_200_OK,
+)
+def history_reasoning_run_receipts(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 138: read-only deterministic reasoning-run history for one session."""
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_receipt_service.history(db, session_id)
+    except ReasoningRunReceiptContractError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-receipt contract violation",
+        ) from exc
 
 
 @router.get(

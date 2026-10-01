@@ -52,6 +52,28 @@ class ReasoningRunReceiptRepository:
         )
         return db.scalars(statement).first()
 
+    def list_completed_by_session(
+        self, db: Session, session_id: UUID
+    ) -> list[ReasoningRunReceipt]:
+        """Return persisted COMPLETED receipts for one exact session.
+
+        Ordering is deterministic and stable across repeated reads: by
+        creation time and then by receipt id so the API is not sensitive
+        to database row ordering or incidental insertion behavior.
+        """
+        statement = (
+            select(ReasoningRunReceipt)
+            .where(
+                ReasoningRunReceipt.session_id == session_id,
+                ReasoningRunReceipt.outcome == "COMPLETED",
+            )
+            .order_by(
+                ReasoningRunReceipt.created_at.asc(),
+                ReasoningRunReceipt.id.asc(),
+            )
+        )
+        return list(db.scalars(statement).all())
+
     def count_by_session(self, db: Session, session_id: UUID) -> int:
         statement = select(ReasoningRunReceipt).where(
             ReasoningRunReceipt.session_id == session_id

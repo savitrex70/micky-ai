@@ -104,6 +104,45 @@ class ReasoningRunReceiptService:
         result["receipt"] = projected
         return result
 
+    def list_completed_by_session(
+        self,
+        db: Session,
+        session_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Project all persisted COMPLETED receipts for one exact session.
+
+        The returned items are strict read projections, ordered by the
+        durable receipt history contract. No writes, no execution, no
+        replay, no mutation.
+        """
+        receipts = self.receipt_repository.list_completed_by_session(db, session_id)
+        projected: list[dict[str, Any]] = []
+        for receipt in receipts:
+            item = self._project(
+                receipt,
+                session_id,
+                receipt.input_fingerprint,
+            )
+            if item is None:
+                raise ReasoningRunReceiptContractError(
+                    "RECEIPT_UNREADABLE",
+                    "persisted receipt state cannot be projected onto the "
+                    "canonical read schema",
+                )
+            projected.append(item)
+        return projected
+
+    def history(
+        self,
+        db: Session,
+        session_id: UUID,
+    ) -> dict[str, Any]:
+        """Return the deterministic read-only history for a session."""
+        return {
+            "session_id": str(session_id),
+            "receipts": self.list_completed_by_session(db, session_id),
+        }
+
     def _project(
         self,
         receipt: Any,

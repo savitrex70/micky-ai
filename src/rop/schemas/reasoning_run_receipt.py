@@ -56,3 +56,17 @@ class ReasoningRunReceiptInspectionRead(BaseModel):
     requested_input_fingerprint: str
     receipt: ReasoningRunReceiptRead | None
     receipt_source: str
+
+
+class ReasoningRunReceiptHistoryRead(BaseModel):
+    """Task 138: read-only deterministic history for a session's receipts.
+
+    The response is intentionally constrained to the exact canonical
+    receipt projection and the explicit session identity. It exposes
+    only persisted COMPLETED receipts and forbids any extra fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    receipts: list[ReasoningRunReceiptRead]
