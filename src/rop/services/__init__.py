@@ -392,6 +392,11 @@ from rop.services.reasoning_run_receipt import (
     ReasoningRunReceiptContractError,
     ReasoningRunReceiptService,
 )
+from rop.services.reasoning_run_receipt_provenance_audit import (
+    REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139,
+    ReasoningRunReceiptProvenanceAuditContractError,
+    ReasoningRunReceiptProvenanceAuditService,
+)
 from rop.services.reasoning_run_replay import (
     REASONING_RUN_REPLAY_SOURCE_TASK_128,
     ReasoningRunReplayContractError,
@@ -613,6 +618,9 @@ __all__ = [
     "REASONING_RUN_RECEIPT_SERVICE_SOURCE_TASK_137",
     "ReasoningRunReceiptContractError",
     "ReasoningRunReceiptService",
+    "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
+    "ReasoningRunReceiptProvenanceAuditContractError",
+    "ReasoningRunReceiptProvenanceAuditService",
     "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",

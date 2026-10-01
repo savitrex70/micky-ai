@@ -66,6 +66,7 @@ from rop.schemas import (
     ReasoningRunRead,
     ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
+    ReasoningRunReceiptProvenanceAuditRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
@@ -181,6 +182,8 @@ from rop.services import (
     ReasoningRunIdempotencyContractError,
     ReasoningRunIdempotencyService,
     ReasoningRunReceiptContractError,
+    ReasoningRunReceiptProvenanceAuditContractError,
+    ReasoningRunReceiptProvenanceAuditService,
     ReasoningRunReceiptService,
     ReasoningRunService,
     ReasoningSessionService,
@@ -253,6 +256,9 @@ reasoning_run_idempotency_consistency_service = (
     ReasoningRunIdempotencyConsistencyService()
 )
 reasoning_run_receipt_service = ReasoningRunReceiptService()
+reasoning_run_receipt_provenance_audit_service = (
+    ReasoningRunReceiptProvenanceAuditService()
+)
 reasoning_run_execution_bundle_service = ReasoningRunExecutionBundleService()
 reasoning_run_execution_audit_package_service = (
     ReasoningRunExecutionAuditPackageService()
@@ -2337,6 +2343,44 @@ def inspect_reasoning_run_receipt(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-receipt contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/receipt/provenance-audit",
+    response_model=ReasoningRunReceiptProvenanceAuditRead,
+    status_code=status.HTTP_200_OK,
+)
+def audit_reasoning_run_receipt_provenance(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 139: read-only provenance consistency audit of one session's receipts.
+
+    Audits every persisted COMPLETED receipt belonging to the exact
+    requested session against the canonical provenance invariants:
+    exact session binding, canonical 64-character lowercase SHA-256
+    input fingerprint, ``COMPLETED`` outcome, structurally valid
+    ``exogenous_snapshot``, and projectability onto the canonical
+    receipt read schema. Strictly read-only: no execution, no replay,
+    no writes, no receipt creation or mutation, no fingerprint or
+    snapshot recomputation, no provider/model calls. Invalid receipts
+    are reported as explicit invalid findings, never repaired,
+    substituted, or converted into missing history; an empty
+    completed history is a distinct deterministic result. Only
+    session existence checking and error translation live here.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_receipt_provenance_audit_service.audit(db, session_id)
+    except ReasoningRunReceiptProvenanceAuditContractError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-receipt-provenance-audit contract violation",
         ) from exc
 
 

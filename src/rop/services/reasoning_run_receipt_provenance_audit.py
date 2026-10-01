@@ -1,0 +1,177 @@
+"""Task 139: read-only reasoning-run receipt provenance consistency audit.
+
+Deterministically audits the provenance of every persisted COMPLETED
+receipt belonging to one exact session against the canonical ROP
+provenance invariants: exact session binding, canonical 64-character
+lowercase SHA-256 input fingerprint, ``COMPLETED`` outcome,
+structurally valid ``exogenous_snapshot`` (the Task 124
+``EXOGENOUS_SNAPSHOT_FIELDS`` projection), internal provenance
+consistency, and projectability onto the canonical Task 137 receipt
+read schema.
+
+Strictly read-only over persisted state: no execution, no replay, no
+candidate generation, no snapshot or fingerprint recomputation, no
+receipt creation or mutation, no transaction ownership, no
+provider/model calls. A persisted receipt is treated as historical
+evidence: invalid provenance is reported as an explicit invalid
+finding, never silently repaired, recomputed, or converted into
+missing history. Missing history (no completed receipts) is a
+distinct deterministic result. Reuses the Task 138 receipt
+repository query and the Task 137 read projection unchanged.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+from uuid import UUID
+
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
+from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
+from rop.schemas.reasoning_run_receipt_provenance_audit import (
+    ReasoningRunReceiptProvenanceAuditRead,
+)
+from rop.services.reasoning_run_input_snapshot import EXOGENOUS_SNAPSHOT_FIELDS
+from rop.services.reasoning_run_receipt import ReasoningRunReceiptService
+
+REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139 = (
+    "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_TASK_139"
+)
+
+_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class ReasoningRunReceiptProvenanceAuditContractError(Exception):
+    """Task 139: the provenance audit result cannot be projected."""
+
+    def __init__(self, invariant: str, detail: str) -> None:
+        self.invariant = invariant
+        super().__init__(f"[{invariant}] {detail}")
+
+
+class ReasoningRunReceiptProvenanceAuditService:
+    """Deterministic read-only provenance audit of one session's receipts."""
+
+    def __init__(
+        self,
+        receipt_repository: ReasoningRunReceiptRepository | None = None,
+        receipt_service: ReasoningRunReceiptService | None = None,
+    ) -> None:
+        self.receipt_repository = receipt_repository or ReasoningRunReceiptRepository()
+        self.receipt_service = receipt_service or ReasoningRunReceiptService()
+
+    def audit(
+        self,
+        db: Session,
+        session_id: UUID,
+    ) -> dict[str, Any]:
+        """Audit every persisted COMPLETED receipt for one exact session.
+
+        Receipts are read through the Task 138 repository method, so
+        ordering is deterministic (creation time, then receipt id) and
+        only this session's COMPLETED receipts are examined. Read-only:
+        no writes, no execution, no replay, no recomputation of stored
+        provenance.
+        """
+        receipts = self.receipt_repository.list_completed_by_session(db, session_id)
+
+        findings: list[dict[str, Any]] = []
+        valid_receipts = 0
+        invalid_receipts = 0
+        for receipt in receipts:
+            issues = sorted(set(self._provenance_issues(receipt, session_id)))
+            consistent = not issues
+            if consistent:
+                valid_receipts += 1
+            else:
+                invalid_receipts += 1
+            raw_fingerprint = getattr(receipt, "input_fingerprint", None)
+            findings.append(
+                {
+                    "receipt_id": str(receipt.id),
+                    "input_fingerprint": (
+                        str(raw_fingerprint) if raw_fingerprint is not None else ""
+                    ),
+                    "receipt_consistent": consistent,
+                    "provenance_issues": issues,
+                }
+            )
+
+        audit = {
+            "available": True,
+            "audit_consistent": invalid_receipts == 0,
+            "session_id": str(session_id),
+            "completed_receipts_examined": len(receipts),
+            "valid_receipts": valid_receipts,
+            "invalid_receipts": invalid_receipts,
+            "findings": findings,
+            "audit_source": REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139,
+        }
+        try:
+            validated = ReasoningRunReceiptProvenanceAuditRead.model_validate(audit)
+        except ValidationError as exc:
+            raise ReasoningRunReceiptProvenanceAuditContractError(
+                "AUDIT_UNPROJECTABLE",
+                "audit result cannot be projected onto the canonical audit schema",
+            ) from exc
+        return validated.model_dump()
+
+    def _provenance_issues(
+        self,
+        receipt: Any,
+        session_id: UUID,
+    ) -> list[str]:
+        """Evaluate one persisted receipt against the provenance invariants.
+
+        Pure over persisted receipt state: reads the receipt's own
+        fields only, never current session state, never recomputes a
+        fingerprint or snapshot.
+        """
+        issues: list[str] = []
+
+        receipt_session = getattr(receipt, "session_id", None)
+        if receipt_session is None or str(receipt_session) != str(session_id):
+            issues.append("SESSION_MISMATCH")
+
+        fingerprint = getattr(receipt, "input_fingerprint", None)
+        if (
+            not isinstance(fingerprint, str)
+            or _FINGERPRINT_RE.match(fingerprint) is None
+        ):
+            issues.append("MALFORMED_FINGERPRINT")
+
+        if getattr(receipt, "outcome", None) != "COMPLETED":
+            issues.append("OUTCOME_NOT_COMPLETED")
+
+        snapshot = getattr(receipt, "exogenous_snapshot", None)
+        if not self._exogenous_shape_valid(snapshot):
+            issues.append("EXOGENOUS_SNAPSHOT_MALFORMED")
+        elif str(snapshot.get("session_id")) != str(receipt_session):
+            issues.append("EXOGENOUS_SESSION_MISMATCH")
+
+        projected = self.receipt_service.project_receipt(
+            receipt, session_id, fingerprint
+        )
+        if projected is None:
+            issues.append("RECEIPT_UNREADABLE")
+
+        return issues
+
+    @staticmethod
+    def _exogenous_shape_valid(snapshot: Any) -> bool:
+        """Structural validity per the Task 124 canonical projection."""
+        if not isinstance(snapshot, dict):
+            return False
+        if set(snapshot) != set(EXOGENOUS_SNAPSHOT_FIELDS):
+            return False
+        if not isinstance(snapshot.get("session_id"), str):
+            return False
+        if not isinstance(snapshot.get("user_input"), str):
+            return False
+        if not isinstance(snapshot.get("observations"), list):
+            return False
+        if not isinstance(snapshot.get("entities"), list):
+            return False
+        return True

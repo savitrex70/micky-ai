@@ -143,6 +143,21 @@ class ReasoningRunReceiptService:
             "receipts": self.list_completed_by_session(db, session_id),
         }
 
+    def project_receipt(
+        self,
+        receipt: Any,
+        session_id: UUID,
+        input_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        """Project one persisted receipt onto the strict read schema.
+
+        Public read-only reuse seam (Task 139): delegates to the
+        unchanged Task 137 projection, returning ``None`` exactly when
+        the persisted receipt cannot be canonically projected. No
+        semantic change to inspection or history behavior.
+        """
+        return self._project(receipt, session_id, input_fingerprint)
+
     def _project(
         self,
         receipt: Any,
