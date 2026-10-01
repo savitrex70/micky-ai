@@ -87,6 +87,19 @@ def _db() -> Any:
     return gen, next(gen)
 
 
+def _counts() -> dict[str, int]:
+    """Row counts for every ROP table; used to prove read-only paths."""
+    from rop.database import Base as _Base
+
+    with TestingSessionLocal() as db:
+        return {
+            table.name: db.execute(
+                sql_text(f'SELECT COUNT(*) FROM "{table.name}"')
+            ).scalar_one()
+            for table in _Base.metadata.sorted_tables
+        }
+
+
 def _executed(user_input: str = CHEST_PAIN) -> tuple[str, dict[str, Any]]:
     from rop.services.reasoning_run_execution import ReasoningRunExecutionService
 
@@ -631,26 +644,76 @@ def test_gate_api_idempotent_execution_boundary() -> None:
 
 
 def test_gate_api_idempotency_consistency_audit() -> None:
-    """Task 135: the idempotency API audit accepts faithful envelopes
-    and rejects corruption, read-only."""
-    from rop.services.reasoning_run_idempotency_consistency import (
-        ReasoningRunIdempotencyConsistencyService,
-    )
-
+    """Task 135: the idempotency API audit accepts faithful Task 134
+    envelopes through the real POST HTTP boundary, reports corruption,
+    rejects structurally invalid requests, and stays read-only."""
     sid = _create_session()
     _add_observation(sid)
     envelope = client.post(f"/sessions/{sid}/reasoning-run/execute-idempotent").json()
-    audit = ReasoningRunIdempotencyConsistencyService().build(
-        envelope=envelope, session_id=UUID(sid)
-    )
-    assert audit["audit_consistent"] is True
+    assert envelope["disposition"] == "EXECUTED_NEW"
 
-    tampered = dict(envelope)
-    tampered["disposition"] = "REUSED_IDENTICAL"
-    tampered_audit = ReasoningRunIdempotencyConsistencyService().build(
-        envelope=tampered, session_id=UUID(sid)
+    # Faithful EXECUTED_NEW envelope audits consistent through HTTP.
+    audit = client.post(
+        f"/sessions/{sid}/reasoning-run/idempotency-consistency",
+        json=envelope,
     )
-    assert tampered_audit["audit_consistent"] is False
+    assert audit.status_code == 200
+    assert audit.json()["audit_consistent"] is True
+    assert audit.json()["consistency_issues"] == []
+
+    # Real reuse produces a faithful REUSED_IDENTICAL envelope.
+    known = envelope["result"]["input_fingerprint"]
+    reuse = client.post(
+        f"/sessions/{sid}/reasoning-run/execute-idempotent",
+        json={"known_input_fingerprint": known},
+    ).json()
+    assert reuse["disposition"] == "REUSED_IDENTICAL"
+    reuse_audit = client.post(
+        f"/sessions/{sid}/reasoning-run/idempotency-consistency",
+        json=reuse,
+    )
+    assert reuse_audit.status_code == 200
+    assert reuse_audit.json()["audit_consistent"] is True
+
+    # A parseable-but-corrupted envelope reports its inconsistency.
+    tampered = dict(envelope)
+    tampered["disposition"] = "INVALID"
+    tampered_audit = client.post(
+        f"/sessions/{sid}/reasoning-run/idempotency-consistency",
+        json=tampered,
+    )
+    assert tampered_audit.status_code == 200
+    assert tampered_audit.json()["audit_consistent"] is False
+    assert "INVALID_DISPOSITION" in tampered_audit.json()["consistency_issues"]
+
+    # A structurally invalid envelope is rejected before the audit.
+    broken = dict(envelope)
+    broken["current_input_fingerprint"] = "NOT-A-FINGERPRINT"
+    assert (
+        client.post(
+            f"/sessions/{sid}/reasoning-run/idempotency-consistency",
+            json=broken,
+        ).status_code
+        == 422
+    )
+
+    # A missing session stays a 404; the read-only guarantee holds.
+    assert (
+        client.post(
+            f"/sessions/{uuid4()}/reasoning-run/idempotency-consistency",
+            json=envelope,
+        ).status_code
+        == 404
+    )
+    before = _counts()
+    assert (
+        client.post(
+            f"/sessions/{sid}/reasoning-run/idempotency-consistency",
+            json=envelope,
+        ).status_code
+        == 200
+    )
+    assert _counts() == before
 
 
 def test_gate_api_http_failure_mapping() -> None:
@@ -715,18 +778,7 @@ def test_gate_prohibition_no_network_in_reasoning() -> None:
 
 
 def test_gate_prohibition_no_db_writes_on_read_endpoints() -> None:
-    from rop.database import Base as _Base
-
     sid, _ = _executed()
-
-    def _counts() -> dict[str, int]:
-        with TestingSessionLocal() as db:
-            return {
-                table.name: db.execute(
-                    sql_text(f'SELECT COUNT(*) FROM "{table.name}"')
-                ).scalar_one()
-                for table in _Base.metadata.sorted_tables
-            }
 
     before = _counts()
     for path in (

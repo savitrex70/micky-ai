@@ -7,8 +7,11 @@ coherence, reused/executed fingerprint binding, and nested execution
 structural validity (via Task 045's own validator).
 
 Pure and read-only: no database, no execution, no mutation, no
-recomputation of Task 127's decision. Like the Task 045 audit layer,
-this service has no HTTP endpoint of its own.
+recomputation of Task 127's decision. The Task 135 HTTP endpoint
+(``POST /sessions/{id}/reasoning-run/idempotency-consistency``) is a
+thin read-only adapter over this service; structurally invalid
+envelopes are rejected by the strict request schema before they ever
+reach this audit.
 """
 
 from __future__ import annotations

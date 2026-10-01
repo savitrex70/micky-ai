@@ -2230,33 +2230,34 @@ def execute_reasoning_run_idempotent(
         ) from exc
 
 
-@router.get(
+@router.post(
     "/{session_id}/reasoning-run/idempotency-consistency",
     response_model=ReasoningRunIdempotencyConsistencyRead,
     status_code=status.HTTP_200_OK,
 )
-def get_reasoning_run_idempotency_consistency(
+def audit_reasoning_run_idempotency_consistency(
     session_id: UUID,
-    request: ReasoningRunIdempotencyAuditRequest | None = None,
+    request: ReasoningRunIdempotencyAuditRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Task 135: audit the idempotency API result for contract compliance.
 
-    Validates that a Task 134 idempotency envelope conforms to the
+    Audits a complete supplied Task 134 idempotency envelope, so the
+    endpoint carries a proper request body (POST); it remains strictly
+    read-only -- HTTP method semantics and database mutability are
+    separate concerns, and this endpoint writes nothing and executes
+    no reasoning. Validates that the envelope conforms to the
     deterministic contract: session identity, disposition vocabulary,
     fingerprint shapes, disposition/result coherence, fingerprint
     bindings, and nested execution structural validity. Returns the
-    audit result with a deterministic issue list.
+    audit result with a deterministic issue list. A structurally
+    invalid envelope fails request validation (HTTP 422) and never
+    reaches the audit; an internally inconsistent-but-parseable
+    envelope audits to HTTP 200 with ``audit_consistent=False``.
     """
     if session_service.get(db, session_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
-        )
-
-    if request is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Request body with idempotency envelope is required",
         )
 
     envelope = request.model_dump()
