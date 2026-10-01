@@ -102,6 +102,7 @@ EXECUTION_STAGE_SOURCES = _STAGE_SOURCES
 
 _CANONICAL_RECEIPT_CONSTRAINT = "uq_reasoning_run_receipts_session_fingerprint"
 
+
 def _is_receipt_identity_collision(exc: IntegrityError) -> bool:
     """Return True only for the canonical receipt identity uniqueness race.
 
@@ -141,25 +142,19 @@ def _is_receipt_identity_collision(exc: IntegrityError) -> bool:
     except Exception:
         message = ""
 
-    canonical_identity_evidence = (
-        _CANONICAL_RECEIPT_CONSTRAINT.lower() in message
-        or (
-            "reasoning_run_receipts" in message
-            and "session_id" in message
-            and "input_fingerprint" in message
-        )
+    canonical_identity_evidence = _CANONICAL_RECEIPT_CONSTRAINT.lower() in message or (
+        "reasoning_run_receipts" in message
+        and "session_id" in message
+        and "input_fingerprint" in message
     )
 
     if pgcode == "23505":
         return canonical_identity_evidence
 
-    return (
-        canonical_identity_evidence
-        and (
-            "unique constraint failed" in message
-            or "duplicate key value" in message
-            or "unique constraint" in message
-        )
+    return canonical_identity_evidence and (
+        "unique constraint failed" in message
+        or "duplicate key value" in message
+        or "unique constraint" in message
     )
 
 

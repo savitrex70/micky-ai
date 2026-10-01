@@ -1,4 +1,4 @@
-﻿"""Task 136: concurrent identical reasoning-run execution safety tests.
+"""Task 136: concurrent identical reasoning-run execution safety tests.
 Two independent threads execute the same canonical identity through the
 real executor against one shared file-backed SQLite database. SQLite is
 single-writer, so parking both transactions at the receipt write would
@@ -265,7 +265,8 @@ def test_collision_classifier_rejects_unrelated_postgres_unique_violation() -> N
         constraint_name = "uq_other_table_other_identity"
 
     class _FakePgError(Exception):
-        def __init__(self) -> None:
+        def __init__(self, message: str = "") -> None:
+            super().__init__(message)
             self.diag = _FakeDiag()
             self.pgcode = "23505"
 
@@ -275,6 +276,7 @@ def test_collision_classifier_rejects_unrelated_postgres_unique_violation() -> N
         _FakePgError("duplicate key value violates unique constraint"),
     )
     assert _is_receipt_identity_collision(exc) is False
+
 
 def test_collision_classifier_rejects_receipt_check_violation() -> None:
     exc = IntegrityError(
@@ -577,4 +579,3 @@ def test_gate_task136_concurrency_invariant(test_client, test_session_factory) -
     assert len(adoption_calls) == 1
     target_signature = _derived_state_signature(test_session_factory, target_uuid)
     assert target_signature == control_signature
-
