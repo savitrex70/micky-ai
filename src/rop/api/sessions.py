@@ -67,6 +67,7 @@ from rop.schemas import (
     ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
     ReasoningRunReceiptProvenanceAuditRead,
+    ReasoningRunReplayConsistencyAuditRead,
     ReasoningRunReplayRead,
     ReasoningRunReplayRequest,
     ReasoningSessionCreate,
@@ -187,6 +188,8 @@ from rop.services import (
     ReasoningRunReceiptProvenanceAuditContractError,
     ReasoningRunReceiptProvenanceAuditService,
     ReasoningRunReceiptService,
+    ReasoningRunReplayConsistencyAuditContractError,
+    ReasoningRunReplayConsistencyAuditService,
     ReasoningRunReplayContractError,
     ReasoningRunReplayService,
     ReasoningRunService,
@@ -256,6 +259,9 @@ reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
 reasoning_run_replay_service = ReasoningRunReplayService()
+reasoning_run_replay_consistency_audit_service = (
+    ReasoningRunReplayConsistencyAuditService()
+)
 reasoning_run_idempotency_service = ReasoningRunIdempotencyService()
 reasoning_run_idempotency_consistency_service = (
     ReasoningRunIdempotencyConsistencyService()
@@ -2436,6 +2442,55 @@ def reasoning_run_replay(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-replay contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/replay/consistency-audit",
+    response_model=ReasoningRunReplayConsistencyAuditRead,
+    status_code=status.HTTP_200_OK,
+)
+def audit_reasoning_run_replay_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 141: read-only consistency audit of one session's replay material.
+
+    Audits every persisted COMPLETED receipt belonging to the exact
+    requested session against the canonical Task 128 replay contract
+    that the Task 140 replay API depends on, so the API cannot
+    silently drift from the contract it claims to implement. Tampering
+    is detected across all four replay material surfaces -- session
+    identity, fingerprint, snapshot, and recorded result -- by reusing
+    the canonical contract's own compare-only binding verification
+    rather than a second, weaker rule.
+
+    Three outcomes stay strictly distinct and are never conflated:
+    ``NO_MATERIAL`` (nothing to audit -- a legitimate deterministic
+    result), ``INCONSISTENT`` (readable material that contradicts the
+    canonical contract), and ``MALFORMED`` (material that is
+    structurally unverifiable, so nothing is claimed about it).
+    Strictly read-only: no execution, no replay, no writes, no receipt
+    creation or mutation, no snapshot builds, no current-state
+    fingerprinting, no provider/model calls.
+
+    The divergence-vs-contract-failure boundary is preserved: replay
+    divergence is the POST API's HTTP ``200`` finding, while a genuine
+    contract failure is its generic HTTP ``500``. A missing session
+    yields ``404``; an unprojectable audit yields ``500`` with a
+    generic detail that never leaks internal exception text.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_replay_consistency_audit_service.audit(db, session_id)
+    except ReasoningRunReplayConsistencyAuditContractError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-replay-consistency-audit contract violation",
         ) from exc
 
 

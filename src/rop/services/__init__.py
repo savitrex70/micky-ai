@@ -403,6 +403,11 @@ from rop.services.reasoning_run_replay import (
     ReasoningRunReplayService,
     exogenous_projection,
 )
+from rop.services.reasoning_run_replay_consistency_audit import (
+    REASONING_RUN_REPLAY_CONSISTENCY_AUDIT_SOURCE_TASK_141,
+    ReasoningRunReplayConsistencyAuditContractError,
+    ReasoningRunReplayConsistencyAuditService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -624,7 +629,10 @@ __all__ = [
     "REASONING_RUN_ORCHESTRATION_SOURCE_TASK_132",
     "ReasoningRunOrchestrationContractError",
     "ReasoningRunOrchestrationService",
+    "REASONING_RUN_REPLAY_CONSISTENCY_AUDIT_SOURCE_TASK_141",
     "REASONING_RUN_REPLAY_SOURCE_TASK_128",
+    "ReasoningRunReplayConsistencyAuditContractError",
+    "ReasoningRunReplayConsistencyAuditService",
     "ReasoningRunReplayContractError",
     "ReasoningRunReplayService",
     "exogenous_projection",
