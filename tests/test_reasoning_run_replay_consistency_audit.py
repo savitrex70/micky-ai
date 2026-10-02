@@ -3,15 +3,21 @@
 Proves the strictly read-only consistency-audit boundary between the
 canonical Task 140 replay API and the Task 128 replay contract: the
 three required states (no replay material / inconsistent /
-malformed-unverifiable) stay strictly distinct, tampering is detected
-across all four replay material surfaces (session identity,
-fingerprint, snapshot, recorded result) by reusing the canonical
+malformed-unverifiable) stay strictly distinct, violations are
+detected over the persisted surfaces the receipt actually carries
+(session identity, fingerprint shape, exogenous snapshot structure,
+and persisted input snapshot binding) by reusing the canonical
 contract's own verification, output is deterministic, there are zero
 side effects, historical material is never recomputed from current
 state, schemas are strict, the divergence-vs-contract-failure
 boundary is preserved, the Task 137/138/139/140 contracts are
 unchanged, and no model/provider integration is introduced. No
 execution, no replay, no writes, no network.
+
+The Task 140 ``original_result`` is request material and is not
+persisted as historical replay evidence by the current architecture,
+so its provenance is reported as ``NOT_PERSISTED`` rather than
+audited. Tests below cover that limitation explicitly.
 """
 
 from __future__ import annotations

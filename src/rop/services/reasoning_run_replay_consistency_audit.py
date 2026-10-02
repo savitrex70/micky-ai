@@ -293,9 +293,12 @@ class ReasoningRunReplayConsistencyAuditService:
         if projected is None:
             issues.append("REPLAY_RECEIPT_UNREADABLE")
 
-        # Surfaces 3 and 4 -- the snapshot binding and the recorded
-        # result's agreement with it, via the canonical contract's own
-        # compare-only verification.
+        # Persisted input snapshot: structure, canonical binding, and
+        # agreement with the persisted exogenous projection, via the
+        # canonical contract's own compare-only verification. The Task
+        # 140 ``original_result`` is not persisted and is never
+        # reconstructed here; its provenance is reported separately as
+        # NOT_PERSISTED.
         input_snapshot = getattr(receipt, "input_snapshot", None)
         if input_snapshot is None:
             # Material persisted before binding evidence existed.
