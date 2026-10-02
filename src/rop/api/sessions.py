@@ -2456,23 +2456,30 @@ def audit_reasoning_run_replay_consistency(
 ) -> dict[str, Any]:
     """Task 141: read-only consistency audit of one session's replay material.
 
-    Audits every persisted COMPLETED receipt belonging to the exact
-    requested session against the canonical Task 128 replay contract
-    that the Task 140 replay API depends on, so the API cannot
-    silently drift from the contract it claims to implement. Tampering
-    is detected across all four replay material surfaces -- session
-    identity, fingerprint, snapshot, and recorded result -- by reusing
-    the canonical contract's own compare-only binding verification
-    rather than a second, weaker rule.
+    Audits the replay-related historical receipt material that is
+    actually persisted for the exact requested session against the
+    canonical Task 128 replay contract that the Task 140 replay API
+    depends on. The audited surfaces are the ones the receipt genuinely
+    carries -- session identity, fingerprint shape, exogenous snapshot
+    structure, persisted input snapshot and its canonical fingerprint
+    binding, exogenous projection consistency, and receipt outcome --
+    reusing the canonical contract's own compare-only binding
+    verification rather than a second, weaker rule.
 
-    Three outcomes stay strictly distinct and are never conflated:
-    ``NO_MATERIAL`` (nothing to audit -- a legitimate deterministic
-    result), ``INCONSISTENT`` (readable material that contradicts the
-    canonical contract), and ``MALFORMED`` (material that is
-    structurally unverifiable, so nothing is claimed about it).
-    Strictly read-only: no execution, no replay, no writes, no receipt
-    creation or mutation, no snapshot builds, no current-state
-    fingerprinting, no provider/model calls.
+    The Task 140 ``original_result`` is request material and is not
+    persisted as historical replay evidence by the current
+    architecture. Its historical provenance is therefore reported
+    explicitly as ``NOT_PERSISTED`` rather than verified, reconstructed,
+    or treated as tampering.
+
+    Three outcomes over persisted material stay strictly distinct and
+    are never conflated: ``NO_MATERIAL`` (nothing to audit -- a
+    legitimate deterministic result), ``INCONSISTENT`` (readable
+    material that contradicts the canonical contract), and
+    ``MALFORMED`` (material that is structurally unverifiable, so
+    nothing is claimed about it). Strictly read-only: no execution, no
+    replay, no writes, no receipt creation or mutation, no snapshot
+    builds, no current-state fingerprinting, no provider/model calls.
 
     The divergence-vs-contract-failure boundary is preserved: replay
     divergence is the POST API's HTTP ``200`` finding, while a genuine

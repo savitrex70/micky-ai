@@ -1,18 +1,33 @@
 """Task 141: read-only replay API consistency audit.
 
-Deterministically audits every persisted COMPLETED receipt belonging to
-one exact session against the canonical Task 128 replay contract that
-the Task 140 replay API depends on, so the two cannot silently drift
-apart.
+Deterministically audits the replay-related historical receipt material
+that is actually persisted for one exact session, against the canonical
+Task 128 replay contract that the Task 140 replay API depends on.
 
 The audit reuses the canonical contract's own primitives rather than
 re-deriving them: the canonical 64-character lowercase SHA-256
 fingerprint shape, the Task 125 ``verify_snapshot_fingerprint``
-binding check, and the Task 124 exogenous projection. Tampering is
-detected across all four replay material surfaces -- session identity,
-fingerprint, snapshot, and recorded result -- by reusing the exact
-verification the canonical replay contract already performs, never by
-inventing a second, weaker binding rule.
+binding check, and the Task 124 exogenous projection. Violations are
+detected over the persisted surfaces the receipt actually carries --
+session identity, fingerprint, exogenous snapshot, and persisted input
+snapshot binding -- by reusing the exact verification the canonical
+replay contract already performs, never by inventing a second, weaker
+binding rule.
+
+Historical evidence actually available
+
+The current ROP persistence model persists ``session_id``,
+``input_fingerprint``, ``outcome``, ``exogenous_snapshot``, and
+``input_snapshot``. It does NOT persist the Task 140 request
+``original_result`` as historical replay evidence. This audit therefore
+verifies only what genuinely exists, and states the original-result
+gap explicitly through ``original_result_provenance = NOT_PERSISTED``.
+
+Missing evidence is never treated as tampering and never silently
+treated as verified. It is also never manufactured: this audit does not
+persist a replay result, does not reconstruct one from current state,
+does not re-execute a reasoning run, and does not invoke the replay
+engine to fill the gap.
 
 Strictly read-only over persisted state: no execution, no replay, no
 candidate generation, no snapshot builds, no reads of mutable current
@@ -24,7 +39,7 @@ current state, never a substitution of current session input, and
 never hash-of-exogenous-projection (the recorded fingerprint binds the
 full snapshot, not its projection).
 
-Three outcomes are kept strictly distinct and are never conflated:
+Three outcomes over persisted material are kept strictly distinct:
 
 * ``NO_MATERIAL`` -- no persisted COMPLETED receipt exists for the
   session, so there is nothing to audit. This is a legitimate,
@@ -43,7 +58,9 @@ Three outcomes are kept strictly distinct and are never conflated:
 Material persisted before binding evidence existed reports an explicit
 ``UNVERIFIABLE`` contract finding: never silently verified, never
 fabricated, and never counted as consistent, because binding evidence
-that does not exist cannot be independently verified.
+that does not exist cannot be independently verified. This is distinct
+from the architectural ``original_result_provenance`` gap, which is
+reported separately and never drives ``audit_consistent``.
 
 Reuses the Task 138 receipt repository query and the Task 137 read
 projection unchanged. The divergence-vs-contract-failure boundary is
@@ -84,11 +101,21 @@ REPLAY_STATE_SATISFIED = "SATISFIED"
 REPLAY_STATE_INCONSISTENT = "INCONSISTENT"
 REPLAY_STATE_MALFORMED = "MALFORMED"
 
-# Canonical Task 128 replay contract verdicts, reused verbatim.
-REPLAY_CONTRACT_VERIFIABLE = "VERIFIABLE"
+# Canonical Task 128 replay contract verdicts, reused verbatim. The
+# clean verdict is scoped to persisted material because the Task 140
+# ``original_result`` is request material, not persisted evidence, and
+# is reported separately via ``original_result_provenance``.
+REPLAY_CONTRACT_PERSISTED_MATERIAL_VERIFIABLE = "PERSISTED_MATERIAL_VERIFIABLE"
 REPLAY_CONTRACT_RECORD_INVALID = "RECORD_INVALID"
 REPLAY_CONTRACT_RECORD_TAMPERED = "RECORD_TAMPERED"
 REPLAY_CONTRACT_UNVERIFIABLE = "UNVERIFIABLE"
+
+# The Task 140 ``original_result`` is not persisted as historical
+# replay evidence by the current architecture, so its historical
+# provenance can never be independently verified here. Reported
+# explicitly -- never fabricated, never reconstructed, never counted
+# as tampering, and never treated as verified.
+REPLAY_ORIGINAL_RESULT_PROVENANCE_NOT_PERSISTED = "NOT_PERSISTED"
 
 # Structural malformation makes the canonical contract unevaluable, so
 # it can never reach the weaker tamper verdict.
@@ -137,6 +164,11 @@ class ReasoningRunReplayConsistencyAuditService:
         only this session's COMPLETED receipts are examined. Read-only:
         no writes, no execution, no replay, no recomputation of stored
         provenance.
+
+        ``audit_consistent`` describes the persisted material only.
+        The Task 140 ``original_result`` is not persisted as historical
+        replay evidence, so its provenance is reported separately and
+        never makes the audit inconsistent.
         """
         receipts = self.receipt_repository.list_completed_by_session(db, session_id)
 
@@ -172,6 +204,9 @@ class ReasoningRunReplayConsistencyAuditService:
             "audit_consistent": invalid_receipts == 0,
             "session_id": str(session_id),
             "replay_state": self._aggregate_replay_state(findings, len(receipts)),
+            "original_result_provenance": (
+                REPLAY_ORIGINAL_RESULT_PROVENANCE_NOT_PERSISTED
+            ),
             "completed_receipts_examined": len(receipts),
             "valid_receipts": valid_receipts,
             "invalid_receipts": invalid_receipts,
@@ -218,9 +253,10 @@ class ReasoningRunReplayConsistencyAuditService:
 
         Pure over persisted receipt state: reads the receipt's own
         fields only, never current session state, never builds a
-        snapshot, never replays. The tamper verdict reuses the exact
-        Task 125 binding verification the canonical replay contract
-        already applies, and reports it under the contract's own
+        snapshot, never replays, and never reconstructs an original
+        replay result. The tamper verdict reuses the exact Task 125
+        binding verification the canonical replay contract already
+        applies, and reports it under the contract's own
         ``RECORD_TAMPERED`` vocabulary rather than a bespoke rule.
         """
         issues: list[str] = []
@@ -290,7 +326,10 @@ class ReasoningRunReplayConsistencyAuditService:
     def _classify(issues: list[str]) -> tuple[str, str]:
         """Map issues to the per-material replay state and contract finding."""
         if not issues:
-            return REPLAY_STATE_SATISFIED, REPLAY_CONTRACT_VERIFIABLE
+            return (
+                REPLAY_STATE_SATISFIED,
+                REPLAY_CONTRACT_PERSISTED_MATERIAL_VERIFIABLE,
+            )
 
         issue_set = set(issues)
         if issue_set & _MALFORMING_ISSUES:

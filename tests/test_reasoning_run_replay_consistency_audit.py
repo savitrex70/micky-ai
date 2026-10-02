@@ -47,6 +47,7 @@ from rop.services.reasoning_run_input_snapshot import (
 from rop.services.reasoning_run_receipt import (
     REASONING_RUN_RECEIPT_SERVICE_SOURCE_TASK_137,
 )
+from rop.services.reasoning_run_replay import ReasoningRunReplayService
 from rop.services.reasoning_run_replay_consistency_audit import (
     REASONING_RUN_REPLAY_CONSISTENCY_AUDIT_SOURCE_TASK_141,
     ReasoningRunReplayConsistencyAuditService,
@@ -80,6 +81,7 @@ AUDIT_KEYS = {
     "audit_consistent",
     "session_id",
     "replay_state",
+    "original_result_provenance",
     "completed_receipts_examined",
     "valid_receipts",
     "invalid_receipts",
@@ -264,7 +266,7 @@ def test_audit_of_consistent_replay_material_is_satisfied() -> None:
         assert set(finding) == FINDING_KEYS
         assert finding["replay_consistent"] is True
         assert finding["replay_state"] == "SATISFIED"
-        assert finding["replay_contract_finding"] == "VERIFIABLE"
+        assert finding["replay_contract_finding"] == "PERSISTED_MATERIAL_VERIFIABLE"
         assert finding["replay_issues"] == []
     ReasoningRunReplayConsistencyAuditRead.model_validate(body)
 
@@ -348,7 +350,7 @@ def test_audit_binds_fingerprint_to_persisted_snapshot() -> None:
     finding = _audit(sid)["findings"][0]
     assert finding["replay_consistent"] is True
     assert finding["replay_state"] == "SATISFIED"
-    assert finding["replay_contract_finding"] == "VERIFIABLE"
+    assert finding["replay_contract_finding"] == "PERSISTED_MATERIAL_VERIFIABLE"
     assert finding["replay_issues"] == []
     assert finding["input_fingerprint"] == fingerprint
 
@@ -863,6 +865,7 @@ def test_audit_schema_rejects_top_level_extra_fields() -> None:
         "audit_consistent": True,
         "session_id": str(uuid4()),
         "replay_state": "NO_MATERIAL",
+        "original_result_provenance": "NOT_PERSISTED",
         "completed_receipts_examined": 0,
         "valid_receipts": 0,
         "invalid_receipts": 0,
@@ -889,6 +892,7 @@ def test_audit_schema_rejects_nested_finding_extra_fields() -> None:
         "audit_consistent": False,
         "session_id": str(uuid4()),
         "replay_state": "INCONSISTENT",
+        "original_result_provenance": "NOT_PERSISTED",
         "completed_receipts_examined": 1,
         "valid_receipts": 0,
         "invalid_receipts": 1,
@@ -1133,6 +1137,205 @@ def test_task_140_post_replay_remains_unchanged() -> None:
 
     # Nonexistent session still 404.
     assert client.get(AUDIT_URL.format(sid=uuid4())).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Task 141 correction: unavailable original-result provenance
+#
+# The Task 140 ``original_result`` is request material. The current ROP
+# persistence model does not persist it as historical replay evidence,
+# so Task 141 must never claim to verify it. These tests establish that
+# the gap is reported explicitly, and that it is neither misclassified
+# as tampering nor silently treated as verified.
+# ---------------------------------------------------------------------------
+
+
+def test_audit_reports_original_result_provenance_as_not_persisted() -> None:
+    """The audit never claims to hold historical original-result evidence."""
+    sid = _create_session()
+    _add_observation(sid, "Patient reports chest pain")
+    _executed_fingerprint(sid)
+
+    counts_before = _counts()
+
+    # 1. A valid persisted receipt exists and is audited successfully.
+    body = _audit(UUID(sid))
+    assert body["completed_receipts_examined"] == 1
+    assert body["valid_receipts"] == 1
+    assert body["audit_consistent"] is True
+    assert body["replay_state"] == "SATISFIED"
+
+    # 2. Original-result provenance is explicitly unavailable.
+    assert body["original_result_provenance"] == "NOT_PERSISTED"
+
+    # 3. The clean verdict is scoped to persisted material, so it never
+    #    implies the original result was verified.
+    finding = body["findings"][0]
+    assert finding["replay_contract_finding"] == "PERSISTED_MATERIAL_VERIFIABLE"
+    assert finding["replay_issues"] == []
+
+    # 4. Missing evidence is NOT reported as tampering.
+    assert "REPLAY_RECORD_TAMPERED" not in finding["replay_issues"]
+
+    # 5. Missing evidence is NOT an inconsistency either: the audit of
+    #    genuinely persisted material stays consistent.
+    assert body["audit_consistent"] is True
+
+    # 6. No database row was created to satisfy the audit.
+    assert _counts() == counts_before
+
+
+def test_audit_never_reconstructs_original_result_from_current_state() -> None:
+    """The audit does not manufacture original-result evidence."""
+    sid = _create_session()
+    _add_observation(sid, "Patient reports chest pain")
+    _executed_fingerprint(sid)
+
+    first = _audit(UUID(sid))
+    receipts_before = first["completed_receipts_examined"]
+    assert first["original_result_provenance"] == "NOT_PERSISTED"
+
+    # Mutate current session state after the recorded run.
+    _add_observation(sid, "Patient reports new onset dizziness")
+
+    # Snapshot counts after the deliberate mutation, so the comparison
+    # isolates what the audit itself creates.
+    counts_before = _counts()
+    second = _audit(UUID(sid))
+
+    # The historical audit is unchanged by current-state drift: no
+    # original result was regenerated to fill the gap.
+    assert second == first
+    assert second["original_result_provenance"] == "NOT_PERSISTED"
+    # No additional receipt was created by auditing.
+    assert second["completed_receipts_examined"] == receipts_before
+    assert _counts() == counts_before
+
+
+def test_audit_never_invokes_the_replay_engine(monkeypatch) -> None:
+    """Task 141 must not call replay to manufacture missing history."""
+    sid = UUID(_create_session())
+    _add_observation(sid, "Patient reports chest pain")
+    _executed_fingerprint(sid)
+    counts_before = _counts()
+
+    def _fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "Task 141 must not invoke ReasoningRunReplayService.replay"
+        )
+
+    monkeypatch.setattr(ReasoningRunReplayService, "replay", _fail_if_called)
+
+    body = _audit(sid)
+    assert body["audit_consistent"] is True
+    assert body["original_result_provenance"] == "NOT_PERSISTED"
+    assert body["completed_receipts_examined"] == 1
+    assert _counts() == counts_before
+
+
+def test_audit_creates_no_persistence_of_any_kind() -> None:
+    """The audit must not add replay-result or other derived persistence."""
+    sid = _create_session()
+    _add_observation(sid, "Patient reports chest pain")
+    _executed_fingerprint(sid)
+
+    counts_before = _counts()
+    for _ in range(2):
+        assert _audit(UUID(sid))["available"] is True
+    assert _counts() == counts_before
+
+    # The receipt model gained no original-result column, and no
+    # replay-record table was introduced for Task 141.
+    assert "original_result" not in ReasoningRunReceipt.__table__.columns
+    table_names = set(Base.metadata.tables)
+    assert not any(
+        name in table_names
+        for name in (
+            "replay_record",
+            "replay_records",
+            "replay_history",
+            "original_result",
+            "replay_result",
+            "replay_results",
+        )
+    )
+
+
+def test_audit_keeps_existing_provenance_checks_intact() -> None:
+    """The correction must not weaken any existing tamper detection."""
+    # Session mismatch (via the receipt's own bound evidence).
+    session_sid = UUID(_create_session())
+    _insert_bound_receipt(session_sid)
+    tampered_exogenous = _valid_exogenous(session_sid)
+    tampered_exogenous["session_id"] = str(uuid4())
+    with TestingSessionLocal() as db:
+        row = (
+            db.query(ReasoningRunReceipt)
+            .filter(ReasoningRunReceipt.session_id == session_sid)
+            .one()
+        )
+        row.exogenous_snapshot = tampered_exogenous
+        db.commit()
+    assert (
+        "REPLAY_EXOGENOUS_SESSION_MISMATCH"
+        in _audit(session_sid)["findings"][0]["replay_issues"]
+    )
+
+    # Fingerprint / snapshot binding mismatch.
+    binding_sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(binding_sid)
+    forged = hashlib.sha256(b"forged-binding").hexdigest()
+    _insert_receipt(binding_sid, forged, input_snapshot=snapshot)
+    binding = _audit(binding_sid)["findings"][0]
+    assert "REPLAY_RECORD_TAMPERED" in binding["replay_issues"]
+    assert binding["replay_contract_finding"] == "RECORD_TAMPERED"
+
+    # Snapshot corruption must never become verified.
+    corrupt_sid = UUID(_create_session())
+    broken = _canonical_snapshot(corrupt_sid)
+    del broken["candidate_order"]
+    _insert_receipt(
+        corrupt_sid,
+        compute_snapshot_fingerprint(broken),
+        input_snapshot=broken,
+    )
+    corrupt = _audit(corrupt_sid)["findings"][0]
+    assert "REPLAY_INPUT_SNAPSHOT_MALFORMED" in corrupt["replay_issues"]
+    assert corrupt["replay_contract_finding"] == "RECORD_INVALID"
+    assert corrupt["replay_consistent"] is False
+
+    # Exogenous projection mismatch.
+    projection_sid = UUID(_create_session())
+    proj_snapshot = _canonical_snapshot(projection_sid)
+    wrong_projection = _valid_exogenous(projection_sid)
+    wrong_projection["user_input"] = "Patient reports something else"
+    _insert_receipt(
+        projection_sid,
+        compute_snapshot_fingerprint(proj_snapshot),
+        exogenous=wrong_projection,
+        input_snapshot=proj_snapshot,
+    )
+    projection = _audit(projection_sid)["findings"][0]
+    assert "REPLAY_EXOGENOUS_PROJECTION_MISMATCH" in projection["replay_issues"]
+    assert "REPLAY_RECORD_TAMPERED" not in projection["replay_issues"]
+
+    # Malformed fingerprint structure.
+    malformed_sid = UUID(_create_session())
+    _insert_receipt(malformed_sid, "A" * 64)
+    malformed = _audit(malformed_sid)["findings"][0]
+    assert "REPLAY_MALFORMED_FINGERPRINT" in malformed["replay_issues"]
+    assert malformed["replay_contract_finding"] == "RECORD_INVALID"
+
+    # Unreadable receipt.
+    unreadable_sid = UUID(_create_session())
+    row = _insert_bound_receipt(unreadable_sid)
+    with TestingSessionLocal() as db:
+        persisted = db.get(ReasoningRunReceipt, row.id)
+        assert persisted is not None
+        persisted.exogenous_snapshot = ["not", "a", "dict"]
+        db.commit()
+    unreadable = _audit(unreadable_sid)["findings"][0]
+    assert "REPLAY_RECEIPT_UNREADABLE" in unreadable["replay_issues"]
 
 
 # ---------------------------------------------------------------------------
