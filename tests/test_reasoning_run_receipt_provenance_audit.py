@@ -168,6 +168,25 @@ def _insert_receipt(
     return row
 
 
+def _insert_bound_receipt(
+    session_id: UUID,
+    user_input: str = "Patient reports chest pain",
+    created_at: datetime | None = None,
+) -> ReasoningRunReceipt:
+    """Insert a receipt whose persisted snapshot binds its fingerprint."""
+    snapshot = _canonical_snapshot(session_id)
+    snapshot["user_input"] = user_input
+    exogenous = _valid_exogenous(session_id)
+    exogenous["user_input"] = user_input
+    return _insert_receipt(
+        session_id,
+        compute_snapshot_fingerprint(snapshot),
+        created_at=created_at,
+        exogenous=exogenous,
+        input_snapshot=snapshot,
+    )
+
+
 def _counts() -> dict[str, int]:
     with TestingSessionLocal() as db:
         return {
@@ -207,8 +226,8 @@ def _executed_fingerprint(session_id: str) -> str:
 
 def test_audit_of_valid_completed_receipts_is_consistent() -> None:
     sid = UUID(_create_session())
-    _insert_receipt(sid, "a" * 64)
-    _insert_receipt(sid, hashlib.sha256(b"rop-canonical-input").hexdigest())
+    _insert_bound_receipt(sid, user_input="Patient reports chest pain")
+    _insert_bound_receipt(sid, user_input="Patient reports dizziness after rest")
 
     r = client.get(AUDIT_URL.format(sid=sid))
     assert r.status_code == 200
@@ -257,13 +276,15 @@ def test_audit_nonexistent_session_returns_404() -> None:
 
 def test_audit_valid_lowercase_sha256_fingerprint_passes() -> None:
     sid = UUID(_create_session())
-    fingerprint = hashlib.sha256(b"exact canonical snapshot bytes").hexdigest()
+    snapshot = _canonical_snapshot(sid)
+    fingerprint = compute_snapshot_fingerprint(snapshot)
     assert len(fingerprint) == 64 and fingerprint.islower()
-    _insert_receipt(sid, fingerprint)
+    _insert_receipt(sid, fingerprint, input_snapshot=snapshot)
 
     body = client.get(AUDIT_URL.format(sid=sid)).json()
     assert body["audit_consistent"] is True
     assert body["findings"][0]["input_fingerprint"] == fingerprint
+    assert body["findings"][0]["fingerprint_binding"] == "BOUND"
     assert body["findings"][0]["provenance_issues"] == []
 
 
@@ -392,7 +413,11 @@ def test_audit_issues_are_sorted_deterministically() -> None:
     body = client.get(AUDIT_URL.format(sid=sid)).json()
     issues = body["findings"][0]["provenance_issues"]
     assert issues == sorted(issues)
-    assert issues == ["EXOGENOUS_SNAPSHOT_MALFORMED", "MALFORMED_FINGERPRINT"]
+    assert issues == [
+        "EXOGENOUS_SNAPSHOT_MALFORMED",
+        "FINGERPRINT_PROVENANCE_NOT_PERSISTED",
+        "MALFORMED_FINGERPRINT",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -873,9 +898,17 @@ def test_audit_legacy_receipt_binding_is_explicit_not_silent() -> None:
     body = client.get(AUDIT_URL.format(sid=sid)).json()
     finding = body["findings"][0]
     assert finding["fingerprint_binding"] == "NOT_PERSISTED"
-    assert finding["receipt_consistent"] is True
-    assert finding["provenance_issues"] == []
+    # Unverifiable provenance is not verified provenance: the receipt
+    # is never counted consistent, while remaining semantically
+    # distinct from INVALID (nothing is claimed cryptographically
+    # wrong -- the binding evidence simply does not exist).
+    assert finding["receipt_consistent"] is False
+    assert finding["provenance_issues"] == ["FINGERPRINT_PROVENANCE_NOT_PERSISTED"]
+    assert "FINGERPRINT_PROVENANCE_MISMATCH" not in finding["provenance_issues"]
     assert body["completed_receipts_examined"] == 1
+    assert body["valid_receipts"] == 0
+    assert body["invalid_receipts"] == 1
+    assert body["audit_consistent"] is False
 
 
 def test_audit_verifies_binding_for_real_execution_receipt() -> None:

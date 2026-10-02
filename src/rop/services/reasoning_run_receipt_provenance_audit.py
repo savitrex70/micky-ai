@@ -21,10 +21,15 @@ current state, never a substitution of current session input, and
 never hash-of-exogenous-projection (the recorded fingerprint binds
 the full snapshot, not its projection). Receipts persisted before
 binding evidence existed report an explicit ``NOT_PERSISTED`` binding
-status: never silently verified, never fabricated. A persisted
-receipt is treated as historical evidence: invalid provenance is
-reported as an explicit invalid finding, never silently repaired,
-recomputed, or converted into missing history. Missing history (no
+status: never silently verified, never fabricated -- and never
+counted as consistent, because a receipt whose binding evidence does
+not exist cannot be independently verified (``receipt_consistent``
+is false with the explicit ``FINGERPRINT_PROVENANCE_NOT_PERSISTED``
+issue, without ever claiming the historical receipt is
+cryptographically wrong). A persisted receipt is treated as
+historical evidence: invalid provenance is reported as an explicit
+invalid finding, never silently repaired, recomputed, or converted
+into missing history. Missing history (no
 completed receipts) is a distinct deterministic result. Reuses the
 Task 138 receipt repository query and the Task 137 read projection
 unchanged.
@@ -149,7 +154,11 @@ class ReasoningRunReceiptProvenanceAuditService:
         snapshot. The binding verdict is the canonical Task 125
         comparison of the receipt's persisted input snapshot against
         its persisted fingerprint -- a hash check over historical
-        evidence, not a recomputation from mutable state.
+        evidence, not a recomputation from mutable state. A receipt
+        with no persisted binding evidence reports ``NOT_PERSISTED``
+        together with the ``FINGERPRINT_PROVENANCE_NOT_PERSISTED``
+        issue, so it is examined, counted invalid, and never silently
+        accepted as verified.
         """
         issues: list[str] = []
 
@@ -183,7 +192,11 @@ class ReasoningRunReceiptProvenanceAuditService:
         if snapshot is None:
             # Legacy receipt: binding evidence was never persisted.
             # Explicit status -- never silently verified, never
-            # fabricated, and not itself an invented violation.
+            # fabricated, and not claimed consistent: unverifiable
+            # provenance is not verified provenance. Semantically
+            # distinct from INVALID (no evidence exists to verify,
+            # so nothing is claimed cryptographically wrong).
+            issues.append("FINGERPRINT_PROVENANCE_NOT_PERSISTED")
             binding = "NOT_PERSISTED"
         else:
             if not isinstance(snapshot, dict):
