@@ -67,6 +67,8 @@ from rop.schemas import (
     ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
     ReasoningRunReceiptProvenanceAuditRead,
+    ReasoningRunReplayRead,
+    ReasoningRunReplayRequest,
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
@@ -185,6 +187,8 @@ from rop.services import (
     ReasoningRunReceiptProvenanceAuditContractError,
     ReasoningRunReceiptProvenanceAuditService,
     ReasoningRunReceiptService,
+    ReasoningRunReplayContractError,
+    ReasoningRunReplayService,
     ReasoningRunService,
     ReasoningSessionService,
     ReasoningStepService,
@@ -251,6 +255,7 @@ reasoning_pipeline_service = ReasoningPipelineService()
 reasoning_run_service = ReasoningRunService()
 reasoning_run_consistency_service = ReasoningRunConsistencyService()
 reasoning_run_execution_service = ReasoningRunExecutionService()
+reasoning_run_replay_service = ReasoningRunReplayService()
 reasoning_run_idempotency_service = ReasoningRunIdempotencyService()
 reasoning_run_idempotency_consistency_service = (
     ReasoningRunIdempotencyConsistencyService()
@@ -2383,6 +2388,54 @@ def audit_reasoning_run_receipt_provenance(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-receipt-provenance-audit contract violation",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/reasoning-run/replay",
+    response_model=ReasoningRunReplayRead,
+    status_code=status.HTTP_200_OK,
+)
+def reasoning_run_replay(
+    session_id: UUID,
+    request: ReasoningRunReplayRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 140: canonical deterministic reasoning-run replay.
+
+    Evaluates a recorded original execution result against the current
+    session state through the Task 128 replay service, returning the
+    strict ``ReasoningRunReplayRead`` comparison. Thin, read-only HTTP
+    boundary only: fingerprint verification, exogenous-input
+    comparison, stage comparison, canonicalized-state comparison,
+    and divergence reporting all live in the service layer unchanged.
+    The supplied recorded material is passed through verbatim -- it is
+    never reconstructed, normalized, or substituted with current state.
+
+    A missing session yields ``404``. A replay that cannot be
+    evaluated or trusted (``RECORD_INVALID``, ``RECORD_TAMPERED``,
+    ``REPLAY_BUILD_FAILED``) yields ``500`` with a generic detail that
+    never leaks internal exception text. Legitimate divergence (input
+    drift, stage reorder, derived-state change) is reported in the
+    result with HTTP ``200`` -- replay divergence is a deterministic
+    finding, not an HTTP failure.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_replay_service.replay(
+            db,
+            session_id,
+            original_result=request.original_result,
+            original_snapshot=request.original_snapshot,
+        )
+    except ReasoningRunReplayContractError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-replay contract violation",
         ) from exc
 
 

@@ -255,6 +255,12 @@ from rop.schemas.reasoning_run_receipt_provenance_audit import (
     ReasoningRunReceiptProvenanceAuditRead,
     ReasoningRunReceiptProvenanceFindingRead,
 )
+from rop.schemas.reasoning_run_replay import (
+    ReasoningRunReplayRead,
+)
+from rop.schemas.reasoning_run_replay_request import (
+    ReasoningRunReplayRequest,
+)
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -377,6 +383,8 @@ __all__ = [
     "ReasoningRunReceiptProvenanceFindingRead",
     "ReasoningRunReceiptRead",
     "ReasoningRunRead",
+    "ReasoningRunReplayRead",
+    "ReasoningRunReplayRequest",
     "ReasoningRunStageRead",
     "ReasoningSessionCreate",
     "ReasoningSessionRead",

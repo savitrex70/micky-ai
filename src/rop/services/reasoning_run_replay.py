@@ -73,7 +73,7 @@ def canonicalize_deterministic_state(value: Any) -> str:
     while any material rule or derived-state change still diverges.
     """
     try:
-        rendered = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        rendered = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
     except Exception:
         return "<unrenderable>"
     rendered = _UUID_RE.sub("UUID", rendered)
