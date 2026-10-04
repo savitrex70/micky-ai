@@ -56,6 +56,7 @@ from rop.schemas import (
     ReasoningHandoffRead,
     ReasoningPipelineRead,
     ReasoningRunConsistencyRead,
+    ReasoningRunDiagnosticsRead,
     ReasoningRunExecutionAuditPackageRead,
     ReasoningRunExecutionBundleRead,
     ReasoningRunExecutionRead,
@@ -176,6 +177,8 @@ from rop.services import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
     ReasoningRunContractError,
+    ReasoningRunDiagnosticsContractError,
+    ReasoningRunDiagnosticsService,
     ReasoningRunExecutionAuditPackageContractError,
     ReasoningRunExecutionAuditPackageService,
     ReasoningRunExecutionBundleContractError,
@@ -271,6 +274,7 @@ reasoning_run_idempotency_consistency_service = (
 )
 reasoning_run_receipt_service = ReasoningRunReceiptService()
 reasoning_run_inspection_service = ReasoningRunInspectionService()
+reasoning_run_diagnostics_service = ReasoningRunDiagnosticsService()
 reasoning_run_receipt_provenance_audit_service = (
     ReasoningRunReceiptProvenanceAuditService()
 )
@@ -2541,6 +2545,44 @@ def inspect_reasoning_run(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-inspection contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/diagnostics",
+    response_model=ReasoningRunDiagnosticsRead,
+    status_code=status.HTTP_200_OK,
+)
+def diagnose_reasoning_run(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 143: Stage 6 operational diagnostics boundary.
+
+    Read-only diagnostics over the already persisted Stage 6
+    inspection state, delegating to the Task 142 unified inspection
+    bundle. No reasoning execution, no replay, no writes, no receipt
+    creation or mutation, no provider/model calls. The Task 140
+    ``original_result`` gap (``NOT_PERSISTED``) remains an evidence
+    limitation inherited from Task 141 and never drives a status here.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_diagnostics_service.diagnose(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-diagnostics contract violation",
         ) from exc
 
 

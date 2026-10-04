@@ -203,6 +203,7 @@ from rop.schemas.reasoning_run import (
 from rop.schemas.reasoning_run_consistency import (
     ReasoningRunConsistencyRead,
 )
+from rop.schemas.reasoning_run_diagnostics import ReasoningRunDiagnosticsRead
 from rop.schemas.reasoning_run_execution import (
     ReasoningRunExecutionRead,
     ReasoningRunExecutionStageRead,
@@ -388,6 +389,7 @@ __all__ = [
     "ReasoningRunReceiptProvenanceFindingRead",
     "ReasoningRunReceiptRead",
     "ReasoningRunRead",
+    "ReasoningRunDiagnosticsRead",
     "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",

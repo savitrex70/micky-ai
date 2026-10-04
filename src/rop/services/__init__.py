@@ -323,6 +323,11 @@ from rop.services.reasoning_run_consistency import (
     ReasoningRunConsistencyContractError,
     ReasoningRunConsistencyService,
 )
+from rop.services.reasoning_run_diagnostics import (
+    REASONING_RUN_DIAGNOSTICS_SOURCE_TASK_143,
+    ReasoningRunDiagnosticsContractError,
+    ReasoningRunDiagnosticsService,
+)
 from rop.services.reasoning_run_execution import (
     ReasoningRunExecutionContractError,
     ReasoningRunExecutionService,
@@ -631,6 +636,9 @@ __all__ = [
     "REASONING_RUN_INSPECTION_SOURCE_TASK_142",
     "ReasoningRunInspectionContractError",
     "ReasoningRunInspectionService",
+    "REASONING_RUN_DIAGNOSTICS_SOURCE_TASK_143",
+    "ReasoningRunDiagnosticsContractError",
+    "ReasoningRunDiagnosticsService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
