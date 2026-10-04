@@ -72,6 +72,7 @@ from rop.schemas import (
     ReasoningRunReplayConsistencyAuditRead,
     ReasoningRunReplayRead,
     ReasoningRunReplayRequest,
+    ReasoningRunStage6GateConsistencyAuditRead,
     ReasoningRunStage6GateRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -200,6 +201,8 @@ from rop.services import (
     ReasoningRunReplayContractError,
     ReasoningRunReplayService,
     ReasoningRunService,
+    ReasoningRunStage6GateConsistencyAuditContractError,
+    ReasoningRunStage6GateConsistencyAuditService,
     ReasoningRunStage6GateContractError,
     ReasoningRunStage6GateService,
     ReasoningSessionService,
@@ -279,6 +282,9 @@ reasoning_run_receipt_service = ReasoningRunReceiptService()
 reasoning_run_inspection_service = ReasoningRunInspectionService()
 reasoning_run_diagnostics_service = ReasoningRunDiagnosticsService()
 reasoning_run_stage_6_gate_service = ReasoningRunStage6GateService()
+reasoning_run_stage_6_gate_consistency_audit_service = (
+    ReasoningRunStage6GateConsistencyAuditService()
+)
 reasoning_run_receipt_provenance_audit_service = (
     ReasoningRunReceiptProvenanceAuditService()
 )
@@ -2628,6 +2634,51 @@ def evaluate_reasoning_run_stage_6_gate(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-stage-6-gate contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-gate/consistency-audit",
+    response_model=ReasoningRunStage6GateConsistencyAuditRead,
+    status_code=status.HTTP_200_OK,
+)
+def audit_reasoning_run_stage_6_gate_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 145: Stage 6 completion gate consistency audit.
+
+    Read-only audit of the Task 144 gate verdict against the
+    deterministic evidence from Tasks 142 and 143. Verifies the
+    published gate status agrees with the underlying evidence; a
+    mismatch yields a deterministic finding. No reasoning execution,
+    no replay, no writes, no receipt creation or mutation, no
+    provider/model calls. The Task 140 ``original_result`` gap
+    (``NOT_PERSISTED``) remains an evidence limitation and never
+    drives this audit.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_gate_consistency_audit_service.audit(
+            db, session_id
+        )
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+        ReasoningRunStage6GateConsistencyAuditContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-stage-6-gate-consistency-audit "
+            "contract violation",
         ) from exc
 
 
