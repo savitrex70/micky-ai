@@ -418,6 +418,11 @@ from rop.services.reasoning_run_replay_consistency_audit import (
     ReasoningRunReplayConsistencyAuditContractError,
     ReasoningRunReplayConsistencyAuditService,
 )
+from rop.services.reasoning_run_stage_6_certification import (
+    REASONING_RUN_STAGE_6_CERTIFICATION_SOURCE_TASK_152,
+    ReasoningRunStage6CertificationContractError,
+    ReasoningRunStage6CertificationService,
+)
 from rop.services.reasoning_run_stage_6_evidence import (
     REASONING_RUN_STAGE_6_EVIDENCE_SOURCE_TASK_148,
     ReasoningRunStage6EvidenceContractError,
@@ -703,6 +708,9 @@ __all__ = [
     "REASONING_RUN_STAGE_6_MANIFEST_CONSISTENCY_AUDIT_SOURCE_TASK_151",
     "ReasoningRunStage6ManifestConsistencyAuditContractError",
     "ReasoningRunStage6ManifestConsistencyAuditService",
+    "REASONING_RUN_STAGE_6_CERTIFICATION_SOURCE_TASK_152",
+    "ReasoningRunStage6CertificationContractError",
+    "ReasoningRunStage6CertificationService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",

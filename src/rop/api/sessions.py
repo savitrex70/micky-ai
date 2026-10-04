@@ -72,6 +72,7 @@ from rop.schemas import (
     ReasoningRunReplayConsistencyAuditRead,
     ReasoningRunReplayRead,
     ReasoningRunReplayRequest,
+    ReasoningRunStage6CertificationRead,
     ReasoningRunStage6EvidenceConsistencyAuditRead,
     ReasoningRunStage6EvidenceRead,
     ReasoningRunStage6GateConsistencyAuditRead,
@@ -207,6 +208,8 @@ from rop.services import (
     ReasoningRunReplayContractError,
     ReasoningRunReplayService,
     ReasoningRunService,
+    ReasoningRunStage6CertificationContractError,
+    ReasoningRunStage6CertificationService,
     ReasoningRunStage6EvidenceConsistencyAuditContractError,
     ReasoningRunStage6EvidenceConsistencyAuditService,
     ReasoningRunStage6EvidenceContractError,
@@ -310,6 +313,7 @@ reasoning_run_stage_6_release_manifest_service = (
 reasoning_run_stage_6_manifest_consistency_audit_service = (
     ReasoningRunStage6ManifestConsistencyAuditService()
 )
+reasoning_run_stage_6_certification_service = ReasoningRunStage6CertificationService()
 reasoning_run_stage_6_readiness_service = ReasoningRunStage6ReadinessService()
 reasoning_run_stage_6_readiness_consistency_audit_service = (
     ReasoningRunStage6ReadinessConsistencyAuditService()
@@ -2999,6 +3003,55 @@ def audit_reasoning_run_stage_6_manifest_consistency(
             detail="Internal "
             "reasoning-run-stage-6-manifest-consistency-audit contract "
             "violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-certification",
+    response_model=ReasoningRunStage6CertificationRead,
+    status_code=status.HTTP_200_OK,
+)
+def certify_reasoning_run_stage_6(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 152: final Stage 6 deterministic release certification.
+
+    Thin final orchestration/certification boundary over the canonical
+    Stage 6 chain (Tasks 144-151). Answers whether the deterministic
+    core satisfies all release-readiness and consistency requirements.
+    Certification confirms the deterministic core only: no reasoning
+    execution, no replay, no writes, no receipt creation or mutation,
+    no provider/model calls, no Stage 7. The Task 140
+    ``original_result`` gap (``NOT_PERSISTED``) remains an evidence
+    limitation and never blocks certification on its own.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_certification_service.certify(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+        ReasoningRunStage6GateConsistencyAuditContractError,
+        ReasoningRunStage6ReadinessContractError,
+        ReasoningRunStage6ReadinessConsistencyAuditContractError,
+        ReasoningRunStage6EvidenceContractError,
+        ReasoningRunStage6EvidenceConsistencyAuditContractError,
+        ReasoningRunStage6ReleaseManifestContractError,
+        ReasoningRunStage6ManifestConsistencyAuditContractError,
+        ReasoningRunStage6CertificationContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-stage-6-certification contract " "violation",
         ) from exc
 
 

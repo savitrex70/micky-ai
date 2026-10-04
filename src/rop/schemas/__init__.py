@@ -267,6 +267,9 @@ from rop.schemas.reasoning_run_replay_consistency_audit import (
 from rop.schemas.reasoning_run_replay_request import (
     ReasoningRunReplayRequest,
 )
+from rop.schemas.reasoning_run_stage_6_certification import (
+    ReasoningRunStage6CertificationRead,
+)
 from rop.schemas.reasoning_run_stage_6_evidence import (
     ReasoningRunStage6EvidenceRead,
 )
@@ -422,6 +425,7 @@ __all__ = [
     "ReasoningRunStage6ReleaseManifestComponentRead",
     "ReasoningRunStage6ReleaseManifestRead",
     "ReasoningRunStage6ManifestConsistencyAuditRead",
+    "ReasoningRunStage6CertificationRead",
     "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",
