@@ -63,6 +63,7 @@ from rop.schemas import (
     ReasoningRunIdempotencyConsistencyRead,
     ReasoningRunIdempotentExecutionRead,
     ReasoningRunIdempotentExecutionRequest,
+    ReasoningRunInspectionRead,
     ReasoningRunRead,
     ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
@@ -184,6 +185,8 @@ from rop.services import (
     ReasoningRunIdempotencyConsistencyService,
     ReasoningRunIdempotencyContractError,
     ReasoningRunIdempotencyService,
+    ReasoningRunInspectionContractError,
+    ReasoningRunInspectionService,
     ReasoningRunReceiptContractError,
     ReasoningRunReceiptProvenanceAuditContractError,
     ReasoningRunReceiptProvenanceAuditService,
@@ -267,6 +270,7 @@ reasoning_run_idempotency_consistency_service = (
     ReasoningRunIdempotencyConsistencyService()
 )
 reasoning_run_receipt_service = ReasoningRunReceiptService()
+reasoning_run_inspection_service = ReasoningRunInspectionService()
 reasoning_run_receipt_provenance_audit_service = (
     ReasoningRunReceiptProvenanceAuditService()
 )
@@ -2498,6 +2502,45 @@ def audit_reasoning_run_replay_consistency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-replay-consistency-audit contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/inspection",
+    response_model=ReasoningRunInspectionRead,
+    status_code=status.HTTP_200_OK,
+)
+def inspect_reasoning_run(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 142: unified deterministic reasoning-run inspection bundle.
+
+    Read-only aggregation of the already persisted Task 137 receipt
+    inspections, Task 138 receipt history, Task 139 provenance audit,
+    and Task 141 replay consistency audit for the exact requested
+    session. No reasoning execution, no replay, no writes, no receipt
+    creation or mutation, no provider/model calls. The Task 140
+    ``original_result`` is request material and is never reconstructed
+    or persisted here; its ``NOT_PERSISTED`` provenance is preserved
+    inside the Task 141 audit without driving the overall status.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_inspection_service.inspect(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-inspection contract violation",
         ) from exc
 
 

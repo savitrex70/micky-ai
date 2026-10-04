@@ -246,6 +246,7 @@ from rop.schemas.reasoning_run_idempotency_consistency import (
 from rop.schemas.reasoning_run_idempotency_request import (
     ReasoningRunIdempotentExecutionRequest,
 )
+from rop.schemas.reasoning_run_inspection import ReasoningRunInspectionRead
 from rop.schemas.reasoning_run_receipt import (
     ReasoningRunReceiptHistoryRead,
     ReasoningRunReceiptInspectionRead,
@@ -387,6 +388,7 @@ __all__ = [
     "ReasoningRunReceiptProvenanceFindingRead",
     "ReasoningRunReceiptRead",
     "ReasoningRunRead",
+    "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",
     "ReasoningRunReplayRead",
