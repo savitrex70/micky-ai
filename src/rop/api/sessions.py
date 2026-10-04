@@ -72,6 +72,7 @@ from rop.schemas import (
     ReasoningRunReplayConsistencyAuditRead,
     ReasoningRunReplayRead,
     ReasoningRunReplayRequest,
+    ReasoningRunStage6EvidenceRead,
     ReasoningRunStage6GateConsistencyAuditRead,
     ReasoningRunStage6GateRead,
     ReasoningRunStage6ReadinessConsistencyAuditRead,
@@ -203,6 +204,8 @@ from rop.services import (
     ReasoningRunReplayContractError,
     ReasoningRunReplayService,
     ReasoningRunService,
+    ReasoningRunStage6EvidenceContractError,
+    ReasoningRunStage6EvidenceService,
     ReasoningRunStage6GateConsistencyAuditContractError,
     ReasoningRunStage6GateConsistencyAuditService,
     ReasoningRunStage6GateContractError,
@@ -288,6 +291,7 @@ reasoning_run_receipt_service = ReasoningRunReceiptService()
 reasoning_run_inspection_service = ReasoningRunInspectionService()
 reasoning_run_diagnostics_service = ReasoningRunDiagnosticsService()
 reasoning_run_stage_6_gate_service = ReasoningRunStage6GateService()
+reasoning_run_stage_6_evidence_service = ReasoningRunStage6EvidenceService()
 reasoning_run_stage_6_readiness_service = ReasoningRunStage6ReadinessService()
 reasoning_run_stage_6_readiness_consistency_audit_service = (
     ReasoningRunStage6ReadinessConsistencyAuditService()
@@ -2779,6 +2783,52 @@ def audit_reasoning_run_stage_6_readiness_consistency(
             detail="Internal "
             "reasoning-run-stage-6-readiness-consistency-audit contract "
             "violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-evidence",
+    response_model=ReasoningRunStage6EvidenceRead,
+    status_code=status.HTTP_200_OK,
+)
+def bundle_reasoning_run_stage_6_evidence(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 148: canonical Stage 6 release evidence bundle.
+
+    Read-only evidence index over the Task 144 gate, Task 145 gate
+    consistency audit, Task 146 readiness report, and Task 147
+    readiness consistency audit. Reports the minimal canonical evidence
+    supporting the release-readiness decision; release readiness is
+    never reported when gate or readiness consistency fails. No
+    reasoning execution, no replay, no writes, no receipt creation or
+    mutation, no provider/model calls. The Task 140
+    ``original_result`` gap (``NOT_PERSISTED``) remains an evidence
+    limitation and never drives this bundle.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_evidence_service.bundle(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+        ReasoningRunStage6GateConsistencyAuditContractError,
+        ReasoningRunStage6ReadinessContractError,
+        ReasoningRunStage6ReadinessConsistencyAuditContractError,
+        ReasoningRunStage6EvidenceContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-stage-6-evidence contract " "violation",
         ) from exc
 
 
