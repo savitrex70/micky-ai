@@ -72,6 +72,7 @@ from rop.schemas import (
     ReasoningRunReplayConsistencyAuditRead,
     ReasoningRunReplayRead,
     ReasoningRunReplayRequest,
+    ReasoningRunStage6GateRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
@@ -199,6 +200,8 @@ from rop.services import (
     ReasoningRunReplayContractError,
     ReasoningRunReplayService,
     ReasoningRunService,
+    ReasoningRunStage6GateContractError,
+    ReasoningRunStage6GateService,
     ReasoningSessionService,
     ReasoningStepService,
     TemplateMatchService,
@@ -275,6 +278,7 @@ reasoning_run_idempotency_consistency_service = (
 reasoning_run_receipt_service = ReasoningRunReceiptService()
 reasoning_run_inspection_service = ReasoningRunInspectionService()
 reasoning_run_diagnostics_service = ReasoningRunDiagnosticsService()
+reasoning_run_stage_6_gate_service = ReasoningRunStage6GateService()
 reasoning_run_receipt_provenance_audit_service = (
     ReasoningRunReceiptProvenanceAuditService()
 )
@@ -2583,6 +2587,47 @@ def diagnose_reasoning_run(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-diagnostics contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-gate",
+    response_model=ReasoningRunStage6GateRead,
+    status_code=status.HTTP_200_OK,
+)
+def evaluate_reasoning_run_stage_6_gate(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 144: Stage 6 pre-LLM deterministic core completion gate.
+
+    Read-only decision surface over the Task 142 unified inspection
+    bundle and Task 143 operational diagnostics. Classifies already
+    persisted deterministic evidence as READY, BLOCKED, UNVERIFIABLE,
+    or NO_MATERIAL. No reasoning execution, no replay, no writes, no
+    receipt creation or mutation, no provider/model calls. Does not
+    start Stage 7: the Task 140 ``original_result`` gap
+    (``NOT_PERSISTED``) remains an evidence limitation and never
+    blocks the gate on its own.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_gate_service.evaluate(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-stage-6-gate contract violation",
         ) from exc
 
 
