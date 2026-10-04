@@ -354,6 +354,25 @@ class ReasoningRunStage6GateConsistencyAuditService:
             has_issues
         ):
             incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+        # Task 141's canonical session aggregation, reconstructed from
+        # the per-receipt findings with its exact precedence: a
+        # MALFORMED finding outranks INCONSISTENT, which outranks
+        # SATISFIED. Any published session state disagreeing with that
+        # reconstruction is an incoherent audit.
+        finding_states = {finding.get("replay_state", "") for finding in findings}
+        if "MALFORMED" in finding_states:
+            expected_session_state: str | None = "MALFORMED"
+        elif "INCONSISTENT" in finding_states:
+            expected_session_state = "INCONSISTENT"
+        elif finding_states == {"SATISFIED"}:
+            expected_session_state = "SATISFIED"
+        else:
+            expected_session_state = None
+        if (
+            expected_session_state is not None
+            and session_state != expected_session_state
+        ):
+            incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
         if incoherent:
             return "INCONSISTENT", sorted(set(incoherent))
         if session_state == "SATISFIED":

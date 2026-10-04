@@ -938,3 +938,86 @@ def test_audit_refuses_finding_flag_contradiction(
         finding.startswith("GATE_PROVENANCE_FINDING_INCOHERENT:")
         for finding in body["findings"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Session aggregate reconstructed with Task 141 precedence
+# ---------------------------------------------------------------------------
+
+
+def test_audit_rejects_session_state_below_finding_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    assert genuine["replay_state"] == "MALFORMED"
+    forged_audit = dict(genuine)
+    forged_audit["replay_state"] = "INCONSISTENT"
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_REPLAY_AUDIT_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_session_state_above_finding_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    assert genuine["replay_state"] == "INCONSISTENT"
+    forged_audit = dict(genuine)
+    forged_audit["replay_state"] = "MALFORMED"
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_REPLAY_AUDIT_INCOHERENT" in body["findings"]
+
+
+def test_audit_accepts_genuine_malformed_outranking() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid, user_input="Patient reports chest pain")
+    _insert_receipt(sid, "d" * 63 + "0", input_snapshot={"bad": "snapshot"})
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is True
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert body["actual_gate_status"] == "BLOCKED"
+    assert not any("INCOHERENT" in finding for finding in body["findings"])
