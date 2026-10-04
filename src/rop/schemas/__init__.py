@@ -283,6 +283,10 @@ from rop.schemas.reasoning_run_stage_6_readiness import (
 from rop.schemas.reasoning_run_stage_6_readiness_consistency_audit import (
     ReasoningRunStage6ReadinessConsistencyAuditRead,
 )
+from rop.schemas.reasoning_run_stage_6_release_manifest import (
+    ReasoningRunStage6ReleaseManifestComponentRead,
+    ReasoningRunStage6ReleaseManifestRead,
+)
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -412,6 +416,8 @@ __all__ = [
     "ReasoningRunStage6ReadinessConsistencyAuditRead",
     "ReasoningRunStage6EvidenceRead",
     "ReasoningRunStage6EvidenceConsistencyAuditRead",
+    "ReasoningRunStage6ReleaseManifestComponentRead",
+    "ReasoningRunStage6ReleaseManifestRead",
     "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",

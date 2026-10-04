@@ -78,6 +78,7 @@ from rop.schemas import (
     ReasoningRunStage6GateRead,
     ReasoningRunStage6ReadinessConsistencyAuditRead,
     ReasoningRunStage6ReadinessRead,
+    ReasoningRunStage6ReleaseManifestRead,
     ReasoningSessionCreate,
     ReasoningSessionRead,
     ReasoningStepCreate,
@@ -217,6 +218,8 @@ from rop.services import (
     ReasoningRunStage6ReadinessConsistencyAuditService,
     ReasoningRunStage6ReadinessContractError,
     ReasoningRunStage6ReadinessService,
+    ReasoningRunStage6ReleaseManifestContractError,
+    ReasoningRunStage6ReleaseManifestService,
     ReasoningSessionService,
     ReasoningStepService,
     TemplateMatchService,
@@ -297,6 +300,9 @@ reasoning_run_stage_6_gate_service = ReasoningRunStage6GateService()
 reasoning_run_stage_6_evidence_service = ReasoningRunStage6EvidenceService()
 reasoning_run_stage_6_evidence_consistency_audit_service = (
     ReasoningRunStage6EvidenceConsistencyAuditService()
+)
+reasoning_run_stage_6_release_manifest_service = (
+    ReasoningRunStage6ReleaseManifestService()
 )
 reasoning_run_stage_6_readiness_service = ReasoningRunStage6ReadinessService()
 reasoning_run_stage_6_readiness_consistency_audit_service = (
@@ -2885,6 +2891,55 @@ def audit_reasoning_run_stage_6_evidence_consistency(
             detail="Internal "
             "reasoning-run-stage-6-evidence-consistency-audit contract "
             "violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-release-manifest",
+    response_model=ReasoningRunStage6ReleaseManifestRead,
+    status_code=status.HTTP_200_OK,
+)
+def manifest_reasoning_run_stage_6_release(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 150: canonical Stage 6 release package manifest.
+
+    Read-only metadata/index boundary over the eight canonical Stage 6
+    surfaces (Tasks 142-149). Identifies each surface and its current
+    state in stable canonical order; release readiness is reported only
+    when every required invariant holds and never overrides a
+    lower-level canonical inconsistency. No reasoning execution, no
+    replay, no writes, no receipt creation or mutation, no
+    provider/model calls. The Task 140 ``original_result`` gap
+    (``NOT_PERSISTED``) remains an evidence limitation and never
+    drives this manifest.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_release_manifest_service.manifest(db, session_id)
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+        ReasoningRunStage6GateConsistencyAuditContractError,
+        ReasoningRunStage6ReadinessContractError,
+        ReasoningRunStage6ReadinessConsistencyAuditContractError,
+        ReasoningRunStage6EvidenceContractError,
+        ReasoningRunStage6EvidenceConsistencyAuditContractError,
+        ReasoningRunStage6ReleaseManifestContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal reasoning-run-stage-6-release-manifest "
+            "contract violation",
         ) from exc
 
 

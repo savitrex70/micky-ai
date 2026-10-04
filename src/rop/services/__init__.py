@@ -448,6 +448,11 @@ from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
     ReasoningRunStage6ReadinessConsistencyAuditContractError,
     ReasoningRunStage6ReadinessConsistencyAuditService,
 )
+from rop.services.reasoning_run_stage_6_release_manifest import (
+    REASONING_RUN_STAGE_6_RELEASE_MANIFEST_SOURCE_TASK_150,
+    ReasoningRunStage6ReleaseManifestContractError,
+    ReasoningRunStage6ReleaseManifestService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -687,6 +692,9 @@ __all__ = [
     "REASONING_RUN_STAGE_6_EVIDENCE_CONSISTENCY_AUDIT_SOURCE_TASK_149",
     "ReasoningRunStage6EvidenceConsistencyAuditContractError",
     "ReasoningRunStage6EvidenceConsistencyAuditService",
+    "REASONING_RUN_STAGE_6_RELEASE_MANIFEST_SOURCE_TASK_150",
+    "ReasoningRunStage6ReleaseManifestContractError",
+    "ReasoningRunStage6ReleaseManifestService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
