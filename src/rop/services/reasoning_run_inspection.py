@@ -18,7 +18,6 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from rop.repositories.reasoning_run_receipt import ReasoningRunReceiptRepository
 from rop.schemas.reasoning_run_inspection import ReasoningRunInspectionRead
 from rop.services.reasoning_run_receipt import (
     ReasoningRunReceiptContractError,
@@ -60,7 +59,6 @@ class ReasoningRunInspectionService:
 
     def __init__(
         self,
-        receipt_repository: ReasoningRunReceiptRepository | None = None,
         receipt_service: ReasoningRunReceiptService | None = None,
         provenance_audit_service: (
             ReasoningRunReceiptProvenanceAuditService | None
@@ -69,7 +67,6 @@ class ReasoningRunInspectionService:
             ReasoningRunReplayConsistencyAuditService | None
         ) = None,
     ) -> None:
-        self.receipt_repository = receipt_repository or ReasoningRunReceiptRepository()
         self.receipt_service = receipt_service or ReasoningRunReceiptService()
         self.provenance_audit_service = (
             provenance_audit_service or ReasoningRunReceiptProvenanceAuditService()
