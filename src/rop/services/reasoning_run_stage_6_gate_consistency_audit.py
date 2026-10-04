@@ -1,16 +1,20 @@
 """Task 145: Stage 6 completion gate consistency audit service.
 
 Read-only audit of the complete Task 144 gate contract against
-independent deterministic evidence: the Task 143 diagnostics, Task 142
-inspection bundle, Task 139 provenance audit, and Task 141 replay
-consistency audit outputs. Verifies every decision-relevant gate
-field -- ``gate_status``, ``ready``, ``receipt_status``,
-``history_status``, ``provenance_status``, ``replay_status``,
-``inspection_status``, ``diagnostics_status`` -- including status /
-boolean coherence. Reuses the existing services; reimplements no
-receipt, provenance, replay, inspection, diagnostics, or
-gate-classification validation logic (the diagnostics-health rule is
-reused verbatim from Task 144). No reasoning execution, no replay
+independent deterministic evidence: the Task 142 inspection bundle,
+Task 139 provenance audit, and Task 141 replay consistency audit
+outputs. Verifies every decision-relevant gate field --
+``gate_status``, ``ready``, ``receipt_status``, ``history_status``,
+``provenance_status``, ``replay_status``, ``inspection_status``,
+``diagnostics_status`` -- including status / boolean coherence. The
+expected provenance and replay states are derived from the owning
+Task 139/141 audits, never from the Task 143 presentation mapping;
+Task 143 diagnostics is consumed only as a cross-check surface, and a
+disagreement between canonical evidence and the diagnostics
+presentation is reported explicitly. Reuses the existing services;
+reimplements no receipt, provenance, replay, inspection, diagnostics,
+or gate-classification validation logic (the diagnostics-health rule
+is reused verbatim from Task 144). No reasoning execution, no replay
 engine invocation, no persistence, no provider/model calls. The Task
 140 ``original_result`` is request material, never persisted, so it is
 never reconstructed here; its ``NOT_PERSISTED`` provenance is not an
@@ -140,7 +144,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
                 "onto the canonical audit schema",
             ) from exc
 
-        expected = self._expected_gate(
+        expected, presentation_findings = self._expected_gate(
             diagnostics, inspection, provenance_audit, replay_audit
         )
         actual = {
@@ -155,6 +159,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
         }
 
         findings = list(gate["findings"])
+        findings.extend(presentation_findings)
         if expected["gate_status"] != actual["gate_status"]:
             findings.append(
                 "GATE_STATUS_MISMATCH:"
@@ -201,6 +206,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
                     "diagnostics_status",
                 )
             )
+            and not presentation_findings
         )
 
         audit = {
@@ -227,28 +233,89 @@ class ReasoningRunStage6GateConsistencyAuditService:
         return validated.model_dump()
 
     @staticmethod
+    def _canonical_provenance_status(
+        provenance_audit: dict[str, Any],
+    ) -> str:
+        """Derive provenance state from the owning Task 139 audit.
+
+        Canonical Task 139 semantics over its own fields: no examined
+        material is NO_MATERIAL; a consistent audit over persisted
+        material is CONSISTENT; a pure missing-binding-evidence gap
+        (``FINGERPRINT_PROVENANCE_NOT_PERSISTED`` only) is
+        UNVERIFIABLE, never tampering; any genuine contradiction is
+        INCONSISTENT.
+        """
+        if provenance_audit.get("completed_receipts_examined", 0) == 0:
+            return "NO_MATERIAL"
+        if provenance_audit.get("audit_consistent", False):
+            return "CONSISTENT"
+        for finding in provenance_audit.get("findings", []):
+            issues = set(finding.get("provenance_issues", []))
+            if issues and not issues <= {"FINGERPRINT_PROVENANCE_NOT_PERSISTED"}:
+                return "INCONSISTENT"
+        return "UNVERIFIABLE"
+
+    @staticmethod
+    def _canonical_replay_status(replay_audit: dict[str, Any]) -> str:
+        """Derive replay state from the owning Task 141 audit.
+
+        Canonical Task 141 semantics over its own ``replay_state``: a
+        structurally readable but contract-violating record is
+        INCONSISTENT; structurally unverifiable material (including
+        missing binding evidence) is UNVERIFIABLE; the architectural
+        ``original_result`` gap (``NOT_PERSISTED``) is not an issue
+        code and can never surface here as INCONSISTENT.
+        """
+        state = replay_audit.get("replay_state", "NO_MATERIAL")
+        if state == "NO_MATERIAL":
+            return "NO_MATERIAL"
+        if state == "SATISFIED":
+            return "CONSISTENT"
+        if state == "INCONSISTENT":
+            return "INCONSISTENT"
+        return "UNVERIFIABLE"
+
+    @classmethod
     def _expected_gate(
+        cls,
         diagnostics: dict[str, Any],
         inspection: dict[str, Any],
         provenance_audit: dict[str, Any],
         replay_audit: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Derive the expected Task 144 contract from upstream evidence.
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Derive the expected Task 144 contract from canonical evidence.
 
-        Independent expectation over already computed outputs, using
-        the canonical Task 144 semantics: completed material decides
-        NO_MATERIAL; contradiction outranks missing evidence; the
-        architectural ``original_result`` gap never appears here
-        because it is not an issue code anywhere upstream. An unknown
-        combination never silently passes as READY.
+        Provenance, replay, and inspection states come from their
+        owning Task 139/141/142 outputs; diagnostics health uses the
+        shared Task 144 helper over those canonical states. Task 143
+        diagnostics is compared as a cross-check surface only: a
+        disagreement between canonical evidence and the diagnostics
+        presentation yields explicit presentation findings and fails
+        consistency, but the expected gate itself never follows a
+        forged presentation. An unknown combination never silently
+        passes as READY.
         """
-        completed = diagnostics["completed_receipts"]
-        inspection_status = diagnostics["inspection_status"]
-        provenance_status = diagnostics["provenance_status"]
-        replay_status = diagnostics["replay_consistency_status"]
+        completed = len(inspection["receipt_history"]["receipts"])
+        inspection_status = inspection["overall_status"]
+        provenance_status = cls._canonical_provenance_status(provenance_audit)
+        replay_status = cls._canonical_replay_status(replay_audit)
         diagnostics_status = derive_diagnostics_health(
             completed, provenance_status, replay_status
         )
+
+        presentation_findings: list[str] = []
+        if diagnostics.get("provenance_status") != provenance_status:
+            presentation_findings.append(
+                "GATE_PROVENANCE_PRESENTATION_MISMATCH:"
+                f"expected={provenance_status},"
+                f"actual={diagnostics.get('provenance_status')}"
+            )
+        if diagnostics.get("replay_consistency_status") != replay_status:
+            presentation_findings.append(
+                "GATE_REPLAY_PRESENTATION_MISMATCH:"
+                f"expected={replay_status},"
+                f"actual={diagnostics.get('replay_consistency_status')}"
+            )
 
         receipts = inspection["receipt_history"]["receipts"]
         if completed == 0:
@@ -287,13 +354,16 @@ class ReasoningRunStage6GateConsistencyAuditService:
         else:
             gate_status = "BLOCKED"
 
-        return {
-            "gate_status": gate_status,
-            "ready": gate_status == "READY",
-            "receipt_status": receipt_status,
-            "history_status": history_status,
-            "provenance_status": provenance_status,
-            "replay_status": replay_status,
-            "inspection_status": inspection_status,
-            "diagnostics_status": diagnostics_status,
-        }
+        return (
+            {
+                "gate_status": gate_status,
+                "ready": gate_status == "READY",
+                "receipt_status": receipt_status,
+                "history_status": history_status,
+                "provenance_status": provenance_status,
+                "replay_status": replay_status,
+                "inspection_status": inspection_status,
+                "diagnostics_status": diagnostics_status,
+            },
+            presentation_findings,
+        )

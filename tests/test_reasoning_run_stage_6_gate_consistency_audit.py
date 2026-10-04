@@ -30,6 +30,9 @@ from rop.models.reasoning_run_receipt import ReasoningRunReceipt
 from rop.schemas.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditRead,
 )
+from rop.services.reasoning_run_diagnostics import (
+    ReasoningRunDiagnosticsService,
+)
 from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
@@ -644,3 +647,95 @@ def test_audit_detects_ready_true_with_blocked_status(
     assert body["gate_consistent"] is False
     assert "GATE_STATUS_MISMATCH:expected=READY,actual=BLOCKED" in body["findings"]
     assert "GATE_READY_INCOHERENT:status=BLOCKED,ready=True" in body["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Canonical-evidence independence (Task 139/141 own the derivation)
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunDiagnosticsService().diagnose(db, sid)
+    forged_diagnostics = dict(genuine)
+    forged_diagnostics.update(overrides)
+
+    def _forged_diagnose(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_diagnostics
+
+    monkeypatch.setattr(ReasoningRunDiagnosticsService, "diagnose", _forged_diagnose)
+    return _audit(sid)
+
+
+def test_audit_detects_forged_diagnostics_provenance_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    body = _audit_with_forged_diagnostics(
+        monkeypatch, sid, provenance_status="CONSISTENT"
+    )
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert (
+        "GATE_PROVENANCE_PRESENTATION_MISMATCH:"
+        "expected=INCONSISTENT,actual=CONSISTENT" in body["findings"]
+    )
+
+
+def test_audit_detects_forged_diagnostics_replay_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    body = _audit_with_forged_diagnostics(
+        monkeypatch, sid, replay_consistency_status="CONSISTENT"
+    )
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert (
+        "GATE_REPLAY_PRESENTATION_MISMATCH:expected=INCONSISTENT,"
+        "actual=CONSISTENT" in body["findings"]
+    )
+
+
+def test_audit_derives_unverifiable_from_canonical_gap_evidence() -> None:
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is True
+    assert body["expected_gate_status"] == "UNVERIFIABLE"
+    assert body["actual_gate_status"] == "UNVERIFIABLE"
+    assert "FINGERPRINT_PROVENANCE_NOT_PERSISTED" in body["findings"]
+    assert "REPLAY_INPUT_SNAPSHOT_NOT_PERSISTED" in body["findings"]
+    assert "REPLAY_RECORD_TAMPERED" not in body["findings"]
+    assert "FINGERPRINT_PROVENANCE_MISMATCH" not in body["findings"]
+    assert not any("PRESENTATION_MISMATCH" in finding for finding in body["findings"])
+
+
+def test_audit_healthy_chain_has_no_presentation_mismatch() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is True
+    assert body["expected_gate_status"] == "READY"
+    assert body["actual_gate_status"] == "READY"
+    assert body["findings"] == []
+    assert not any("PRESENTATION_MISMATCH" in finding for finding in body["findings"])
