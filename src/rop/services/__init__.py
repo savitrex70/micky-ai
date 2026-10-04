@@ -433,6 +433,11 @@ from rop.services.reasoning_run_stage_6_readiness import (
     ReasoningRunStage6ReadinessContractError,
     ReasoningRunStage6ReadinessService,
 )
+from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
+    REASONING_RUN_STAGE_6_READINESS_CONSISTENCY_AUDIT_SOURCE_TASK_147,
+    ReasoningRunStage6ReadinessConsistencyAuditContractError,
+    ReasoningRunStage6ReadinessConsistencyAuditService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -663,6 +668,9 @@ __all__ = [
     "REASONING_RUN_STAGE_6_READINESS_SOURCE_TASK_146",
     "ReasoningRunStage6ReadinessContractError",
     "ReasoningRunStage6ReadinessService",
+    "REASONING_RUN_STAGE_6_READINESS_CONSISTENCY_AUDIT_SOURCE_TASK_147",
+    "ReasoningRunStage6ReadinessConsistencyAuditContractError",
+    "ReasoningRunStage6ReadinessConsistencyAuditService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
