@@ -1,0 +1,44 @@
+rules:
+  - rule_id: "pe_dyspnea_obs"
+    hypothesis: "pulmonary_embolism"
+    target: "observation"
+    required_findings: ["shortness of breath"]
+    supporting_findings: ["dyspnea", "hypoxia", "tachycardia", "tachypnea", "hemoptysis", "chest pain"]
+    contradicting_findings: ["wheezing", "relieved by bronchodilator", "cough", "fever"]
+    weight: 0.8
+    confidence: 0.9
+    reason: "Dyspnea with hypoxia, tachycardia, or hemoptysis supports PE."
+    source: "evidence_rules"
+
+  - rule_id: "pe_risk_factor_entity"
+    hypothesis: "pulmonary_embolism"
+    target: "entity"
+    required_findings: ["immobility"]
+    supporting_findings: ["recent surgery", "cancer", "pregnancy", "dvt", "immobility"]
+    contradicting_findings: ["no risk factors"]
+    weight: 0.5
+    confidence: 0.85
+    reason: "Risk factors support PE."
+    source: "evidence_rules"
+
+  - rule_id: "pneumonia_dyspnea_obs"
+    hypothesis: "pneumonia"
+    target: "observation"
+    required_findings: ["shortness of breath"]
+    supporting_findings: ["fever", "cough", "sputum", "crackles", "chest pain"]
+    contradicting_findings: ["wheezing", "no fever", "relieved by bronchodilator"]
+    weight: 0.6
+    confidence: 0.9
+    reason: "Fever, cough, and sputum production support pneumonia."
+    source: "evidence_rules"
+
+  - rule_id: "copd_dyspnea_obs"
+    hypothesis: "copd_exacerbation"
+    target: "observation"
+    required_findings: ["shortness of breath", "wheezing"]
+    supporting_findings: ["wheezing", "cough", "sputum", "history of copd"]
+    contradicting_findings: ["fever", "no wheezing"]
+    weight: 0.5
+    confidence: 0.8
+    reason: "Wheezing and chronic cough history support COPD exacerbation."
+    source: "evidence_rules"

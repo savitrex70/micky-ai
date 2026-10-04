@@ -1,0 +1,90 @@
+"""Task 057: provider abstraction for the LLM reasoning boundary.
+
+A minimal Protocol -- not a framework. The Task 057 service depends
+only on this interface. ROP itself stays model-agnostic: no concrete
+model runtime is part of the architecture, and tests inject a fake
+provider so the unit suite never needs a running model server.
+"""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from rop.services.llm_boundary_contract import PROVIDER_RESPONSE_REQUIRED_FIELDS
+
+
+@dataclass(frozen=True)
+class LLMReasoningProviderResponse:
+    """A single provider response, before any ROP validation."""
+
+    provider: str
+    model: str
+    text: str
+
+
+# Loud rather than silent: the declared response shape must match the
+# canonical Task 113 registry exactly.
+assert tuple(LLMReasoningProviderResponse.__dataclass_fields__) == tuple(
+    PROVIDER_RESPONSE_REQUIRED_FIELDS
+)
+
+
+class LLMReasoningProviderError(Exception):
+    """The provider could not produce a response.
+
+    Used for network failures, timeouts, non-200 responses, missing
+    configuration, or any other condition where the provider never
+    returned model text. The Task 057 service translates this into
+    MODEL_UNAVAILABLE; it is never surfaced to callers raw.
+    """
+
+
+class LLMReasoningProvider(Protocol):
+    """Structural interface the Task 057 service depends on."""
+
+    provider_name: str
+    model_name: str
+
+    def generate_reasoning(
+        self, request: LLMReasoningRequest
+    ) -> LLMReasoningProviderResponse: ...
+
+
+@dataclass(frozen=True)
+class LLMReasoningRequest:
+    """What the model is allowed to receive, and nothing else.
+
+    Built exclusively from a validated Task 055 canonical context.
+    Contains no database handles, no filesystem paths, no environment
+    variables, no credentials, and no Python objects.
+
+    Task 114: the request is a defensive snapshot. The payload is
+    deep-copied at construction, so later mutation of the caller's dict
+    (or of shared nested structures) cannot change what the provider
+    sees. Hand the provider ``snapshot()``, never the ROP-owned
+    instance, so provider-side mutation cannot reach ROP state either.
+    The dataclass stays frozen, so the fingerprint binding cannot be
+    replaced after construction.
+    """
+
+    payload: dict[str, Any]
+    context_fingerprint: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", copy.deepcopy(self.payload))
+
+    def snapshot(self) -> LLMReasoningRequest:
+        """Return an independent copy for exactly one provider handoff."""
+        return LLMReasoningRequest(
+            payload=copy.deepcopy(self.payload),
+            context_fingerprint=self.context_fingerprint,
+        )
+
+    def to_model_json(self) -> dict[str, Any]:
+        """Return a fresh copy of the payload the provider serializes."""
+        return {
+            **copy.deepcopy(self.payload),
+            "context_fingerprint": self.context_fingerprint,
+        }

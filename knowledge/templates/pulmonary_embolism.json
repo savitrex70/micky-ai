@@ -1,0 +1,37 @@
+{
+  "name": "pulmonary_embolism",
+  "category": "Pulmonology",
+  "description": "Pulmonary embolism (PE) assessment template for suspected clot in the lungs.",
+  "priority": 2,
+  "trigger_rules": {
+    "symptom": [
+      "shortness of breath",
+      "dyspnea",
+      "chest pain",
+      "coughing blood",
+      "hemoptysis"
+    ],
+    "risk_factor": [
+      "recent surgery",
+      "immobility",
+      "history of dvt",
+      "cancer",
+      "pregnancy"
+    ],
+    "vital_sign": [
+      "tachycardia",
+      "tachypnea",
+      "low oxygen saturation",
+      "hypoxia"
+    ]
+  },
+  "required_information": [
+    "age",
+    "sex",
+    "vital_signs",
+    "oxygen_saturation",
+    "d_dimer",
+    "ct_angiography",
+    "past_medical_history"
+  ]
+}

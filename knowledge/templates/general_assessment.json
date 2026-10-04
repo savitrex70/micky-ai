@@ -1,0 +1,31 @@
+{
+  "name": "general_assessment",
+  "category": "General",
+  "description": "Default general clinical assessment template used when no specific template matches.",
+  "priority": 99,
+  "trigger_rules": {
+    "symptom": [
+      "pain",
+      "fever",
+      "cough",
+      "fatigue",
+      "nausea",
+      "vomiting",
+      "headache",
+      "dizziness"
+    ],
+    "general": [
+      "malaise",
+      "weakness",
+      "loss of appetite"
+    ]
+  },
+  "required_information": [
+    "age",
+    "sex",
+    "chief_complaint",
+    "vital_signs",
+    "medical_history",
+    "medications"
+  ]
+}

@@ -1,0 +1,81 @@
+hypotheses:
+  - name: "migraine"
+    category: "Neurology"
+    description: "Recurrent headache with associated symptoms"
+    required_findings:
+      - "headache"
+    supporting_findings:
+      - "throbbing"
+      - "unilateral"
+      - "photophobia"
+      - "phonophobia"
+      - "nausea"
+    contradicting_findings:
+      - "sudden onset"
+      - "fever"
+    risk_factors:
+      - "family history"
+      - "female"
+      - "hormonal changes"
+    urgency: "low"
+    base_score: 0.6
+
+  - name: "tension_type_headache"
+    category: "Neurology"
+    description: "Bilateral head pressure resembling a tight band"
+    required_findings:
+      - "headache"
+    supporting_findings:
+      - "pressure"
+      - "bilateral"
+      - "tight band"
+    contradicting_findings:
+      - "throbbing"
+      - "unilateral"
+      - "photophobia"
+      - "fever"
+    risk_factors:
+      - "stress"
+      - "poor posture"
+    urgency: "low"
+    base_score: 0.4
+
+  - name: "meningitis"
+    category: "Neurology"
+    description: "Infection of the protective membranes around the brain"
+    required_findings:
+      - "headache"
+      - "fever"
+    supporting_findings:
+      - "photophobia"
+      - "neck stiffness"
+      - "confusion"
+      - "rash"
+    contradicting_findings:
+      - "gradual onset"
+      - "no fever"
+    risk_factors:
+      - "recent illness"
+      - "immunocompromised"
+      - "close contact with sick person"
+    urgency: "high"
+    base_score: 0.85
+
+  - name: "brain_tumor"
+    category: "Neurology"
+    description: "Mass in the brain causing increased intracranial pressure"
+    required_findings:
+      - "headache"
+    supporting_findings:
+      - "worse in morning"
+      - "progressive"
+      - "neurological deficit"
+      - "papilledema"
+    contradicting_findings:
+      - "relieved by medication"
+      - "intermittent"
+    risk_factors:
+      - "age > 40"
+      - "neurological symptoms"
+    urgency: "high"
+    base_score: 0.7
