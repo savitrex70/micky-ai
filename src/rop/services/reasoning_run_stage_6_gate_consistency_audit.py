@@ -144,7 +144,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
                 "onto the canonical audit schema",
             ) from exc
 
-        expected, presentation_findings = self._expected_gate(
+        expected, coherence_findings = self._expected_gate(
             diagnostics, inspection, provenance_audit, replay_audit
         )
         actual = {
@@ -159,20 +159,21 @@ class ReasoningRunStage6GateConsistencyAuditService:
         }
 
         findings = list(gate["findings"])
-        findings.extend(presentation_findings)
+        mismatch_findings: list[str] = []
+        mismatch_findings.extend(coherence_findings)
         if expected["gate_status"] != actual["gate_status"]:
-            findings.append(
+            mismatch_findings.append(
                 "GATE_STATUS_MISMATCH:"
                 f"expected={expected['gate_status']},"
                 f"actual={actual['gate_status']}"
             )
         if expected["ready"] != actual["ready"]:
-            findings.append(
+            mismatch_findings.append(
                 "GATE_READY_MISMATCH:"
                 f"expected={expected['ready']},actual={actual['ready']}"
             )
         if actual["ready"] != (actual["gate_status"] == "READY"):
-            findings.append(
+            mismatch_findings.append(
                 "GATE_READY_INCOHERENT:"
                 f"status={actual['gate_status']},ready={actual['ready']}"
             )
@@ -185,10 +186,11 @@ class ReasoningRunStage6GateConsistencyAuditService:
             "diagnostics_status",
         ):
             if expected[field] != actual[field]:
-                findings.append(
+                mismatch_findings.append(
                     f"GATE_{field.upper()}_MISMATCH:"
                     f"expected={expected[field]},actual={actual[field]}"
                 )
+        findings.extend(mismatch_findings)
         findings = sorted(set(findings))
 
         consistent = (
@@ -206,7 +208,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
                     "diagnostics_status",
                 )
             )
-            and not presentation_findings
+            and not mismatch_findings
         )
 
         audit = {
@@ -232,48 +234,133 @@ class ReasoningRunStage6GateConsistencyAuditService:
             ) from exc
         return validated.model_dump()
 
-    @staticmethod
+    @classmethod
     def _canonical_provenance_status(
+        cls,
         provenance_audit: dict[str, Any],
-    ) -> str:
-        """Derive provenance state from the owning Task 139 audit.
+    ) -> tuple[str, list[str]]:
+        """Derive provenance state from the owning Task 139 audit output.
 
-        Canonical Task 139 semantics over its own fields: no examined
-        material is NO_MATERIAL; a consistent audit over persisted
-        material is CONSISTENT; a pure missing-binding-evidence gap
+        The verdict comes from the audit's own per-receipt evidence,
+        never from its summary boolean alone: every finding's
+        ``receipt_consistent`` flag must agree with its
+        ``provenance_issues``, the session ``audit_consistent`` flag
+        must agree with the findings, and the examined count must agree
+        with the findings length. Any internal disagreement is an
+        incoherent audit and yields INCONSISTENT with an explicit
+        finding. Otherwise: no examined material is NO_MATERIAL; empty
+        issues everywhere is CONSISTENT; a pure
+        missing-binding-evidence gap
         (``FINGERPRINT_PROVENANCE_NOT_PERSISTED`` only) is
         UNVERIFIABLE, never tampering; any genuine contradiction is
         INCONSISTENT.
         """
-        if provenance_audit.get("completed_receipts_examined", 0) == 0:
-            return "NO_MATERIAL"
-        if provenance_audit.get("audit_consistent", False):
-            return "CONSISTENT"
-        for finding in provenance_audit.get("findings", []):
+        incoherent: list[str] = []
+        examined = provenance_audit.get("completed_receipts_examined", 0)
+        findings = provenance_audit.get("findings", [])
+        if examined == 0:
+            if findings or not provenance_audit.get("audit_consistent", True):
+                incoherent.append("GATE_PROVENANCE_AUDIT_INCOHERENT")
+                return "INCONSISTENT", incoherent
+            return "NO_MATERIAL", incoherent
+        if len(findings) != examined:
+            incoherent.append("GATE_PROVENANCE_AUDIT_INCOHERENT")
+        for finding in findings:
+            issues = set(finding.get("provenance_issues", []))
+            if finding.get("receipt_consistent", False) == bool(issues):
+                incoherent.append(
+                    "GATE_PROVENANCE_FINDING_INCOHERENT:"
+                    f"{finding.get('receipt_id', '')}"
+                )
+        if provenance_audit.get("audit_consistent", False) == any(
+            finding.get("provenance_issues", []) for finding in findings
+        ):
+            incoherent.append("GATE_PROVENANCE_AUDIT_INCOHERENT")
+        if incoherent:
+            return "INCONSISTENT", sorted(set(incoherent))
+        for finding in findings:
             issues = set(finding.get("provenance_issues", []))
             if issues and not issues <= {"FINGERPRINT_PROVENANCE_NOT_PERSISTED"}:
-                return "INCONSISTENT"
-        return "UNVERIFIABLE"
+                return "INCONSISTENT", []
+        if any(finding.get("provenance_issues", []) for finding in findings):
+            return "UNVERIFIABLE", []
+        return "CONSISTENT", []
 
-    @staticmethod
-    def _canonical_replay_status(replay_audit: dict[str, Any]) -> str:
-        """Derive replay state from the owning Task 141 audit.
+    @classmethod
+    def _canonical_replay_status(
+        cls,
+        replay_audit: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        """Derive replay state from the owning Task 141 audit output.
 
-        Canonical Task 141 semantics over its own ``replay_state``: a
-        structurally readable but contract-violating record is
-        INCONSISTENT; structurally unverifiable material (including
-        missing binding evidence) is UNVERIFIABLE; the architectural
-        ``original_result`` gap (``NOT_PERSISTED``) is not an issue
-        code and can never surface here as INCONSISTENT.
+        Coherence first: the session ``replay_state``,
+        ``audit_consistent`` flag, and every finding's
+        ``replay_consistent`` flag and ``replay_state`` must agree with
+        the actually present ``replay_issues``, and
+        ``original_result_provenance`` must carry the architectural
+        ``NOT_PERSISTED`` marker. Any internal disagreement is an
+        incoherent audit and yields INCONSISTENT -- a ``SATISFIED``
+        verdict over tampered issues is refused, never trusted.
+        Once coherence holds, the verdict follows Task 141's own
+        classification (``SATISFIED`` clean, ``INCONSISTENT``
+        contract-violating, ``MALFORMED`` structurally unverifiable
+        including missing binding evidence), so a genuine
+        malformed-but-flagged record agrees with the gate instead of
+        manufacturing a second verdict. The ``NOT_PERSISTED``
+        original-result gap is not an issue code and can never surface
+        here as INCONSISTENT.
         """
-        state = replay_audit.get("replay_state", "NO_MATERIAL")
-        if state == "NO_MATERIAL":
-            return "NO_MATERIAL"
-        if state == "SATISFIED":
-            return "CONSISTENT"
-        if state == "INCONSISTENT":
-            return "INCONSISTENT"
-        return "UNVERIFIABLE"
+        incoherent: list[str] = []
+        examined = replay_audit.get("completed_receipts_examined", 0)
+        findings = replay_audit.get("findings", [])
+        if replay_audit.get("original_result_provenance") != "NOT_PERSISTED":
+            incoherent.append(
+                "GATE_REPLAY_ORIGINAL_PROVENANCE_UNEXPECTED:"
+                f"{replay_audit.get('original_result_provenance')}"
+            )
+        if examined == 0:
+            if (
+                findings
+                or not replay_audit.get("audit_consistent", True)
+                or replay_audit.get("replay_state", "NO_MATERIAL") != "NO_MATERIAL"
+            ):
+                incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+                return "INCONSISTENT", sorted(set(incoherent))
+            return "NO_MATERIAL", []
+        if len(findings) != examined:
+            incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+        for finding in findings:
+            issues = set(finding.get("replay_issues", []))
+            state = finding.get("replay_state", "")
+            if finding.get("replay_consistent", False) == bool(issues):
+                incoherent.append(
+                    "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
+                )
+            if (state == "SATISFIED") == bool(issues):
+                incoherent.append(
+                    "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
+                )
+            if state not in ("SATISFIED", "INCONSISTENT", "MALFORMED"):
+                incoherent.append(
+                    "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
+                )
+        if replay_audit.get("audit_consistent", False) == any(
+            finding.get("replay_issues", []) for finding in findings
+        ):
+            incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+        session_state = replay_audit.get("replay_state", "")
+        has_issues = any(finding.get("replay_issues", []) for finding in findings)
+        if session_state == "NO_MATERIAL" or (session_state == "SATISFIED") == (
+            has_issues
+        ):
+            incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+        if incoherent:
+            return "INCONSISTENT", sorted(set(incoherent))
+        if session_state == "SATISFIED":
+            return "CONSISTENT", []
+        if session_state == "INCONSISTENT":
+            return "INCONSISTENT", []
+        return "UNVERIFIABLE", []
 
     @classmethod
     def _expected_gate(
@@ -297,13 +384,17 @@ class ReasoningRunStage6GateConsistencyAuditService:
         """
         completed = len(inspection["receipt_history"]["receipts"])
         inspection_status = inspection["overall_status"]
-        provenance_status = cls._canonical_provenance_status(provenance_audit)
-        replay_status = cls._canonical_replay_status(replay_audit)
+        provenance_status, provenance_incoherent = cls._canonical_provenance_status(
+            provenance_audit
+        )
+        replay_status, replay_incoherent = cls._canonical_replay_status(replay_audit)
         diagnostics_status = derive_diagnostics_health(
             completed, provenance_status, replay_status
         )
 
         presentation_findings: list[str] = []
+        presentation_findings.extend(provenance_incoherent)
+        presentation_findings.extend(replay_incoherent)
         if diagnostics.get("provenance_status") != provenance_status:
             presentation_findings.append(
                 "GATE_PROVENANCE_PRESENTATION_MISMATCH:"

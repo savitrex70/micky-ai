@@ -437,7 +437,9 @@ def test_audit_does_not_invoke_replay_or_persist() -> None:
         "from rop.services.reasoning_run_orchestration",
         ".replay(",
         "record_completed",
-        "original_result",
+        "original_result=",
+        'original_result"',
+        "original_result'",
         "db.commit",
         "db.add",
         "db.flush",
@@ -450,6 +452,11 @@ def test_audit_does_not_invoke_replay_or_persist() -> None:
         "httpx",
     ):
         assert token not in code, token
+    # The only permitted original_result* reference is reading the
+    # architectural provenance marker to verify it is NOT_PERSISTED;
+    # the marker must never be reconstructed, replayed, or persisted.
+    assert "original_result_provenance" in code
+    assert code.count("original_result") == code.count("original_result_provenance")
 
 
 def test_audit_creates_no_persistence() -> None:
@@ -739,3 +746,195 @@ def test_audit_healthy_chain_has_no_presentation_mismatch() -> None:
     assert body["actual_gate_status"] == "READY"
     assert body["findings"] == []
     assert not any("PRESENTATION_MISMATCH" in finding for finding in body["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Internally contradictory canonical audits are refused, never trusted
+# ---------------------------------------------------------------------------
+
+
+def test_audit_refuses_contradictory_provenance_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_receipt_provenance_audit import (
+        ReasoningRunReceiptProvenanceAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReceiptProvenanceAuditService().audit(db, sid)
+    assert genuine["audit_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["findings"] = [
+        {
+            "receipt_id": genuine["findings"][0]["receipt_id"],
+            "input_fingerprint": genuine["findings"][0]["input_fingerprint"],
+            "receipt_consistent": False,
+            "fingerprint_binding": "INVALID",
+            "provenance_issues": ["FINGERPRINT_PROVENANCE_MISMATCH"],
+        }
+    ]
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReceiptProvenanceAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_PROVENANCE_AUDIT_INCOHERENT" in body["findings"]
+    assert "FINGERPRINT_PROVENANCE_MISMATCH" in body["findings"]
+
+
+def test_audit_refuses_satisfied_replay_with_tamper_issues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    assert genuine["replay_state"] == "SATISFIED"
+    forged_audit = dict(genuine)
+    forged_audit["audit_consistent"] = False
+    forged_audit["invalid_receipts"] = 1
+    forged_audit["valid_receipts"] = 0
+    forged_audit["findings"] = [
+        {
+            "receipt_id": genuine["findings"][0]["receipt_id"],
+            "input_fingerprint": genuine["findings"][0]["input_fingerprint"],
+            "replay_consistent": False,
+            "replay_state": "SATISFIED",
+            "replay_contract_finding": "PERSISTED_MATERIAL_VERIFIABLE",
+            "replay_issues": ["REPLAY_RECORD_TAMPERED"],
+        }
+    ]
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_REPLAY_AUDIT_INCOHERENT" in body["findings"]
+    assert "REPLAY_RECORD_TAMPERED" in body["findings"]
+
+
+def test_audit_refuses_consistent_replay_with_issues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["findings"] = [dict(genuine["findings"][0])]
+    forged_audit["findings"][0]["replay_issues"] = [
+        "REPLAY_EXOGENOUS_PROJECTION_MISMATCH"
+    ]
+    forged_audit["invalid_receipts"] = 1
+    forged_audit["valid_receipts"] = 0
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_REPLAY_AUDIT_INCOHERENT" in body["findings"]
+
+
+def test_audit_refuses_unexpected_original_result_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["original_result_provenance"] = "PERSISTED"
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_ORIGINAL_PROVENANCE_UNEXPECTED:PERSISTED" in body["findings"]
+
+
+def test_audit_refuses_finding_flag_contradiction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_receipt_provenance_audit import (
+        ReasoningRunReceiptProvenanceAuditService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReceiptProvenanceAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["findings"] = [dict(genuine["findings"][0])]
+    forged_audit["findings"][0]["provenance_issues"] = [
+        "FINGERPRINT_PROVENANCE_NOT_PERSISTED"
+    ]
+    forged_audit["findings"][0]["receipt_consistent"] = True
+    forged_audit["invalid_receipts"] = 1
+    forged_audit["valid_receipts"] = 0
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReceiptProvenanceAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is False
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert any(
+        finding.startswith("GATE_PROVENANCE_FINDING_INCOHERENT:")
+        for finding in body["findings"]
+    )
