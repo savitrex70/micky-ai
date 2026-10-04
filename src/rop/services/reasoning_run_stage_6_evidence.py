@@ -89,8 +89,11 @@ class ReasoningRunStage6EvidenceService:
         Delegates to the existing Task 144/145/146/147 services.
         Read-only: no writes, no execution, no replay, no
         provider/model calls. Release readiness is reported only when
-        the gate is READY, readiness is READY, and both consistency
-        audits agree.
+        every prerequisite holds: READY gate with its ``ready`` flag
+        true, consistent gate audit, READY readiness with its
+        ``release_ready`` flag true, consistent readiness audit, and
+        healthy diagnostics. No upstream boolean/status contradiction
+        can disappear behind another field reporting READY.
         """
         try:
             gate = self.gate_service.evaluate(db, session_id)
@@ -126,9 +129,15 @@ class ReasoningRunStage6EvidenceService:
             ) from exc
 
         gate_status = gate["gate_status"]
+        gate_ready = gate["ready"]
         gate_consistent = gate_audit["gate_consistent"]
         readiness_status = readiness["readiness_status"]
+        readiness_release_ready = readiness["release_ready"]
         readiness_consistent = readiness_audit["readiness_consistent"]
+        diagnostics_health = gate["diagnostics_status"]
+        has_material = gate_status != "NO_MATERIAL"
+        gate_ready_coherent = gate_ready == (gate_status == "READY")
+        readiness_rr_coherent = readiness_release_ready == (readiness_status == "READY")
 
         if gate_status == "NO_MATERIAL":
             stage_6_status = "NO_MATERIAL"
@@ -137,15 +146,25 @@ class ReasoningRunStage6EvidenceService:
             or readiness_status == "BLOCKED"
             or not gate_consistent
             or not readiness_consistent
+            or not gate_ready_coherent
+            or not readiness_rr_coherent
+            or diagnostics_health == "UNHEALTHY"
         ):
             stage_6_status = "BLOCKED"
-        elif gate_status == "UNVERIFIABLE" or readiness_status == "UNVERIFIABLE":
+        elif (
+            gate_status == "UNVERIFIABLE"
+            or readiness_status == "UNVERIFIABLE"
+            or diagnostics_health == "DEGRADED"
+        ):
             stage_6_status = "UNVERIFIABLE"
         elif (
             gate_status == "READY"
+            and gate_ready
             and readiness_status == "READY"
+            and readiness_release_ready
             and gate_consistent
             and readiness_consistent
+            and diagnostics_health == "HEALTHY"
         ):
             stage_6_status = "READY"
         else:
@@ -157,6 +176,24 @@ class ReasoningRunStage6EvidenceService:
             | set(readiness["findings"])
             | set(readiness_audit["findings"])
         )
+        if has_material and not gate_ready_coherent:
+            findings = sorted(
+                set(findings)
+                | {"GATE_READY_INCOHERENT:" f"status={gate_status},ready={gate_ready}"}
+            )
+        if has_material and not readiness_rr_coherent:
+            findings = sorted(
+                set(findings)
+                | {
+                    "READINESS_RELEASE_READY_INCOHERENT:"
+                    f"status={readiness_status},"
+                    f"release_ready={readiness_release_ready}"
+                }
+            )
+        if has_material and diagnostics_health != "HEALTHY":
+            findings = sorted(
+                set(findings) | {f"DIAGNOSTICS_NOT_HEALTHY:{diagnostics_health}"}
+            )
 
         bundle = {
             "requested_session_id": str(session_id),

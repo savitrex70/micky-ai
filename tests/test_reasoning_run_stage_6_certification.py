@@ -723,3 +723,191 @@ def test_certification_of_unreadable_receipt_is_contract_failure() -> None:
     assert r.json() == {
         "detail": "Internal reasoning-run-stage-6-certification contract " "violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Status/boolean/component invariants (every contradiction blocks)
+# ---------------------------------------------------------------------------
+
+
+def test_gate_ready_false_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+    _forged_service_result(
+        monkeypatch,
+        ReasoningRunStage6GateService,
+        "evaluate",
+        sid,
+        "ready",
+        False,
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert "GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+def test_readiness_release_ready_false_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+    _forged_service_result(
+        monkeypatch,
+        ReasoningRunStage6ReadinessService,
+        "report",
+        sid,
+        "release_ready",
+        False,
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert (
+        "READINESS_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_evidence_release_ready_false_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+    _forged_service_result(
+        monkeypatch,
+        ReasoningRunStage6EvidenceService,
+        "bundle",
+        sid,
+        "release_ready",
+        False,
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert (
+        "EVIDENCE_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_forged_evidence_available_false_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+    _forged_service_result(
+        monkeypatch,
+        ReasoningRunStage6EvidenceService,
+        "bundle",
+        sid,
+        "evidence_available",
+        False,
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert "EVIDENCE_UNAVAILABLE" in body["findings"]
+
+
+def test_manifest_release_ready_false_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+    _forged_service_result(
+        monkeypatch,
+        ReasoningRunStage6ReleaseManifestService,
+        "manifest",
+        sid,
+        "release_ready",
+        False,
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert (
+        "MANIFEST_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_manifest_component_unavailable_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_stage_6_release_manifest import (
+        ReasoningRunStage6ReleaseManifestService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReleaseManifestService().manifest(db, sid)
+    forged_manifest = dict(genuine)
+    forged_manifest["components"] = [dict(c) for c in genuine["components"]]
+    forged_manifest["components"][2]["available"] = False
+
+    def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_manifest
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert (
+        "MANIFEST_COMPONENT_NOT_AVAILABLE:REASONING_RUN_STAGE_6_GATE_TASK_144"
+        in body["findings"]
+    )
+
+
+def test_manifest_component_inconsistent_prevents_certification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rop.services.reasoning_run_stage_6_release_manifest import (
+        ReasoningRunStage6ReleaseManifestService,
+    )
+
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReleaseManifestService().manifest(db, sid)
+    forged_manifest = dict(genuine)
+    forged_manifest["components"] = [dict(c) for c in genuine["components"]]
+    forged_manifest["components"][6]["consistent"] = False
+
+    def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_manifest
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+
+    body = _certify(sid)
+
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert (
+        "MANIFEST_COMPONENT_INCONSISTENT:"
+        "REASONING_RUN_STAGE_6_EVIDENCE_TASK_148" in body["findings"]
+    )

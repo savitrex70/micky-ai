@@ -509,3 +509,138 @@ def test_audit_of_unreadable_receipt_is_contract_failure() -> None:
         "detail": "Internal "
         "reasoning-run-stage-6-gate-consistency-audit contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Full Task 144 contract verification (one test per decision field)
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_gate(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine)
+    forged_gate.update(overrides)
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+    return _audit(sid)
+
+
+def test_audit_detects_forged_receipt_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, receipt_status="INCOMPLETE")
+
+    assert body["gate_consistent"] is False
+    assert "GATE_RECEIPT_STATUS_MISMATCH:expected=VERIFIED,actual=INCOMPLETE" in (
+        body["findings"]
+    )
+
+
+def test_audit_detects_forged_history_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, history_status="MISMATCH")
+
+    assert body["gate_consistent"] is False
+    assert "GATE_HISTORY_STATUS_MISMATCH:expected=CONSISTENT,actual=MISMATCH" in (
+        body["findings"]
+    )
+
+
+def test_audit_detects_forged_provenance_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, provenance_status="INCONSISTENT")
+
+    assert body["gate_consistent"] is False
+    assert (
+        "GATE_PROVENANCE_STATUS_MISMATCH:expected=CONSISTENT,"
+        "actual=INCONSISTENT" in body["findings"]
+    )
+
+
+def test_audit_detects_forged_replay_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, replay_status="INCONSISTENT")
+
+    assert body["gate_consistent"] is False
+    assert (
+        "GATE_REPLAY_STATUS_MISMATCH:expected=CONSISTENT,actual=INCONSISTENT"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_inspection_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, inspection_status="INCONSISTENT")
+
+    assert body["gate_consistent"] is False
+    assert (
+        "GATE_INSPECTION_STATUS_MISMATCH:expected=VERIFIABLE,"
+        "actual=INCONSISTENT" in body["findings"]
+    )
+
+
+def test_audit_detects_forged_diagnostics_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, diagnostics_status="UNHEALTHY")
+
+    assert body["gate_consistent"] is False
+    assert (
+        "GATE_DIAGNOSTICS_STATUS_MISMATCH:expected=HEALTHY,actual=UNHEALTHY"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_ready_false_with_ready_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, ready=False)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_READY_MISMATCH:expected=True,actual=False" in body["findings"]
+    assert "GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+def test_audit_detects_ready_true_with_blocked_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate(monkeypatch, sid, gate_status="BLOCKED", ready=True)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_STATUS_MISMATCH:expected=READY,actual=BLOCKED" in body["findings"]
+    assert "GATE_READY_INCOHERENT:status=BLOCKED,ready=True" in body["findings"]

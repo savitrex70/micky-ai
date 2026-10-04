@@ -38,8 +38,14 @@ from rop.services.reasoning_run_stage_6_evidence import (
     REASONING_RUN_STAGE_6_EVIDENCE_SOURCE_TASK_148,
     ReasoningRunStage6EvidenceService,
 )
+from rop.services.reasoning_run_stage_6_gate import (
+    ReasoningRunStage6GateService,
+)
 from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditService,
+)
+from rop.services.reasoning_run_stage_6_readiness import (
+    ReasoningRunStage6ReadinessService,
 )
 from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
     ReasoningRunStage6ReadinessConsistencyAuditService,
@@ -547,3 +553,83 @@ def test_evidence_of_unreadable_receipt_is_contract_failure() -> None:
     assert r.json() == {
         "detail": "Internal reasoning-run-stage-6-evidence contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Upstream boolean/health invariants (no silent READY)
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_blocked_when_gate_ready_flag_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine)
+    forged_gate["ready"] = False
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+
+    body = _evidence(sid)
+
+    assert body["stage_6_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert "GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+def test_evidence_blocked_when_readiness_release_ready_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessService().report(db, sid)
+    forged_report = dict(genuine)
+    forged_report["release_ready"] = False
+
+    def _forged_report(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_report
+
+    monkeypatch.setattr(ReasoningRunStage6ReadinessService, "report", _forged_report)
+
+    body = _evidence(sid)
+
+    assert body["stage_6_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert (
+        "READINESS_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_evidence_blocked_when_diagnostics_not_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine)
+    forged_gate["diagnostics_status"] = "UNHEALTHY"
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+
+    body = _evidence(sid)
+
+    assert body["stage_6_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert "DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY" in body["findings"]

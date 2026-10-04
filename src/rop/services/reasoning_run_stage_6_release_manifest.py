@@ -250,7 +250,25 @@ class ReasoningRunStage6ReleaseManifestService:
         evidence: dict[str, Any],
         evidence_audit: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Build the eight canonical component entries in stable order."""
+        """Build the eight canonical component entries in stable order.
+
+        Each entry derives status, availability, and consistency from
+        its owning canonical response. The diagnostics component
+        carries the canonical Task 144 diagnostics-health derivation
+        (already computed by the gate over the Task 143 outputs) as its
+        status -- so the diagnostics contract, including health
+        semantics, is represented faithfully without a second
+        diagnostics algorithm -- while its availability is read
+        directly from the Task 143 response. Availability elsewhere
+        means the owning service returned its canonical response (any
+        failure surfaces as a contract error instead, never as a
+        manifest entry). Consistency rule: report surfaces (Task 142
+        inspection, Task 143 diagnostics) are internally coherent by
+        strict-schema construction, so their health rides on
+        ``status``; verdict surfaces (gate, readiness, evidence) agree
+        with their governing consistency audits; audit surfaces carry
+        their own consistency flags.
+        """
         return [
             {
                 "component_id": COMPONENT_INSPECTION_TASK_142,
@@ -262,15 +280,15 @@ class ReasoningRunStage6ReleaseManifestService:
             {
                 "component_id": COMPONENT_DIAGNOSTICS_TASK_143,
                 "component_kind": "diagnostics",
-                "status": diagnostics["inspection_status"],
+                "status": gate["diagnostics_status"],
                 "consistent": True,
-                "available": True,
+                "available": diagnostics["session_exists"],
             },
             {
                 "component_id": COMPONENT_GATE_TASK_144,
                 "component_kind": "gate",
                 "status": gate["gate_status"],
-                "consistent": True,
+                "consistent": gate_audit["gate_consistent"],
                 "available": True,
             },
             {
@@ -284,7 +302,7 @@ class ReasoningRunStage6ReleaseManifestService:
                 "component_id": COMPONENT_READINESS_TASK_146,
                 "component_kind": "readiness",
                 "status": readiness["readiness_status"],
-                "consistent": True,
+                "consistent": readiness_audit["readiness_consistent"],
                 "available": True,
             },
             {
@@ -298,7 +316,7 @@ class ReasoningRunStage6ReleaseManifestService:
                 "component_id": COMPONENT_EVIDENCE_TASK_148,
                 "component_kind": "evidence",
                 "status": evidence["stage_6_status"],
-                "consistent": True,
+                "consistent": evidence_audit["evidence_consistent"],
                 "available": evidence["evidence_available"],
             },
             {

@@ -583,3 +583,109 @@ def test_audit_of_unreadable_receipt_is_contract_failure() -> None:
         "detail": "Internal "
         "reasoning-run-stage-6-evidence-consistency-audit contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Full Task 148 contract verification (one test per decision field)
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_evidence(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6EvidenceService().bundle(db, sid)
+    forged_bundle = dict(genuine)
+    forged_bundle.update(overrides)
+
+    def _forged_bundle(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_bundle
+
+    monkeypatch.setattr(ReasoningRunStage6EvidenceService, "bundle", _forged_bundle)
+    return _audit(sid)
+
+
+def test_audit_detects_forged_gate_status_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_evidence(monkeypatch, sid, gate_status="BLOCKED")
+
+    assert body["evidence_consistent"] is False
+    assert (
+        "EVIDENCE_GATE_STATUS_MISMATCH:expected=READY,actual=BLOCKED"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_gate_consistent_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_evidence(monkeypatch, sid, gate_consistent=False)
+
+    assert body["evidence_consistent"] is False
+    assert (
+        "EVIDENCE_GATE_CONSISTENT_MISMATCH:expected=True,actual=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_readiness_status_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_evidence(monkeypatch, sid, readiness_status="BLOCKED")
+
+    assert body["evidence_consistent"] is False
+    assert (
+        "EVIDENCE_READINESS_STATUS_MISMATCH:expected=READY,actual=BLOCKED"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_readiness_consistent_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_evidence(monkeypatch, sid, readiness_consistent=False)
+
+    assert body["evidence_consistent"] is False
+    assert (
+        "EVIDENCE_READINESS_CONSISTENT_MISMATCH:expected=True,actual=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_false_evidence_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6EvidenceService().bundle(db, sid)
+    assert genuine["stage_6_status"] == "NO_MATERIAL"
+    assert genuine["evidence_available"] is False
+
+    forged_bundle = dict(genuine)
+    forged_bundle["evidence_available"] = True
+
+    def _forged_bundle(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_bundle
+
+    monkeypatch.setattr(ReasoningRunStage6EvidenceService, "bundle", _forged_bundle)
+
+    body = _audit(sid)
+
+    assert body["evidence_consistent"] is False
+    assert "EVIDENCE_AVAILABLE_MISMATCH:expected=False,actual=True" in body["findings"]

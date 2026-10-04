@@ -516,3 +516,107 @@ def test_audit_of_unreadable_receipt_is_contract_failure() -> None:
         "detail": "Internal "
         "reasoning-run-stage-6-readiness-consistency-audit contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Full Task 146 contract verification (one test per decision field)
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_readiness(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessService().report(db, sid)
+    forged_report = dict(genuine)
+    forged_report.update(overrides)
+
+    def _forged_report(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_report
+
+    monkeypatch.setattr(ReasoningRunStage6ReadinessService, "report", _forged_report)
+    return _audit(sid)
+
+
+def test_audit_detects_forged_release_ready_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_readiness(monkeypatch, sid, release_ready=False)
+
+    assert body["readiness_consistent"] is False
+    assert "READINESS_RELEASE_READY_MISMATCH:expected=True,actual=False" in (
+        body["findings"]
+    )
+    assert (
+        "READINESS_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_blocked_status_with_release_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_readiness(
+        monkeypatch, sid, readiness_status="BLOCKED", release_ready=True
+    )
+
+    assert body["readiness_consistent"] is False
+    assert "READINESS_STATUS_MISMATCH:expected=READY,actual=BLOCKED" in body["findings"]
+    assert (
+        "READINESS_RELEASE_READY_INCOHERENT:status=BLOCKED,release_ready=True"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_gate_status_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_readiness(monkeypatch, sid, gate_status="BLOCKED")
+
+    assert body["readiness_consistent"] is False
+    assert (
+        "READINESS_GATE_STATUS_MISMATCH:expected=READY,actual=BLOCKED"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_gate_consistent_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_readiness(monkeypatch, sid, gate_consistent=False)
+
+    assert body["readiness_consistent"] is False
+    assert (
+        "READINESS_GATE_CONSISTENT_MISMATCH:expected=True,actual=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_diagnostics_status_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_readiness(
+        monkeypatch, sid, diagnostics_status="UNHEALTHY"
+    )
+
+    assert body["readiness_consistent"] is False
+    assert (
+        "READINESS_DIAGNOSTICS_STATUS_MISMATCH:expected=HEALTHY,"
+        "actual=UNHEALTHY" in body["findings"]
+    )

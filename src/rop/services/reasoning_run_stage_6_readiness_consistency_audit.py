@@ -73,10 +73,14 @@ class ReasoningRunStage6ReadinessConsistencyAuditService:
         db: Session,
         session_id: UUID,
     ) -> dict[str, Any]:
-        """Audit the published readiness state against persisted evidence.
+        """Audit the published readiness contract against evidence.
 
-        Delegates to the existing Task 146/144/145 services. Read-only:
-        no writes, no execution, no replay, no provider/model calls.
+        Delegates to the existing Task 146/144/145 services. Verifies
+        the complete Task 146 contract -- ``readiness_status``,
+        ``release_ready``, ``gate_status``, ``gate_consistent``, and
+        ``diagnostics_status`` -- against the canonical Task 144/145
+        evidence. Read-only: no writes, no execution, no replay, no
+        provider/model calls.
         """
         try:
             readiness = self.readiness_service.report(db, session_id)
@@ -105,13 +109,49 @@ class ReasoningRunStage6ReadinessConsistencyAuditService:
 
         actual = readiness["readiness_status"]
         expected = self._expected_status(gate, gate_audit)
-        consistent = expected == actual
+        expected_release_ready = expected == "READY"
+        release_ready_ok = readiness["release_ready"] == expected_release_ready
+
+        echo_checks = (
+            (
+                "READINESS_GATE_STATUS_MISMATCH",
+                readiness["gate_status"],
+                gate["gate_status"],
+            ),
+            (
+                "READINESS_GATE_CONSISTENT_MISMATCH",
+                readiness["gate_consistent"],
+                gate_audit["gate_consistent"],
+            ),
+            (
+                "READINESS_DIAGNOSTICS_STATUS_MISMATCH",
+                readiness["diagnostics_status"],
+                gate["diagnostics_status"],
+            ),
+        )
+        echo_ok = all(published == canonical for _, published, canonical in echo_checks)
+        consistent = expected == actual and release_ready_ok and echo_ok
 
         findings = list(readiness["findings"])
-        if not consistent:
+        if expected != actual:
             findings.append(
                 "READINESS_STATUS_MISMATCH:" f"expected={expected},actual={actual}"
             )
+        if not release_ready_ok:
+            findings.append(
+                "READINESS_RELEASE_READY_MISMATCH:"
+                f"expected={expected_release_ready},"
+                f"actual={readiness['release_ready']}"
+            )
+        if readiness["release_ready"] != (actual == "READY"):
+            findings.append(
+                "READINESS_RELEASE_READY_INCOHERENT:"
+                f"status={actual},"
+                f"release_ready={readiness['release_ready']}"
+            )
+        for name, published, canonical in echo_checks:
+            if published != canonical:
+                findings.append(f"{name}:expected={canonical},actual={published}")
         findings = sorted(set(findings))
 
         audit = {

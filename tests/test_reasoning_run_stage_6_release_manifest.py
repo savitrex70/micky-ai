@@ -62,6 +62,14 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 MANIFEST_URL = "/sessions/{sid}/reasoning-run/stage-6-release-manifest"
+GATE_URL = "/sessions/{sid}/reasoning-run/stage-6-gate"
+GATE_AUDIT_URL = "/sessions/{sid}/reasoning-run/stage-6-gate/consistency-audit"
+READINESS_URL = "/sessions/{sid}/reasoning-run/stage-6-readiness"
+READINESS_AUDIT_URL = (
+    "/sessions/{sid}/reasoning-run/stage-6-readiness/consistency-audit"
+)
+EVIDENCE_URL = "/sessions/{sid}/reasoning-run/stage-6-evidence"
+EVIDENCE_AUDIT_URL = "/sessions/{sid}/reasoning-run/stage-6-evidence/consistency-audit"
 
 MANIFEST_KEYS = {
     "requested_session_id",
@@ -525,3 +533,69 @@ def test_manifest_of_unreadable_receipt_is_contract_failure() -> None:
         "detail": "Internal reasoning-run-stage-6-release-manifest "
         "contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Component derivation rules (status/consistency from owning responses)
+# ---------------------------------------------------------------------------
+
+
+def test_diagnostics_component_carries_canonical_health() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest(sid)
+
+    by_id = {c["component_id"]: c for c in body["components"]}
+    diagnostics = by_id["REASONING_RUN_DIAGNOSTICS_TASK_143"]
+    assert diagnostics["component_kind"] == "diagnostics"
+    assert diagnostics["status"] == "HEALTHY"
+    assert diagnostics["consistent"] is True
+    assert diagnostics["available"] is True
+
+
+def test_diagnostics_component_reflects_degraded_health() -> None:
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+
+    body = _manifest(sid)
+
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert by_id["REASONING_RUN_DIAGNOSTICS_TASK_143"]["status"] == "DEGRADED"
+    assert body["manifest_status"] == "UNVERIFIABLE"
+
+
+def test_verdict_components_agree_with_governing_audits() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest(sid)
+
+    gate = client.get(GATE_URL.format(sid=sid)).json()
+    gate_audit = client.get(GATE_AUDIT_URL.format(sid=sid)).json()
+    readiness = client.get(READINESS_URL.format(sid=sid)).json()
+    readiness_audit = client.get(READINESS_AUDIT_URL.format(sid=sid)).json()
+    evidence = client.get(EVIDENCE_URL.format(sid=sid)).json()
+    evidence_audit = client.get(EVIDENCE_AUDIT_URL.format(sid=sid)).json()
+
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert by_id["REASONING_RUN_STAGE_6_GATE_TASK_144"]["status"] == gate["gate_status"]
+    assert by_id["REASONING_RUN_STAGE_6_GATE_TASK_144"]["consistent"] == (
+        gate_audit["gate_consistent"]
+    )
+    assert (
+        by_id["REASONING_RUN_STAGE_6_READINESS_TASK_146"]["status"]
+        == readiness["readiness_status"]
+    )
+    assert (
+        by_id["REASONING_RUN_STAGE_6_READINESS_TASK_146"]["consistent"]
+        == readiness_audit["readiness_consistent"]
+    )
+    assert (
+        by_id["REASONING_RUN_STAGE_6_EVIDENCE_TASK_148"]["status"]
+        == evidence["stage_6_status"]
+    )
+    assert (
+        by_id["REASONING_RUN_STAGE_6_EVIDENCE_TASK_148"]["consistent"]
+        == evidence_audit["evidence_consistent"]
+    )

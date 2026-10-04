@@ -9,7 +9,9 @@ validation logic. No reasoning execution, no replay engine
 invocation, no persistence, no provider/model calls. The Task 140
 ``original_result`` is request material, never persisted, so it is
 never reconstructed here; its ``NOT_PERSISTED`` provenance is not an
-issue code and never blocks readiness on its own.
+issue code and never blocks readiness on its own. READY additionally
+requires the gate ``ready`` flag to be true and diagnostics to be
+healthy.
 """
 
 from __future__ import annotations
@@ -68,9 +70,12 @@ class ReasoningRunStage6ReadinessService:
         Delegates to the existing Task 144 gate and Task 145 gate
         consistency audit. Read-only: no writes, no execution, no
         replay, no provider/model calls.
-        READY requires the gate to be READY, the gate audit to agree,
-        and no blocking deterministic contradiction; readiness is never
+        READY requires the gate to be READY with its ``ready`` flag
+        true, the gate audit to agree, healthy diagnostics, and no
+        blocking deterministic contradiction; readiness is never
         reported when the gate audit finds the gate inconsistent.
+        ``release_ready`` is true exactly when ``readiness_status`` is
+        READY, by construction from the same verdict.
         """
         try:
             gate = self.gate_service.evaluate(db, session_id)
@@ -90,8 +95,10 @@ class ReasoningRunStage6ReadinessService:
             ) from exc
 
         gate_status = gate["gate_status"]
+        gate_ready = gate["ready"]
         gate_consistent = gate_audit["gate_consistent"]
         diagnostics_status = gate["diagnostics_status"]
+        gate_ready_coherent = gate_ready == (gate_status == "READY")
 
         if gate_status == "NO_MATERIAL":
             readiness_status = "NO_MATERIAL"
@@ -99,12 +106,14 @@ class ReasoningRunStage6ReadinessService:
             gate_status == "BLOCKED"
             or not gate_consistent
             or diagnostics_status == "UNHEALTHY"
+            or not gate_ready_coherent
         ):
             readiness_status = "BLOCKED"
         elif gate_status == "UNVERIFIABLE" or diagnostics_status == "DEGRADED":
             readiness_status = "UNVERIFIABLE"
         elif (
             gate_status == "READY"
+            and gate_ready
             and gate_consistent
             and diagnostics_status == "HEALTHY"
         ):
@@ -113,6 +122,11 @@ class ReasoningRunStage6ReadinessService:
             readiness_status = "BLOCKED"
 
         findings = sorted(set(gate["findings"]) | set(gate_audit["findings"]))
+        if gate_status != "NO_MATERIAL" and not gate_ready_coherent:
+            findings = sorted(
+                set(findings)
+                | {"GATE_READY_INCOHERENT:" f"status={gate_status},ready={gate_ready}"}
+            )
 
         report = {
             "requested_session_id": str(session_id),

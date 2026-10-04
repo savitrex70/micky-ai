@@ -36,6 +36,9 @@ from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
 )
+from rop.services.reasoning_run_stage_6_gate import (
+    ReasoningRunStage6GateService,
+)
 from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditService,
 )
@@ -508,3 +511,89 @@ def test_readiness_of_unreadable_receipt_is_contract_failure() -> None:
     assert r.json() == {
         "detail": "Internal reasoning-run-stage-6-readiness contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Complete readiness contract: status/boolean coherence
+# ---------------------------------------------------------------------------
+
+
+def _readiness_with_forged_gate(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine)
+    forged_gate.update(overrides)
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+    r = client.get(READINESS_URL.format(sid=sid))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_readiness_status_and_release_ready_agree_in_all_states() -> None:
+    cases = [
+        ("Patient reports chest pain", "READY", True),
+        ("Patient reports dizziness", "READY", True),
+    ]
+    for user_input, status, release_ready in cases:
+        sid = UUID(_create_session(user_input=user_input))
+        _insert_bound_receipt(sid, user_input=user_input)
+        body = _readiness(sid)
+        assert body["readiness_status"] == status
+        assert body["release_ready"] is release_ready
+
+    tampered_sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(tampered_sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(tampered_sid, forged, input_snapshot=snapshot)
+    tampered = _readiness(tampered_sid)
+    assert tampered["readiness_status"] == "BLOCKED"
+    assert tampered["release_ready"] is False
+    assert tampered["diagnostics_status"] == "UNHEALTHY"
+
+    legacy_sid = UUID(_create_session())
+    _insert_receipt(legacy_sid, "c" * 64, input_snapshot=None)
+    legacy = _readiness(legacy_sid)
+    assert legacy["readiness_status"] == "UNVERIFIABLE"
+    assert legacy["release_ready"] is False
+    assert legacy["diagnostics_status"] == "DEGRADED"
+
+    empty_sid = UUID(_create_session())
+    empty = _readiness(empty_sid)
+    assert empty["readiness_status"] == "NO_MATERIAL"
+    assert empty["release_ready"] is False
+
+
+def test_readiness_blocked_when_gate_ready_flag_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _readiness_with_forged_gate(monkeypatch, sid, ready=False)
+
+    assert body["gate_status"] == "READY"
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert "GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+def test_readiness_inherits_gate_findings_deterministically() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    body = _readiness(sid)
+    gate = client.get(GATE_URL.format(sid=sid)).json()
+
+    assert set(gate["findings"]) <= set(body["findings"])
+    assert body["findings"] == sorted(body["findings"])

@@ -641,3 +641,132 @@ def test_audit_of_unreadable_receipt_is_contract_failure() -> None:
         "detail": "Internal "
         "reasoning-run-stage-6-manifest-consistency-audit contract violation"
     }
+
+
+# ---------------------------------------------------------------------------
+# Full five-field component verification
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_manifest(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, mutate: object
+) -> dict:
+    from rop.services.reasoning_run_stage_6_release_manifest import (
+        ReasoningRunStage6ReleaseManifestService,
+    )
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReleaseManifestService().manifest(db, sid)
+    forged_manifest = dict(genuine)
+    forged_manifest["components"] = [dict(c) for c in genuine["components"]]
+    mutate(forged_manifest["components"])
+
+    def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_manifest
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+    return _audit(sid)
+
+
+def test_audit_detects_forged_component_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    def _forge(components: list) -> None:
+        components[2]["available"] = False
+
+    body = _audit_with_forged_manifest(monkeypatch, sid, _forge)
+
+    assert body["manifest_consistent"] is False
+    assert (
+        "MANIFEST_COMPONENT_AVAILABLE_MISMATCH:"
+        "REASONING_RUN_STAGE_6_GATE_TASK_144:expected=True,actual=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_component_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    def _forge(components: list) -> None:
+        components[6]["consistent"] = False
+
+    body = _audit_with_forged_manifest(monkeypatch, sid, _forge)
+
+    assert body["manifest_consistent"] is False
+    assert (
+        "MANIFEST_COMPONENT_CONSISTENT_MISMATCH:"
+        "REASONING_RUN_STAGE_6_EVIDENCE_TASK_148:expected=True,actual=False"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_forged_component_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    def _forge(components: list) -> None:
+        components[0]["component_kind"] = "diagnostics"
+
+    body = _audit_with_forged_manifest(monkeypatch, sid, _forge)
+
+    assert body["manifest_consistent"] is False
+    assert (
+        "MANIFEST_COMPONENT_KIND_MISMATCH:"
+        "REASONING_RUN_INSPECTION_TASK_142:expected=inspection,"
+        "actual=diagnostics" in body["findings"]
+    )
+
+
+def test_audit_detects_duplicate_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    def _forge(components: list) -> None:
+        components.append(dict(components[0]))
+
+    body = _audit_with_forged_manifest(monkeypatch, sid, _forge)
+
+    assert body["manifest_consistent"] is False
+    assert (
+        "MANIFEST_COMPONENT_DUPLICATE:REASONING_RUN_INSPECTION_TASK_142"
+        in body["findings"]
+    )
+
+
+def test_audit_detects_unexpected_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    def _forge(components: list) -> None:
+        components.append(
+            {
+                "component_id": "REASONING_RUN_SOMETHING_ELSE_TASK_999",
+                "component_kind": "mystery",
+                "status": "READY",
+                "consistent": True,
+                "available": True,
+            }
+        )
+
+    body = _audit_with_forged_manifest(monkeypatch, sid, _forge)
+
+    assert body["manifest_consistent"] is False
+    assert (
+        "MANIFEST_COMPONENT_UNEXPECTED:REASONING_RUN_SOMETHING_ELSE_TASK_999"
+        in body["findings"]
+    )

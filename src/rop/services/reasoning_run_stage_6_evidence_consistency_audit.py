@@ -142,7 +142,35 @@ class ReasoningRunStage6EvidenceConsistencyAuditService:
         expected = self._expected_status(gate, gate_audit, readiness, readiness_audit)
         expected_release_ready = expected == "READY"
         release_ready_ok = evidence["release_ready"] == expected_release_ready
-        consistent = expected == actual and release_ready_ok
+        expected_available = expected != "NO_MATERIAL"
+        available_ok = evidence["evidence_available"] == expected_available
+
+        echo_checks = (
+            (
+                "EVIDENCE_GATE_STATUS_MISMATCH",
+                evidence["gate_status"],
+                gate["gate_status"],
+            ),
+            (
+                "EVIDENCE_GATE_CONSISTENT_MISMATCH",
+                evidence["gate_consistent"],
+                gate_audit["gate_consistent"],
+            ),
+            (
+                "EVIDENCE_READINESS_STATUS_MISMATCH",
+                evidence["readiness_status"],
+                readiness["readiness_status"],
+            ),
+            (
+                "EVIDENCE_READINESS_CONSISTENT_MISMATCH",
+                evidence["readiness_consistent"],
+                readiness_audit["readiness_consistent"],
+            ),
+        )
+        echo_ok = all(published == canonical for _, published, canonical in echo_checks)
+        consistent = (
+            expected == actual and release_ready_ok and available_ok and echo_ok
+        )
 
         findings = list(evidence["findings"])
         if expected != actual:
@@ -155,6 +183,21 @@ class ReasoningRunStage6EvidenceConsistencyAuditService:
                 f"expected={expected_release_ready},"
                 f"actual={evidence['release_ready']}"
             )
+        if not available_ok:
+            findings.append(
+                "EVIDENCE_AVAILABLE_MISMATCH:"
+                f"expected={expected_available},"
+                f"actual={evidence['evidence_available']}"
+            )
+        if evidence["release_ready"] != (actual == "READY"):
+            findings.append(
+                "EVIDENCE_RELEASE_READY_INCOHERENT:"
+                f"status={actual},"
+                f"release_ready={evidence['release_ready']}"
+            )
+        for name, published, canonical in echo_checks:
+            if published != canonical:
+                findings.append(f"{name}:expected={canonical},actual={published}")
         findings = sorted(set(findings))
 
         audit = {

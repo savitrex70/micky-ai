@@ -192,23 +192,36 @@ class ReasoningRunStage6CertificationService:
             ) from exc
 
         gate_status = gate["gate_status"]
+        gate_ready = gate["ready"]
         gate_consistent = gate_audit["gate_consistent"]
         readiness_status = readiness["readiness_status"]
+        readiness_release_ready = readiness["release_ready"]
         readiness_consistent = readiness_audit["readiness_consistent"]
         evidence_status = evidence["stage_6_status"]
+        evidence_release_ready = evidence["release_ready"]
+        evidence_available = evidence["evidence_available"]
         evidence_consistent = evidence_audit["evidence_consistent"]
         manifest_status = manifest["manifest_status"]
+        manifest_release_ready = manifest["release_ready"]
         manifest_consistent = manifest_audit["manifest_consistent"]
+        manifest_components = manifest["components"]
+        has_material = gate_status != "NO_MATERIAL"
 
         certification_status = self._certification_status(
             gate_status,
+            gate_ready,
             gate_consistent,
             readiness_status,
+            readiness_release_ready,
             readiness_consistent,
             evidence_status,
+            evidence_release_ready,
+            evidence_available,
             evidence_consistent,
             manifest_status,
+            manifest_release_ready,
             manifest_consistent,
+            manifest_components,
         )
         certified = certification_status == "CERTIFIED"
 
@@ -217,6 +230,52 @@ class ReasoningRunStage6CertificationService:
             | set(manifest["findings"])
             | set(manifest_audit["findings"])
         )
+        if has_material and not gate_ready == (gate_status == "READY"):
+            findings = sorted(
+                set(findings)
+                | {"GATE_READY_INCOHERENT:" f"status={gate_status},ready={gate_ready}"}
+            )
+        if has_material and not readiness_release_ready == (
+            readiness_status == "READY"
+        ):
+            findings = sorted(
+                set(findings)
+                | {
+                    "READINESS_RELEASE_READY_INCOHERENT:"
+                    f"status={readiness_status},"
+                    f"release_ready={readiness_release_ready}"
+                }
+            )
+        if has_material and not evidence_release_ready == (evidence_status == "READY"):
+            findings = sorted(
+                set(findings)
+                | {
+                    "EVIDENCE_RELEASE_READY_INCOHERENT:"
+                    f"status={evidence_status},"
+                    f"release_ready={evidence_release_ready}"
+                }
+            )
+        if has_material and not manifest_release_ready == (manifest_status == "READY"):
+            findings = sorted(
+                set(findings)
+                | {
+                    "MANIFEST_RELEASE_READY_INCOHERENT:"
+                    f"status={manifest_status},"
+                    f"release_ready={manifest_release_ready}"
+                }
+            )
+        if has_material and not evidence_available:
+            findings = sorted(set(findings) | {"EVIDENCE_UNAVAILABLE"})
+        for component in manifest_components if has_material else []:
+            cid = component["component_id"]
+            if not component["available"]:
+                findings = sorted(
+                    set(findings) | {f"MANIFEST_COMPONENT_NOT_AVAILABLE:{cid}"}
+                )
+            if not component["consistent"]:
+                findings = sorted(
+                    set(findings) | {f"MANIFEST_COMPONENT_INCONSISTENT:{cid}"}
+                )
 
         certification = {
             "requested_session_id": str(session_id),
@@ -252,23 +311,38 @@ class ReasoningRunStage6CertificationService:
     @staticmethod
     def _certification_status(
         gate_status: str,
+        gate_ready: bool,
         gate_consistent: bool,
         readiness_status: str,
+        readiness_release_ready: bool,
         readiness_consistent: bool,
         evidence_status: str,
+        evidence_release_ready: bool,
+        evidence_available: bool,
         evidence_consistent: bool,
         manifest_status: str,
+        manifest_release_ready: bool,
         manifest_consistent: bool,
+        manifest_components: list[dict[str, Any]],
     ) -> str:
         """Derive the certification verdict from canonical verdicts.
 
-        Contradiction (or any disagreeing consistency audit) blocks; a
-        pure evidence gap without contradiction leaves the core
-        unverifiable; certification requires every invariant. The
-        architectural ``original_result`` gap never appears here
-        because it is not an issue code anywhere upstream. An unknown
-        combination never silently passes as CERTIFIED.
+        Every status/boolean contradiction blocks: a READY surface
+        whose boolean flag disagrees, an unavailable evidence bundle,
+        an unavailable manifest component, or an inconsistent manifest
+        component each independently prevents certification, as does
+        any disagreeing consistency audit. Contradiction (or any
+        disagreeing audit) blocks; a pure evidence gap without
+        contradiction leaves the core unverifiable; certification
+        requires every invariant. The architectural ``original_result``
+        gap never appears here because it is not an issue code anywhere
+        upstream. An unknown combination never silently passes as
+        CERTIFIED.
         """
+        components_coherent = all(
+            component["available"] and component["consistent"]
+            for component in manifest_components
+        )
         if gate_status == "NO_MATERIAL":
             return "NO_MATERIAL"
         if (
@@ -280,6 +354,12 @@ class ReasoningRunStage6CertificationService:
             or not readiness_consistent
             or not evidence_consistent
             or not manifest_consistent
+            or not gate_ready == (gate_status == "READY")
+            or not readiness_release_ready == (readiness_status == "READY")
+            or not evidence_release_ready == (evidence_status == "READY")
+            or not manifest_release_ready == (manifest_status == "READY")
+            or not evidence_available
+            or not components_coherent
         ):
             return "BLOCKED"
         if (
@@ -291,13 +371,19 @@ class ReasoningRunStage6CertificationService:
             return "UNVERIFIABLE"
         if (
             gate_status == "READY"
+            and gate_ready
             and readiness_status == "READY"
+            and readiness_release_ready
             and evidence_status == "READY"
+            and evidence_release_ready
+            and evidence_available
             and manifest_status == "READY"
+            and manifest_release_ready
             and gate_consistent
             and readiness_consistent
             and evidence_consistent
             and manifest_consistent
+            and components_coherent
         ):
             return "CERTIFIED"
         return "BLOCKED"

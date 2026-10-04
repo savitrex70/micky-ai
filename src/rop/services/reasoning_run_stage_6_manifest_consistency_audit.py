@@ -199,6 +199,7 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
         actual = manifest["manifest_status"]
         expected = self._expected_status(upstream)
         expected_release_ready = expected == "READY"
+        expected_components = self._expected_components(upstream)
 
         findings = list(manifest["findings"])
         if expected != actual:
@@ -211,13 +212,16 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
                 f"expected={expected_release_ready},"
                 f"actual={manifest['release_ready']}"
             )
-        findings.extend(self._component_findings(manifest["components"], upstream))
+        component_findings = self._component_findings(
+            manifest["components"], expected_components
+        )
+        findings.extend(component_findings)
         findings = sorted(set(findings))
 
         consistent = (
             expected == actual
             and manifest["release_ready"] == expected_release_ready
-            and not self._component_findings(manifest["components"], upstream)
+            and not component_findings
         )
 
         audit = {
@@ -295,10 +299,93 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
         return "BLOCKED"
 
     @staticmethod
+    def _expected_components(upstream: dict[str, Any]) -> list[dict[str, Any]]:
+        """Derive the expected manifest component entries from upstream.
+
+        One explicit canonical mapping from each required component ID
+        to its expected kind, status, availability, and consistency,
+        recomputed from the canonical Task 144-149 outputs using the
+        same construction rules as Task 150: report surfaces carry
+        strict-schema coherence, verdict surfaces agree with their
+        governing audits, and the diagnostics entry carries the
+        canonical Task 144 diagnostics-health derivation.
+        """
+        gate = upstream["gate"]
+        gate_audit = upstream["gate_audit"]
+        readiness = upstream["readiness"]
+        readiness_audit = upstream["readiness_audit"]
+        evidence = upstream["evidence"]
+        evidence_audit = upstream["evidence_audit"]
+        return [
+            {
+                "component_id": "REASONING_RUN_INSPECTION_TASK_142",
+                "component_kind": "inspection",
+                "status": gate["inspection_status"],
+                "consistent": True,
+                "available": True,
+            },
+            {
+                "component_id": "REASONING_RUN_DIAGNOSTICS_TASK_143",
+                "component_kind": "diagnostics",
+                "status": gate["diagnostics_status"],
+                "consistent": True,
+                "available": True,
+            },
+            {
+                "component_id": "REASONING_RUN_STAGE_6_GATE_TASK_144",
+                "component_kind": "gate",
+                "status": gate["gate_status"],
+                "consistent": gate_audit["gate_consistent"],
+                "available": True,
+            },
+            {
+                "component_id": (
+                    "REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_TASK_145"
+                ),
+                "component_kind": "gate_consistency_audit",
+                "status": gate_audit["actual_gate_status"],
+                "consistent": gate_audit["gate_consistent"],
+                "available": gate_audit["available"],
+            },
+            {
+                "component_id": "REASONING_RUN_STAGE_6_READINESS_TASK_146",
+                "component_kind": "readiness",
+                "status": readiness["readiness_status"],
+                "consistent": readiness_audit["readiness_consistent"],
+                "available": True,
+            },
+            {
+                "component_id": (
+                    "REASONING_RUN_STAGE_6_READINESS_CONSISTENCY_AUDIT_TASK_147"
+                ),
+                "component_kind": "readiness_consistency_audit",
+                "status": readiness_audit["actual_readiness_status"],
+                "consistent": readiness_audit["readiness_consistent"],
+                "available": readiness_audit["available"],
+            },
+            {
+                "component_id": "REASONING_RUN_STAGE_6_EVIDENCE_TASK_148",
+                "component_kind": "evidence",
+                "status": evidence["stage_6_status"],
+                "consistent": evidence_audit["evidence_consistent"],
+                "available": evidence["evidence_available"],
+            },
+            {
+                "component_id": (
+                    "REASONING_RUN_STAGE_6_EVIDENCE_CONSISTENCY_AUDIT_TASK_149"
+                ),
+                "component_kind": "evidence_consistency_audit",
+                "status": evidence_audit["actual_evidence_status"],
+                "consistent": evidence_audit["evidence_consistent"],
+                "available": evidence_audit["available"],
+            },
+        ]
+
+    @staticmethod
     def _component_findings(
-        components: list[dict[str, Any]], upstream: dict[str, Any]
+        components: list[dict[str, Any]], expected: list[dict[str, Any]]
     ) -> list[str]:
-        """Verify required component identity, order, and agreement."""
+        """Verify component identity, kind, status, availability, order."""
         findings: list[str] = []
         required = list(REQUIRED_MANIFEST_COMPONENT_IDS)
         required_set = set(required)
@@ -307,38 +394,45 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
         for required_id in required:
             if required_id not in present_set:
                 findings.append(f"MANIFEST_COMPONENT_MISSING:{required_id}")
+        for cid in sorted(required_set):
+            if present.count(cid) > 1:
+                findings.append(f"MANIFEST_COMPONENT_DUPLICATE:{cid}")
+        for cid in sorted(present_set - required_set):
+            findings.append(f"MANIFEST_COMPONENT_UNEXPECTED:{cid}")
         if [cid for cid in present if cid in required_set] != [
             cid for cid in required if cid in present_set
         ]:
             findings.append("MANIFEST_COMPONENT_ORDER_MISMATCH")
-        expected_statuses = {
-            "REASONING_RUN_INSPECTION_TASK_142": upstream["gate"]["inspection_status"],
-            "REASONING_RUN_DIAGNOSTICS_TASK_143": upstream["gate"]["inspection_status"],
-            "REASONING_RUN_STAGE_6_GATE_TASK_144": upstream["gate"]["gate_status"],
-            "REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_TASK_145": (
-                upstream["gate_audit"]["actual_gate_status"]
-            ),
-            "REASONING_RUN_STAGE_6_READINESS_TASK_146": upstream["readiness"][
-                "readiness_status"
-            ],
-            "REASONING_RUN_STAGE_6_READINESS_CONSISTENCY_AUDIT_TASK_147": (
-                upstream["readiness_audit"]["actual_readiness_status"]
-            ),
-            "REASONING_RUN_STAGE_6_EVIDENCE_TASK_148": upstream["evidence"][
-                "stage_6_status"
-            ],
-            "REASONING_RUN_STAGE_6_EVIDENCE_CONSISTENCY_AUDIT_TASK_149": (
-                upstream["evidence_audit"]["actual_evidence_status"]
-            ),
-        }
+        expected_by_id = {c["component_id"]: c for c in expected}
+        seen: set[str] = set()
         for component in components:
             cid = component["component_id"]
-            if cid in expected_statuses and (
-                component["status"] != expected_statuses[cid]
-            ):
+            if cid not in expected_by_id or cid in seen:
+                continue
+            seen.add(cid)
+            want = expected_by_id[cid]
+            if component["component_kind"] != want["component_kind"]:
+                findings.append(
+                    "MANIFEST_COMPONENT_KIND_MISMATCH:"
+                    f"{cid}:expected={want['component_kind']},"
+                    f"actual={component['component_kind']}"
+                )
+            if component["status"] != want["status"]:
                 findings.append(
                     "MANIFEST_COMPONENT_MISMATCH:"
-                    f"{cid}:expected={expected_statuses[cid]},"
+                    f"{cid}:expected={want['status']},"
                     f"actual={component['status']}"
+                )
+            if component["available"] != want["available"]:
+                findings.append(
+                    "MANIFEST_COMPONENT_AVAILABLE_MISMATCH:"
+                    f"{cid}:expected={want['available']},"
+                    f"actual={component['available']}"
+                )
+            if component["consistent"] != want["consistent"]:
+                findings.append(
+                    "MANIFEST_COMPONENT_CONSISTENT_MISMATCH:"
+                    f"{cid}:expected={want['consistent']},"
+                    f"actual={component['consistent']}"
                 )
         return findings

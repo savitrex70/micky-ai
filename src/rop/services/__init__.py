@@ -437,6 +437,7 @@ from rop.services.reasoning_run_stage_6_gate import (
     REASONING_RUN_STAGE_6_GATE_SOURCE_TASK_144,
     ReasoningRunStage6GateContractError,
     ReasoningRunStage6GateService,
+    derive_diagnostics_health,
 )
 from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
     REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_SOURCE_TASK_145,
@@ -687,6 +688,7 @@ __all__ = [
     "REASONING_RUN_STAGE_6_GATE_SOURCE_TASK_144",
     "ReasoningRunStage6GateContractError",
     "ReasoningRunStage6GateService",
+    "derive_diagnostics_health",
     "REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_SOURCE_TASK_145",
     "ReasoningRunStage6GateConsistencyAuditContractError",
     "ReasoningRunStage6GateConsistencyAuditService",

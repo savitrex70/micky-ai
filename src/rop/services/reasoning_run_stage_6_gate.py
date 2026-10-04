@@ -38,6 +38,26 @@ GATE_STATUS_UNVERIFIABLE = "UNVERIFIABLE"
 GATE_STATUS_NO_MATERIAL = "NO_MATERIAL"
 
 
+def derive_diagnostics_health(
+    completed: int, provenance_status: str, replay_status: str
+) -> str:
+    """Coarse diagnostics health over Task 143 component statuses.
+
+    Canonical shared derivation (Task 144): contradiction outranks
+    missing evidence, and the architectural ``original_result`` gap
+    never appears here because it is not an issue code anywhere
+    upstream. Reused by downstream audits so the health rule exists in
+    exactly one place.
+    """
+    if completed == 0:
+        return "NO_MATERIAL"
+    if provenance_status == "INCONSISTENT" or replay_status == "INCONSISTENT":
+        return "UNHEALTHY"
+    if provenance_status == "UNVERIFIABLE" or replay_status == "UNVERIFIABLE":
+        return "DEGRADED"
+    return "HEALTHY"
+
+
 class ReasoningRunStage6GateContractError(Exception):
     """Task 144: the gate result cannot be projected."""
 
@@ -167,13 +187,7 @@ class ReasoningRunStage6GateService:
         completed: int, provenance_status: str, replay_status: str
     ) -> str:
         """Coarse diagnostics health over the Task 143 component statuses."""
-        if completed == 0:
-            return "NO_MATERIAL"
-        if provenance_status == "INCONSISTENT" or replay_status == "INCONSISTENT":
-            return "UNHEALTHY"
-        if provenance_status == "UNVERIFIABLE" or replay_status == "UNVERIFIABLE":
-            return "DEGRADED"
-        return "HEALTHY"
+        return derive_diagnostics_health(completed, provenance_status, replay_status)
 
     @staticmethod
     def _gate_status(
