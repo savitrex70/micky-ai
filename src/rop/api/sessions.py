@@ -76,6 +76,7 @@ from rop.schemas import (
     ReasoningRunStage6EvidenceRead,
     ReasoningRunStage6GateConsistencyAuditRead,
     ReasoningRunStage6GateRead,
+    ReasoningRunStage6ManifestConsistencyAuditRead,
     ReasoningRunStage6ReadinessConsistencyAuditRead,
     ReasoningRunStage6ReadinessRead,
     ReasoningRunStage6ReleaseManifestRead,
@@ -214,6 +215,8 @@ from rop.services import (
     ReasoningRunStage6GateConsistencyAuditService,
     ReasoningRunStage6GateContractError,
     ReasoningRunStage6GateService,
+    ReasoningRunStage6ManifestConsistencyAuditContractError,
+    ReasoningRunStage6ManifestConsistencyAuditService,
     ReasoningRunStage6ReadinessConsistencyAuditContractError,
     ReasoningRunStage6ReadinessConsistencyAuditService,
     ReasoningRunStage6ReadinessContractError,
@@ -303,6 +306,9 @@ reasoning_run_stage_6_evidence_consistency_audit_service = (
 )
 reasoning_run_stage_6_release_manifest_service = (
     ReasoningRunStage6ReleaseManifestService()
+)
+reasoning_run_stage_6_manifest_consistency_audit_service = (
+    ReasoningRunStage6ManifestConsistencyAuditService()
 )
 reasoning_run_stage_6_readiness_service = ReasoningRunStage6ReadinessService()
 reasoning_run_stage_6_readiness_consistency_audit_service = (
@@ -2940,6 +2946,59 @@ def manifest_reasoning_run_stage_6_release(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal reasoning-run-stage-6-release-manifest "
             "contract violation",
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/reasoning-run/stage-6-release-manifest/consistency-audit",
+    response_model=ReasoningRunStage6ManifestConsistencyAuditRead,
+    status_code=status.HTTP_200_OK,
+)
+def audit_reasoning_run_stage_6_manifest_consistency(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Task 151: Stage 6 release package manifest consistency audit.
+
+    Read-only audit of the Task 150 manifest against the canonical
+    upstream chain from Task 144 gate through Task 149 evidence
+    consistency. Verifies manifest status, release-ready value,
+    required component presence/order, and per-component agreement with
+    upstream evidence; any deviation yields deterministic findings. No
+    reasoning execution, no replay, no writes, no receipt creation or
+    mutation, no provider/model calls. The Task 140
+    ``original_result`` gap (``NOT_PERSISTED``) remains an evidence
+    limitation and never drives this audit.
+    """
+    if session_service.get(db, session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+
+    try:
+        return reasoning_run_stage_6_manifest_consistency_audit_service.audit(
+            db, session_id
+        )
+    except (
+        ReasoningRunReceiptContractError,
+        ReasoningRunReceiptProvenanceAuditContractError,
+        ReasoningRunReplayConsistencyAuditContractError,
+        ReasoningRunInspectionContractError,
+        ReasoningRunDiagnosticsContractError,
+        ReasoningRunStage6GateContractError,
+        ReasoningRunStage6GateConsistencyAuditContractError,
+        ReasoningRunStage6ReadinessContractError,
+        ReasoningRunStage6ReadinessConsistencyAuditContractError,
+        ReasoningRunStage6EvidenceContractError,
+        ReasoningRunStage6EvidenceConsistencyAuditContractError,
+        ReasoningRunStage6ReleaseManifestContractError,
+        ReasoningRunStage6ManifestConsistencyAuditContractError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal "
+            "reasoning-run-stage-6-manifest-consistency-audit contract "
+            "violation",
         ) from exc
 
 
