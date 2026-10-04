@@ -271,6 +271,9 @@ from rop.schemas.reasoning_run_stage_6_gate import ReasoningRunStage6GateRead
 from rop.schemas.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditRead,
 )
+from rop.schemas.reasoning_run_stage_6_readiness import (
+    ReasoningRunStage6ReadinessRead,
+)
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -396,6 +399,7 @@ __all__ = [
     "ReasoningRunDiagnosticsRead",
     "ReasoningRunStage6GateRead",
     "ReasoningRunStage6GateConsistencyAuditRead",
+    "ReasoningRunStage6ReadinessRead",
     "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",
