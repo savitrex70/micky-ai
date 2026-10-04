@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -111,7 +112,6 @@ def test_no_concrete_provider_class_to_construct() -> None:
     """Task 123 realignment: there is no concrete provider class left to
     construct. The generic Protocol interface exists as a boundary for
     explicitly injected test fakes only."""
-    from pathlib import Path
 
     import rop.services as services_pkg
 
@@ -179,7 +179,7 @@ def test_imports_perform_no_activation() -> None:
         capture_output=True,
         text=True,
         env=env,
-        cwd="C:\\Users\\nurk0\\Downloads\\micky ai",
+        cwd=Path(__file__).resolve().parents[1],
         timeout=120,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
