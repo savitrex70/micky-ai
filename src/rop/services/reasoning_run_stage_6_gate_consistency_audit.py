@@ -58,6 +58,22 @@ REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_SOURCE_TASK_145 = (
     "REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_TASK_145"
 )
 
+# Structural malformation per Task 141's canonical contract: material
+# carrying any of these issues is structurally unverifiable, so it can
+# never reach the weaker tamper verdict. Cited from Task 141 rather
+# than re-derived, so the per-finding classification below reconstructs
+# Task 141's own verdicts instead of inventing new ones.
+_REPLAY_MALFORMING_ISSUES = frozenset(
+    {
+        "REPLAY_MALFORMED_FINGERPRINT",
+        "REPLAY_OUTCOME_NOT_COMPLETED",
+        "REPLAY_EXOGENOUS_SNAPSHOT_MALFORMED",
+        "REPLAY_RECEIPT_UNREADABLE",
+        "REPLAY_INPUT_SNAPSHOT_NOT_PERSISTED",
+        "REPLAY_INPUT_SNAPSHOT_MALFORMED",
+    }
+)
+
 
 class ReasoningRunStage6GateConsistencyAuditContractError(Exception):
     """Task 145: the gate consistency audit result cannot be projected."""
@@ -286,6 +302,24 @@ class ReasoningRunStage6GateConsistencyAuditService:
             return "UNVERIFIABLE", []
         return "CONSISTENT", []
 
+    @staticmethod
+    def _finding_classification(issues: set[str]) -> tuple[str, str]:
+        """Reconstruct Task 141's per-finding verdict from its issues.
+
+        Mirrors Task 141's own classification exactly: clean material
+        is SATISFIED, structurally malformed material is MALFORMED
+        (UNVERIFIABLE when the only gap is never-persisted binding
+        evidence, RECORD_INVALID otherwise), and readable but
+        contract-violating material is INCONSISTENT (RECORD_TAMPERED).
+        """
+        if not issues:
+            return ("SATISFIED", "PERSISTED_MATERIAL_VERIFIABLE")
+        if issues & _REPLAY_MALFORMING_ISSUES:
+            if issues == {"REPLAY_INPUT_SNAPSHOT_NOT_PERSISTED"}:
+                return ("MALFORMED", "UNVERIFIABLE")
+            return ("MALFORMED", "RECORD_INVALID")
+        return ("INCONSISTENT", "RECORD_TAMPERED")
+
     @classmethod
     def _canonical_replay_status(
         cls,
@@ -293,10 +327,9 @@ class ReasoningRunStage6GateConsistencyAuditService:
     ) -> tuple[str, list[str]]:
         """Derive replay state from the owning Task 141 audit output.
 
-        Coherence first: the session ``replay_state``,
-        ``audit_consistent`` flag, and every finding's
-        ``replay_consistent`` flag and ``replay_state`` must agree with
-        the actually present ``replay_issues``, and
+        Coherence first: every finding's ``replay_state`` and
+        ``replay_contract_finding`` must match Task 141's own
+        classification reconstructed from its ``replay_issues``, and
         ``original_result_provenance`` must carry the architectural
         ``NOT_PERSISTED`` marker. Any internal disagreement is an
         incoherent audit and yields INCONSISTENT -- a ``SATISFIED``
@@ -326,21 +359,20 @@ class ReasoningRunStage6GateConsistencyAuditService:
             ):
                 incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
                 return "INCONSISTENT", sorted(set(incoherent))
-            return "NO_MATERIAL", []
+            return "NO_MATERIAL", sorted(set(incoherent))
         if len(findings) != examined:
             incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
         for finding in findings:
             issues = set(finding.get("replay_issues", []))
-            state = finding.get("replay_state", "")
             if finding.get("replay_consistent", False) == bool(issues):
                 incoherent.append(
                     "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
                 )
-            if (state == "SATISFIED") == bool(issues):
-                incoherent.append(
-                    "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
-                )
-            if state not in ("SATISFIED", "INCONSISTENT", "MALFORMED"):
+            expected_state, expected_contract = cls._finding_classification(issues)
+            if (
+                finding.get("replay_state", "") != expected_state
+                or finding.get("replay_contract_finding", "") != expected_contract
+            ):
                 incoherent.append(
                     "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
                 )
