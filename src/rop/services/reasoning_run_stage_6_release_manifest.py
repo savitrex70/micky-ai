@@ -218,7 +218,11 @@ class ReasoningRunStage6ReleaseManifestService:
             evidence,
             evidence_audit,
         )
-        findings = sorted(set(evidence["findings"]) | set(evidence_audit["findings"]))
+        findings = sorted(
+            set(evidence["findings"])
+            | set(evidence_audit["findings"])
+            | set(self._package_findings(gate, readiness, evidence))
+        )
 
         manifest = {
             "requested_session_id": str(session_id),
@@ -329,6 +333,53 @@ class ReasoningRunStage6ReleaseManifestService:
         ]
 
     @staticmethod
+    def _package_findings(
+        gate: dict[str, Any],
+        readiness: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> list[str]:
+        """Represent package-level coherence contradictions, when false.
+
+        Only guards the manifest checks itself are reported, and only
+        when actually false: a published ``ready`` / ``release_ready``
+        flag contradicting its own status, or non-healthy diagnostics
+        blocking readiness. The genuinely empty chain (diagnostics
+        ``NO_MATERIAL``) is a missing-evidence state, not a
+        contradiction, so it never surfaces here.
+        """
+        findings: list[str] = []
+        gate_ready_coherent = gate["ready"] == (gate["gate_status"] == "READY")
+        readiness_release_ready_coherent = readiness["release_ready"] == (
+            readiness["readiness_status"] == "READY"
+        )
+        evidence_release_ready_coherent = evidence["release_ready"] == (
+            evidence["stage_6_status"] == "READY"
+        )
+        if not gate_ready_coherent:
+            findings.append(
+                "MANIFEST_GATE_READY_INCOHERENT:"
+                f"status={gate['gate_status']},ready={gate['ready']}"
+            )
+        if not readiness_release_ready_coherent:
+            findings.append(
+                "MANIFEST_READINESS_RELEASE_READY_INCOHERENT:"
+                f"status={readiness['readiness_status']},"
+                f"release_ready={readiness['release_ready']}"
+            )
+        if not evidence_release_ready_coherent:
+            findings.append(
+                "MANIFEST_EVIDENCE_RELEASE_READY_INCOHERENT:"
+                f"status={evidence['stage_6_status']},"
+                f"release_ready={evidence['release_ready']}"
+            )
+        diagnostics_status = gate["diagnostics_status"]
+        if diagnostics_status == "DEGRADED":
+            findings.append("MANIFEST_DIAGNOSTICS_NOT_HEALTHY:DEGRADED")
+        elif diagnostics_status == "UNHEALTHY":
+            findings.append("MANIFEST_DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY")
+        return findings
+
+    @staticmethod
     def _manifest_status(
         gate: dict[str, Any],
         gate_audit: dict[str, Any],
@@ -339,41 +390,84 @@ class ReasoningRunStage6ReleaseManifestService:
     ) -> str:
         """Derive the package verdict without overriding lower levels.
 
-        Contradiction outranks missing evidence; evidence gaps never
-        become tampering. READY requires every invariant: READY gate,
-        consistent gate audit, READY readiness, consistent readiness
-        audit, available consistent evidence. Anything unrecognized
-        never silently passes as READY.
+        A genuine lower-level consistency-audit contradiction (gate,
+        readiness, or evidence) outranks every other verdict, including
+        ``NO_MATERIAL``, so an empty session can never hide an upstream
+        inconsistency. A contradictory boolean is never overridden by a
+        READY-looking status string: the published ``ready`` and
+        ``release_ready`` flags must independently cohere with their
+        statuses, and unhealthy diagnostics block. Only a genuinely
+        empty, coherent chain is ``NO_MATERIAL``; an unverifiable
+        surface or degraded diagnostics leave the package
+        ``UNVERIFIABLE``. READY requires every guard at once, and
+        anything unrecognized never silently passes as READY.
         """
         gate_status = gate["gate_status"]
         readiness_status = readiness["readiness_status"]
         evidence_status = evidence["stage_6_status"]
-        if gate_status == "NO_MATERIAL":
-            return "NO_MATERIAL"
+
+        gate_consistent = gate_audit["gate_consistent"]
+        readiness_consistent = readiness_audit["readiness_consistent"]
+        evidence_consistent = evidence_audit["evidence_consistent"]
+
+        diagnostics_status = gate["diagnostics_status"]
+
+        gate_ready_coherent = gate["ready"] == (gate_status == "READY")
+        readiness_release_ready_coherent = readiness["release_ready"] == (
+            readiness_status == "READY"
+        )
+        evidence_release_ready_coherent = evidence["release_ready"] == (
+            evidence_status == "READY"
+        )
+
+        # Mandatory precedence: a genuine lower-level consistency-audit
+        # contradiction outranks every other verdict, including
+        # NO_MATERIAL.
+        if not gate_consistent or not readiness_consistent or not evidence_consistent:
+            return "BLOCKED"
         if (
             gate_status == "BLOCKED"
             or readiness_status == "BLOCKED"
             or evidence_status == "BLOCKED"
-            or not gate_audit["gate_consistent"]
-            or not readiness_audit["readiness_consistent"]
-            or not evidence_audit["evidence_consistent"]
         ):
             return "BLOCKED"
+        # Coherence guards: a contradictory boolean can never be
+        # overridden by a READY-looking status string.
+        if (
+            not gate_ready_coherent
+            or not readiness_release_ready_coherent
+            or not evidence_release_ready_coherent
+        ):
+            return "BLOCKED"
+        if diagnostics_status == "UNHEALTHY":
+            return "BLOCKED"
+        # Only a genuinely empty, coherent chain is NO_MATERIAL.
+        if (
+            gate_status == "NO_MATERIAL"
+            and readiness_status == "NO_MATERIAL"
+            and evidence_status == "NO_MATERIAL"
+        ):
+            return "NO_MATERIAL"
         if (
             gate_status == "UNVERIFIABLE"
             or readiness_status == "UNVERIFIABLE"
             or evidence_status == "UNVERIFIABLE"
+            or diagnostics_status == "DEGRADED"
         ):
             return "UNVERIFIABLE"
+        # READY requires every guard at once.
         if (
             gate_status == "READY"
+            and gate["ready"]
+            and gate_consistent
             and readiness_status == "READY"
+            and readiness["release_ready"]
+            and readiness_consistent
             and evidence_status == "READY"
-            and gate_audit["gate_consistent"]
-            and readiness_audit["readiness_consistent"]
-            and evidence_audit["evidence_consistent"]
-            and evidence["evidence_available"]
             and evidence["release_ready"]
+            and evidence["evidence_available"]
+            and evidence_consistent
+            and diagnostics_status == "HEALTHY"
         ):
             return "READY"
         return "BLOCKED"

@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Generator
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -36,8 +37,23 @@ from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
 )
+from rop.services.reasoning_run_stage_6_evidence import (
+    ReasoningRunStage6EvidenceService,
+)
+from rop.services.reasoning_run_stage_6_evidence_consistency_audit import (
+    ReasoningRunStage6EvidenceConsistencyAuditService,
+)
+from rop.services.reasoning_run_stage_6_gate import (
+    ReasoningRunStage6GateService,
+)
 from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditService,
+)
+from rop.services.reasoning_run_stage_6_readiness import (
+    ReasoningRunStage6ReadinessService,
+)
+from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
+    ReasoningRunStage6ReadinessConsistencyAuditService,
 )
 from rop.services.reasoning_run_stage_6_release_manifest import (
     REASONING_RUN_STAGE_6_RELEASE_MANIFEST_SOURCE_TASK_150,
@@ -599,3 +615,236 @@ def test_verdict_components_agree_with_governing_audits() -> None:
         by_id["REASONING_RUN_STAGE_6_EVIDENCE_TASK_148"]["consistent"]
         == evidence_audit["evidence_consistent"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Independent precedence reconstruction (Task 150 correction)
+# ---------------------------------------------------------------------------
+
+
+class _StaticGateService(ReasoningRunStage6GateService):
+    def __init__(self, result: dict[str, Any]) -> None:
+        self._result = result
+
+    def evaluate(self, db: Session, session_id: UUID) -> dict[str, Any]:
+        _ = (db, session_id)
+        return self._result
+
+
+class _StaticReadinessService(ReasoningRunStage6ReadinessService):
+    def __init__(self, result: dict[str, Any]) -> None:
+        self._result = result
+
+    def report(self, db: Session, session_id: UUID) -> dict[str, Any]:
+        _ = (db, session_id)
+        return self._result
+
+
+class _StaticEvidenceService(ReasoningRunStage6EvidenceService):
+    def __init__(self, result: dict[str, Any]) -> None:
+        self._result = result
+
+    def bundle(self, db: Session, session_id: UUID) -> dict[str, Any]:
+        _ = (db, session_id)
+        return self._result
+
+
+def _manifest_with_forged_gate_view(sid: UUID, **overrides: object) -> dict[str, Any]:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+        forged = dict(genuine)
+        forged.update(overrides)
+        return ReasoningRunStage6ReleaseManifestService(
+            gate_service=_StaticGateService(forged)
+        ).manifest(db, sid)
+
+
+def _manifest_with_forged_readiness_view(
+    sid: UUID, **overrides: object
+) -> dict[str, Any]:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessService().report(db, sid)
+        forged = dict(genuine)
+        forged.update(overrides)
+        return ReasoningRunStage6ReleaseManifestService(
+            readiness_service=_StaticReadinessService(forged)
+        ).manifest(db, sid)
+
+
+def _manifest_with_forged_evidence_view(
+    sid: UUID, **overrides: object
+) -> dict[str, Any]:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6EvidenceService().bundle(db, sid)
+        forged = dict(genuine)
+        forged.update(overrides)
+        return ReasoningRunStage6ReleaseManifestService(
+            evidence_service=_StaticEvidenceService(forged)
+        ).manifest(db, sid)
+
+
+def test_manifest_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert genuine["gate_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["gate_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _manifest(sid)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert (
+        by_id["REASONING_RUN_STAGE_6_GATE_CONSISTENCY_AUDIT_TASK_145"]["consistent"]
+        is False
+    )
+
+
+def test_manifest_of_no_material_with_inconsistent_readiness_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessConsistencyAuditService().audit(db, sid)
+    assert genuine["readiness_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["readiness_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReadinessConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _manifest(sid)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert (
+        by_id["REASONING_RUN_STAGE_6_READINESS_CONSISTENCY_AUDIT_TASK_147"][
+            "consistent"
+        ]
+        is False
+    )
+
+
+def test_manifest_of_no_material_with_inconsistent_evidence_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6EvidenceConsistencyAuditService().audit(db, sid)
+    assert genuine["evidence_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["evidence_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "EVIDENCE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6EvidenceConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _manifest(sid)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert (
+        by_id["REASONING_RUN_STAGE_6_EVIDENCE_CONSISTENCY_AUDIT_TASK_149"]["consistent"]
+        is False
+    )
+
+
+def test_manifest_derives_blocked_when_gate_ready_flag_forged_false() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest_with_forged_gate_view(sid, ready=False)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert "MANIFEST_GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+def test_manifest_derives_blocked_when_readiness_release_ready_forged_false() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest_with_forged_readiness_view(sid, release_ready=False)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert (
+        "MANIFEST_READINESS_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_manifest_derives_blocked_when_evidence_release_ready_forged_false() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest_with_forged_evidence_view(sid, release_ready=False)
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert (
+        "MANIFEST_EVIDENCE_RELEASE_READY_INCOHERENT:status=READY,release_ready=False"
+        in body["findings"]
+    )
+
+
+def test_manifest_derives_unverifiable_when_diagnostics_degraded() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest_with_forged_gate_view(sid, diagnostics_status="DEGRADED")
+
+    assert body["manifest_status"] == "UNVERIFIABLE"
+    assert body["release_ready"] is False
+    assert "MANIFEST_DIAGNOSTICS_NOT_HEALTHY:DEGRADED" in body["findings"]
+    by_id = {c["component_id"]: c for c in body["components"]}
+    assert by_id["REASONING_RUN_DIAGNOSTICS_TASK_143"]["status"] == "DEGRADED"
+
+
+def test_manifest_derives_blocked_when_diagnostics_unhealthy() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _manifest_with_forged_gate_view(sid, diagnostics_status="UNHEALTHY")
+
+    assert body["manifest_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert "MANIFEST_DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY" in body["findings"]
