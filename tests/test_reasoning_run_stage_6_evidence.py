@@ -373,6 +373,89 @@ def test_evidence_missing_session_returns_404() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Precedence: upstream contradictions outrank NO_MATERIAL
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert genuine["gate_status"] == "NO_MATERIAL"
+    assert genuine["gate_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["gate_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _evidence(sid)
+
+    assert body["stage_6_status"] == "BLOCKED"
+    assert body["stage_6_status"] != "NO_MATERIAL"
+    assert body["evidence_available"] is True
+    assert body["release_ready"] is False
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["gate_consistent"] is False
+    assert body["readiness_status"] == "BLOCKED"
+    assert "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL" in (
+        body["findings"]
+    )
+    assert body["finding_count"] == len(body["findings"])
+
+
+def test_evidence_of_no_material_with_inconsistent_readiness_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessConsistencyAuditService().audit(db, sid)
+    assert genuine["readiness_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["readiness_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReadinessConsistencyAuditService,
+        "audit",
+        _forged_audit,
+    )
+
+    body = _evidence(sid)
+
+    assert body["stage_6_status"] == "BLOCKED"
+    assert body["stage_6_status"] != "NO_MATERIAL"
+    assert body["evidence_available"] is True
+    assert body["release_ready"] is False
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["readiness_consistent"] is False
+    assert (
+        "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+        in body["findings"]
+    )
+
+
+# ---------------------------------------------------------------------------
 # Isolation / determinism / read-only
 # ---------------------------------------------------------------------------
 

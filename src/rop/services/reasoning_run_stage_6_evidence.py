@@ -88,12 +88,16 @@ class ReasoningRunStage6EvidenceService:
 
         Delegates to the existing Task 144/145/146/147 services.
         Read-only: no writes, no execution, no replay, no
-        provider/model calls. Release readiness is reported only when
-        every prerequisite holds: READY gate with its ``ready`` flag
-        true, consistent gate audit, READY readiness with its
-        ``release_ready`` flag true, consistent readiness audit, and
-        healthy diagnostics. No upstream boolean/status contradiction
-        can disappear behind another field reporting READY.
+        provider/model calls. A genuine Task 145 or Task 147
+        consistency contradiction outranks every other verdict,
+        including ``NO_MATERIAL``: an upstream inconsistency can never
+        be hidden by an empty session. Release readiness is reported
+        only when every prerequisite holds: READY gate with its
+        ``ready`` flag coherent, consistent gate audit, READY readiness
+        with its ``release_ready`` flag coherent, consistent readiness
+        audit, and healthy diagnostics. No upstream boolean/status
+        contradiction can disappear behind another field reporting
+        READY.
         """
         try:
             gate = self.gate_service.evaluate(db, session_id)
@@ -139,31 +143,29 @@ class ReasoningRunStage6EvidenceService:
         gate_ready_coherent = gate_ready == (gate_status == "READY")
         readiness_rr_coherent = readiness_release_ready == (readiness_status == "READY")
 
-        if gate_status == "NO_MATERIAL":
-            stage_6_status = "NO_MATERIAL"
-        elif (
-            gate_status == "BLOCKED"
-            or readiness_status == "BLOCKED"
-            or not gate_consistent
-            or not readiness_consistent
-            or not gate_ready_coherent
-            or not readiness_rr_coherent
-            or diagnostics_health == "UNHEALTHY"
-        ):
+        if not gate_consistent:
+            # Mandatory precedence: a genuine Task 145 contradiction
+            # outranks every other verdict, including NO_MATERIAL.
             stage_6_status = "BLOCKED"
-        elif (
-            gate_status == "UNVERIFIABLE"
-            or readiness_status == "UNVERIFIABLE"
-            or diagnostics_health == "DEGRADED"
-        ):
+        elif not readiness_consistent:
+            # Mandatory precedence: a genuine Task 147 contradiction
+            # outranks every other verdict, including NO_MATERIAL.
+            stage_6_status = "BLOCKED"
+        elif gate_status == "BLOCKED":
+            stage_6_status = "BLOCKED"
+        elif readiness_status == "BLOCKED":
+            stage_6_status = "BLOCKED"
+        elif gate_status == "NO_MATERIAL" and readiness_status == "NO_MATERIAL":
+            stage_6_status = "NO_MATERIAL"
+        elif gate_status == "UNVERIFIABLE" or readiness_status == "UNVERIFIABLE":
             stage_6_status = "UNVERIFIABLE"
         elif (
             gate_status == "READY"
-            and gate_ready
             and readiness_status == "READY"
-            and readiness_release_ready
             and gate_consistent
             and readiness_consistent
+            and gate_ready_coherent
+            and readiness_rr_coherent
             and diagnostics_health == "HEALTHY"
         ):
             stage_6_status = "READY"
