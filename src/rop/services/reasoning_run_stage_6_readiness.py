@@ -11,7 +11,12 @@ invocation, no persistence, no provider/model calls. The Task 140
 never reconstructed here; its ``NOT_PERSISTED`` provenance is not an
 issue code and never blocks readiness on its own. READY additionally
 requires the gate ``ready`` flag to be true and diagnostics to be
-healthy.
+healthy. Precedence is mandatory: a genuine Task 145 gate
+inconsistency (``gate_consistent == False``) is always BLOCKED and
+outranks every other verdict, including ``NO_MATERIAL``, so a
+consistency contradiction can never be hidden by the empty-session
+convenience classification; only a genuinely coherent NO_MATERIAL
+result may report NO_MATERIAL.
 """
 
 from __future__ import annotations
@@ -72,8 +77,13 @@ class ReasoningRunStage6ReadinessService:
         replay, no provider/model calls.
         READY requires the gate to be READY with its ``ready`` flag
         true, the gate audit to agree, healthy diagnostics, and no
-        blocking deterministic contradiction; readiness is never
-        reported when the gate audit finds the gate inconsistent.
+        blocking deterministic contradiction. Verdict precedence is
+        mandatory: ``gate_consistent == False`` is always BLOCKED and
+        outranks every other verdict, including ``NO_MATERIAL`` -- a
+        Task 145 contradiction is never hidden by the empty-session
+        classification, and only a genuinely coherent NO_MATERIAL
+        result reports NO_MATERIAL. UNHEALTHY diagnostics and an
+        incoherent gate ``ready`` flag fall through to BLOCKED.
         ``release_ready`` is true exactly when ``readiness_status`` is
         READY, by construction from the same verdict.
         """
@@ -100,23 +110,22 @@ class ReasoningRunStage6ReadinessService:
         diagnostics_status = gate["diagnostics_status"]
         gate_ready_coherent = gate_ready == (gate_status == "READY")
 
-        if gate_status == "NO_MATERIAL":
-            readiness_status = "NO_MATERIAL"
-        elif (
-            gate_status == "BLOCKED"
-            or not gate_consistent
-            or diagnostics_status == "UNHEALTHY"
-            or not gate_ready_coherent
-        ):
+        # Mandatory precedence: a genuine Task 145 gate inconsistency
+        # outranks every other verdict, including NO_MATERIAL. Task 145
+        # is explicitly saying the canonical gate result contradicts
+        # itself, so that contradiction must never be hidden by the
+        # empty-session convenience classification.
+        if not gate_consistent:
             readiness_status = "BLOCKED"
-        elif gate_status == "UNVERIFIABLE" or diagnostics_status == "DEGRADED":
+        elif gate_status == "NO_MATERIAL":
+            readiness_status = "NO_MATERIAL"
+        elif gate_status == "BLOCKED":
+            readiness_status = "BLOCKED"
+        elif gate_status == "UNVERIFIABLE":
             readiness_status = "UNVERIFIABLE"
-        elif (
-            gate_status == "READY"
-            and gate_ready
-            and gate_consistent
-            and diagnostics_status == "HEALTHY"
-        ):
+        elif diagnostics_status == "DEGRADED":
+            readiness_status = "UNVERIFIABLE"
+        elif gate_status == "READY" and gate_ready and diagnostics_status == "HEALTHY":
             readiness_status = "READY"
         else:
             readiness_status = "BLOCKED"

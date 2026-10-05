@@ -536,6 +536,26 @@ def _readiness_with_forged_gate(
     return r.json()
 
 
+def _readiness_with_forged_gate_audit(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit.update(overrides)
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+    r = client.get(READINESS_URL.format(sid=sid))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_readiness_status_and_release_ready_agree_in_all_states() -> None:
     cases = [
         ("Patient reports chest pain", "READY", True),
@@ -583,6 +603,180 @@ def test_readiness_blocked_when_gate_ready_flag_is_false(
     assert body["readiness_status"] == "BLOCKED"
     assert body["release_ready"] is False
     assert "GATE_READY_INCOHERENT:status=READY,ready=False" in body["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Precedence: a genuine Task 145 contradiction outranks NO_MATERIAL
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact defect: NO_MATERIAL must never hide a Task 145 contradiction."""
+    sid = UUID(_create_session())
+    with TestingSessionLocal() as db:
+        genuine_audit = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert genuine_audit["gate_consistent"] is True
+    contradiction = "GATE_STATUS_MISMATCH:expected=NO_MATERIAL,actual=READY"
+    forged_findings = list(genuine_audit["findings"]) + [contradiction]
+
+    body = _readiness_with_forged_gate_audit(
+        monkeypatch,
+        sid,
+        gate_consistent=False,
+        findings=forged_findings,
+        finding_count=len(forged_findings),
+    )
+
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["gate_consistent"] is False
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert contradiction in body["findings"]
+
+
+def test_readiness_of_no_material_with_coherent_gate_audit_is_no_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: the legitimate empty-session verdict survives interception."""
+    sid = UUID(_create_session())
+
+    body = _readiness_with_forged_gate_audit(monkeypatch, sid)
+
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["gate_consistent"] is True
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["release_ready"] is False
+    assert body["findings"] == []
+
+
+def test_readiness_of_blocked_gate_with_inconsistent_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged_fp = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged_fp, input_snapshot=snapshot)
+    contradiction = "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=READY"
+    forged_findings = [contradiction]
+
+    body = _readiness_with_forged_gate_audit(
+        monkeypatch,
+        sid,
+        gate_consistent=False,
+        findings=forged_findings,
+        finding_count=len(forged_findings),
+    )
+
+    assert body["gate_status"] == "BLOCKED"
+    assert body["gate_consistent"] is False
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+
+
+def test_readiness_of_unverifiable_gate_with_inconsistent_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stronger contradiction must not be weakened to UNVERIFIABLE."""
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+    contradiction = "GATE_DIAGNOSTICS_MISMATCH:expected=DEGRADED,actual=HEALTHY"
+    forged_findings = [contradiction]
+
+    body = _readiness_with_forged_gate_audit(
+        monkeypatch,
+        sid,
+        gate_consistent=False,
+        findings=forged_findings,
+        finding_count=len(forged_findings),
+    )
+
+    assert body["gate_status"] == "UNVERIFIABLE"
+    assert body["gate_consistent"] is False
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert contradiction in body["findings"]
+
+
+def test_readiness_of_ready_gate_with_degraded_diagnostics_is_unverifiable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """READY + DEGRADED diagnostics demotes to UNVERIFIABLE once Task 145
+    is coherent. The coherent audit is captured before the gate is
+    forged because the genuine Task 145 audit re-evaluates the gate and
+    would (correctly) flag the forgery -- that stronger-contradiction
+    path is the subject of the next test."""
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine_gate = ReasoningRunStage6GateService().evaluate(db, sid)
+        coherent_audit = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert coherent_audit["gate_consistent"] is True
+    forged_gate = dict(genuine_gate)
+    forged_gate["diagnostics_status"] = "DEGRADED"
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return coherent_audit
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _readiness(sid)
+
+    assert body["gate_status"] == "READY"
+    assert body["gate_consistent"] is True
+    assert body["diagnostics_status"] == "DEGRADED"
+    assert body["readiness_status"] == "UNVERIFIABLE"
+    assert body["release_ready"] is False
+
+
+def test_readiness_of_ready_gate_with_degraded_diagnostics_and_inconsistent_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degraded diagnostics never weaken a genuine Task 145 contradiction.
+
+    The gate alone is forged; the Task 145 audit then runs genuinely
+    over the forged gate and itself reports the gate inconsistent --
+    the exact contradiction the readiness precedence must not hide.
+    """
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine_gate = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine_gate)
+    forged_gate["diagnostics_status"] = "DEGRADED"
+
+    def _forged_evaluate(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_gate
+
+    monkeypatch.setattr(ReasoningRunStage6GateService, "evaluate", _forged_evaluate)
+
+    with TestingSessionLocal() as db:
+        genuine_audit = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert genuine_audit["gate_consistent"] is False
+
+    body = _readiness(sid)
+
+    assert body["gate_status"] == "READY"
+    assert body["diagnostics_status"] == "DEGRADED"
+    assert body["gate_consistent"] is False
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["release_ready"] is False
+    assert body["findings"] == sorted(
+        set(forged_gate["findings"]) | set(genuine_audit["findings"])
+    )
 
 
 def test_readiness_inherits_gate_findings_deterministically() -> None:
