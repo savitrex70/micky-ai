@@ -34,6 +34,9 @@ from rop.services.reasoning_run_fingerprint import compute_snapshot_fingerprint
 from rop.services.reasoning_run_input_snapshot import (
     REASONING_RUN_INPUT_SNAPSHOT_SOURCE_TASK_124,
 )
+from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
+    ReasoningRunStage6GateConsistencyAuditService,
+)
 from rop.services.reasoning_run_stage_6_readiness import (
     ReasoningRunStage6ReadinessService,
 )
@@ -292,6 +295,72 @@ def test_audit_missing_session_returns_404() -> None:
     r = client.get(AUDIT_URL.format(sid=uuid4()))
     assert r.status_code == 404
     assert r.json() == {"detail": "Session not found"}
+
+
+# ---------------------------------------------------------------------------
+# Precedence: a genuine Task 145 contradiction outranks NO_MATERIAL
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_gate_audit(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit.update(overrides)
+    if "findings" in overrides:
+        forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+    return _audit(sid)
+
+
+def test_audit_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    body = _audit_with_forged_gate_audit(
+        monkeypatch,
+        sid,
+        gate_consistent=False,
+        findings=["GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"],
+    )
+
+    assert body["expected_readiness_status"] == "BLOCKED"
+    assert body["actual_readiness_status"] == "BLOCKED"
+    assert body["readiness_status"] == "BLOCKED"
+    assert body["readiness_consistent"] is True
+    assert body["release_ready"] is False
+    assert "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL" in (
+        body["findings"]
+    )
+    assert not any(
+        finding.startswith("READINESS_STATUS_MISMATCH") for finding in body["findings"]
+    )
+    assert body["finding_count"] == len(body["findings"])
+
+
+def test_audit_of_no_material_with_coherent_gate_audit_is_no_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    body = _audit_with_forged_gate_audit(monkeypatch, sid)
+
+    assert body["expected_readiness_status"] == "NO_MATERIAL"
+    assert body["actual_readiness_status"] == "NO_MATERIAL"
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["readiness_consistent"] is True
+    assert body["release_ready"] is False
+    assert body["findings"] == []
 
 
 # ---------------------------------------------------------------------------

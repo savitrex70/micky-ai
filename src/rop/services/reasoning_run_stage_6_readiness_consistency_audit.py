@@ -184,25 +184,28 @@ class ReasoningRunStage6ReadinessConsistencyAuditService:
     def _expected_status(gate: dict[str, Any], gate_audit: dict[str, Any]) -> str:
         """Map Task 144/145 outputs to the expected readiness state.
 
-        Independent expectation over already computed verdicts, using
-        the same readiness rule the Task 146 report applies:
-        contradiction (or a disagreeing gate audit) blocks, a pure
-        evidence gap leaves readiness unverifiable, and only a READY
-        gate with a consistent audit and healthy diagnostics is ready.
-        The architectural ``original_result`` gap never appears here
-        because it is not an issue code anywhere upstream. An unknown
-        combination never silently passes as READY.
+        Independent expectation over already computed verdicts,
+        mirroring the corrected Task 146 readiness rule: a genuine
+        Task 145 contradiction (``gate_consistent == False``)
+        outranks every other verdict, including ``NO_MATERIAL``, so
+        an inconsistent gate audit can never be hidden by an empty
+        session. A pure evidence gap with a coherent audit stays
+        ``NO_MATERIAL``, and only a READY gate with a consistent
+        audit and healthy diagnostics is ready. The architectural
+        ``original_result`` gap never appears here because it is not
+        an issue code anywhere upstream. An unknown combination never
+        silently passes as READY.
         """
         gate_status = gate.get("gate_status", "NO_MATERIAL")
         gate_consistent = gate_audit.get("gate_consistent", False)
         diagnostics_health = gate.get("diagnostics_status", "NO_MATERIAL")
+        # Mandatory precedence: a genuine Task 145 gate inconsistency
+        # outranks every other verdict, including NO_MATERIAL.
+        if not gate_consistent:
+            return "BLOCKED"
         if gate_status == "NO_MATERIAL":
             return "NO_MATERIAL"
-        if (
-            gate_status == "BLOCKED"
-            or not gate_consistent
-            or diagnostics_health == "UNHEALTHY"
-        ):
+        if gate_status == "BLOCKED" or diagnostics_health == "UNHEALTHY":
             return "BLOCKED"
         if gate_status == "UNVERIFIABLE" or diagnostics_health == "DEGRADED":
             return "UNVERIFIABLE"
