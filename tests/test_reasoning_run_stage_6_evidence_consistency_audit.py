@@ -14,6 +14,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Generator
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -41,8 +42,17 @@ from rop.services.reasoning_run_stage_6_evidence_consistency_audit import (
     REASONING_RUN_STAGE_6_EVIDENCE_CONSISTENCY_AUDIT_SOURCE_TASK_149,
     ReasoningRunStage6EvidenceConsistencyAuditService,
 )
+from rop.services.reasoning_run_stage_6_gate import (
+    ReasoningRunStage6GateService,
+)
 from rop.services.reasoning_run_stage_6_gate_consistency_audit import (
     ReasoningRunStage6GateConsistencyAuditService,
+)
+from rop.services.reasoning_run_stage_6_readiness import (
+    ReasoningRunStage6ReadinessService,
+)
+from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
+    ReasoningRunStage6ReadinessConsistencyAuditService,
 )
 
 engine = create_engine(
@@ -689,3 +699,168 @@ def test_audit_detects_false_evidence_available(
 
     assert body["evidence_consistent"] is False
     assert "EVIDENCE_AVAILABLE_MISMATCH:expected=False,actual=True" in body["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Independent precedence reconstruction (Task 149 correction)
+# ---------------------------------------------------------------------------
+
+
+def test_audit_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    assert genuine["gate_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["gate_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6GateConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["expected_evidence_status"] == "BLOCKED"
+    assert body["evidence_status"] == "BLOCKED"
+    assert body["evidence_consistent"] is True
+    assert body["release_ready"] is False
+    assert "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL" in (
+        body["findings"]
+    )
+
+
+def test_audit_of_no_material_with_inconsistent_readiness_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessConsistencyAuditService().audit(db, sid)
+    assert genuine["readiness_consistent"] is True
+    forged_audit = dict(genuine)
+    forged_audit["readiness_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReadinessConsistencyAuditService, "audit", _forged_audit
+    )
+
+    body = _audit(sid)
+
+    assert body["expected_evidence_status"] == "BLOCKED"
+    assert body["evidence_status"] == "BLOCKED"
+    assert body["evidence_consistent"] is True
+    assert body["release_ready"] is False
+    assert "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL" in (
+        body["findings"]
+    )
+
+
+class _StaticGateService(ReasoningRunStage6GateService):
+    """Serve one precomputed Task 144 verdict (Task 149 test seam)."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        self._result = result
+
+    def evaluate(self, db: Session, session_id: UUID) -> dict[str, Any]:
+        _ = (db, session_id)
+        return self._result
+
+
+class _StaticReadinessService(ReasoningRunStage6ReadinessService):
+    """Serve one precomputed Task 146 report (Task 149 test seam)."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        self._result = result
+
+    def report(self, db: Session, session_id: UUID) -> dict[str, Any]:
+        _ = (db, session_id)
+        return self._result
+
+
+def _audit_with_forged_gate_view(sid: UUID, **overrides: object) -> dict[str, Any]:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateService().evaluate(db, sid)
+    forged_gate = dict(genuine)
+    forged_gate.update(overrides)
+    with TestingSessionLocal() as db:
+        return ReasoningRunStage6EvidenceConsistencyAuditService(
+            gate_service=_StaticGateService(forged_gate)
+        ).audit(db, sid)
+
+
+def test_audit_derives_blocked_when_gate_ready_flag_forged_false() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate_view(sid, ready=False)
+
+    assert body["expected_evidence_status"] == "BLOCKED"
+    assert body["actual_evidence_status"] == "READY"
+    assert body["evidence_consistent"] is False
+    assert body["release_ready"] is True
+    assert "EVIDENCE_STATUS_MISMATCH:expected=BLOCKED,actual=READY" in body["findings"]
+
+
+def test_audit_derives_blocked_when_readiness_release_ready_forged_false() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessService().report(db, sid)
+    forged_readiness = dict(genuine)
+    forged_readiness["release_ready"] = False
+    with TestingSessionLocal() as db:
+        body = ReasoningRunStage6EvidenceConsistencyAuditService(
+            readiness_service=_StaticReadinessService(forged_readiness)
+        ).audit(db, sid)
+
+    assert body["expected_evidence_status"] == "BLOCKED"
+    assert body["actual_evidence_status"] == "READY"
+    assert body["evidence_consistent"] is False
+    assert "EVIDENCE_STATUS_MISMATCH:expected=BLOCKED,actual=READY" in body["findings"]
+
+
+def test_audit_derives_unverifiable_when_diagnostics_degraded() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate_view(sid, diagnostics_status="DEGRADED")
+
+    assert body["expected_evidence_status"] == "UNVERIFIABLE"
+    assert body["actual_evidence_status"] == "READY"
+    assert body["evidence_consistent"] is False
+    assert (
+        "EVIDENCE_STATUS_MISMATCH:expected=UNVERIFIABLE,actual=READY"
+        in body["findings"]
+    )
+
+
+def test_audit_derives_blocked_when_diagnostics_unhealthy() -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_gate_view(sid, diagnostics_status="UNHEALTHY")
+
+    assert body["expected_evidence_status"] == "BLOCKED"
+    assert body["actual_evidence_status"] == "READY"
+    assert body["evidence_consistent"] is False
+    assert "EVIDENCE_STATUS_MISMATCH:expected=BLOCKED,actual=READY" in body["findings"]

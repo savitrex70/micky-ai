@@ -233,36 +233,71 @@ class ReasoningRunStage6EvidenceConsistencyAuditService:
         readiness: dict[str, Any],
         readiness_audit: dict[str, Any],
     ) -> str:
-        """Map Task 144-147 outputs to the expected evidence state.
+        """Independently reconstruct the canonical Task 148 verdict.
 
-        Independent expectation over already computed verdicts: a real
-        contradiction or a disagreeing consistency audit blocks, a pure
-        evidence gap leaves the bundle unverifiable, and only a READY
-        gate with a READY readiness and two agreeing audits is READY.
-        The architectural ``original_result`` gap never appears here
-        because it is not an issue code anywhere upstream. An unknown
-        combination never silently passes as READY.
+        Mirrors the approved Task 148 evidence precedence exactly: a
+        genuine Task 145 or Task 147 contradiction (``gate_consistent
+        == False`` / ``readiness_consistent == False``) outranks every
+        other verdict, including ``NO_MATERIAL``; the published ``ready``
+        and ``release_ready`` flags must independently cohere with
+        their statuses (``ready == (gate_status == "READY")`` and
+        ``release_ready == (readiness_status == "READY")``), so the
+        status field alone is never trusted; unhealthy diagnostics
+        block; an empty session with coherent audits stays
+        ``NO_MATERIAL``; an unverifiable upstream or degraded
+        diagnostics leave the bundle ``UNVERIFIABLE``; and ``READY``
+        requires every guard at once. The architectural
+        ``original_result`` gap never appears here because it is not
+        an issue code anywhere upstream. An unknown combination never
+        silently passes as READY.
         """
         gate_status = gate.get("gate_status", "NO_MATERIAL")
+        gate_ready = gate.get("ready", False)
         gate_consistent = gate_audit.get("gate_consistent", False)
         readiness_status = readiness.get("readiness_status", "NO_MATERIAL")
+        readiness_release_ready = readiness.get("release_ready", False)
         readiness_consistent = readiness_audit.get("readiness_consistent", False)
-        if gate_status == "NO_MATERIAL":
+        diagnostics_status = gate.get("diagnostics_status", "NO_MATERIAL")
+
+        gate_ready_coherent = gate_ready == (gate_status == "READY")
+        readiness_release_ready_coherent = readiness_release_ready == (
+            readiness_status == "READY"
+        )
+
+        # Mandatory precedence: a genuine Task 145 contradiction
+        # outranks every other verdict, including NO_MATERIAL.
+        if not gate_consistent:
+            return "BLOCKED"
+        # Mandatory precedence: a genuine Task 147 contradiction also
+        # outranks every other verdict, including NO_MATERIAL.
+        if not readiness_consistent:
+            return "BLOCKED"
+        if not gate_ready_coherent:
+            return "BLOCKED"
+        if not readiness_release_ready_coherent:
+            return "BLOCKED"
+        if gate_status == "BLOCKED":
+            return "BLOCKED"
+        if readiness_status == "BLOCKED":
+            return "BLOCKED"
+        if diagnostics_status == "UNHEALTHY":
+            return "BLOCKED"
+        if gate_status == "NO_MATERIAL" and readiness_status == "NO_MATERIAL":
             return "NO_MATERIAL"
         if (
-            gate_status == "BLOCKED"
-            or readiness_status == "BLOCKED"
-            or not gate_consistent
-            or not readiness_consistent
+            gate_status == "UNVERIFIABLE"
+            or readiness_status == "UNVERIFIABLE"
+            or diagnostics_status == "DEGRADED"
         ):
-            return "BLOCKED"
-        if gate_status == "UNVERIFIABLE" or readiness_status == "UNVERIFIABLE":
             return "UNVERIFIABLE"
         if (
             gate_status == "READY"
-            and readiness_status == "READY"
+            and gate_ready
             and gate_consistent
+            and readiness_status == "READY"
+            and readiness_release_ready
             and readiness_consistent
+            and diagnostics_status == "HEALTHY"
         ):
             return "READY"
         return "BLOCKED"
