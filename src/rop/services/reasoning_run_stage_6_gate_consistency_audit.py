@@ -258,27 +258,47 @@ class ReasoningRunStage6GateConsistencyAuditService:
         """Derive provenance state from the owning Task 139 audit output.
 
         The verdict comes from the audit's own per-receipt evidence,
-        never from its summary boolean alone: every finding's
+        never from its summary fields alone: every finding's
         ``receipt_consistent`` flag must agree with its
         ``provenance_issues``, the session ``audit_consistent`` flag
-        must agree with the findings, and the examined count must agree
-        with the findings length. Any internal disagreement is an
-        incoherent audit and yields INCONSISTENT with an explicit
-        finding. Otherwise: no examined material is NO_MATERIAL; empty
-        issues everywhere is CONSISTENT; a pure
-        missing-binding-evidence gap
+        must agree with the findings, the examined count must agree
+        with the findings length, and the published ``valid_receipts``
+        / ``invalid_receipts`` summary must be a non-negative partition
+        of the examined count that matches the findings' own flags.
+        Any internal disagreement is an incoherent audit and yields
+        INCONSISTENT with an explicit finding; impossible aggregate
+        counts are refused, never silently accepted. Otherwise: no
+        examined material is NO_MATERIAL; empty issues everywhere is
+        CONSISTENT; a pure missing-binding-evidence gap
         (``FINGERPRINT_PROVENANCE_NOT_PERSISTED`` only) is
         UNVERIFIABLE, never tampering; any genuine contradiction is
         INCONSISTENT.
         """
         incoherent: list[str] = []
         examined = provenance_audit.get("completed_receipts_examined", 0)
+        valid = provenance_audit.get("valid_receipts", 0)
+        invalid = provenance_audit.get("invalid_receipts", 0)
         findings = provenance_audit.get("findings", [])
+        counts_incoherent = examined < 0 or valid < 0 or invalid < 0
+        if not counts_incoherent and (
+            valid + invalid != examined or len(findings) != examined
+        ):
+            counts_incoherent = True
+        if not counts_incoherent:
+            flagged_valid = sum(
+                1 for finding in findings if finding.get("receipt_consistent", False)
+            )
+            counts_incoherent = (
+                flagged_valid != valid or len(findings) - flagged_valid != invalid
+            )
+        if counts_incoherent:
+            incoherent.append("GATE_PROVENANCE_COUNTS_INCOHERENT")
         if examined == 0:
             if findings or not provenance_audit.get("audit_consistent", True):
                 incoherent.append("GATE_PROVENANCE_AUDIT_INCOHERENT")
-                return "INCONSISTENT", incoherent
-            return "NO_MATERIAL", incoherent
+            if incoherent:
+                return "INCONSISTENT", sorted(set(incoherent))
+            return "NO_MATERIAL", []
         if len(findings) != examined:
             incoherent.append("GATE_PROVENANCE_AUDIT_INCOHERENT")
         for finding in findings:
@@ -329,11 +349,15 @@ class ReasoningRunStage6GateConsistencyAuditService:
 
         Coherence first: every finding's ``replay_state`` and
         ``replay_contract_finding`` must match Task 141's own
-        classification reconstructed from its ``replay_issues``, and
+        classification reconstructed from its ``replay_issues``,
         ``original_result_provenance`` must carry the architectural
-        ``NOT_PERSISTED`` marker. Any internal disagreement is an
-        incoherent audit and yields INCONSISTENT -- a ``SATISFIED``
-        verdict over tampered issues is refused, never trusted.
+        ``NOT_PERSISTED`` marker, and the published summary counts
+        must be a non-negative partition of the examined count that
+        matches the classification-derived verdicts (SATISFIED counts
+        as valid; MALFORMED and INCONSISTENT count as invalid). Any
+        internal disagreement is an incoherent audit and yields
+        INCONSISTENT -- a ``SATISFIED`` verdict over tampered issues or
+        impossible aggregate counts is refused, never trusted.
         Once coherence holds, the verdict follows Task 141's own
         classification (``SATISFIED`` clean, ``INCONSISTENT``
         contract-violating, ``MALFORMED`` structurally unverifiable
@@ -345,12 +369,19 @@ class ReasoningRunStage6GateConsistencyAuditService:
         """
         incoherent: list[str] = []
         examined = replay_audit.get("completed_receipts_examined", 0)
+        valid = replay_audit.get("valid_receipts", 0)
+        invalid = replay_audit.get("invalid_receipts", 0)
         findings = replay_audit.get("findings", [])
         if replay_audit.get("original_result_provenance") != "NOT_PERSISTED":
             incoherent.append(
                 "GATE_REPLAY_ORIGINAL_PROVENANCE_UNEXPECTED:"
                 f"{replay_audit.get('original_result_provenance')}"
             )
+        counts_incoherent = examined < 0 or valid < 0 or invalid < 0
+        if not counts_incoherent and (
+            valid + invalid != examined or len(findings) != examined
+        ):
+            counts_incoherent = True
         if examined == 0:
             if (
                 findings
@@ -358,10 +389,14 @@ class ReasoningRunStage6GateConsistencyAuditService:
                 or replay_audit.get("replay_state", "NO_MATERIAL") != "NO_MATERIAL"
             ):
                 incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+            if counts_incoherent:
+                incoherent.append("GATE_REPLAY_COUNTS_INCOHERENT")
+            if incoherent:
                 return "INCONSISTENT", sorted(set(incoherent))
             return "NO_MATERIAL", sorted(set(incoherent))
         if len(findings) != examined:
             incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
+        derived_states: list[str] = []
         for finding in findings:
             issues = set(finding.get("replay_issues", []))
             if finding.get("replay_consistent", False) == bool(issues):
@@ -369,6 +404,7 @@ class ReasoningRunStage6GateConsistencyAuditService:
                     "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
                 )
             expected_state, expected_contract = cls._finding_classification(issues)
+            derived_states.append(expected_state)
             if (
                 finding.get("replay_state", "") != expected_state
                 or finding.get("replay_contract_finding", "") != expected_contract
@@ -376,6 +412,13 @@ class ReasoningRunStage6GateConsistencyAuditService:
                 incoherent.append(
                     "GATE_REPLAY_FINDING_INCOHERENT:" f"{finding.get('receipt_id', '')}"
                 )
+        if not counts_incoherent:
+            derived_valid = sum(1 for state in derived_states if state == "SATISFIED")
+            counts_incoherent = (
+                derived_valid != valid or len(derived_states) - derived_valid != invalid
+            )
+        if counts_incoherent:
+            incoherent.append("GATE_REPLAY_COUNTS_INCOHERENT")
         if replay_audit.get("audit_consistent", False) == any(
             finding.get("replay_issues", []) for finding in findings
         ):
@@ -386,24 +429,22 @@ class ReasoningRunStage6GateConsistencyAuditService:
             has_issues
         ):
             incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
-        # Task 141's canonical session aggregation, reconstructed from
-        # the per-receipt findings with its exact precedence: a
-        # MALFORMED finding outranks INCONSISTENT, which outranks
-        # SATISFIED. Any published session state disagreeing with that
-        # reconstruction is an incoherent audit.
-        finding_states = {finding.get("replay_state", "") for finding in findings}
-        if "MALFORMED" in finding_states:
+        # Task 141's canonical session aggregation, independently
+        # reconstructed from the per-finding classifications with its
+        # exact precedence: a MALFORMED finding outranks INCONSISTENT,
+        # which outranks SATISFIED. An impossible mixture, an unknown
+        # per-finding state, or any published session state disagreeing
+        # with that reconstruction is an incoherent audit and can never
+        # silently become a healthy state.
+        if "MALFORMED" in derived_states:
             expected_session_state: str | None = "MALFORMED"
-        elif "INCONSISTENT" in finding_states:
+        elif "INCONSISTENT" in derived_states:
             expected_session_state = "INCONSISTENT"
-        elif finding_states == {"SATISFIED"}:
+        elif derived_states and all(state == "SATISFIED" for state in derived_states):
             expected_session_state = "SATISFIED"
         else:
             expected_session_state = None
-        if (
-            expected_session_state is not None
-            and session_state != expected_session_state
-        ):
+        if session_state != expected_session_state:
             incoherent.append("GATE_REPLAY_AUDIT_INCOHERENT")
         if incoherent:
             return "INCONSISTENT", sorted(set(incoherent))

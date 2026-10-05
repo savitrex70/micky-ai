@@ -1099,3 +1099,238 @@ def test_audit_rejects_malformed_finding_with_tamper_only_issues(
         finding.startswith("GATE_REPLAY_FINDING_INCOHERENT:")
         for finding in body["findings"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Summary-count coherence: impossible aggregates are refused, never trusted
+# ---------------------------------------------------------------------------
+
+
+def _audit_with_forged_provenance(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    from rop.services.reasoning_run_receipt_provenance_audit import (
+        ReasoningRunReceiptProvenanceAuditService,
+    )
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReceiptProvenanceAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit.update(overrides)
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReceiptProvenanceAuditService, "audit", _forged_audit
+    )
+    return _audit(sid)
+
+
+def _audit_with_forged_replay(
+    monkeypatch: pytest.MonkeyPatch, sid: UUID, **overrides: object
+) -> dict:
+    from rop.services.reasoning_run_replay_consistency_audit import (
+        ReasoningRunReplayConsistencyAuditService,
+    )
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunReplayConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit.update(overrides)
+
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunReplayConsistencyAuditService, "audit", _forged_audit
+    )
+    return _audit(sid)
+
+
+def _insert_two_material_session() -> UUID:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid, user_input="Patient reports chest pain")
+    _insert_receipt(sid, "d" * 63 + "0", input_snapshot={"bad": "snapshot"})
+    return sid
+
+
+def test_audit_rejects_provenance_partition_not_summed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(
+        monkeypatch, sid, valid_receipts=0, invalid_receipts=0
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_inflated_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(
+        monkeypatch, sid, valid_receipts=1, invalid_receipts=1
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_finding_length_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(monkeypatch, sid, findings=[])
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_valid_count_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(
+        monkeypatch, sid, valid_receipts=0, invalid_receipts=1
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_invalid_count_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+
+    body = _audit_with_forged_provenance(
+        monkeypatch, sid, valid_receipts=1, invalid_receipts=0
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_negative_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(monkeypatch, sid, valid_receipts=-1)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_provenance_inconsistent_flag_on_clean_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_provenance(monkeypatch, sid, audit_consistent=False)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_PROVENANCE_AUDIT_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_partition_not_summed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_replay(
+        monkeypatch, sid, valid_receipts=1, invalid_receipts=1
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_finding_length_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_replay(monkeypatch, sid, findings=[])
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_valid_count_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _insert_two_material_session()
+
+    body = _audit_with_forged_replay(
+        monkeypatch, sid, valid_receipts=2, invalid_receipts=0
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_invalid_count_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _insert_two_material_session()
+
+    body = _audit_with_forged_replay(
+        monkeypatch, sid, valid_receipts=0, invalid_receipts=2
+    )
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_negative_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_replay(monkeypatch, sid, invalid_receipts=-1)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" in body["findings"]
+
+
+def test_audit_rejects_replay_inconsistent_flag_on_clean_material(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+    _insert_bound_receipt(sid)
+
+    body = _audit_with_forged_replay(monkeypatch, sid, audit_consistent=False)
+
+    assert body["gate_consistent"] is False
+    assert "GATE_REPLAY_AUDIT_INCOHERENT" in body["findings"]
+
+
+def test_audit_accepts_genuine_replay_counts_across_states() -> None:
+    sid = _insert_two_material_session()
+
+    body = _audit(sid)
+
+    assert body["gate_consistent"] is True
+    assert body["expected_gate_status"] == "BLOCKED"
+    assert "GATE_REPLAY_COUNTS_INCOHERENT" not in body["findings"]
+    assert "GATE_PROVENANCE_COUNTS_INCOHERENT" not in body["findings"]
