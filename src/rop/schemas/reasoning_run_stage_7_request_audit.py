@@ -37,12 +37,22 @@ class ReasoningRunStage7RequestAuditRead(BaseModel):
     ``available`` is always exactly
     ``request_audit_status != "UNAVAILABLE"``. ``findings`` are
     deterministic, sorted, and deduplicated.
+
+    ``audited_session_id`` and ``audited_request_fingerprint`` are the
+    binding evidence: the exact ``session_id`` and
+    ``context_fingerprint`` of the audited package as observed when the
+    audit ran (``None`` when the observed value was absent or not a
+    string). A ``CONSISTENT`` verdict requires both to be present, so
+    downstream stages can verify that the audit they consume names the
+    exact package they are acting on.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     request_audit_status: Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"]
     available: bool
+    audited_session_id: str | None
+    audited_request_fingerprint: str | None
     session_consistent: bool
     admission_consistent: bool
     certification_consistent: bool
@@ -71,6 +81,13 @@ class ReasoningRunStage7RequestAuditRead(BaseModel):
                 raise ValueError("CONSISTENT requires every dimension to be True")
             if self.findings:
                 raise ValueError("CONSISTENT requires no findings")
+            if (
+                self.audited_session_id is None
+                or self.audited_request_fingerprint is None
+            ):
+                raise ValueError(
+                    "CONSISTENT requires audited session and fingerprint binding"
+                )
         elif self.request_audit_status == "INCONSISTENT":
             if all(dimensions):
                 raise ValueError("INCONSISTENT requires at least one False dimension")

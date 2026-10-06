@@ -100,7 +100,11 @@ class ReasoningRunStage7RequestAuditService:
         ``UNAVAILABLE`` (package material missing, a verification input
         unreadable, or readable canonical evidence that reports itself
         unavailable -- no dimension is certified). Findings are
-        deterministic, sorted, and deduplicated.
+        deterministic, sorted, and deduplicated. The result echoes the
+        audited package's ``session_id`` and ``context_fingerprint`` as
+        ``audited_session_id`` and ``audited_request_fingerprint`` so
+        downstream stages can verify that a consumed audit names the
+        exact package they are acting on.
         """
         findings: list[str] = []
         dimensions = {name: False for name in _DIMENSION_NAMES}
@@ -108,23 +112,50 @@ class ReasoningRunStage7RequestAuditService:
 
         if not isinstance(package, Mapping):
             findings.append("REQUEST_PACKAGE_MISSING")
-            return self._finalize("UNAVAILABLE", dimensions, findings)
+            return self._finalize("UNAVAILABLE", dimensions, findings, None, None)
+
+        observed_session = package.get("session_id")
+        audited_session_id = (
+            observed_session if isinstance(observed_session, str) else None
+        )
+        observed_fingerprint = package.get("context_fingerprint")
+        audited_request_fingerprint = (
+            observed_fingerprint if isinstance(observed_fingerprint, str) else None
+        )
 
         request_status = package.get("request_status")
         if request_status != "PACKAGED":
             findings.append(f"REQUEST_NOT_PACKAGED:{request_status}")
-            return self._finalize("UNAVAILABLE", dimensions, findings)
+            return self._finalize(
+                "UNAVAILABLE",
+                dimensions,
+                findings,
+                audited_session_id,
+                audited_request_fingerprint,
+            )
 
         raw_payload = package.get("payload")
         if not isinstance(raw_payload, Mapping):
             findings.append("REQUEST_PAYLOAD_MISSING")
-            return self._finalize("UNAVAILABLE", dimensions, findings)
+            return self._finalize(
+                "UNAVAILABLE",
+                dimensions,
+                findings,
+                audited_session_id,
+                audited_request_fingerprint,
+            )
         payload = dict(raw_payload)
 
         fingerprint = package.get("context_fingerprint")
         if not isinstance(fingerprint, str):
             findings.append("FINGERPRINT_MISSING")
-            return self._finalize("UNAVAILABLE", dimensions, findings)
+            return self._finalize(
+                "UNAVAILABLE",
+                dimensions,
+                findings,
+                audited_session_id,
+                audited_request_fingerprint,
+            )
 
         package_available = package.get("available")
         availability_ok = package_available is True
@@ -265,7 +296,13 @@ class ReasoningRunStage7RequestAuditService:
             status = "CONSISTENT"
         else:
             status = "INCONSISTENT"
-        return self._finalize(status, dimensions, findings)
+        return self._finalize(
+            status,
+            dimensions,
+            findings,
+            audited_session_id,
+            audited_request_fingerprint,
+        )
 
     @staticmethod
     def _canonical_equal(left: Any, right: Any) -> bool:
@@ -282,7 +319,11 @@ class ReasoningRunStage7RequestAuditService:
 
     @staticmethod
     def _finalize(
-        status: str, dimensions: dict[str, bool], findings: list[str]
+        status: str,
+        dimensions: dict[str, bool],
+        findings: list[str],
+        audited_session_id: str | None,
+        audited_request_fingerprint: str | None,
     ) -> dict[str, Any]:
         if status == "UNAVAILABLE":
             dimensions = {name: False for name in _DIMENSION_NAMES}
@@ -290,6 +331,8 @@ class ReasoningRunStage7RequestAuditService:
         result: dict[str, Any] = {
             "request_audit_status": status,
             "available": status != "UNAVAILABLE",
+            "audited_session_id": audited_session_id,
+            "audited_request_fingerprint": audited_request_fingerprint,
             **dimensions,
             "finding_count": len(normalized),
             "findings": normalized,

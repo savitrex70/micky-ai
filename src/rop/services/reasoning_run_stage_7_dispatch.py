@@ -2,12 +2,17 @@
 
 Hands one approved Task 155 request package -- audited consistent by
 Task 156 -- to an explicitly injected generic LLMReasoningProvider.
-There is no default provider, no discovery, no registry, no
-environment or configuration lookup, and no startup selection: without
-an explicit provider the dispatch fails closed with the canonical Task
-057 MODEL_UNAVAILABLE outcome. The provider receives a defensive
-snapshot of the request, so provider-side mutation cannot reach
-ROP-owned state.
+The package is re-validated against the strict Task 155 contract, its
+fingerprint is recomputed from the payload, and the supplied Task 156
+audit must itself be schema-valid and name this exact package through
+its audited session and fingerprint binding. A stale, foreign, forged,
+or unbound package or audit fails closed as an input-integrity failure
+with no provider contact. There is no default provider, no discovery,
+no registry, no environment or configuration lookup, and no startup
+selection: without an explicit provider the dispatch fails closed with
+the canonical Task 057 MODEL_UNAVAILABLE outcome. The provider receives
+a defensive snapshot of the request, so provider-side mutation cannot
+reach ROP-owned state.
 
 The raw provider response is never interpreted, parsed, or validated
 here; it travels next to the strict projection and is only ever read by
@@ -28,6 +33,10 @@ from pydantic import ValidationError
 from rop.schemas.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchRead,
 )
+from rop.schemas.reasoning_run_stage_7_request import ReasoningRunStage7RequestRead
+from rop.schemas.reasoning_run_stage_7_request_audit import (
+    ReasoningRunStage7RequestAuditRead,
+)
 from rop.services.llm_boundary_contract import (
     OUTCOME_INPUT_INCONSISTENT,
     OUTCOME_INPUT_UNAVAILABLE,
@@ -38,6 +47,7 @@ from rop.services.llm_reasoning_provider import (
     LLMReasoningProvider,
     LLMReasoningRequest,
 )
+from rop.services.llm_request_serialization import compute_fingerprint
 
 REASONING_RUN_STAGE_7_DISPATCH_SOURCE_TASK_157 = (
     "REASONING_RUN_STAGE_7_DISPATCH_TASK_157"
@@ -67,13 +77,20 @@ class ReasoningRunStage7DispatchService:
         """Hand one approved request package to the injected provider.
 
         Material gates run first: a blocked package is ``BLOCKED``; an
-        unreadable audit, a blocked package, or an unconsumable payload
-        is ``UNAVAILABLE`` with the canonical input outcome; an
-        inconsistent audit is ``BLOCKED``. No provider is contacted on
-        any of those paths. The provider gate runs last: an absent
-        provider fails closed with MODEL_UNAVAILABLE, a raising provider
-        is classified through the canonical Task 107 normalizer, and
-        only a returned response produces ``DISPATCHED``.
+        unreadable audit, a blocked package, or a package missing its
+        payload or fingerprint is ``UNAVAILABLE`` with the canonical
+        input outcome; an inconsistent audit is ``BLOCKED``. The
+        package must then validate against the strict Task 155 contract,
+        its fingerprint must match a fresh recomputation from the
+        payload, the supplied audit must validate against the strict
+        Task 156 contract, and that audit must name exactly this package
+        through its audited session and fingerprint binding. A stale or
+        foreign audit and any forged package fails closed as
+        INPUT_INCONSISTENT. No provider is contacted on any of those
+        paths. The provider gate runs last: an absent provider fails
+        closed with MODEL_UNAVAILABLE, a raising provider is classified
+        through the canonical Task 107 normalizer, and only a returned
+        response produces ``DISPATCHED``.
 
         The returned mapping carries the strict projection plus
         ``provider_response``: the untouched, unvalidated provider
@@ -108,6 +125,8 @@ class ReasoningRunStage7DispatchService:
         if request_status != "PACKAGED":
             if request_status == "UNAVAILABLE":
                 result["request_status"] = "UNAVAILABLE"
+            elif request_status is not None:
+                result["outcome"] = OUTCOME_INPUT_INCONSISTENT
             return self._project(result, None)
         result["request_status"] = "PACKAGED"
 
@@ -123,12 +142,47 @@ class ReasoningRunStage7DispatchService:
         if audit_status != "CONSISTENT":
             if audit_status == "UNAVAILABLE":
                 result["request_audit_status"] = "UNAVAILABLE"
+            elif audit_status is not None:
+                result["outcome"] = OUTCOME_INPUT_INCONSISTENT
             return self._project(result, None)
         result["request_audit_status"] = "CONSISTENT"
 
         payload = request.get("payload")
         fingerprint = request.get("context_fingerprint")
         if not isinstance(payload, Mapping) or not isinstance(fingerprint, str):
+            return self._project(result, None)
+
+        try:
+            validated_request = ReasoningRunStage7RequestRead.model_validate(
+                dict(request)
+            )
+        except ValidationError:
+            result["outcome"] = OUTCOME_INPUT_INCONSISTENT
+            return self._project(result, None)
+
+        try:
+            recomputed_fingerprint = compute_fingerprint(dict(payload))
+        except (TypeError, ValueError):
+            result["outcome"] = OUTCOME_INPUT_INCONSISTENT
+            return self._project(result, None)
+        if recomputed_fingerprint != fingerprint:
+            result["outcome"] = OUTCOME_INPUT_INCONSISTENT
+            return self._project(result, None)
+
+        try:
+            validated_audit = ReasoningRunStage7RequestAuditRead.model_validate(
+                dict(request_audit)
+            )
+        except ValidationError:
+            result["outcome"] = OUTCOME_INPUT_INCONSISTENT
+            return self._project(result, None)
+
+        if (
+            validated_audit.audited_session_id != validated_request.session_id
+            or validated_audit.audited_request_fingerprint
+            != validated_request.context_fingerprint
+        ):
+            result["outcome"] = OUTCOME_INPUT_INCONSISTENT
             return self._project(result, None)
 
         provider = self.provider

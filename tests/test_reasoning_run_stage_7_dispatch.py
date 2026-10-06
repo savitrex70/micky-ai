@@ -3,12 +3,13 @@
 Covers the explicit dispatch seam over the generic LLMReasoningProvider
 interface: an explicitly injected test-only fake provider receives one
 defensive snapshot of the approved Task 155 request package, exactly
-once, and only after the Task 156 audit is consistent. Provider
-absence, canonical provider failure, malformed metadata, mutation of
-the request snapshot, and hostile provider objects are all contained
-by the canonical Task 057/107 taxonomy. No default provider, no
-discovery, no registry, no environment or configuration activation, no
-network, no concrete provider module.
+once, and only after the Task 156 audit is consistent and bound to the
+exact package being dispatched. Provider absence, canonical provider
+failure, malformed metadata, mutation of the request snapshot, and
+hostile provider objects are all contained by the canonical Task
+057/107 taxonomy. No default provider, no discovery, no registry, no
+environment or configuration activation, no network, no concrete
+provider module.
 """
 
 from __future__ import annotations
@@ -388,6 +389,149 @@ def test_unconsumable_payload_fails_closed() -> None:
     assert result["dispatch_status"] == "UNAVAILABLE"
     assert result["outcome"] == "INPUT_INCONSISTENT"
     assert result["provider_response"] is None
+    assert provider.calls == []
+
+
+def test_stale_audit_against_mutated_package_is_rejected() -> None:
+    sid = _seed_full_session("Task 157 stale audit")
+    provider = _FakeProvider()
+    service = ReasoningRunStage7DispatchService(provider=provider)
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        audit = _audit(db, package)
+        mutated = copy.deepcopy(package)
+        mutated["payload"]["observations"][0]["text"] = "tampered after audit"
+
+        assert mutated["payload"] != package["payload"]
+        assert mutated["context_fingerprint"] == package["context_fingerprint"]
+
+        result = service.dispatch(request=mutated, request_audit=audit)
+
+    assert result["dispatch_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["outcome"] == "INPUT_INCONSISTENT"
+    assert result["request_fingerprint"] is None
+    assert result["provider_response"] is None
+    assert provider.calls == []
+
+
+def test_cross_package_audit_is_rejected() -> None:
+    sid_a = _seed_full_session("Task 157 cross package A")
+    sid_b = _seed_full_session("Task 157 cross package B")
+    provider = _FakeProvider()
+    service = ReasoningRunStage7DispatchService(provider=provider)
+    with TestingSessionLocal() as db:
+        package_a = _build_package(db, sid_a)
+        audit_a = _audit(db, package_a)
+        package_b = _build_package(db, sid_b)
+        audit_b = _audit(db, package_b)
+
+        assert package_a["context_fingerprint"] != package_b["context_fingerprint"]
+
+        foreign_audit = service.dispatch(request=package_b, request_audit=audit_a)
+        assert foreign_audit["dispatch_status"] == "UNAVAILABLE"
+        assert foreign_audit["outcome"] == "INPUT_INCONSISTENT"
+        assert foreign_audit["session_id"] == sid_b
+
+        foreign_request = service.dispatch(request=package_a, request_audit=audit_b)
+        assert foreign_request["dispatch_status"] == "UNAVAILABLE"
+        assert foreign_request["outcome"] == "INPUT_INCONSISTENT"
+        assert foreign_request["session_id"] == sid_a
+
+    assert provider.calls == []
+
+
+def test_forged_request_mappings_are_rejected_before_provider() -> None:
+    sid = _seed_full_session("Task 157 forged request")
+    other = _create_session("Task 157 forged request other")
+    provider = _FakeProvider()
+    service = ReasoningRunStage7DispatchService(provider=provider)
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        audit = _audit(db, package)
+
+        forged_availability = service.dispatch(
+            request={**package, "available": False}, request_audit=audit
+        )
+        assert forged_availability["dispatch_status"] == "UNAVAILABLE"
+        assert forged_availability["outcome"] == "INPUT_INCONSISTENT"
+
+        forged_fingerprint = service.dispatch(
+            request={**package, "context_fingerprint": "A" * 64},
+            request_audit=audit,
+        )
+        assert forged_fingerprint["dispatch_status"] == "UNAVAILABLE"
+        assert forged_fingerprint["outcome"] == "INPUT_INCONSISTENT"
+
+        foreign_payload = {
+            **package,
+            "payload": {**package["payload"], "session_id": other},
+        }
+        forged_session = service.dispatch(request=foreign_payload, request_audit=audit)
+        assert forged_session["dispatch_status"] == "UNAVAILABLE"
+        assert forged_session["outcome"] == "INPUT_INCONSISTENT"
+
+        forged_status = service.dispatch(
+            request={**package, "request_status": "FORGED"}, request_audit=audit
+        )
+        assert forged_status["dispatch_status"] == "UNAVAILABLE"
+        assert forged_status["outcome"] == "INPUT_INCONSISTENT"
+
+    assert provider.calls == []
+
+
+def test_unbound_consistent_audit_is_rejected() -> None:
+    sid = _seed_full_session("Task 157 unbound audit")
+    provider = _FakeProvider()
+    service = ReasoningRunStage7DispatchService(provider=provider)
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        audit = _audit(db, package)
+
+        bare_audit = service.dispatch(
+            request=package, request_audit={"request_audit_status": "CONSISTENT"}
+        )
+        assert bare_audit["dispatch_status"] == "UNAVAILABLE"
+        assert bare_audit["outcome"] == "INPUT_INCONSISTENT"
+
+        unbound_session = service.dispatch(
+            request=package, request_audit={**audit, "audited_session_id": None}
+        )
+        assert unbound_session["dispatch_status"] == "UNAVAILABLE"
+        assert unbound_session["outcome"] == "INPUT_INCONSISTENT"
+
+        unbound_fingerprint = service.dispatch(
+            request=package,
+            request_audit={**audit, "audited_request_fingerprint": None},
+        )
+        assert unbound_fingerprint["dispatch_status"] == "UNAVAILABLE"
+        assert unbound_fingerprint["outcome"] == "INPUT_INCONSISTENT"
+
+    assert provider.calls == []
+
+
+def test_schema_valid_mismatched_audit_binding_is_rejected() -> None:
+    sid = _seed_full_session("Task 157 mismatched binding")
+    other = _create_session("Task 157 mismatched binding other")
+    provider = _FakeProvider()
+    service = ReasoningRunStage7DispatchService(provider=provider)
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        audit = _audit(db, package)
+
+        wrong_fingerprint = service.dispatch(
+            request=package,
+            request_audit={**audit, "audited_request_fingerprint": "0" * 64},
+        )
+        assert wrong_fingerprint["dispatch_status"] == "UNAVAILABLE"
+        assert wrong_fingerprint["outcome"] == "INPUT_INCONSISTENT"
+
+        wrong_session = service.dispatch(
+            request=package, request_audit={**audit, "audited_session_id": other}
+        )
+        assert wrong_session["dispatch_status"] == "UNAVAILABLE"
+        assert wrong_session["outcome"] == "INPUT_INCONSISTENT"
+
     assert provider.calls == []
 
 

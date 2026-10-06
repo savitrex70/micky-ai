@@ -66,6 +66,8 @@ client = TestClient(app)
 AUDIT_KEYS = {
     "request_audit_status",
     "available",
+    "audited_session_id",
+    "audited_request_fingerprint",
     "session_consistent",
     "admission_consistent",
     "certification_consistent",
@@ -269,6 +271,8 @@ def test_correct_package_is_consistent() -> None:
     assert set(result) == AUDIT_KEYS
     assert result["request_audit_status"] == "CONSISTENT"
     assert result["available"] is True
+    assert result["audited_session_id"] == sid
+    assert result["audited_request_fingerprint"] == package["context_fingerprint"]
     assert result["session_consistent"] is True
     assert result["admission_consistent"] is True
     assert result["certification_consistent"] is True
@@ -289,6 +293,8 @@ def test_fingerprint_mismatch_is_inconsistent() -> None:
 
     assert result["request_audit_status"] == "INCONSISTENT"
     assert result["available"] is True
+    assert result["audited_session_id"] == sid
+    assert result["audited_request_fingerprint"] == "0" * 64
     assert result["fingerprint_consistent"] is False
     assert "FINGERPRINT_MISMATCH" in result["findings"]
     assert result["session_consistent"] is True
@@ -307,6 +313,7 @@ def test_session_mismatch_is_inconsistent() -> None:
         result = _audit(db, package)
 
     assert result["request_audit_status"] == "INCONSISTENT"
+    assert result["audited_session_id"] == sid_b
     assert result["session_consistent"] is False
     assert f"SESSION_IDENTITY_MISMATCH:{sid_a}" in result["findings"]
 
@@ -733,6 +740,8 @@ def test_audit_schema_is_strict() -> None:
     valid = {
         "request_audit_status": "CONSISTENT",
         "available": True,
+        "audited_session_id": "11111111-1111-1111-1111-111111111111",
+        "audited_request_fingerprint": "a" * 64,
         "session_consistent": True,
         "admission_consistent": True,
         "certification_consistent": True,
@@ -745,6 +754,25 @@ def test_audit_schema_is_strict() -> None:
     }
     validated = ReasoningRunStage7RequestAuditRead.model_validate(valid)
     assert validated.request_audit_status == "CONSISTENT"
+    assert validated.audited_session_id == "11111111-1111-1111-1111-111111111111"
+    assert validated.audited_request_fingerprint == "a" * 64
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestAuditRead.model_validate({**valid, "extra": 1})
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            {**valid, "audited_session_id": None}
+        )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            {**valid, "audited_request_fingerprint": None}
+        )
+    unbound_but_missing = {
+        key: value
+        for key, value in valid.items()
+        if key not in ("audited_session_id", "audited_request_fingerprint")
+    }
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestAuditRead.model_validate(unbound_but_missing)
     with pytest.raises(ValidationError):
         ReasoningRunStage7RequestAuditRead.model_validate({**valid, "extra": 1})
     with pytest.raises(ValidationError):
@@ -786,6 +814,8 @@ def _audit_result(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "request_audit_status": "CONSISTENT",
         "available": True,
+        "audited_session_id": "11111111-1111-1111-1111-111111111111",
+        "audited_request_fingerprint": "a" * 64,
         "session_consistent": True,
         "admission_consistent": True,
         "certification_consistent": True,
@@ -811,9 +841,11 @@ def test_audit_schema_enforces_finding_coherence() -> None:
             session_consistent=False,
             finding_count=1,
             findings=["SESSION_IDENTITY_MALFORMED"],
+            audited_session_id=None,
         )
     )
     assert inconsistent.certification_consistent is True
+    assert inconsistent.audited_session_id is None
 
     unavailable = ReasoningRunStage7RequestAuditRead.model_validate(
         _audit_result(
@@ -827,9 +859,12 @@ def test_audit_schema_enforces_finding_coherence() -> None:
             fingerprint_consistent=False,
             finding_count=1,
             findings=["REQUEST_PACKAGE_MISSING"],
+            audited_session_id=None,
+            audited_request_fingerprint=None,
         )
     )
     assert unavailable.available is False
+    assert unavailable.audited_request_fingerprint is None
 
     with pytest.raises(ValidationError):
         # CONSISTENT with findings is incoherent.
