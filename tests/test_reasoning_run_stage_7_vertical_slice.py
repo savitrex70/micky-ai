@@ -126,6 +126,7 @@ class _CertificationStub:
         self.calls.append(session_id)
         certified = self._status == "CERTIFIED"
         return {
+            "requested_session_id": str(session_id),
             "certification_status": self._status,
             "certified": certified,
             "release_ready": certified,

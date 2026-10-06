@@ -4,7 +4,8 @@ Covers the read-only admission decision over the canonical Task 152
 Stage 6 certification: CERTIFIED admits, NO_MATERIAL blocks (an empty
 deterministic session must never be sent to an LLM), BLOCKED and
 UNVERIFIABLE block, an unreadable certification is UNAVAILABLE, an
-incoherent certification record can never admit, exact session
+incoherent certification record can never admit, a certification
+bound to a different session can never admit, exact session
 isolation, determinism, read-only behavior, strict schema, and no
 provider invocation. No model, no network, no concrete provider.
 """
@@ -78,6 +79,7 @@ class _CertificationStub:
         self.calls.append(session_id)
         certified = self._status == "CERTIFIED"
         return {
+            "requested_session_id": str(session_id),
             "certification_status": self._status,
             "certified": certified,
             "release_ready": certified,
@@ -89,6 +91,7 @@ class _IncoherentCertificationStub:
 
     def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
         return {
+            "requested_session_id": str(session_id),
             "certification_status": "CERTIFIED",
             "certified": False,
             "release_ready": False,
@@ -98,6 +101,32 @@ class _IncoherentCertificationStub:
 class _ContractErrorStub:
     def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
         raise ReasoningRunStage6CertificationContractError("GATE_UNREADABLE", "forged")
+
+
+class _ForeignSessionCertificationStub:
+    """Returns a CERTIFIED record bound to a different session."""
+
+    def __init__(self, bound_session_id: UUID) -> None:
+        self._bound_session_id = bound_session_id
+
+    def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
+        return {
+            "requested_session_id": str(self._bound_session_id),
+            "certification_status": "CERTIFIED",
+            "certified": True,
+            "release_ready": True,
+        }
+
+
+class _UnboundCertificationStub:
+    """Returns a coherent CERTIFIED record that names no session at all."""
+
+    def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
+        return {
+            "certification_status": "CERTIFIED",
+            "certified": True,
+            "release_ready": True,
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -198,6 +227,46 @@ def test_incoherent_certification_record_can_never_admit() -> None:
     assert result["admitted"] is False
     assert result["stage_6_certification_consistent"] is False
     assert result["findings"] == ["STAGE_6_CERTIFICATION_INCOHERENT"]
+
+
+def test_foreign_certified_record_can_never_admit() -> None:
+    sid_a = _create_session("Patient A reports chest pain")
+    sid_b = _create_session("Patient B reports chest pain")
+    stub = _ForeignSessionCertificationStub(UUID(sid_a))
+    with TestingSessionLocal() as db:
+        service = ReasoningRunStage7AdmissionService(certification_service=stub)
+        foreign = service.evaluate(db, UUID(sid_b))
+        owner = service.evaluate(db, UUID(sid_a))
+
+    assert foreign["requested_session_id"] == sid_b
+    assert foreign["admission_status"] == "BLOCKED"
+    assert foreign["admitted"] is False
+    assert foreign["admitted"] == (foreign["admission_status"] == "ADMITTED")
+    assert foreign["stage_6_certification_status"] == "CERTIFIED"
+    assert foreign["stage_6_certification_consistent"] is False
+    assert foreign["findings"] == ["STAGE_6_CERTIFICATION_SESSION_MISMATCH"]
+    assert foreign["finding_count"] == 1
+
+    assert owner["requested_session_id"] == sid_a
+    assert owner["admission_status"] == "ADMITTED"
+    assert owner["admitted"] is True
+    assert owner["stage_6_certification_consistent"] is True
+    assert owner["findings"] == []
+
+
+def test_unbound_certified_record_can_never_admit() -> None:
+    sid = _create_session()
+    with TestingSessionLocal() as db:
+        service = ReasoningRunStage7AdmissionService(
+            certification_service=_UnboundCertificationStub()
+        )
+        result = service.evaluate(db, UUID(sid))
+    assert result["requested_session_id"] == sid
+    assert result["admission_status"] == "BLOCKED"
+    assert result["admitted"] is False
+    assert result["stage_6_certification_consistent"] is False
+    assert result["findings"] == ["STAGE_6_CERTIFICATION_SESSION_MISMATCH"]
+    assert result["finding_count"] == 1
 
 
 def test_exact_session_isolation() -> None:

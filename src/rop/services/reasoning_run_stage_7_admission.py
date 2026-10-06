@@ -12,8 +12,9 @@ service and reproduces none of its logic. Mapping: certification
 ``CERTIFIED`` -> ``ADMITTED``; ``NO_MATERIAL`` -> ``BLOCKED`` (an
 empty deterministic session must never be sent to an LLM); ``BLOCKED``
 and ``UNVERIFIABLE`` -> ``BLOCKED``; a certification that cannot be
-read or projected -> ``UNAVAILABLE``. A certification record that is
-not internally coherent can never admit.
+read or projected -> ``UNAVAILABLE``. A certification record that does
+not name the exact requested session, or that is not internally coherent,
+can never admit.
 
 Read-only: no persistence, no reasoning execution, no provider/model
 calls, no network, no server. Admission never means a model is
@@ -70,11 +71,13 @@ class ReasoningRunStage7AdmissionService:
         Read-only over session state: the only consumer of ``db`` is
         the canonical Task 152 certification handoff. ``NO_MATERIAL``
         is deliberately not eligible for LLM reasoning -- an empty
-        deterministic session must never be sent to a model. Fail
-        closed on an unreadable certification: release readiness and
-        record consistency are ``False`` and the status is
-        ``UNAVAILABLE``; the question is never answered by fabricating
-        certification evidence.
+        deterministic session must never be sent to a model. The
+        certification must name the exact requested session: a
+        CERTIFIED record issued for any other session can never admit
+        this one. Fail closed on an unreadable certification: release
+        readiness and record consistency are ``False`` and the status
+        is ``UNAVAILABLE``; the question is never answered by
+        fabricating certification evidence.
         """
         readable = True
         certification_status: str = _CERTIFICATION_UNREADABLE_STATUS
@@ -92,13 +95,23 @@ class ReasoningRunStage7AdmissionService:
             certification_status = certification.get("certification_status")
             certified = certification.get("certified")
             release_ready = certification.get("release_ready")
-            certification_consistent = (
+            identity_bound = certification.get("requested_session_id") == str(
+                session_id
+            )
+            record_coherent = (
                 certified == (certification_status == "CERTIFIED")
                 and release_ready == certified
             )
-            if not certification_consistent:
+            certification_consistent = identity_bound and record_coherent
+            if not identity_bound:
+                admission_findings.append("STAGE_6_CERTIFICATION_SESSION_MISMATCH")
+            if not record_coherent:
                 admission_findings.append("STAGE_6_CERTIFICATION_INCOHERENT")
-            elif certification_status != "CERTIFIED":
+            if (
+                identity_bound
+                and record_coherent
+                and certification_status != "CERTIFIED"
+            ):
                 admission_findings.append(
                     f"STAGE_6_CERTIFICATION_NOT_CERTIFIED:{certification_status}"
                 )
