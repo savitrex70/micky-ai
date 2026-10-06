@@ -1059,6 +1059,16 @@ def test_certification_of_no_material_with_inconsistent_manifest_audit_is_blocke
     )
 
 
+def _coherent_manifest_audit_for_forged_manifest(sid: UUID) -> dict[str, object]:
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ManifestConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["manifest_consistent"] = True
+    forged_audit["findings"] = []
+    forged_audit["finding_count"] = 0
+    return forged_audit
+
+
 def test_certification_of_no_material_with_unavailable_component_is_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1069,28 +1079,33 @@ def test_certification_of_no_material_with_unavailable_component_is_blocked(
     forged_manifest = dict(genuine)
     forged_manifest["components"] = [dict(c) for c in genuine["components"]]
     forged_manifest["components"][2]["available"] = False
+    forged_audit = _coherent_manifest_audit_for_forged_manifest(sid)
 
     def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
         _ = (db, session_id)
         return forged_manifest
 
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
     monkeypatch.setattr(
         ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+    monkeypatch.setattr(
+        ReasoningRunStage6ManifestConsistencyAuditService, "audit", _forged_audit
     )
 
     body = _certify(sid)
 
-    assert body["manifest_consistent"] is False
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["evidence_status"] == "NO_MATERIAL"
+    assert body["manifest_status"] == "NO_MATERIAL"
+    assert body["manifest_consistent"] is True
     assert body["certification_status"] == "BLOCKED"
     assert body["certified"] is False
     assert body["release_ready"] is False
-    assert any(
-        f.startswith(
-            "MANIFEST_COMPONENT_AVAILABLE_MISMATCH:"
-            "REASONING_RUN_STAGE_6_GATE_TASK_144"
-        )
-        for f in body["findings"]
-    )
     assert (
         "MANIFEST_COMPONENT_NOT_AVAILABLE:REASONING_RUN_STAGE_6_GATE_TASK_144"
         in body["findings"]
@@ -1107,19 +1122,30 @@ def test_certification_of_empty_chain_with_inconsistent_component_is_blocked(
     forged_manifest = dict(genuine)
     forged_manifest["components"] = [dict(c) for c in genuine["components"]]
     forged_manifest["components"][2]["consistent"] = False
+    forged_audit = _coherent_manifest_audit_for_forged_manifest(sid)
 
     def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
         _ = (db, session_id)
         return forged_manifest
 
+    def _forged_audit(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
     monkeypatch.setattr(
         ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+    monkeypatch.setattr(
+        ReasoningRunStage6ManifestConsistencyAuditService, "audit", _forged_audit
     )
 
     body = _certify(sid)
 
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["evidence_status"] == "NO_MATERIAL"
     assert body["manifest_status"] == "NO_MATERIAL"
-    assert body["manifest_consistent"] is False
+    assert body["manifest_consistent"] is True
     assert body["certification_status"] == "BLOCKED"
     assert body["certified"] is False
     assert body["release_ready"] is False
