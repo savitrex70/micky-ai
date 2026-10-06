@@ -7,12 +7,12 @@ recomputes the canonical Task 104 serialization and fingerprint, and
 compares each of those against the packaged claims. A supplied
 fingerprint is only accepted when it matches a fresh recomputation; a
 PACKAGED request additionally requires an available package state, a
-canonical ADMITTED admission whose Stage 6 certification is CERTIFIED
-and whose own public invariants are coherent (admitted matches the
-verdict, the Stage 6 record is consistent, release readiness matches
-certification); and the canonical context must itself report itself
-available and consistent, otherwise the audit fails closed as
-UNAVAILABLE.
+canonical ADMITTED admission bound to the audited session whose Stage 6
+certification is CERTIFIED and whose public invariants are coherent
+(admitted matches the verdict, the Stage 6 record is consistent, and
+release readiness matches certification); and the canonical context
+must itself report itself available and consistent, otherwise the audit
+fails closed as UNAVAILABLE.
 
 Read-only: no persistence, no provider call, no network, and no
 mutation of the audited package.
@@ -208,6 +208,8 @@ class ReasoningRunStage7RequestAuditService:
                 recomputed_cert_consistent = admission.get(
                     "stage_6_certification_consistent"
                 )
+                admission_session = admission.get("requested_session_id")
+                session_binding_ok = admission_session == str(session_uuid)
                 recomputed_is_admitted = recomputed_admission == "ADMITTED"
                 recomputed_is_certified = recomputed_cert == "CERTIFIED"
                 admission_verdict_coherent = (
@@ -217,6 +219,10 @@ class ReasoningRunStage7RequestAuditService:
                 release_ready_coherent = (
                     recomputed_release_ready == recomputed_is_certified
                 )
+                if not session_binding_ok:
+                    findings.append(
+                        f"ADMISSION_SESSION_ID_MISMATCH:{admission_session}"
+                    )
                 if not admission_verdict_coherent:
                     findings.append("ADMISSION_VERDICT_INCOHERENT")
                 if not certification_coherent:
@@ -229,7 +235,8 @@ class ReasoningRunStage7RequestAuditService:
                 elif echoed_admission != "ADMITTED":
                     findings.append(f"ADMISSION_STATUS_MISMATCH:{echoed_admission}")
                 if (
-                    admission_verdict_coherent
+                    session_binding_ok
+                    and admission_verdict_coherent
                     and certification_coherent
                     and release_ready_coherent
                     and recomputed_is_admitted
