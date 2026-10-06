@@ -5,7 +5,11 @@ service never trusts the builder's flags: it re-reads the canonical
 Task 154 admission verdict, rebuilds the canonical Task 055 context,
 recomputes the canonical Task 104 serialization and fingerprint, and
 compares each of those against the packaged claims. A supplied
-fingerprint is only accepted when it matches a fresh recomputation.
+fingerprint is only accepted when it matches a fresh recomputation; a
+PACKAGED request additionally requires a canonical ADMITTED admission
+with CERTIFIED Stage 6 certification; and the canonical context must
+itself report itself available and consistent, otherwise the audit
+fails closed as UNAVAILABLE.
 
 Read-only: no persistence, no provider call, no network, and no
 mutation of the audited package.
@@ -29,6 +33,7 @@ from rop.services.llm_request_serialization import (
     compute_fingerprint,
     serialize_context,
     to_json_safe,
+    validate_payload,
 )
 from rop.services.reasoning_context import (
     ReasoningContextContractError,
@@ -87,10 +92,12 @@ class ReasoningRunStage7RequestAuditService:
         """Independently verify one Task 155 package against canonical state.
 
         Statuses: ``CONSISTENT`` (every dimension re-derived and
-        matched), ``INCONSISTENT`` (readable package with at least one
-        mismatch), ``UNAVAILABLE`` (package material missing or a
-        verification input unreadable -- no dimension is certified).
-        Findings are deterministic, sorted, and deduplicated.
+        matched, with no findings), ``INCONSISTENT`` (readable package
+        with at least one mismatch and at least one finding),
+        ``UNAVAILABLE`` (package material missing, a verification input
+        unreadable, or readable canonical evidence that reports itself
+        unavailable -- no dimension is certified). Findings are
+        deterministic, sorted, and deduplicated.
         """
         findings: list[str] = []
         dimensions = {name: False for name in _DIMENSION_NAMES}
@@ -136,13 +143,13 @@ class ReasoningRunStage7RequestAuditService:
         else:
             dimensions["session_consistent"] = True
 
-        expected_fields = set(PAYLOAD_FIELDS)
-        payload_fields_ok = set(payload) == expected_fields
-        if payload_fields_ok is False:
-            for field in sorted(set(payload) - expected_fields):
-                findings.append(f"PAYLOAD_UNEXPECTED_FIELD:{field}")
-            for field in sorted(expected_fields - set(payload)):
-                findings.append(f"PAYLOAD_MISSING_FIELD:{field}")
+        unexpected_fields = validate_payload(payload)
+        missing_fields = sorted(set(PAYLOAD_FIELDS) - set(payload))
+        for field in sorted(unexpected_fields):
+            findings.append(f"PAYLOAD_UNEXPECTED_FIELD:{field}")
+        for field in missing_fields:
+            findings.append(f"PAYLOAD_MISSING_FIELD:{field}")
+        payload_fields_ok = not unexpected_fields and not missing_fields
 
         fingerprint_ok = False
         try:
@@ -162,14 +169,22 @@ class ReasoningRunStage7RequestAuditService:
                 findings.append(f"CONTEXT_UNREADABLE:{exc.invariant}")
                 unavailable = True
             else:
-                canonical_ok = self._canonical_equal(
-                    serialize_context(context), payload
-                )
-                if not canonical_ok:
-                    findings.append("PAYLOAD_NOT_CANONICAL")
-                context_session = str(context.get("session_id"))
-                if context_session != session_id:
-                    findings.append(f"SESSION_IDENTITY_MISMATCH:{context_session}")
+                if (
+                    not isinstance(context, Mapping)
+                    or context.get("available") is not True
+                    or context.get("context_consistent") is not True
+                ):
+                    findings.append("CONTEXT_UNAVAILABLE")
+                    unavailable = True
+                else:
+                    canonical_ok = self._canonical_equal(
+                        serialize_context(context), payload
+                    )
+                    if not canonical_ok:
+                        findings.append("PAYLOAD_NOT_CANONICAL")
+                    context_session = str(context.get("session_id"))
+                    if context_session != session_id:
+                        findings.append(f"SESSION_IDENTITY_MISMATCH:{context_session}")
 
         if session_uuid is not None and not unavailable:
             try:
@@ -188,10 +203,14 @@ class ReasoningRunStage7RequestAuditService:
                     dimensions["admission_consistent"] = True
                 recomputed_cert = admission.get("stage_6_certification_status")
                 echoed_cert = package.get("stage_6_certification_status")
-                if echoed_cert == recomputed_cert:
-                    dimensions["certification_consistent"] = True
-                else:
+                if echoed_cert != recomputed_cert:
                     findings.append(f"STAGE_6_CERTIFICATION_MISMATCH:{echoed_cert}")
+                elif recomputed_cert != "CERTIFIED":
+                    findings.append(
+                        f"STAGE_6_CERTIFICATION_NOT_CERTIFIED:{recomputed_cert}"
+                    )
+                else:
+                    dimensions["certification_consistent"] = True
 
         dimensions["payload_consistent"] = payload_fields_ok and canonical_ok
         dimensions["fingerprint_consistent"] = fingerprint_ok

@@ -104,6 +104,40 @@ class _ContextContractErrorStub:
         raise ReasoningContextContractError("SESSION_NOT_FOUND", "forged")
 
 
+class _AdmissionVerdictStub:
+    """Returns one fixed canonical admission verdict for echo auditing."""
+
+    def __init__(self, admission_status: str, certification_status: str) -> None:
+        self._admission_status = admission_status
+        self._certification_status = certification_status
+
+    def evaluate(self, db: Session, session_id: UUID) -> dict[str, object]:
+        return {
+            "admission_status": self._admission_status,
+            "stage_6_certification_status": self._certification_status,
+        }
+
+
+class _UnavailableContextStub:
+    """Returns a structurally valid Task 055 context that reports itself
+    unavailable, so the audit must fail closed rather than certify it."""
+
+    def build_for_session(self, db: Session, session_id: UUID) -> dict[str, object]:
+        return {
+            "available": False,
+            "context_consistent": False,
+            "session_id": session_id,
+            "observations": [],
+            "entities": [],
+            "missing_information": [],
+            "template_context": [],
+            "candidate_state": [],
+            "reasoning_pipeline": {},
+            "reasoning_run_consistency": {},
+            "context_source": "REASONING_CONTEXT_TASK_055",
+        }
+
+
 @pytest.fixture(autouse=True)
 def _reset_db() -> Generator[None, None, None]:
     Base.metadata.drop_all(engine)
@@ -321,6 +355,31 @@ def test_not_admitted_recomputation_is_inconsistent() -> None:
     assert "ADMISSION_NOT_ADMITTED:BLOCKED" in result["findings"]
 
 
+def test_canonical_certification_verdict_is_required() -> None:
+    sid = _seed_full_session("Task 156 canonical certification")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        blocked = _audit(
+            db,
+            {**package, "stage_6_certification_status": "BLOCKED"},
+            admission_service=_AdmissionVerdictStub("ADMITTED", "BLOCKED"),
+        )
+        certified = _audit(
+            db,
+            package,
+            admission_service=_AdmissionVerdictStub("ADMITTED", "CERTIFIED"),
+        )
+
+    assert blocked["request_audit_status"] == "INCONSISTENT"
+    assert blocked["available"] is True
+    assert blocked["certification_consistent"] is False
+    assert "STAGE_6_CERTIFICATION_NOT_CERTIFIED:BLOCKED" in blocked["findings"]
+    assert blocked["admission_consistent"] is True
+    assert certified["request_audit_status"] == "CONSISTENT"
+    assert certified["available"] is True
+    assert certified["certification_consistent"] is True
+
+
 def test_missing_package_material_is_unavailable() -> None:
     sid = _seed_full_session("Task 156 missing material")
     with TestingSessionLocal() as db:
@@ -389,6 +448,23 @@ def test_unreadable_verification_inputs_are_unavailable() -> None:
         assert admission_failure["admission_consistent"] is False
 
 
+def test_unavailable_canonical_context_is_unavailable() -> None:
+    sid = _seed_full_session("Task 156 context unavailable")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        result = _audit(
+            db, package, reasoning_context_service=_UnavailableContextStub()
+        )
+
+    assert result["request_audit_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert "CONTEXT_UNAVAILABLE" in result["findings"]
+    assert result["session_consistent"] is False
+    assert result["admission_consistent"] is False
+    assert result["payload_consistent"] is False
+    assert result["fingerprint_consistent"] is False
+
+
 def test_audit_does_not_mutate_canonical_request_and_is_deterministic() -> None:
     sid = _seed_full_session("Task 156 immutable")
     with TestingSessionLocal() as db:
@@ -445,6 +521,24 @@ def test_audit_is_read_only_and_invokes_no_provider(
     assert package == snapshot
 
 
+def test_audit_is_independent_of_request_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 156 builder independence")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+
+        def _forbidden(*args: object, **kwargs: object) -> None:
+            raise AssertionError("Task 156 must not call the Task 155 builder")
+
+        monkeypatch.setattr(ReasoningRunStage7RequestService, "build", _forbidden)
+        result = _audit(db, package)
+
+    assert result["request_audit_status"] == "CONSISTENT"
+    assert result["available"] is True
+    assert result["findings"] == []
+
+
 def test_audit_schema_is_strict() -> None:
     valid = {
         "request_audit_status": "CONSISTENT",
@@ -495,6 +589,113 @@ def test_audit_schema_is_strict() -> None:
                 "finding_count": 2,
                 "findings": ["B", "A"],
             }
+        )
+
+
+def _audit_result(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "request_audit_status": "CONSISTENT",
+        "available": True,
+        "session_consistent": True,
+        "admission_consistent": True,
+        "certification_consistent": True,
+        "source_consistent": True,
+        "payload_consistent": True,
+        "fingerprint_consistent": True,
+        "finding_count": 0,
+        "findings": [],
+        "audit_source": REASONING_RUN_STAGE_7_REQUEST_AUDIT_SOURCE_TASK_156,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_audit_schema_enforces_finding_coherence() -> None:
+    validated = ReasoningRunStage7RequestAuditRead.model_validate(_audit_result())
+    assert validated.request_audit_status == "CONSISTENT"
+    assert validated.findings == []
+
+    inconsistent = ReasoningRunStage7RequestAuditRead.model_validate(
+        _audit_result(
+            request_audit_status="INCONSISTENT",
+            session_consistent=False,
+            finding_count=1,
+            findings=["SESSION_IDENTITY_MALFORMED"],
+        )
+    )
+    assert inconsistent.certification_consistent is True
+
+    unavailable = ReasoningRunStage7RequestAuditRead.model_validate(
+        _audit_result(
+            request_audit_status="UNAVAILABLE",
+            available=False,
+            session_consistent=False,
+            admission_consistent=False,
+            certification_consistent=False,
+            source_consistent=False,
+            payload_consistent=False,
+            fingerprint_consistent=False,
+            finding_count=1,
+            findings=["REQUEST_PACKAGE_MISSING"],
+        )
+    )
+    assert unavailable.available is False
+
+    with pytest.raises(ValidationError):
+        # CONSISTENT with findings is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(finding_count=1, findings=["unexpected"])
+        )
+    with pytest.raises(ValidationError):
+        # CONSISTENT with a False dimension is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(session_consistent=False)
+        )
+    with pytest.raises(ValidationError):
+        # INCONSISTENT without findings is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(
+                request_audit_status="INCONSISTENT",
+                session_consistent=False,
+            )
+        )
+    with pytest.raises(ValidationError):
+        # INCONSISTENT with every dimension True is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(
+                request_audit_status="INCONSISTENT",
+                finding_count=1,
+                findings=["something"],
+            )
+        )
+    with pytest.raises(ValidationError):
+        # UNAVAILABLE without findings is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(
+                request_audit_status="UNAVAILABLE",
+                available=False,
+                session_consistent=False,
+                admission_consistent=False,
+                certification_consistent=False,
+                source_consistent=False,
+                payload_consistent=False,
+                fingerprint_consistent=False,
+            )
+        )
+    with pytest.raises(ValidationError):
+        # UNAVAILABLE with any True dimension is incoherent.
+        ReasoningRunStage7RequestAuditRead.model_validate(
+            _audit_result(
+                request_audit_status="UNAVAILABLE",
+                available=False,
+                admission_consistent=False,
+                certification_consistent=False,
+                source_consistent=False,
+                payload_consistent=False,
+                fingerprint_consistent=False,
+                finding_count=1,
+                findings=["CONTEXT_UNAVAILABLE"],
+            )
         )
 
 

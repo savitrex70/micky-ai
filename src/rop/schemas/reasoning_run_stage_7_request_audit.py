@@ -28,11 +28,12 @@ class ReasoningRunStage7RequestAuditRead(BaseModel):
     """Strict provenance audit verdict for one request package.
 
     ``request_audit_status`` is the canonical verdict: ``CONSISTENT``
-    (every dimension was independently re-derived and matched),
-    ``INCONSISTENT`` (the package was readable but at least one
-    dimension mismatched), or ``UNAVAILABLE`` (the package or a
-    verification input could not be read, so no dimension is
-    certified -- all dimension flags are ``False`` in that case).
+    (every dimension was independently re-derived and matched, with no
+    findings), ``INCONSISTENT`` (the package was readable but at least
+    one dimension mismatched, so at least one finding exists), or
+    ``UNAVAILABLE`` (the package or a verification input could not be
+    read, so no dimension is certified -- all dimension flags are
+    ``False`` in that case -- and at least one finding records why).
     ``available`` is always exactly
     ``request_audit_status != "UNAVAILABLE"``. ``findings`` are
     deterministic, sorted, and deduplicated.
@@ -68,9 +69,16 @@ class ReasoningRunStage7RequestAuditRead(BaseModel):
         if self.request_audit_status == "CONSISTENT":
             if not all(dimensions):
                 raise ValueError("CONSISTENT requires every dimension to be True")
+            if self.findings:
+                raise ValueError("CONSISTENT requires no findings")
         elif self.request_audit_status == "INCONSISTENT":
             if all(dimensions):
                 raise ValueError("INCONSISTENT requires at least one False dimension")
-        elif any(dimensions):
-            raise ValueError("UNAVAILABLE requires every dimension to be False")
+            if not self.findings:
+                raise ValueError("INCONSISTENT requires at least one finding")
+        else:
+            if any(dimensions):
+                raise ValueError("UNAVAILABLE requires every dimension to be False")
+            if not self.findings:
+                raise ValueError("UNAVAILABLE requires at least one finding")
         return self
