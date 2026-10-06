@@ -123,8 +123,10 @@ class ReasoningRunStage6CertificationService:
 
         Delegates to the existing Task 144-151 services. Read-only: no
         writes, no execution, no replay, no provider/model calls, no
-        Stage 7. ``certified`` is true only when every invariant holds;
-        no lower-level inconsistency is ever overridden.
+        Stage 7. The canonical Task 144 diagnostics health is a
+        mandatory certification input. ``certified`` is true only when
+        every invariant holds; no lower-level inconsistency is ever
+        overridden.
         """
         try:
             gate = self.gate_service.evaluate(db, session_id)
@@ -206,6 +208,13 @@ class ReasoningRunStage6CertificationService:
         manifest_consistent = manifest_audit["manifest_consistent"]
         manifest_components = manifest["components"]
         has_material = gate_status != "NO_MATERIAL"
+        diagnostics_status = gate["diagnostics_status"]
+        genuinely_empty = (
+            gate_status == "NO_MATERIAL"
+            and readiness_status == "NO_MATERIAL"
+            and evidence_status == "NO_MATERIAL"
+            and manifest_status == "NO_MATERIAL"
+        )
 
         certification_status = self._certification_status(
             gate_status,
@@ -222,6 +231,8 @@ class ReasoningRunStage6CertificationService:
             manifest_release_ready,
             manifest_consistent,
             manifest_components,
+            diagnostics_status,
+            genuinely_empty,
         )
         certified = certification_status == "CERTIFIED"
 
@@ -266,7 +277,15 @@ class ReasoningRunStage6CertificationService:
             )
         if has_material and not evidence_available:
             findings = sorted(set(findings) | {"EVIDENCE_UNAVAILABLE"})
-        for component in manifest_components if has_material else []:
+        if diagnostics_status == "DEGRADED":
+            findings = sorted(
+                set(findings) | {"CERTIFICATION_DIAGNOSTICS_NOT_HEALTHY:DEGRADED"}
+            )
+        elif diagnostics_status == "UNHEALTHY":
+            findings = sorted(
+                set(findings) | {"CERTIFICATION_DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY"}
+            )
+        for component in manifest_components if not genuinely_empty else []:
             cid = component["component_id"]
             if not component["available"]:
                 findings = sorted(
@@ -324,66 +343,91 @@ class ReasoningRunStage6CertificationService:
         manifest_release_ready: bool,
         manifest_consistent: bool,
         manifest_components: list[dict[str, Any]],
+        diagnostics_status: str,
+        genuinely_empty: bool,
     ) -> str:
         """Derive the certification verdict from canonical verdicts.
 
-        Every status/boolean contradiction blocks: a READY surface
-        whose boolean flag disagrees, an unavailable evidence bundle,
-        an unavailable manifest component, or an inconsistent manifest
-        component each independently prevents certification, as does
-        any disagreeing consistency audit. Contradiction (or any
-        disagreeing audit) blocks; a pure evidence gap without
-        contradiction leaves the core unverifiable; certification
-        requires every invariant. The architectural ``original_result``
-        gap never appears here because it is not an issue code anywhere
-        upstream. An unknown combination never silently passes as
+        Canonical precedence: any disagreeing consistency audit blocks
+        first, so ``NO_MATERIAL`` can never hide a contradiction; then
+        any BLOCKED status, any status/boolean incoherence, unavailable
+        evidence, an incoherent manifest component, and UNHEALTHY
+        diagnostics each independently block. ``NO_MATERIAL`` is
+        reserved for a fully coherent genuinely empty chain: an empty
+        chain's absent evidence is the Task 144/148 empty state, not a
+        contradiction, so it does not block. Degraded diagnostics or
+        any UNVERIFIABLE surface leave the core unverifiable;
+        certification requires every invariant, including diagnostics
+        HEALTHY. An unknown combination never silently passes as
         CERTIFIED.
         """
         components_coherent = all(
             component["available"] and component["consistent"]
             for component in manifest_components
         )
-        if gate_status == "NO_MATERIAL":
-            return "NO_MATERIAL"
+        gate_ready_coherent = gate_ready == (gate_status == "READY")
+        readiness_release_ready_coherent = readiness_release_ready == (
+            readiness_status == "READY"
+        )
+        evidence_release_ready_coherent = evidence_release_ready == (
+            evidence_status == "READY"
+        )
+        manifest_release_ready_coherent = manifest_release_ready == (
+            manifest_status == "READY"
+        )
+        if (
+            not gate_consistent
+            or not readiness_consistent
+            or not evidence_consistent
+            or not manifest_consistent
+        ):
+            return "BLOCKED"
         if (
             gate_status == "BLOCKED"
             or readiness_status == "BLOCKED"
             or evidence_status == "BLOCKED"
             or manifest_status == "BLOCKED"
-            or not gate_consistent
-            or not readiness_consistent
-            or not evidence_consistent
-            or not manifest_consistent
-            or not gate_ready == (gate_status == "READY")
-            or not readiness_release_ready == (readiness_status == "READY")
-            or not evidence_release_ready == (evidence_status == "READY")
-            or not manifest_release_ready == (manifest_status == "READY")
-            or not evidence_available
-            or not components_coherent
         ):
             return "BLOCKED"
+        if (
+            not gate_ready_coherent
+            or not readiness_release_ready_coherent
+            or not evidence_release_ready_coherent
+            or not manifest_release_ready_coherent
+        ):
+            return "BLOCKED"
+        if not evidence_available and not genuinely_empty:
+            return "BLOCKED"
+        if not components_coherent and not genuinely_empty:
+            return "BLOCKED"
+        if diagnostics_status == "UNHEALTHY":
+            return "BLOCKED"
+        if genuinely_empty:
+            return "NO_MATERIAL"
         if (
             gate_status == "UNVERIFIABLE"
             or readiness_status == "UNVERIFIABLE"
             or evidence_status == "UNVERIFIABLE"
             or manifest_status == "UNVERIFIABLE"
+            or diagnostics_status == "DEGRADED"
         ):
             return "UNVERIFIABLE"
         if (
             gate_status == "READY"
             and gate_ready
+            and gate_consistent
             and readiness_status == "READY"
             and readiness_release_ready
+            and readiness_consistent
             and evidence_status == "READY"
             and evidence_release_ready
             and evidence_available
+            and evidence_consistent
             and manifest_status == "READY"
             and manifest_release_ready
-            and gate_consistent
-            and readiness_consistent
-            and evidence_consistent
             and manifest_consistent
             and components_coherent
+            and diagnostics_status == "HEALTHY"
         ):
             return "CERTIFIED"
         return "BLOCKED"

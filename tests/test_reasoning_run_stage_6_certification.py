@@ -911,3 +911,202 @@ def test_manifest_component_inconsistent_prevents_certification(
         "MANIFEST_COMPONENT_INCONSISTENT:"
         "REASONING_RUN_STAGE_6_EVIDENCE_TASK_148" in body["findings"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Final-boundary precedence (Task 152 correction)
+# ---------------------------------------------------------------------------
+
+
+def test_certification_of_no_material_with_inconsistent_gate_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6GateConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["gate_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "GATE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(ReasoningRunStage6GateConsistencyAuditService, "audit", _forged)
+
+    body = _certify(sid)
+
+    assert body["gate_status"] == "NO_MATERIAL"
+    assert body["gate_consistent"] is False
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert body["findings"] != []
+
+
+def test_certification_of_no_material_with_inconsistent_readiness_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReadinessConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["readiness_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "READINESS_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReadinessConsistencyAuditService, "audit", _forged
+    )
+
+    body = _certify(sid)
+
+    assert body["readiness_status"] == "NO_MATERIAL"
+    assert body["readiness_consistent"] is False
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert body["findings"] != []
+
+
+def test_certification_of_no_material_with_inconsistent_evidence_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6EvidenceConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["evidence_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "EVIDENCE_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6EvidenceConsistencyAuditService, "audit", _forged
+    )
+
+    body = _certify(sid)
+
+    assert body["evidence_status"] == "NO_MATERIAL"
+    assert body["evidence_consistent"] is False
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert body["findings"] != []
+
+
+def test_certification_of_no_material_with_inconsistent_manifest_audit_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ManifestConsistencyAuditService().audit(db, sid)
+    forged_audit = dict(genuine)
+    forged_audit["manifest_consistent"] = False
+    forged_audit["findings"] = list(genuine["findings"]) + [
+        "MANIFEST_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+    ]
+    forged_audit["finding_count"] = len(forged_audit["findings"])
+
+    def _forged(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_audit
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ManifestConsistencyAuditService, "audit", _forged
+    )
+
+    body = _certify(sid)
+
+    assert body["manifest_status"] == "NO_MATERIAL"
+    assert body["manifest_consistent"] is False
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert (
+        "MANIFEST_STATUS_MISMATCH:expected=BLOCKED,actual=NO_MATERIAL"
+        in body["findings"]
+    )
+
+
+def test_certification_of_no_material_with_unavailable_component_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = UUID(_create_session())
+
+    with TestingSessionLocal() as db:
+        genuine = ReasoningRunStage6ReleaseManifestService().manifest(db, sid)
+    forged_manifest = dict(genuine)
+    forged_manifest["components"] = [dict(c) for c in genuine["components"]]
+    forged_manifest["components"][2]["available"] = False
+
+    def _forged_manifest(self: object, db: Session, session_id: UUID) -> dict:
+        _ = (db, session_id)
+        return forged_manifest
+
+    monkeypatch.setattr(
+        ReasoningRunStage6ReleaseManifestService, "manifest", _forged_manifest
+    )
+
+    body = _certify(sid)
+
+    assert body["manifest_consistent"] is False
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert any(
+        f.startswith(
+            "MANIFEST_COMPONENT_AVAILABLE_MISMATCH:"
+            "REASONING_RUN_STAGE_6_GATE_TASK_144"
+        )
+        for f in body["findings"]
+    )
+
+
+def test_certification_of_degraded_diagnostics_is_unverifiable() -> None:
+    sid = UUID(_create_session())
+    _insert_receipt(sid, "c" * 64, input_snapshot=None)
+
+    body = _certify(sid)
+
+    assert body["gate_status"] == "UNVERIFIABLE"
+    assert body["certification_status"] == "UNVERIFIABLE"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert "REPLAY_RECORD_TAMPERED" not in body["findings"]
+    assert "CERTIFICATION_DIAGNOSTICS_NOT_HEALTHY:DEGRADED" in body["findings"]
+
+
+def test_certification_of_unhealthy_diagnostics_is_blocked() -> None:
+    sid = UUID(_create_session())
+    snapshot = _canonical_snapshot(sid)
+    honest = compute_snapshot_fingerprint(snapshot)
+    forged = ("0" if honest[0] != "0" else "1") + honest[1:]
+    _insert_receipt(sid, forged, input_snapshot=snapshot)
+
+    body = _certify(sid)
+
+    assert body["gate_status"] == "BLOCKED"
+    assert body["certification_status"] == "BLOCKED"
+    assert body["certified"] is False
+    assert body["release_ready"] is False
+    assert "REPLAY_RECORD_TAMPERED" in body["findings"]
+    assert "CERTIFICATION_DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY" in body["findings"]
