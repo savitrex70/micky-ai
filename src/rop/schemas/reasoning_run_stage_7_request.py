@@ -11,9 +11,12 @@ records, no arbitrary metadata. No provider is contacted to build it.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
+
+_FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class ReasoningRunStage7RequestRead(BaseModel):
@@ -27,7 +30,11 @@ class ReasoningRunStage7RequestRead(BaseModel):
     is always exactly ``request_status == "PACKAGED"``.
     ``context_fingerprint`` is the Task 104 fingerprint of the payload
     and, like ``payload``, is present exactly when the status is
-    ``PACKAGED``. ``admission_status`` and
+    ``PACKAGED``; it must be exactly 64 lowercase hexadecimal
+    characters, and a present payload must name the exact
+    ``session_id``. ``PACKAGED`` additionally requires an ``ADMITTED``
+    admission and a ``CERTIFIED`` Stage 6 outcome, and ``BLOCKED``
+    requires a ``BLOCKED`` admission. ``admission_status`` and
     ``stage_6_certification_status`` mirror the consumed Task 154
     verdict. ``request_source`` is the canonical identifier of this
     contract.
@@ -56,5 +63,24 @@ class ReasoningRunStage7RequestRead(BaseModel):
         if packaged != (self.context_fingerprint is not None):
             raise ValueError(
                 "context_fingerprint must be present exactly when PACKAGED"
+            )
+        if packaged and self.admission_status != "ADMITTED":
+            raise ValueError("PACKAGED requires admission_status == 'ADMITTED'")
+        if packaged and self.stage_6_certification_status != "CERTIFIED":
+            raise ValueError(
+                "PACKAGED requires stage_6_certification_status == 'CERTIFIED'"
+            )
+        if self.request_status == "BLOCKED" and self.admission_status != "BLOCKED":
+            raise ValueError("BLOCKED requires admission_status == 'BLOCKED'")
+        if (
+            self.payload is not None
+            and self.payload.get("session_id") != self.session_id
+        ):
+            raise ValueError("payload session_id must equal the requested session_id")
+        if self.context_fingerprint is not None and not _FINGERPRINT_PATTERN.fullmatch(
+            self.context_fingerprint
+        ):
+            raise ValueError(
+                "context_fingerprint must be 64 lowercase hexadecimal characters"
             )
         return self

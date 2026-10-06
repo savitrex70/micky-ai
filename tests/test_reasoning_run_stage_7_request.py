@@ -7,7 +7,11 @@ fingerprint; blocked and unavailable admissions produce no package;
 changed context changes the fingerprint; repeated builds are
 deterministic; a tampered payload no longer matches its fingerprint;
 privacy violations fail closed; construction is read-only and invokes
-no provider. No model, no network, no concrete provider.
+no provider. A canonical context whose payload names another session
+fails closed with ``PAYLOAD_SESSION_ID_MISMATCH`` and is never
+packaged; the public schema rejects contradictory status combinations,
+foreign or missing payload session identities, and malformed
+fingerprints. No model, no network, no concrete provider.
 """
 
 from __future__ import annotations
@@ -124,6 +128,16 @@ class _ExplodingContextService:
 
     def build_for_session(self, db: Session, session_id: UUID) -> dict[str, object]:
         raise AssertionError("context must not be read for a non-admitted session")
+
+
+class _StaticContextService:
+    """Returns one fixed canonical context mapping for any session."""
+
+    def __init__(self, context: dict[str, object]) -> None:
+        self._context = context
+
+    def build_for_session(self, db: Session, session_id: UUID) -> dict[str, object]:
+        return self._context
 
 
 @pytest.fixture(autouse=True)
@@ -263,6 +277,32 @@ def test_nonexistent_session_is_unavailable() -> None:
     assert result["available"] is False
     assert result["context_fingerprint"] is None
     assert result["payload"] is None
+
+
+def test_foreign_payload_session_is_rejected() -> None:
+    requested = _create_session("Task 155 binding requested")
+    foreign = _seed_full_session("Task 155 binding foreign")
+    assert requested != foreign
+    with TestingSessionLocal() as db:
+        foreign_context = ReasoningContextService().build_for_session(db, UUID(foreign))
+        assert foreign_context["available"] is True
+        assert serialize_context(foreign_context)["session_id"] == foreign
+
+        owner_result = ReasoningRunStage7RequestService(
+            admission_service=_AdmissionStub("ADMITTED"),
+            reasoning_context_service=_StaticContextService(foreign_context),
+        ).build(db, UUID(foreign))
+        assert owner_result["request_status"] == "PACKAGED"
+        assert owner_result["payload"]["session_id"] == foreign
+
+        with pytest.raises(ReasoningRunStage7RequestContractError) as excinfo:
+            ReasoningRunStage7RequestService(
+                admission_service=_AdmissionStub("ADMITTED"),
+                reasoning_context_service=_StaticContextService(foreign_context),
+            ).build(db, UUID(requested))
+
+    assert excinfo.value.invariant == "PAYLOAD_SESSION_ID_MISMATCH"
+    assert "requested session" in str(excinfo.value)
 
 
 def test_changed_context_changes_fingerprint() -> None:
@@ -416,6 +456,110 @@ def test_request_schema_is_strict() -> None:
                 "payload": {"session_id": "forged"},
             }
         )
+
+
+SESSION_A = "00000000-0000-0000-0000-00000000000a"
+SESSION_B = "00000000-0000-0000-0000-00000000000b"
+
+
+def _packaged_request(**overrides: object) -> dict[str, object]:
+    request: dict[str, object] = {
+        "request_status": "PACKAGED",
+        "available": True,
+        "session_id": SESSION_A,
+        "admission_status": "ADMITTED",
+        "stage_6_certification_status": "CERTIFIED",
+        "context_fingerprint": "a" * 64,
+        "payload": {"session_id": SESSION_A},
+        "request_source": REASONING_RUN_STAGE_7_REQUEST_SOURCE_TASK_155,
+    }
+    request.update(overrides)
+    return request
+
+
+def test_request_schema_rejects_contradictory_states() -> None:
+    for override in (
+        {"admission_status": "BLOCKED"},
+        {"stage_6_certification_status": "NO_MATERIAL"},
+        {"available": False},
+    ):
+        with pytest.raises(ValidationError):
+            ReasoningRunStage7RequestRead.model_validate(_packaged_request(**override))
+
+    blocked = _packaged_request(
+        request_status="BLOCKED",
+        available=False,
+        admission_status="BLOCKED",
+        stage_6_certification_status="NO_MATERIAL",
+        context_fingerprint=None,
+        payload=None,
+    )
+    assert (
+        ReasoningRunStage7RequestRead.model_validate(blocked).request_status
+        == "BLOCKED"
+    )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestRead.model_validate(
+            {**blocked, "admission_status": "ADMITTED"}
+        )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestRead.model_validate(
+            {**blocked, "payload": {"session_id": SESSION_A}}
+        )
+
+    unavailable = _packaged_request(
+        request_status="UNAVAILABLE",
+        available=False,
+        admission_status="UNAVAILABLE",
+        stage_6_certification_status="UNAVAILABLE",
+        context_fingerprint=None,
+        payload=None,
+    )
+    assert (
+        ReasoningRunStage7RequestRead.model_validate(unavailable).request_status
+        == "UNAVAILABLE"
+    )
+    # An admitted session whose canonical context could not be read is
+    # also UNAVAILABLE, so admission_status must not be forced.
+    assert (
+        ReasoningRunStage7RequestRead.model_validate(
+            _packaged_request(
+                request_status="UNAVAILABLE",
+                available=False,
+                context_fingerprint=None,
+                payload=None,
+            )
+        ).admission_status
+        == "ADMITTED"
+    )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestRead.model_validate(
+            {**unavailable, "payload": {"session_id": SESSION_A}}
+        )
+
+
+def test_request_schema_binds_payload_to_session() -> None:
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestRead.model_validate(
+            _packaged_request(payload={"session_id": SESSION_B})
+        )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7RequestRead.model_validate(_packaged_request(payload={}))
+    validated = ReasoningRunStage7RequestRead.model_validate(_packaged_request())
+    assert validated.payload == {"session_id": SESSION_A}
+
+
+def test_request_schema_enforces_fingerprint_format() -> None:
+    for bad in ("", "a" * 63, "a" * 65, "G" * 64, "A" * 64, "0" * 63 + "G"):
+        with pytest.raises(ValidationError):
+            ReasoningRunStage7RequestRead.model_validate(
+                _packaged_request(context_fingerprint=bad)
+            )
+    for good in ("a" * 64, "0123456789abcdef" * 4):
+        validated = ReasoningRunStage7RequestRead.model_validate(
+            _packaged_request(context_fingerprint=good)
+        )
+        assert validated.context_fingerprint == good
 
 
 def test_service_module_carries_no_provider_call() -> None:

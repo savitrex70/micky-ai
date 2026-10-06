@@ -9,8 +9,11 @@ here.
 
 Only an admitted session produces a package: a refused or undecidable
 admission yields a status result with no payload and no fingerprint,
-and the canonical context is not read at all. Building the package
-performs no provider call, no network access, and no persistence.
+and the canonical context is not read at all. The serialized payload
+must name the exact requested session; a payload bound to any other
+session is rejected with ``PAYLOAD_SESSION_ID_MISMATCH`` and never
+packaged. Building the package performs no provider call, no network
+access, and no persistence.
 """
 
 from __future__ import annotations
@@ -81,7 +84,9 @@ class ReasoningRunStage7RequestService:
         unavailable also fails closed with ``UNAVAILABLE`` and no
         package. The fingerprint is computed from the exact canonical
         serialized payload that is shipped, so any later payload
-        modification no longer matches it.
+        modification no longer matches it. A payload that is not bound
+        to the exact requested session is rejected with
+        ``PAYLOAD_SESSION_ID_MISMATCH``.
         """
         admission = self._admission_service.evaluate(db, session_id)
         admission_status = admission.get("admission_status")
@@ -111,6 +116,11 @@ class ReasoningRunStage7RequestService:
             return self._project(result)
 
         serialized = serialize_context(context)
+        if serialized.get("session_id") != str(session_id):
+            raise ReasoningRunStage7RequestContractError(
+                "PAYLOAD_SESSION_ID_MISMATCH",
+                "canonical payload is not bound to the requested session",
+            )
         unexpected = validate_payload(serialized)
         if unexpected:
             raise ReasoningRunStage7RequestContractError(
