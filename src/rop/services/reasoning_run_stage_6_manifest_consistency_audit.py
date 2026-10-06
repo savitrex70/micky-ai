@@ -1,20 +1,20 @@
 """Task 151: Stage 6 release package manifest consistency audit service.
 
 Read-only audit of the Task 150 manifest against the canonical
-upstream chain: Task 144 gate, Task 145 gate consistency, Task 146
-readiness, Task 147 readiness consistency, Task 148 evidence, and
-Task 149 evidence consistency (which themselves embed the Task 142
-inspection and Task 143 diagnostics evidence). Verifies manifest
+upstream chain: Task 143 diagnostics, Task 144 gate, Task 145 gate
+consistency, Task 146 readiness, Task 147 readiness consistency,
+Task 148 evidence, and Task 149 evidence consistency (which
+themselves embed the Task 142 inspection evidence). Verifies manifest
 status, release-ready value, required component presence/order, and
 per-component agreement with upstream outputs. Reuses the existing
-manifest, gate, audit, readiness, and evidence services; reimplements
-no receipt, fingerprint, snapshot, provenance, replay, inspection,
-diagnostics, gate, readiness, evidence, or manifest validation logic.
-No reasoning execution, no replay engine invocation, no persistence,
-no provider/model calls. The Task 140 ``original_result`` is request
-material, never persisted, so it is never reconstructed here; its
-``NOT_PERSISTED`` provenance is not an issue code and never drives
-this audit.
+manifest, diagnostics, gate, audit, readiness, and evidence services;
+reimplements no receipt, fingerprint, snapshot, provenance, replay,
+inspection, diagnostics, gate, readiness, evidence, or manifest
+validation logic. No reasoning execution, no replay engine
+invocation, no persistence, no provider/model calls. The Task 140
+``original_result`` is request material, never persisted, so it is
+never reconstructed here; its ``NOT_PERSISTED`` provenance is not an
+issue code and never drives this audit.
 """
 
 from __future__ import annotations
@@ -27,6 +27,10 @@ from sqlalchemy.orm import Session
 
 from rop.schemas.reasoning_run_stage_6_manifest_consistency_audit import (
     ReasoningRunStage6ManifestConsistencyAuditRead,
+)
+from rop.services.reasoning_run_diagnostics import (
+    ReasoningRunDiagnosticsContractError,
+    ReasoningRunDiagnosticsService,
 )
 from rop.services.reasoning_run_stage_6_evidence import (
     ReasoningRunStage6EvidenceContractError,
@@ -87,6 +91,7 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
     def __init__(
         self,
         manifest_service: ReasoningRunStage6ReleaseManifestService | None = (None),
+        diagnostics_service: ReasoningRunDiagnosticsService | None = None,
         gate_service: ReasoningRunStage6GateService | None = None,
         gate_audit_service: ReasoningRunStage6GateConsistencyAuditService | None = None,
         readiness_service: ReasoningRunStage6ReadinessService | None = None,
@@ -100,6 +105,9 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
     ) -> None:
         self.manifest_service = (
             manifest_service or ReasoningRunStage6ReleaseManifestService()
+        )
+        self.diagnostics_service = (
+            diagnostics_service or ReasoningRunDiagnosticsService()
         )
         self.gate_service = gate_service or ReasoningRunStage6GateService()
         self.gate_audit_service = (
@@ -125,7 +133,7 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
     ) -> dict[str, Any]:
         """Audit the published manifest against upstream evidence.
 
-        Delegates to the existing Task 150/144/145/146/147/148/149
+        Delegates to the existing Task 150/143/144/145/146/147/148/149
         services. Read-only: no writes, no execution, no replay, no
         provider/model calls. A manifest is never reported consistent
         and release-ready when any canonical upstream condition
@@ -154,6 +162,14 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
                 "GATE_AUDIT_UNREADABLE",
                 "persisted gate audit material cannot be projected onto "
                 "the canonical audit schema",
+            ) from exc
+        try:
+            diagnostics = self.diagnostics_service.diagnose(db, session_id)
+        except ReasoningRunDiagnosticsContractError as exc:
+            raise ReasoningRunStage6ManifestConsistencyAuditContractError(
+                "DIAGNOSTICS_UNREADABLE",
+                "persisted diagnostics material cannot be projected onto "
+                "the canonical diagnostics schema",
             ) from exc
         try:
             readiness = self.readiness_service.report(db, session_id)
@@ -191,6 +207,7 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
         upstream = {
             "gate": gate,
             "gate_audit": gate_audit,
+            "diagnostics": diagnostics,
             "readiness": readiness,
             "readiness_audit": readiness_audit,
             "evidence": evidence,
@@ -254,13 +271,18 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
     def _expected_status(upstream: dict[str, Any]) -> str:
         """Map canonical upstream outputs to the expected manifest state.
 
-        Independent expectation over already computed verdicts:
-        contradiction (or any disagreeing consistency audit) blocks, a
-        pure evidence gap leaves the package unverifiable, and only a
-        fully READY consistent chain is READY. The architectural
-        ``original_result`` gap never appears here because it is not an
-        issue code anywhere upstream. An unknown combination never
-        silently passes as READY.
+        Independent expectation over already computed verdicts,
+        mirroring the approved Task 150 contract exactly: a
+        disagreeing consistency audit contradicts the package and
+        outranks the missing-evidence classification, the boolean
+        ready/release-ready flags must cohere with their owning status
+        strings, diagnostics health participates in the verdict
+        (UNHEALTHY blocks, DEGRADED leaves it unverifiable), a fully
+        coherent empty chain is NO_MATERIAL, and only a fully READY
+        consistent chain is READY. The architectural ``original_result``
+        gap never appears here because it is not an issue code anywhere
+        upstream. An unknown combination never silently passes as
+        READY.
         """
         gate = upstream["gate"]
         gate_audit = upstream["gate_audit"]
@@ -268,32 +290,70 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
         readiness_audit = upstream["readiness_audit"]
         evidence = upstream["evidence"]
         evidence_audit = upstream["evidence_audit"]
-        if gate["gate_status"] == "NO_MATERIAL":
-            return "NO_MATERIAL"
-        if (
-            gate["gate_status"] == "BLOCKED"
-            or readiness["readiness_status"] == "BLOCKED"
-            or evidence["stage_6_status"] == "BLOCKED"
-            or not gate_audit["gate_consistent"]
-            or not readiness_audit["readiness_consistent"]
-            or not evidence_audit["evidence_consistent"]
-        ):
+
+        gate_status = gate["gate_status"]
+        readiness_status = readiness["readiness_status"]
+        evidence_status = evidence["stage_6_status"]
+
+        gate_consistent = gate_audit["gate_consistent"]
+        readiness_consistent = readiness_audit["readiness_consistent"]
+        evidence_consistent = evidence_audit["evidence_consistent"]
+
+        diagnostics_status = gate["diagnostics_status"]
+
+        gate_ready_coherent = gate["ready"] == (gate_status == "READY")
+        readiness_release_ready_coherent = readiness["release_ready"] == (
+            readiness_status == "READY"
+        )
+        evidence_release_ready_coherent = evidence["release_ready"] == (
+            evidence_status == "READY"
+        )
+
+        if not gate_consistent:
+            return "BLOCKED"
+        if not readiness_consistent:
+            return "BLOCKED"
+        if not evidence_consistent:
+            return "BLOCKED"
+        if gate_status == "BLOCKED":
+            return "BLOCKED"
+        if readiness_status == "BLOCKED":
+            return "BLOCKED"
+        if evidence_status == "BLOCKED":
+            return "BLOCKED"
+        if not gate_ready_coherent:
+            return "BLOCKED"
+        if not readiness_release_ready_coherent:
+            return "BLOCKED"
+        if not evidence_release_ready_coherent:
+            return "BLOCKED"
+        if diagnostics_status == "UNHEALTHY":
             return "BLOCKED"
         if (
-            gate["gate_status"] == "UNVERIFIABLE"
-            or readiness["readiness_status"] == "UNVERIFIABLE"
-            or evidence["stage_6_status"] == "UNVERIFIABLE"
+            gate_status == "NO_MATERIAL"
+            and readiness_status == "NO_MATERIAL"
+            and evidence_status == "NO_MATERIAL"
+        ):
+            return "NO_MATERIAL"
+        if (
+            gate_status == "UNVERIFIABLE"
+            or readiness_status == "UNVERIFIABLE"
+            or evidence_status == "UNVERIFIABLE"
+            or diagnostics_status == "DEGRADED"
         ):
             return "UNVERIFIABLE"
         if (
-            gate["gate_status"] == "READY"
-            and readiness["readiness_status"] == "READY"
-            and evidence["stage_6_status"] == "READY"
-            and gate_audit["gate_consistent"]
-            and readiness_audit["readiness_consistent"]
-            and evidence_audit["evidence_consistent"]
+            gate_status == "READY"
+            and gate_ready_coherent
+            and gate_consistent
+            and readiness_status == "READY"
+            and readiness_release_ready_coherent
+            and readiness_consistent
+            and evidence_status == "READY"
+            and evidence_release_ready_coherent
             and evidence["evidence_available"]
-            and evidence["release_ready"]
+            and evidence_consistent
+            and diagnostics_status == "HEALTHY"
         ):
             return "READY"
         return "BLOCKED"
@@ -304,14 +364,16 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
 
         One explicit canonical mapping from each required component ID
         to its expected kind, status, availability, and consistency,
-        recomputed from the canonical Task 144-149 outputs using the
+        recomputed from the canonical Task 143-149 outputs using the
         same construction rules as Task 150: report surfaces carry
         strict-schema coherence, verdict surfaces agree with their
-        governing audits, and the diagnostics entry carries the
-        canonical Task 144 diagnostics-health derivation.
+        governing audits, the diagnostics entry carries the canonical
+        Task 144 diagnostics-health derivation as its status and reads
+        its availability from the canonical Task 143 response.
         """
         gate = upstream["gate"]
         gate_audit = upstream["gate_audit"]
+        diagnostics = upstream["diagnostics"]
         readiness = upstream["readiness"]
         readiness_audit = upstream["readiness_audit"]
         evidence = upstream["evidence"]
@@ -329,7 +391,7 @@ class ReasoningRunStage6ManifestConsistencyAuditService:
                 "component_kind": "diagnostics",
                 "status": gate["diagnostics_status"],
                 "consistent": True,
-                "available": True,
+                "available": diagnostics["session_exists"],
             },
             {
                 "component_id": "REASONING_RUN_STAGE_6_GATE_TASK_144",
