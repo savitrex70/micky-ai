@@ -6,10 +6,13 @@ Task 154 admission verdict, rebuilds the canonical Task 055 context,
 recomputes the canonical Task 104 serialization and fingerprint, and
 compares each of those against the packaged claims. A supplied
 fingerprint is only accepted when it matches a fresh recomputation; a
-PACKAGED request additionally requires a canonical ADMITTED admission
-with CERTIFIED Stage 6 certification; and the canonical context must
-itself report itself available and consistent, otherwise the audit
-fails closed as UNAVAILABLE.
+PACKAGED request additionally requires an available package state, a
+canonical ADMITTED admission whose Stage 6 certification is CERTIFIED
+and whose own public invariants are coherent (admitted matches the
+verdict, the Stage 6 record is consistent, release readiness matches
+certification); and the canonical context must itself report itself
+available and consistent, otherwise the audit fails closed as
+UNAVAILABLE.
 
 Read-only: no persistence, no provider call, no network, and no
 mutation of the audited package.
@@ -123,6 +126,11 @@ class ReasoningRunStage7RequestAuditService:
             findings.append("FINGERPRINT_MISSING")
             return self._finalize("UNAVAILABLE", dimensions, findings)
 
+        package_available = package.get("available")
+        availability_ok = package_available is True
+        if not availability_ok:
+            findings.append(f"REQUEST_AVAILABILITY_MISMATCH:{package_available}")
+
         source = package.get("request_source")
         if source == REASONING_RUN_STAGE_7_REQUEST_SOURCE_TASK_155:
             dimensions["source_consistent"] = True
@@ -194,25 +202,54 @@ class ReasoningRunStage7RequestAuditService:
                 unavailable = True
             else:
                 recomputed_admission = admission.get("admission_status")
+                recomputed_admitted = admission.get("admitted")
+                recomputed_cert = admission.get("stage_6_certification_status")
+                recomputed_release_ready = admission.get("stage_6_release_ready")
+                recomputed_cert_consistent = admission.get(
+                    "stage_6_certification_consistent"
+                )
+                recomputed_is_admitted = recomputed_admission == "ADMITTED"
+                recomputed_is_certified = recomputed_cert == "CERTIFIED"
+                admission_verdict_coherent = (
+                    recomputed_admitted == recomputed_is_admitted
+                )
+                certification_coherent = recomputed_cert_consistent is True
+                release_ready_coherent = (
+                    recomputed_release_ready == recomputed_is_certified
+                )
+                if not admission_verdict_coherent:
+                    findings.append("ADMISSION_VERDICT_INCOHERENT")
+                if not certification_coherent:
+                    findings.append("STAGE_6_CERTIFICATION_INCOHERENT")
+                if not release_ready_coherent:
+                    findings.append("STAGE_6_RELEASE_READY_INCOHERENT")
                 echoed_admission = package.get("admission_status")
-                if recomputed_admission != "ADMITTED":
+                if not recomputed_is_admitted:
                     findings.append(f"ADMISSION_NOT_ADMITTED:{recomputed_admission}")
                 elif echoed_admission != "ADMITTED":
                     findings.append(f"ADMISSION_STATUS_MISMATCH:{echoed_admission}")
-                else:
+                if (
+                    admission_verdict_coherent
+                    and certification_coherent
+                    and release_ready_coherent
+                    and recomputed_is_admitted
+                    and recomputed_is_certified
+                    and echoed_admission == "ADMITTED"
+                ):
                     dimensions["admission_consistent"] = True
-                recomputed_cert = admission.get("stage_6_certification_status")
                 echoed_cert = package.get("stage_6_certification_status")
                 if echoed_cert != recomputed_cert:
                     findings.append(f"STAGE_6_CERTIFICATION_MISMATCH:{echoed_cert}")
-                elif recomputed_cert != "CERTIFIED":
+                elif not recomputed_is_certified:
                     findings.append(
                         f"STAGE_6_CERTIFICATION_NOT_CERTIFIED:{recomputed_cert}"
                     )
                 else:
                     dimensions["certification_consistent"] = True
 
-        dimensions["payload_consistent"] = payload_fields_ok and canonical_ok
+        dimensions["payload_consistent"] = (
+            payload_fields_ok and canonical_ok and availability_ok
+        )
         dimensions["fingerprint_consistent"] = fingerprint_ok
 
         if unavailable:

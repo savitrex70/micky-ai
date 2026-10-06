@@ -2,8 +2,9 @@
 
 Covers the independent audit of the Task 155 request package: a correct
 package is CONSISTENT; fingerprint, session, certification, admission,
-source, and payload-field tampering are each detected as INCONSISTENT
-without trusting the builder's flags; missing package material or an
+package availability, source, and payload-field tampering are each
+detected as INCONSISTENT without trusting the builder's flags, as are
+incoherent canonical admissions; missing package material or an
 unreadable verification input is UNAVAILABLE. Also proves the audit is
 read-only, never mutates the canonical request, is deterministic, and
 calls no provider. No model, no network, no concrete provider.
@@ -105,16 +106,47 @@ class _ContextContractErrorStub:
 
 
 class _AdmissionVerdictStub:
-    """Returns one fixed canonical admission verdict for echo auditing."""
+    """Returns one fixed canonical admission result for echo auditing.
 
-    def __init__(self, admission_status: str, certification_status: str) -> None:
+    Defaults reproduce a locally coherent Task 154 record for the given
+    status pair; individual public invariants can be contradicted to
+    forge incoherent canonical admissions.
+    """
+
+    def __init__(
+        self,
+        admission_status: str,
+        certification_status: str,
+        *,
+        admitted: bool | None = None,
+        release_ready: bool | None = None,
+        certification_consistent: bool | None = None,
+    ) -> None:
         self._admission_status = admission_status
         self._certification_status = certification_status
+        self._admitted = admitted
+        self._release_ready = release_ready
+        self._certification_consistent = certification_consistent
 
     def evaluate(self, db: Session, session_id: UUID) -> dict[str, object]:
         return {
             "admission_status": self._admission_status,
+            "admitted": (
+                self._admitted
+                if self._admitted is not None
+                else self._admission_status == "ADMITTED"
+            ),
             "stage_6_certification_status": self._certification_status,
+            "stage_6_release_ready": (
+                self._release_ready
+                if self._release_ready is not None
+                else self._certification_status == "CERTIFIED"
+            ),
+            "stage_6_certification_consistent": (
+                self._certification_consistent
+                if self._certification_consistent is not None
+                else True
+            ),
         }
 
 
@@ -342,7 +374,10 @@ def test_not_admitted_recomputation_is_inconsistent() -> None:
             {
                 "evaluate": lambda self, db, session_id: {
                     "admission_status": "BLOCKED",
+                    "admitted": False,
                     "stage_6_certification_status": "NO_MATERIAL",
+                    "stage_6_release_ready": False,
+                    "stage_6_certification_consistent": True,
                 }
             },
         )()
@@ -353,6 +388,7 @@ def test_not_admitted_recomputation_is_inconsistent() -> None:
     assert result["request_audit_status"] == "INCONSISTENT"
     assert result["admission_consistent"] is False
     assert "ADMISSION_NOT_ADMITTED:BLOCKED" in result["findings"]
+    assert "ADMISSION_VERDICT_INCOHERENT" not in result["findings"]
 
 
 def test_canonical_certification_verdict_is_required() -> None:
@@ -374,10 +410,104 @@ def test_canonical_certification_verdict_is_required() -> None:
     assert blocked["available"] is True
     assert blocked["certification_consistent"] is False
     assert "STAGE_6_CERTIFICATION_NOT_CERTIFIED:BLOCKED" in blocked["findings"]
-    assert blocked["admission_consistent"] is True
+    # A canonical ADMITTED claim without a CERTIFIED Stage 6 outcome
+    # cannot be admission-consistent.
+    assert blocked["admission_consistent"] is False
     assert certified["request_audit_status"] == "CONSISTENT"
     assert certified["available"] is True
     assert certified["certification_consistent"] is True
+
+
+def test_packaged_request_requires_package_availability() -> None:
+    sid = _seed_full_session("Task 156 forged availability")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        package["available"] = False
+        result = _audit(db, package)
+
+    assert result["request_audit_status"] == "INCONSISTENT"
+    assert result["payload_consistent"] is False
+    assert "REQUEST_AVAILABILITY_MISMATCH:False" in result["findings"]
+    assert result["session_consistent"] is True
+    assert result["admission_consistent"] is True
+    assert result["fingerprint_consistent"] is True
+
+
+def test_admission_verdict_incoherence_is_inconsistent() -> None:
+    sid = _seed_full_session("Task 156 verdict incoherence")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        result = _audit(
+            db,
+            package,
+            admission_service=_AdmissionVerdictStub(
+                "ADMITTED", "CERTIFIED", admitted=False
+            ),
+        )
+
+    assert result["request_audit_status"] == "INCONSISTENT"
+    assert result["admission_consistent"] is False
+    assert "ADMISSION_VERDICT_INCOHERENT" in result["findings"]
+    assert result["certification_consistent"] is True
+
+
+def test_certification_incoherence_blocks_admission_consistency() -> None:
+    sid = _seed_full_session("Task 156 certification incoherence")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        result = _audit(
+            db,
+            package,
+            admission_service=_AdmissionVerdictStub(
+                "ADMITTED", "CERTIFIED", certification_consistent=False
+            ),
+        )
+
+    assert result["request_audit_status"] == "INCONSISTENT"
+    assert result["admission_consistent"] is False
+    assert "STAGE_6_CERTIFICATION_INCOHERENT" in result["findings"]
+    assert result["certification_consistent"] is True
+
+
+def test_release_readiness_incoherence_is_inconsistent() -> None:
+    sid = _seed_full_session("Task 156 release readiness")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        result = _audit(
+            db,
+            package,
+            admission_service=_AdmissionVerdictStub(
+                "ADMITTED", "CERTIFIED", release_ready=False
+            ),
+        )
+
+    assert result["request_audit_status"] == "INCONSISTENT"
+    assert result["admission_consistent"] is False
+    assert "STAGE_6_RELEASE_READY_INCOHERENT" in result["findings"]
+    assert result["certification_consistent"] is True
+
+
+def test_fully_coherent_canonical_admission_stays_consistent() -> None:
+    sid = _seed_full_session("Task 156 coherent admission")
+    with TestingSessionLocal() as db:
+        package = _build_package(db, sid)
+        result = _audit(
+            db,
+            package,
+            admission_service=_AdmissionVerdictStub(
+                "ADMITTED",
+                "CERTIFIED",
+                admitted=True,
+                release_ready=True,
+                certification_consistent=True,
+            ),
+        )
+
+    assert result["request_audit_status"] == "CONSISTENT"
+    assert result["available"] is True
+    assert result["admission_consistent"] is True
+    assert result["certification_consistent"] is True
+    assert result["findings"] == []
 
 
 def test_missing_package_material_is_unavailable() -> None:
