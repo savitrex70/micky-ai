@@ -53,6 +53,7 @@ from rop.services.reasoning_run_stage_6_readiness_consistency_audit import (
     ReasoningRunStage6ReadinessConsistencyAuditService,
 )
 from rop.services.reasoning_run_stage_6_release_manifest import (
+    COMPONENT_EVIDENCE_TASK_148,
     ReasoningRunStage6ReleaseManifestContractError,
     ReasoningRunStage6ReleaseManifestService,
 )
@@ -285,9 +286,12 @@ class ReasoningRunStage6CertificationService:
             findings = sorted(
                 set(findings) | {"CERTIFICATION_DIAGNOSTICS_NOT_HEALTHY:UNHEALTHY"}
             )
-        for component in manifest_components if not genuinely_empty else []:
+        for component in manifest_components:
             cid = component["component_id"]
-            if not component["available"]:
+            expected_available = (
+                evidence_available if cid == COMPONENT_EVIDENCE_TASK_148 else True
+            )
+            if not component["available"] and expected_available:
                 findings = sorted(
                     set(findings) | {f"MANIFEST_COMPONENT_NOT_AVAILABLE:{cid}"}
                 )
@@ -352,17 +356,27 @@ class ReasoningRunStage6CertificationService:
         first, so ``NO_MATERIAL`` can never hide a contradiction; then
         any BLOCKED status, any status/boolean incoherence, unavailable
         evidence, an incoherent manifest component, and UNHEALTHY
-        diagnostics each independently block. ``NO_MATERIAL`` is
-        reserved for a fully coherent genuinely empty chain: an empty
-        chain's absent evidence is the Task 144/148 empty state, not a
-        contradiction, so it does not block. Degraded diagnostics or
-        any UNVERIFIABLE surface leave the core unverifiable;
-        certification requires every invariant, including diagnostics
-        HEALTHY. An unknown combination never silently passes as
-        CERTIFIED.
+        diagnostics each independently block. Manifest component
+        integrity is enforced regardless of empty state: every
+        component must be consistent and available, except that the
+        evidence component canonically mirrors ``evidence_available``
+        (the Task 148/150 empty state), so a coherent genuinely empty
+        chain keeps its one canonically absent component.
+        ``NO_MATERIAL`` is reserved for that fully coherent genuinely
+        empty chain. Degraded diagnostics or any UNVERIFIABLE surface
+        leave the core unverifiable; certification requires every
+        invariant, including diagnostics HEALTHY. An unknown
+        combination never silently passes as CERTIFIED.
         """
         components_coherent = all(
-            component["available"] and component["consistent"]
+            component["consistent"]
+            and (
+                component["available"]
+                or (
+                    component["component_id"] == COMPONENT_EVIDENCE_TASK_148
+                    and not evidence_available
+                )
+            )
             for component in manifest_components
         )
         gate_ready_coherent = gate_ready == (gate_status == "READY")
@@ -398,7 +412,7 @@ class ReasoningRunStage6CertificationService:
             return "BLOCKED"
         if not evidence_available and not genuinely_empty:
             return "BLOCKED"
-        if not components_coherent and not genuinely_empty:
+        if not components_coherent:
             return "BLOCKED"
         if diagnostics_status == "UNHEALTHY":
             return "BLOCKED"
