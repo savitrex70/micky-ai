@@ -127,9 +127,9 @@ def test_injected_fake_fails_closed_without_network(
     """An explicitly injected fake that cannot produce a response fails
     closed through the Task 107 boundary without any network use."""
     import httpx
-    from tests.test_llm_live_boundary_enforcement import FakeProvider
 
     from rop.services.llm_reasoning_provider import LLMReasoningRequest
+    from tests.test_llm_live_boundary_enforcement import FakeProvider
 
     called: list[str] = []
 

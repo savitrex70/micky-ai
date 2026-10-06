@@ -292,14 +292,13 @@ def test_empty_explanation_is_inconsistent_not_raw() -> None:
 def test_public_construction_failure_is_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import rop.services.llm_reasoning as reasoning_mod
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         _service_with,
         _valid_context,
         _valid_model_output,
     )
-
-    import rop.services.llm_reasoning as reasoning_mod
 
     ctx = _valid_context()
 
@@ -348,13 +347,12 @@ def test_hostile_schema_validation_error_str_is_contained(
     """A hostile exception from the raw schema-validation call itself
     (raising __str__) must become a deterministic issue at unit level
     and MODEL_OUTPUT_INVALID on the live path -- never a raw escape."""
+    import rop.services.llm_output_validation as validation_mod
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         _service_with,
         _valid_context,
     )
-
-    import rop.services.llm_output_validation as validation_mod
 
     class _Boom(Exception):
         def __str__(self) -> str:

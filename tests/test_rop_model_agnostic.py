@@ -92,14 +92,13 @@ def test_fresh_interpreter_imports_nothing_model_specific() -> None:
 
 
 def test_generic_boundary_intact_through_fakes() -> None:
+    from rop.services.llm_reasoning_audit import LLMReasoningAuditService
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         _service_with,
         _valid_context,
         _valid_model_output,
     )
-
-    from rop.services.llm_reasoning_audit import LLMReasoningAuditService
 
     ctx = _valid_context()
     proposal = _service_with(

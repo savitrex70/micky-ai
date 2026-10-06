@@ -228,14 +228,13 @@ def test_live_path_rejects_omitted_nested_field(field: str) -> None:
     field never silently becomes an empty list."""
     import json
 
+    from rop.services.llm_reasoning import LLMReasoningContractError
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         _service_with,
         _valid_context,
         _valid_model_output,
     )
-
-    from rop.services.llm_reasoning import LLMReasoningContractError
 
     ctx = _valid_context()
     raw = json.loads(_valid_model_output(ctx))

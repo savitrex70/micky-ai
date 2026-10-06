@@ -13,17 +13,16 @@ import copy
 from collections.abc import Iterator, Mapping
 from typing import Any
 
+from rop.services.llm_request_serialization import (
+    PAYLOAD_FIELDS,
+    compute_fingerprint,
+    serialize_context,
+)
 from tests.test_llm_live_boundary_enforcement import (
     FakeProvider,
     _service_with,
     _valid_context,
     _valid_model_output,
-)
-
-from rop.services.llm_request_serialization import (
-    PAYLOAD_FIELDS,
-    compute_fingerprint,
-    serialize_context,
 )
 
 

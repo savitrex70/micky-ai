@@ -196,14 +196,13 @@ def test_gate_07_task_107_isolates_failures_and_metadata() -> None:
 
 
 def test_gate_08_task_108_structural_privacy_without_clinical_filter() -> None:
+    from rop.services.llm_request_serialization import serialize_context as _ser
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         _service_with,
         _valid_context,
         _valid_model_output,
     )
-
-    from rop.services.llm_request_serialization import serialize_context as _ser
 
     ctx = _valid_context()
     ctx["observations"][
@@ -322,6 +321,8 @@ def test_gate_15_no_automatic_network_model_or_key_behavior(
 
 def test_gate_16_no_rop_state_mutated() -> None:
     from sqlalchemy import text as sql_text
+
+    from rop.database import Base
     from tests.test_llm_live_boundary_enforcement import (
         FakeProvider,
         TestingSessionLocal,
@@ -329,8 +330,6 @@ def test_gate_16_no_rop_state_mutated() -> None:
         _valid_context,
         _valid_model_output,
     )
-
-    from rop.database import Base
 
     ctx = _valid_context()
     service = _service_with(FakeProvider(response_text=_valid_model_output(ctx)))

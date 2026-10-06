@@ -13,12 +13,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from tests.test_llm_live_boundary_enforcement import (
-    FakeProvider,
-    _service_with,
-    _valid_context,
-    _valid_model_output,
-)
 
 from rop.services.llm_privacy_boundary import (
     check_adversarial_text,
@@ -27,6 +21,12 @@ from rop.services.llm_privacy_boundary import (
 from rop.services.llm_reasoning import (
     LLMReasoningContractError,
     LLMReasoningService,
+)
+from tests.test_llm_live_boundary_enforcement import (
+    FakeProvider,
+    _service_with,
+    _valid_context,
+    _valid_model_output,
 )
 
 
