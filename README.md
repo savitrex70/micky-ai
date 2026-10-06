@@ -1,6 +1,6 @@
 # Reasoning Operating Platform
 
-The Reasoning Operating Platform (ROP) is being built incrementally. The current foundation includes one persistence model, `ReasoningSession`, but no reasoning engine, business logic, authentication, or AI integrations.
+The Reasoning Operating Platform (ROP) is being built incrementally. The deterministic reasoning infrastructure through Stage 6 is complete, spanning rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 work on the provider-agnostic LLM boundary is beginning: the boundary seam exists and is exercised only through test-only fakes. ROP contains no concrete model provider integration, no credentials, and no network inference.
 
 ## Stack
 
@@ -57,7 +57,7 @@ The API is available at `http://localhost:8000`. The health check is `GET /healt
 
 ### API endpoints
 
-The first API exposes persistence operations only:
+The API's persistence endpoints:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ The first API exposes persistence operations only:
 | `GET` | `/sessions/{session_id}/observations` | List observations for a session |
 | `POST` | `/sessions/{session_id}/extract-observations` | Extract and store observations from free text |
 
-Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The API performs no reasoning, diagnosis, hypothesis generation, or state transitions.
+Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The deterministic pipeline performs no diagnosis, no model inference, and no clinical interpretation; all reasoning stages are deterministic and rule-based, and no concrete model provider integration exists.
 
 ### Observation extraction pipeline
 
