@@ -31,6 +31,9 @@ from sqlalchemy.pool import StaticPool
 
 from rop.database import Base, get_db
 from rop.main import app
+from rop.schemas.reasoning_run_stage_7_audit_package import (
+    ReasoningRunStage7AuditPackageRead,
+)
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
 )
@@ -43,6 +46,7 @@ from rop.services.reasoning_run_stage_7_admission import (
     ReasoningRunStage7AdmissionService,
 )
 from rop.services.reasoning_run_stage_7_audit_package import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
     ReasoningRunStage7AuditPackageService,
 )
 from rop.services.reasoning_run_stage_7_diagnostics import (
@@ -99,6 +103,11 @@ VERTICAL_SLICE_KEYS = {
     "findings",
     "certification_source",
 }
+
+# The approved Task 162 field set, read from the contract itself so a
+# forged or truncated mapping is defined by the schema rather than by a
+# hand-copied list.
+AUDIT_PACKAGE_KEYS = set(ReasoningRunStage7AuditPackageRead.model_fields)
 
 _CONCRETE_PROVIDER_TOKENS = ("ollama", "openai", "gemini", "anthropic", "claude")
 _PROHIBITED_SOURCE_TOKENS = (
@@ -392,6 +401,52 @@ def _ready_slice_payload() -> dict:
         "findings": [],
         "certification_source": REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
     }
+
+
+def _healthy_package(db: Session, sid: str) -> dict:
+    """The genuine Task 162 package for one fully audited interaction."""
+    package, request_audit, proposal_result, proposal_audit, _, _ = _healthy_material(
+        db, sid
+    )
+    return _package(
+        admission=_admission(db, sid),
+        package=package,
+        request_audit=request_audit,
+        proposal_result=proposal_result,
+        proposal_audit=proposal_audit,
+        diagnostics=_diagnose(package, request_audit, proposal_result, proposal_audit),
+    )
+
+
+def _forged_package_payload() -> dict:
+    """A hand-written mapping that only looks like a healthy package.
+
+    Every value is a legal-looking canonical string and the fields the
+    old gate used to read by hand are all present; the package contract
+    additionally requires ``request_fingerprint``, which a caller cannot
+    know without running Task 162.
+    """
+    return {
+        "session_id": str(uuid4()),
+        "admission_status": "ADMITTED",
+        "diagnostics_status": "HEALTHY",
+        "request_audit_status": "CONSISTENT",
+        "proposal_audit_status": "CONSISTENT",
+        "provider_name": "fake-provider",
+        "model_name": "fake-model",
+        "finding_count": 0,
+        "findings": [],
+        "audit_source": REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+    }
+
+
+def _assert_unavailable(verdict: dict, marker_prefix: str) -> None:
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["finding_count"] == len(verdict["findings"]) == 1
+    assert verdict["findings"][0].startswith(marker_prefix)
+    assert set(verdict) == VERTICAL_SLICE_KEYS
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +748,231 @@ def test_empty_package_is_unavailable() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The Task 162 contract is the only authority on genuine material
+# ---------------------------------------------------------------------------
+
+
+def test_forged_audit_package_is_unavailable() -> None:
+    """Legal-looking status strings cannot manufacture READY."""
+    forged = _forged_package_payload()
+    assert set(forged) < AUDIT_PACKAGE_KEYS
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7AuditPackageRead.model_validate(forged)
+
+    verdict = _certify(forged)
+
+    _assert_unavailable(verdict, "AUDIT_PACKAGE_INVALID:")
+    assert verdict["findings"] == ["AUDIT_PACKAGE_INVALID:request_fingerprint:missing"]
+    assert verdict["session_id"] == ""
+    assert verdict["admission_status"] is None
+    assert verdict["diagnostics_status"] is None
+
+
+def test_audit_package_extra_field_is_unavailable() -> None:
+    sid = _seed_full_session("Task 163 package extra field")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    smuggled = {**healthy, "raw_provider_text": "RAW-LEAK-MARKER-163"}
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7AuditPackageRead.model_validate(smuggled)
+
+    verdict = _certify(smuggled)
+
+    _assert_unavailable(verdict, "AUDIT_PACKAGE_INVALID:")
+    assert "raw_provider_text" in verdict["findings"][0]
+    assert "extra_forbidden" in verdict["findings"][0]
+    assert "RAW-LEAK-MARKER-163" not in json.dumps(verdict)
+
+
+def test_each_missing_package_field_is_unavailable() -> None:
+    sid = _seed_full_session("Task 163 package missing field")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    assert set(healthy) == AUDIT_PACKAGE_KEYS
+    for key in sorted(AUDIT_PACKAGE_KEYS):
+        truncated = {name: value for name, value in healthy.items() if name != key}
+        with pytest.raises(ValidationError):
+            ReasoningRunStage7AuditPackageRead.model_validate(truncated)
+
+        verdict = _certify(truncated)
+
+        assert verdict["slice_status"] == "UNAVAILABLE", key
+        assert verdict["findings"] == [f"AUDIT_PACKAGE_INVALID:{key}:missing"], key
+        assert verdict["session_id"] == "", key
+        assert verdict["provider_name"] is None, key
+
+
+def test_incoherent_package_fields_are_unavailable() -> None:
+    sid = _seed_full_session("Task 163 package incoherent fields")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    cases = (
+        ("provider without model", {**healthy, "model_name": None}),
+        ("model without provider", {**healthy, "provider_name": None}),
+        ("finding count mismatch", {**healthy, "finding_count": 3}),
+        (
+            "unsorted findings",
+            {**healthy, "findings": ["Z_FOUNDING", "A_FOUNDING"], "finding_count": 2},
+        ),
+        (
+            "duplicate findings",
+            {**healthy, "findings": ["A_FOUNDING", "A_FOUNDING"], "finding_count": 2},
+        ),
+        (
+            "illegal status vocabulary",
+            {**healthy, "admission_status": "READY", "diagnostics_status": "OK"},
+        ),
+        ("empty mapping", {}),
+    )
+    for label, tampered in cases:
+        with pytest.raises(ValidationError):
+            ReasoningRunStage7AuditPackageRead.model_validate(tampered)
+
+        verdict = _certify(tampered)
+
+        assert verdict["slice_status"] == "UNAVAILABLE", label
+        assert verdict["findings"][0].startswith("AUDIT_PACKAGE_INVALID:"), label
+        assert verdict["provider_name"] is None, label
+
+
+def test_non_mapping_package_is_missing() -> None:
+    for material in (None, [], [{"session_id": ""}], "AUDIT_PACKAGE", 42):
+        verdict = _certify(material)
+
+        _assert_unavailable(verdict, "AUDIT_PACKAGE_MISSING")
+        assert verdict["findings"] == ["AUDIT_PACKAGE_MISSING"]
+        assert verdict["session_id"] == ""
+        assert verdict["admission_status"] is None
+        assert verdict["diagnostics_status"] is None
+
+
+def test_valid_package_findings_are_preserved_verbatim() -> None:
+    """Task 163 explains nothing beyond what Task 162 already reported."""
+    sid = _seed_full_session("Task 163 findings preserved")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    noisy = {**healthy, "findings": ["TASK_163_TEST_FINDING"], "finding_count": 1}
+    validated = ReasoningRunStage7AuditPackageRead.model_validate(noisy)
+    assert validated.diagnostics_status == "HEALTHY"
+
+    verdict = _certify(noisy)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["findings"] == noisy["findings"]
+    assert verdict["finding_count"] == 1
+    assert verdict["diagnostics_status"] == "HEALTHY"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+
+
+def test_empty_session_identity_cannot_be_ready() -> None:
+    sid = _seed_full_session("Task 163 empty session identity")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    orphan = {**healthy, "session_id": ""}
+    assert ReasoningRunStage7AuditPackageRead.model_validate(orphan).session_id == ""
+
+    verdict = _certify(orphan)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["session_id"] == ""
+    assert verdict["admission_status"] == "ADMITTED"
+    assert verdict["diagnostics_status"] == "HEALTHY"
+    assert verdict["provider_name"] is None
+
+
+def test_unusable_audit_evidence_cannot_be_recertified() -> None:
+    """Withdrawn Task 162 audit evidence is never revived by the gate.
+
+    Task 162 does not project a ``CONSISTENT`` audit whose published
+    binding names another request. Whether that withdrawal reaches the
+    gate as a projected package or as the genuine end-to-end material,
+    Task 163 must refuse certification instead of re-deriving provenance
+    from lower-level evidence.
+    """
+    sid = _seed_full_session("Task 163 unusable audit evidence")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+        admission = _admission(db, sid)
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        detached = {
+            **copy.deepcopy(request_audit),
+            "audited_request_fingerprint": "f" * 64,
+        }
+        bound = _package(
+            admission=admission,
+            package=package,
+            request_audit=detached,
+            proposal_result=proposal_result,
+            proposal_audit=proposal_audit,
+            diagnostics=_diagnose(package, detached, proposal_result, proposal_audit),
+        )
+
+    projected = {
+        **healthy,
+        "request_audit_status": None,
+        "findings": ["REQUEST_AUDIT_FINGERPRINT_MISMATCH"],
+        "finding_count": 1,
+    }
+    assert ReasoningRunStage7AuditPackageRead.model_validate(projected)
+
+    verdict = _certify(projected)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["findings"] == ["REQUEST_AUDIT_FINGERPRINT_MISMATCH"]
+    assert verdict["diagnostics_status"] == "HEALTHY"
+    assert verdict["provider_name"] is None
+
+    assert bound["request_audit_status"] is None
+    end_to_end = _certify(bound)
+
+    assert end_to_end["slice_status"] == "BLOCKED"
+    assert end_to_end["diagnostics_status"] == "UNHEALTHY"
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in end_to_end["findings"]
+    assert end_to_end["findings"] == bound["findings"]
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" not in end_to_end["findings"]
+
+
+def test_degraded_and_no_material_never_attribute_a_provider() -> None:
+    sid = _seed_full_session("Task 163 unattributed material")
+    with TestingSessionLocal() as db:
+        admission = _admission(db, sid)
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        degraded = _package(
+            admission=admission,
+            package=package,
+            request_audit=request_audit,
+            proposal_result=proposal_result,
+            diagnostics=_diagnose(package, request_audit, proposal_result, None),
+        )
+
+    assert degraded["diagnostics_status"] == "DEGRADED"
+    assert degraded["provider_name"] == "fake-provider"
+
+    verdict = _certify(degraded)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["diagnostics_status"] == "DEGRADED"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+
+    absent = _certify(_package(diagnostics=_diagnose()))
+
+    assert absent["slice_status"] == "UNAVAILABLE"
+    assert absent["diagnostics_status"] == "NO_MATERIAL"
+    assert absent["provider_name"] is None
+
+
+# ---------------------------------------------------------------------------
 # Session isolation and determinism
 # ---------------------------------------------------------------------------
 
@@ -828,6 +1108,42 @@ def test_certify_is_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert verdict["slice_status"] == "READY"
     assert counts_after == counts_before
+
+
+def test_certification_never_reconstructs_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate is a pure projection over the already-certified package.
+
+    Every service behind Tasks 154-162, plus the reasoning-context
+    builder, is made to raise. A package prepared beforehand still
+    certifies READY, so nothing lower-level is re-read, re-audited, or
+    recomputed at this boundary.
+    """
+    sid = _seed_full_session("Task 163 provenance regression")
+    with TestingSessionLocal() as db:
+        audit_package = _healthy_package(db, sid)
+    assert audit_package["request_audit_status"] == "CONSISTENT"
+
+    def _no_service(*args: object, **kwargs: object) -> None:
+        raise AssertionError("service invoked")
+
+    monkeypatch.setattr(ReasoningRunStage7AdmissionService, "evaluate", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7RequestService, "build", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7RequestAuditService, "audit", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7DispatchService, "dispatch", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7ProposalService, "build", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7ProposalAuditService, "audit", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7ResultService, "build", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7DiagnosticsService, "diagnose", _no_service)
+    monkeypatch.setattr(ReasoningRunStage7AuditPackageService, "build", _no_service)
+    monkeypatch.setattr(ReasoningContextService, "build_for_session", _no_service)
+
+    verdict = _certify(audit_package)
+
+    assert verdict["slice_status"] == "READY"
+    assert verdict["session_id"] == sid
+    assert verdict["provider_name"] == "fake-provider"
 
 
 def test_no_provider_is_invoked(monkeypatch: pytest.MonkeyPatch) -> None:
