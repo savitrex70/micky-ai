@@ -677,7 +677,16 @@ def test_empty_package_is_unavailable() -> None:
     assert absent["provider_name"] is None
 
     assert empty_package["slice_status"] == "UNAVAILABLE"
-    assert empty_package["findings"] == ["ADMISSION_MISSING", "DIAGNOSTICS_MISSING"]
+    # Task 162 validates every child contract independently, so an empty
+    # package names all six absent children.
+    assert empty_package["findings"] == [
+        "ADMISSION_MISSING",
+        "DIAGNOSTICS_MISSING",
+        "PROPOSAL_AUDIT_MISSING",
+        "PROPOSAL_RESULT_MISSING",
+        "REQUEST_AUDIT_MISSING",
+        "REQUEST_PACKAGE_MISSING",
+    ]
 
     assert diagnostics_only["slice_status"] == "UNAVAILABLE"
     assert diagnostics_only["diagnostics_status"] == "NO_MATERIAL"
