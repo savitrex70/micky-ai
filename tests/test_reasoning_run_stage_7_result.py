@@ -3,8 +3,12 @@
 Covers the single provider-neutral result surface that combines the
 Task 155 request package, the Task 156 request audit, the Task 158
 validated proposal, and the Task 159 proposal audit. The boundary is
-presentation only: the canonical child verdicts decide the aggregate
-status with deterministic precedence (UNAVAILABLE -> INCONSISTENT ->
+presentation only: each piece of material must first validate against
+the child's OWN contract and a CONSISTENT audit only counts when its
+binding evidence names the exact package or proposal being aggregated,
+so forged, detached, or malformed child material can never manufacture
+READY. The canonical child verdicts then decide the aggregate status
+with deterministic precedence (UNAVAILABLE -> INCONSISTENT ->
 MODEL_UNAVAILABLE -> READY), raw provider text and the raw provider
 response object never appear in the projection, and the service is
 read-only and provider-free over the four material mappings.
@@ -18,7 +22,7 @@ import inspect
 import json
 from collections.abc import Generator
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,6 +34,14 @@ from sqlalchemy.pool import StaticPool
 
 from rop.database import Base, get_db
 from rop.main import app
+from rop.schemas.reasoning_run_stage_7_proposal import ReasoningRunStage7ProposalRead
+from rop.schemas.reasoning_run_stage_7_proposal_audit import (
+    ReasoningRunStage7ProposalAuditRead,
+)
+from rop.schemas.reasoning_run_stage_7_request import ReasoningRunStage7RequestRead
+from rop.schemas.reasoning_run_stage_7_request_audit import (
+    ReasoningRunStage7RequestAuditRead,
+)
 from rop.schemas.reasoning_run_stage_7_result import (
     ReasoningRunStage7ResultRead,
 )
@@ -315,6 +327,24 @@ def _model_failure_material(
     return package, request_audit, proposal_result, proposal_audit
 
 
+def _blocked(package: dict) -> dict:
+    """One genuinely valid Task 155 BLOCKED package projection.
+
+    Only the fields the Task 155 contract binds together are changed, so
+    the mapping still satisfies that contract and is consumed as real
+    (blocked) material rather than smuggled in as a malformed one.
+    """
+    return {
+        **copy.deepcopy(package),
+        "request_status": "BLOCKED",
+        "available": False,
+        "admission_status": "BLOCKED",
+        "stage_6_certification_status": "BLOCKED",
+        "context_fingerprint": None,
+        "payload": None,
+    }
+
+
 def _combine(
     package: object = None,
     request_audit: object = None,
@@ -397,7 +427,11 @@ def test_proposal_inconsistency_is_inconsistent() -> None:
             db, sid
         )
         corrupted = copy.deepcopy(proposal_result)
+        # Task 159 binds the Task 158 envelope to its nested proposal, so
+        # a corruption meant to reach the canonical audit changes both
+        # copies; a one-sided change is a provenance forgery instead.
         corrupted["proposal"]["provider"] = ""
+        corrupted["provider"] = ""
         inconsistent_audit = ReasoningRunStage7ProposalAuditService.audit(
             proposal_result=corrupted, context=context
         )
@@ -421,7 +455,10 @@ def test_proposal_fingerprint_mismatch_is_inconsistent() -> None:
 
     assert result["result_status"] == "INCONSISTENT"
     assert result["proposal_consistent"] is False
-    assert "FINGERPRINT_MISMATCH" in result["findings"]
+    # The proposal contradicts its own package and the audit names a
+    # different fingerprint than the envelope being aggregated.
+    assert "PROPOSAL_FINGERPRINT_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +523,7 @@ def test_missing_result_material_is_unavailable() -> None:
         missing_proposal = _combine(package, request_audit, None, proposal_audit)
         missing_proposal_audit = _combine(package, request_audit, proposal_result, None)
         blocked_package = _combine(
-            {**copy.deepcopy(package), "request_status": "BLOCKED"},
+            _blocked(package),
             request_audit,
             proposal_result,
             proposal_audit,
@@ -587,11 +624,13 @@ def test_session_isolation_is_exact() -> None:
 
     assert crossed["result_status"] == "INCONSISTENT"
     assert crossed["session_id"] == sid_a
-    assert "SESSION_MISMATCH" in crossed["findings"]
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" in crossed["findings"]
+    assert "PROPOSAL_SESSION_MISMATCH" in crossed["findings"]
 
     assert reverse["result_status"] == "INCONSISTENT"
     assert reverse["session_id"] == sid_b
-    assert "SESSION_MISMATCH" in reverse["findings"]
+    assert "PROPOSAL_SESSION_MISMATCH" in reverse["findings"]
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" not in reverse["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -830,3 +869,292 @@ def test_result_module_source_is_clean() -> None:
             f"source_scan_{module_path.stem}", module_path
         )
         assert spec is not None
+
+
+# ---------------------------------------------------------------------------
+# Provenance forgery: a CONSISTENT verdict counts only when it names the
+# exact package and proposal being aggregated
+# ---------------------------------------------------------------------------
+
+
+def test_forged_request_audit_session_is_not_ready() -> None:
+    sid = _seed_full_session("Task 160 forged request audit session")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        forged = {**copy.deepcopy(request_audit), "audited_session_id": str(uuid4())}
+        # A renamed binding target is still a structurally valid Task 156
+        # CONSISTENT verdict, so only the binding comparison rejects it.
+        ReasoningRunStage7RequestAuditRead.model_validate(forged)
+        result = _combine(package, forged, proposal_result, proposal_audit)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["request_consistent"] is False
+    assert result["proposal_consistent"] is True
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" in result["findings"]
+
+
+def test_forged_request_audit_fingerprint_is_not_ready() -> None:
+    sid = _seed_full_session("Task 160 forged request audit fingerprint")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        forged = {
+            **copy.deepcopy(request_audit),
+            "audited_request_fingerprint": "0" * 64,
+        }
+        ReasoningRunStage7RequestAuditRead.model_validate(forged)
+        result = _combine(package, forged, proposal_result, proposal_audit)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["request_consistent"] is False
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+
+
+def test_forged_proposal_audit_session_is_not_ready() -> None:
+    sid = _seed_full_session("Task 160 forged proposal audit session")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        forged = {**copy.deepcopy(proposal_audit), "audited_session_id": str(uuid4())}
+        ReasoningRunStage7ProposalAuditRead.model_validate(forged)
+        result = _combine(package, request_audit, proposal_result, forged)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["request_consistent"] is True
+    assert result["proposal_consistent"] is False
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" in result["findings"]
+
+
+def test_forged_proposal_audit_fingerprint_is_not_ready() -> None:
+    sid = _seed_full_session("Task 160 forged proposal audit fingerprint")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        forged = {
+            **copy.deepcopy(proposal_audit),
+            "audited_proposal_fingerprint": "0" * 64,
+        }
+        ReasoningRunStage7ProposalAuditRead.model_validate(forged)
+        result = _combine(package, request_audit, proposal_result, forged)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["proposal_consistent"] is False
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+
+
+def test_proposal_result_from_another_session_is_inconsistent() -> None:
+    sid_a = _seed_full_session("Task 160 foreign proposal A")
+    sid_b = _seed_full_session("Task 160 foreign proposal B")
+    with TestingSessionLocal() as db:
+        package_a, audit_a, _, _, _, _ = _healthy_material(db, sid_a)
+        _, _, proposal_b, proposal_audit_b, _, _ = _healthy_material(db, sid_b)
+        result = _combine(package_a, audit_a, proposal_b, proposal_audit_b)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["session_id"] == sid_a
+    assert result["proposal_status"] == "VALIDATED"
+    assert result["request_consistent"] is True
+    assert result["proposal_consistent"] is False
+    assert "PROPOSAL_SESSION_MISMATCH" in result["findings"]
+    assert "PROPOSAL_FINGERPRINT_MISMATCH" in result["findings"]
+
+
+def test_detached_consistent_request_audit_cannot_be_ready() -> None:
+    sid_a = _seed_full_session("Task 160 detached request audit A")
+    sid_b = _seed_full_session("Task 160 detached request audit B")
+    with TestingSessionLocal() as db:
+        package_a, _, proposal_a, proposal_audit_a, _, _ = _healthy_material(db, sid_a)
+        _, audit_b, _, _, _, _ = _healthy_material(db, sid_b)
+
+    # The detached audit is internally coherent and CONSISTENT: it simply
+    # certifies a different request.
+    assert audit_b["request_audit_status"] == "CONSISTENT"
+    assert audit_b["audited_session_id"] == sid_b
+    result = _combine(package_a, audit_b, proposal_a, proposal_audit_a)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["request_consistent"] is False
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+
+
+def test_detached_consistent_proposal_audit_cannot_be_ready() -> None:
+    sid_a = _seed_full_session("Task 160 detached proposal audit A")
+    sid_b = _seed_full_session("Task 160 detached proposal audit B")
+    with TestingSessionLocal() as db:
+        package_a, audit_a, proposal_a, _, _, _ = _healthy_material(db, sid_a)
+        _, _, _, proposal_audit_b, _, _ = _healthy_material(db, sid_b)
+
+    assert proposal_audit_b["proposal_audit_status"] == "CONSISTENT"
+    assert proposal_audit_b["audited_session_id"] == sid_b
+    result = _combine(package_a, audit_a, proposal_a, proposal_audit_b)
+
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["proposal_consistent"] is False
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Forged child material never manufactures READY
+# ---------------------------------------------------------------------------
+
+
+def test_forged_child_material_never_manufactures_ready() -> None:
+    sid = _seed_full_session("Task 160 forged child material")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+
+        base = {
+            "package": package,
+            "request_audit": request_audit,
+            "proposal_result": proposal_result,
+            "proposal_audit": proposal_audit,
+        }
+
+        cases = (
+            (
+                "package",
+                {
+                    key: value
+                    for key, value in package.items()
+                    if key != "request_source"
+                },
+                "REQUEST_PACKAGE_INVALID",
+            ),
+            (
+                "package",
+                {**copy.deepcopy(package), "available": False},
+                "REQUEST_PACKAGE_INVALID",
+            ),
+            (
+                "request_audit",
+                {
+                    **copy.deepcopy(request_audit),
+                    "audited_request_fingerprint": 12345,
+                },
+                "REQUEST_AUDIT_INVALID",
+            ),
+            (
+                "request_audit",
+                {**copy.deepcopy(request_audit), "unpaid_attestation": "READY"},
+                "REQUEST_AUDIT_INVALID",
+            ),
+            (
+                "proposal_result",
+                {**copy.deepcopy(proposal_result), "proposal_status": "APPROVED"},
+                "PROPOSAL_RESULT_INVALID",
+            ),
+            (
+                "proposal_result",
+                {**copy.deepcopy(proposal_result), "available": False},
+                "PROPOSAL_RESULT_INVALID",
+            ),
+            (
+                "proposal_audit",
+                {
+                    **copy.deepcopy(proposal_audit),
+                    "proposal_audit_status": "AUDITED",
+                },
+                "PROPOSAL_AUDIT_INVALID",
+            ),
+            (
+                "proposal_audit",
+                {**copy.deepcopy(proposal_audit), "audited_session_id": None},
+                "PROPOSAL_AUDIT_INVALID",
+            ),
+        )
+
+        results = []
+        for parameter, forged, expected_prefix in cases:
+            material = {**base, parameter: forged}
+            results.append((expected_prefix, _combine(**material)))
+
+    for expected_prefix, result in results:
+        assert result["result_status"] == "UNAVAILABLE"
+        assert result["request_consistent"] is False
+        assert result["proposal_consistent"] is False
+        assert result["provider_name"] is None
+        assert result["model_name"] is None
+        assert any(
+            finding.startswith(expected_prefix) for finding in result["findings"]
+        ), result["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Strict child reuse: the child schemas, not Task 160 field logic, decide
+# ---------------------------------------------------------------------------
+
+
+def test_each_child_is_rejected_by_its_own_contract() -> None:
+    sid = _seed_full_session("Task 160 child contract reuse")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+
+        base = {
+            "package": package,
+            "request_audit": request_audit,
+            "proposal_result": proposal_result,
+            "proposal_audit": proposal_audit,
+        }
+
+        cases = (
+            # An extra field is invisible to any hand-written field check,
+            # so rejecting it proves the child contract itself ran.
+            (
+                "package",
+                ReasoningRunStage7RequestRead,
+                "REQUEST_PACKAGE_INVALID",
+                {**copy.deepcopy(package), "unpaid_attestation": True},
+            ),
+            (
+                "request_audit",
+                ReasoningRunStage7RequestAuditRead,
+                "REQUEST_AUDIT_INVALID",
+                {
+                    **copy.deepcopy(request_audit),
+                    "findings": ["SELF_SERVED"],
+                    "finding_count": 1,
+                },
+            ),
+            (
+                "proposal_result",
+                ReasoningRunStage7ProposalRead,
+                "PROPOSAL_RESULT_INVALID",
+                {**copy.deepcopy(proposal_result), "provider": None},
+            ),
+            (
+                "proposal_audit",
+                ReasoningRunStage7ProposalAuditRead,
+                "PROPOSAL_AUDIT_INVALID",
+                {**copy.deepcopy(proposal_audit), "unpaid_attestation": True},
+            ),
+        )
+
+        results = []
+        for parameter, schema, expected_prefix, forged in cases:
+            with pytest.raises(ValidationError):
+                schema.model_validate(forged)
+            material = {**base, parameter: forged}
+            results.append((expected_prefix, _combine(**material)))
+
+    for expected_prefix, result in results:
+        assert result["result_status"] == "UNAVAILABLE"
+        assert result["request_consistent"] is False
+        assert result["proposal_consistent"] is False
+        assert any(
+            finding.startswith(expected_prefix) for finding in result["findings"]
+        ), result["findings"]
+
+    # An unvalidated child mapping contributes neither a verdict nor a
+    # single one of its own strings.
+    assert "SELF_SERVED" not in results[1][1]["findings"]

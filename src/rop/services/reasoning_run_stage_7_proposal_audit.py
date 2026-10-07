@@ -26,6 +26,12 @@ orchestrates it and projects its evidence into the Stage 7 verdict. It
 never reimplements, weakens, or extends the canonical Task 103 checks,
 and the verdict is never derived from any other source.
 
+The verdict also carries ``audited_session_id`` and
+``audited_proposal_fingerprint``: the audited nested proposal's own
+``session_id`` and ``context_fingerprint``, read straight from the
+validated material so downstream stages can bind the audit to the exact
+proposal that was certified. No fingerprint is computed here.
+
 Provenance is verified, not assumed. The canonical context is
 REQUIRED: without it session identity, the context fingerprint, and
 every candidate/evidence/missing-information reference cannot be
@@ -95,6 +101,16 @@ def _observed(value: object) -> str:
     return "None" if value is None else type(value).__name__
 
 
+def _binding_value(proposal: Mapping[str, Any], field: str) -> str | None:
+    """Read one audited-proposal binding value without inventing anything.
+
+    The value is the nested Task 057 proposal's own field, so the binding
+    evidence names the exact proposal that was handed to Task 103.
+    """
+    value = proposal.get(field)
+    return value if isinstance(value, str) else None
+
+
 def _invalid_detail(exc: ValidationError) -> str:
     """Render one deterministic Task 158 schema rejection reason."""
     details = sorted(
@@ -149,6 +165,12 @@ class ReasoningRunStage7ProposalAuditService:
 
         Every dimension flag of a non-unavailable result is Task 103
         evidence; this service derives no consistency of its own.
+
+        ``audited_session_id`` and ``audited_proposal_fingerprint`` are
+        the audited nested proposal's own ``session_id`` and
+        ``context_fingerprint``, so a ``CONSISTENT`` verdict names the
+        exact proposal it certifies. Material rejected by the provenance
+        gates certifies no binding and carries ``None``.
         """
         if not isinstance(proposal_result, Mapping):
             return ReasoningRunStage7ProposalAuditService._finalize(
@@ -243,6 +265,10 @@ class ReasoningRunStage7ProposalAuditService:
             proposal_consistent=proposal_consistent,
             dimensions=dimensions,
             findings=findings,
+            audited_session_id=_binding_value(proposal, "session_id"),
+            audited_proposal_fingerprint=_binding_value(
+                proposal, "context_fingerprint"
+            ),
         )
 
     @staticmethod
@@ -252,6 +278,8 @@ class ReasoningRunStage7ProposalAuditService:
         proposal_consistent: bool,
         dimensions: Mapping[str, bool],
         findings: list[str],
+        audited_session_id: str | None = None,
+        audited_proposal_fingerprint: str | None = None,
     ) -> dict[str, Any]:
         if status == "UNAVAILABLE":
             proposal_consistent = False
@@ -260,6 +288,8 @@ class ReasoningRunStage7ProposalAuditService:
         result: dict[str, Any] = {
             "proposal_audit_status": status,
             "available": status != "UNAVAILABLE",
+            "audited_session_id": audited_session_id,
+            "audited_proposal_fingerprint": audited_proposal_fingerprint,
             "proposal_consistent": proposal_consistent,
             **{name: bool(dimensions.get(name)) for name in _DIMENSION_NAMES},
             "finding_count": len(normalized),

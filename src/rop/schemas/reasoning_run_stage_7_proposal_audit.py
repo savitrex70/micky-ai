@@ -14,6 +14,14 @@ required Task 158 envelope or canonical context was missing, invalid,
 or not bound to the nested proposal, Task 103 never ran and the list is
 the Task 159 availability/provenance diagnostic explaining why nothing
 could be certified.
+
+``audited_session_id`` and ``audited_proposal_fingerprint`` are the
+binding evidence: the ``session_id`` and ``context_fingerprint`` of the
+exact nested Task 057 proposal that was audited, read from the validated
+material rather than recomputed (``None`` when no proposal survived the
+provenance gates). A ``CONSISTENT`` verdict requires both to be present,
+so downstream stages can verify that the audit they consume names the
+exact proposal they are acting on.
 """
 
 from __future__ import annotations
@@ -50,12 +58,16 @@ class ReasoningRunStage7ProposalAuditRead(BaseModel):
     ``findings`` are deterministic, sorted, and deduplicated: Task 103
     ``consistency_issues`` when Task 103 ran, otherwise the Task 159
     availability/provenance diagnostic for the rejected material.
+    ``audited_session_id`` and ``audited_proposal_fingerprint`` name the
+    exact audited proposal, and ``CONSISTENT`` requires both.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     proposal_audit_status: Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"]
     available: bool
+    audited_session_id: str | None
+    audited_proposal_fingerprint: str | None
     proposal_consistent: bool
     session_consistent: bool
     fingerprint_consistent: bool
@@ -86,6 +98,13 @@ class ReasoningRunStage7ProposalAuditRead(BaseModel):
             if not self.proposal_consistent or not all(dimensions):
                 raise ValueError(
                     "CONSISTENT requires proposal_consistent and all dimensions"
+                )
+            if (
+                self.audited_session_id is None
+                or self.audited_proposal_fingerprint is None
+            ):
+                raise ValueError(
+                    "CONSISTENT requires audited session and fingerprint binding"
                 )
         elif self.proposal_audit_status == "INCONSISTENT":
             if self.proposal_consistent and all(dimensions):

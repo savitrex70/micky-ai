@@ -88,6 +88,8 @@ client = TestClient(app)
 PROPOSAL_AUDIT_KEYS = {
     "proposal_audit_status",
     "available",
+    "audited_session_id",
+    "audited_proposal_fingerprint",
     "proposal_consistent",
     "session_consistent",
     "fingerprint_consistent",
@@ -366,6 +368,16 @@ def test_valid_proposal_is_consistent() -> None:
     assert audit["audit_source"] == REASONING_RUN_STAGE_7_PROPOSAL_AUDIT_SOURCE_TASK_159
     assert result["context_fingerprint"] == package["context_fingerprint"]
 
+    # Binding evidence names the exact audited proposal: the values are
+    # the nested Task 057 proposal's own fields, not recomputed ones.
+    assert audit["audited_session_id"] == result["proposal"]["session_id"]
+    assert (
+        audit["audited_proposal_fingerprint"]
+        == result["proposal"]["context_fingerprint"]
+    )
+    assert audit["audited_session_id"] == sid
+    assert audit["audited_proposal_fingerprint"] == package["context_fingerprint"]
+
 
 # ---------------------------------------------------------------------------
 # Structural corruption: every case is Task 103 evidence, never a new check
@@ -633,6 +645,9 @@ def _assert_unavailable(verdict: dict, expected_finding: str) -> None:
     assert verdict["proposal_consistent"] is False
     for name in _DIMENSION_NAMES:
         assert verdict[name] is False, name
+    # Rejected material certifies no audited proposal at all.
+    assert verdict["audited_session_id"] is None
+    assert verdict["audited_proposal_fingerprint"] is None
     assert any(
         finding.startswith(expected_finding) for finding in verdict["findings"]
     ), verdict["findings"]
@@ -809,6 +824,25 @@ def test_inconsistent_proposal_still_projects_task_103_exactly() -> None:
     assert audit["proposal_audit_status"] == "INCONSISTENT"
 
 
+def test_binding_names_the_exact_audited_proposal() -> None:
+    """An audited binding always names the proposal Task 103 actually saw."""
+    sid = _seed_full_session("Task 159 audited binding")
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        forged_session = str(uuid4())
+        corrupted = _coherently_corrupted(result, "session_id", forged_session)
+        audit = _audit_proposal(corrupted, context)
+
+    assert audit["proposal_audit_status"] == "INCONSISTENT"
+    assert audit["audited_session_id"] == forged_session
+    assert audit["audited_session_id"] == corrupted["proposal"]["session_id"]
+    assert (
+        audit["audited_proposal_fingerprint"]
+        == result["proposal"]["context_fingerprint"]
+    )
+    assert audit["audited_session_id"] != sid
+
+
 # ---------------------------------------------------------------------------
 # Independence: the audit never touches the canonical request package
 # ---------------------------------------------------------------------------
@@ -905,6 +939,8 @@ def test_proposal_audit_schema_is_strict() -> None:
     valid = {
         "proposal_audit_status": "CONSISTENT",
         "available": True,
+        "audited_session_id": "0b8b1f9a-3f1e-4a1c-9c2f-9a5a1f9a3f1e",
+        "audited_proposal_fingerprint": "a" * 64,
         "proposal_consistent": True,
         "session_consistent": True,
         "fingerprint_consistent": True,
@@ -954,6 +990,17 @@ def test_proposal_audit_schema_is_strict() -> None:
     with pytest.raises(ValidationError):
         ReasoningRunStage7ProposalAuditRead.model_validate(
             {**valid, "proposal_audit_status": "INCONSISTENT"}
+        )
+
+    # A CONSISTENT verdict must name the exact proposal it certifies: a
+    # missing audited binding can never leave CONSISTENT standing.
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7ProposalAuditRead.model_validate(
+            {**valid, "audited_session_id": None}
+        )
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7ProposalAuditRead.model_validate(
+            {**valid, "audited_proposal_fingerprint": None}
         )
 
     inconsistent = ReasoningRunStage7ProposalAuditRead.model_validate(

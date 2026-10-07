@@ -2,12 +2,39 @@
 
 Combines the Task 155 request package, the Task 156 request audit, the
 Task 158 validated proposal, and the Task 159 proposal audit into one
-strict provider-neutral result. Presentation and orchestration only:
-no reasoning algorithm, no re-validation of model output, and no
-re-implementation of any audit dimension -- the child verdicts are
-consumed as canonical evidence, and only cross-material consistency
-(session identity, fingerprint identity, material coherence) is added
-here.
+strict provider-neutral result.
+
+Presentation and orchestration only: no reasoning algorithm, no
+re-validation of model output, and no re-implementation of any audit
+dimension. Child status fields are never trusted on their own -- each
+piece of material must first validate against the child's OWN existing
+contract (``ReasoningRunStage7RequestRead``,
+``ReasoningRunStage7RequestAuditRead``, ``ReasoningRunStage7ProposalRead``
+and ``ReasoningRunStage7ProposalAuditRead``). Those schemas are reused,
+never duplicated here, so a forged, incomplete, over-extended, or
+internally incoherent mapping is rejected as unavailable material
+instead of contributing a verdict or a finding.
+
+Validation alone is not binding. A ``CONSISTENT`` audit only certifies
+the material this boundary is actually acting on, so the binding
+evidence the children already publish is compared exactly:
+
+* Task 156 ``audited_session_id`` / ``audited_request_fingerprint``
+  against the Task 155 ``session_id`` / ``context_fingerprint``,
+* the Task 158 ``session_id`` / ``context_fingerprint`` against the same
+  Task 155 package,
+* Task 159 ``audited_session_id`` / ``audited_proposal_fingerprint``
+  against the Task 158 envelope that carries the audited proposal.
+
+Any disagreement fails closed as ``INCONSISTENT``, and material that
+cannot be validly established fails closed as ``UNAVAILABLE``. A
+detached-but-internally-valid ``CONSISTENT`` audit can therefore never
+manufacture ``READY``: ``READY`` requires the whole provenance chain to
+name the same session and fingerprint end to end.
+
+Only validated children contribute findings. Task 160 adds nothing to
+the children's own vocabularies, only its clearly identified
+cross-material mismatch and material-unavailability diagnostics.
 
 The service is pure over the four material projections: no database
 session, no persistence, no provider invocation, no network. Raw
@@ -20,8 +47,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
+from rop.schemas.reasoning_run_stage_7_proposal import (
+    ReasoningRunStage7ProposalRead,
+)
+from rop.schemas.reasoning_run_stage_7_proposal_audit import (
+    ReasoningRunStage7ProposalAuditRead,
+)
+from rop.schemas.reasoning_run_stage_7_request import ReasoningRunStage7RequestRead
+from rop.schemas.reasoning_run_stage_7_request_audit import (
+    ReasoningRunStage7RequestAuditRead,
+)
 from rop.schemas.reasoning_run_stage_7_result import (
     ReasoningRunStage7ResultRead,
 )
@@ -48,6 +85,38 @@ class ReasoningRunStage7ResultContractError(Exception):
         super().__init__(f"[{invariant}] {detail}")
 
 
+def _invalid_detail(exc: ValidationError) -> str:
+    """Render one deterministic child-contract rejection reason."""
+    details = sorted(
+        f"{'.'.join(str(part) for part in error['loc']) or 'model'}:{error['type']}"
+        for error in exc.errors()
+    )
+    return details[0]
+
+
+def _read_child(
+    schema: type[BaseModel],
+    material: Mapping[str, Any] | None,
+    missing_finding: str,
+    invalid_finding: str,
+) -> tuple[BaseModel | None, list[str]]:
+    """Validate one piece of material against its own child contract.
+
+    The child schema is the only definition of what counts as genuine
+    material, so nothing here infers the contract from selected keys.
+    """
+    if not isinstance(material, Mapping):
+        return None, [missing_finding]
+    try:
+        return schema.model_validate(dict(material)), []
+    except ValidationError as exc:
+        return None, [f"{invalid_finding}:{_invalid_detail(exc)}"]
+    except Exception as exc:
+        # Hostile material that cannot even be converted is unreadable,
+        # never auditable evidence.
+        return None, [f"{invalid_finding}:{type(exc).__name__}"]
+
+
 class ReasoningRunStage7ResultService:
     """Deterministic combination of the four Stage 7 evidence surfaces.
 
@@ -66,170 +135,176 @@ class ReasoningRunStage7ResultService:
     ) -> dict[str, Any]:
         """Combine one Stage 7 interaction into a single strict result.
 
-        Material gates run first: anything other than a packaged request,
-        a readable request audit, a readable proposal status, and -- for
-        a validated proposal -- a readable proposal audit is
-        ``UNAVAILABLE`` ("missing required result material") and no
-        consistency claim is certified. Otherwise the canonical child
-        verdicts decide with deterministic precedence: any request or
-        proposal integrity failure is ``INCONSISTENT``; a canonical Task
-        057 provider failure is ``MODEL_UNAVAILABLE``; a validated,
-        audited, coherent pair is ``READY``.
+        Every child is validated against its own contract first, then
+        bound: a ``CONSISTENT`` verdict counts only when the audit names
+        the exact package or proposal being aggregated. Material this
+        boundary cannot validly establish is ``UNAVAILABLE`` with no
+        consistency claim; material that exists but contradicts its own
+        provenance is ``INCONSISTENT``; a canonical Task 057 provider
+        failure is ``MODEL_UNAVAILABLE``; only a fully bound and audited
+        chain is ``READY``.
         """
         findings: list[str] = []
 
         # ---- Task 155 request package -----------------------------------
-        request_status = "UNAVAILABLE"
-        session_id = ""
-        fingerprint: str | None = None
-        if not isinstance(request_package, Mapping):
-            findings.append("REQUEST_PACKAGE_MISSING")
-        else:
-            raw_status = request_package.get("request_status")
-            if raw_status == "PACKAGED":
-                request_status = "PACKAGED"
-                raw_session = request_package.get("session_id")
-                if isinstance(raw_session, str):
-                    session_id = raw_session
-                raw_fingerprint = request_package.get("context_fingerprint")
-                if isinstance(raw_fingerprint, str) and raw_fingerprint:
-                    fingerprint = raw_fingerprint
-                if session_id == "":
-                    findings.append("REQUEST_SESSION_MISSING")
-                if fingerprint is None:
-                    findings.append("REQUEST_FINGERPRINT_MISSING")
-            else:
-                findings.append(f"REQUEST_NOT_PACKAGED:{raw_status}")
+        package, package_findings = _read_child(
+            ReasoningRunStage7RequestRead,
+            request_package,
+            "REQUEST_PACKAGE_MISSING",
+            "REQUEST_PACKAGE_INVALID",
+        )
+        findings.extend(package_findings)
+
+        session_id = package.session_id if package is not None else ""
+        packaged = package is not None and package.request_status == "PACKAGED"
+        fingerprint = package.context_fingerprint if packaged else None
+        request_status = "PACKAGED" if packaged else "UNAVAILABLE"
+        if package is not None and not packaged:
+            findings.append(f"REQUEST_NOT_PACKAGED:{package.request_status}")
 
         # ---- Task 156 request audit -------------------------------------
+        request_verdict, request_verdict_findings = _read_child(
+            ReasoningRunStage7RequestAuditRead,
+            request_audit,
+            "REQUEST_AUDIT_MISSING",
+            "REQUEST_AUDIT_INVALID",
+        )
+        findings.extend(request_verdict_findings)
         request_audit_status: str | None = None
-        if not isinstance(request_audit, Mapping):
-            findings.append("REQUEST_AUDIT_MISSING")
-        else:
-            raw_audit_status = request_audit.get("request_audit_status")
-            if raw_audit_status in _READABLE_AUDIT_STATUSES:
-                request_audit_status = raw_audit_status
-            else:
+        request_binding_ok = False
+        if isinstance(request_verdict, ReasoningRunStage7RequestAuditRead):
+            request_audit_status = request_verdict.request_audit_status
+            if request_audit_status not in _READABLE_AUDIT_STATUSES:
                 findings.append("REQUEST_AUDIT_UNAVAILABLE")
-            findings.extend(
-                ReasoningRunStage7ResultService._child_findings(request_audit)
-            )
+            elif packaged and request_audit_status == "CONSISTENT":
+                # A CONSISTENT audit must name the exact package consumed.
+                session_ok = request_verdict.audited_session_id == session_id
+                fingerprint_ok = (
+                    request_verdict.audited_request_fingerprint == fingerprint
+                )
+                if not session_ok:
+                    findings.append("REQUEST_AUDIT_SESSION_MISMATCH")
+                if not fingerprint_ok:
+                    findings.append("REQUEST_AUDIT_FINGERPRINT_MISMATCH")
+                request_binding_ok = session_ok and fingerprint_ok
+            findings.extend(request_verdict.findings)
 
         # ---- Task 158 proposal result -----------------------------------
+        proposal, proposal_findings = _read_child(
+            ReasoningRunStage7ProposalRead,
+            proposal_result,
+            "PROPOSAL_RESULT_MISSING",
+            "PROPOSAL_RESULT_INVALID",
+        )
+        findings.extend(proposal_findings)
         proposal_status = "UNAVAILABLE"
         proposal_known = False
-        if not isinstance(proposal_result, Mapping):
-            findings.append("PROPOSAL_RESULT_MISSING")
-        else:
-            raw_proposal_status = proposal_result.get("proposal_status")
-            if raw_proposal_status in (
-                "VALIDATED",
-                OUTCOME_MODEL_UNAVAILABLE,
-                *_MODEL_OUTPUT_OUTCOMES,
-            ):
-                proposal_known = True
-                proposal_status = raw_proposal_status
-            elif raw_proposal_status == "UNAVAILABLE":
+        if proposal is not None:
+            proposal_status = proposal.proposal_status
+            proposal_known = proposal_status != "UNAVAILABLE"
+            if not proposal_known:
                 findings.append("PROPOSAL_UNAVAILABLE")
-            else:
-                findings.append(f"PROPOSAL_STATUS_INVALID:{raw_proposal_status}")
 
-        # ---- Cross-material identity ------------------------------------
-        session_matches = True
-        fingerprint_matches = True
-        if proposal_known and session_id != "":
-            raw_proposal_session = proposal_result.get("session_id")
+        # ---- Cross-material identity: proposal against the package ------
+        proposal_binding_ok = True
+        if proposal is not None and proposal_known and packaged:
+            if proposal.session_id != session_id:
+                proposal_binding_ok = False
+                findings.append("PROPOSAL_SESSION_MISMATCH")
             if (
-                isinstance(raw_proposal_session, str)
-                and raw_proposal_session != session_id
+                proposal_status == "VALIDATED"
+                and proposal.context_fingerprint != fingerprint
             ):
-                session_matches = False
-                findings.append("SESSION_MISMATCH")
-        if proposal_known and fingerprint is not None:
-            raw_proposal_fingerprint = proposal_result.get("context_fingerprint")
-            if (
-                isinstance(raw_proposal_fingerprint, str)
-                and raw_proposal_fingerprint != fingerprint
-            ):
-                fingerprint_matches = False
-                findings.append("FINGERPRINT_MISMATCH")
-
-        # ---- Proposal material coherence and provider metadata ----------
-        proposal_material_ok = True
-        provider_name: str | None = None
-        model_name: str | None = None
-        if proposal_known and proposal_status == "VALIDATED":
-            if proposal_result.get("available") is not True or not isinstance(
-                proposal_result.get("proposal"), Mapping
-            ):
-                proposal_material_ok = False
-                findings.append("PROPOSAL_MATERIAL_INCONSISTENT")
-            else:
-                raw_provider = proposal_result.get("provider")
-                raw_model = proposal_result.get("model")
-                if (
-                    not isinstance(raw_provider, str)
-                    or raw_provider.strip() == ""
-                    or not isinstance(raw_model, str)
-                    or raw_model.strip() == ""
-                ):
-                    proposal_material_ok = False
-                    findings.append("PROPOSAL_METADATA_INCONSISTENT")
-                else:
-                    provider_name = raw_provider
-                    model_name = raw_model
+                proposal_binding_ok = False
+                findings.append("PROPOSAL_FINGERPRINT_MISMATCH")
 
         # ---- Task 159 proposal audit ------------------------------------
+        audit_verdict, audit_verdict_findings = _read_child(
+            ReasoningRunStage7ProposalAuditRead,
+            proposal_audit,
+            "PROPOSAL_AUDIT_MISSING",
+            "PROPOSAL_AUDIT_INVALID",
+        )
+        if proposal_status != "VALIDATED":
+            # Without a validated proposal the audit certifies nothing, so
+            # its absence is not missing required material.
+            audit_verdict_findings = [
+                item
+                for item in audit_verdict_findings
+                if item != "PROPOSAL_AUDIT_MISSING"
+            ]
+        findings.extend(audit_verdict_findings)
         proposal_audit_status: str | None = None
-        if isinstance(proposal_audit, Mapping):
-            raw_proposal_audit = proposal_audit.get("proposal_audit_status")
-            if raw_proposal_audit in _READABLE_AUDIT_STATUSES:
-                proposal_audit_status = raw_proposal_audit
-            elif proposal_status == "VALIDATED":
-                findings.append("PROPOSAL_AUDIT_UNAVAILABLE")
-            findings.extend(
-                ReasoningRunStage7ResultService._child_findings(proposal_audit)
-            )
-        elif proposal_status == "VALIDATED":
-            findings.append("PROPOSAL_AUDIT_MISSING")
+        proposal_audit_consistent = False
+        proposal_audit_binding_ok = False
+        if isinstance(audit_verdict, ReasoningRunStage7ProposalAuditRead):
+            proposal_audit_status = audit_verdict.proposal_audit_status
+            proposal_audit_consistent = audit_verdict.proposal_consistent
+            if proposal_audit_status not in _READABLE_AUDIT_STATUSES:
+                if proposal_status == "VALIDATED":
+                    findings.append("PROPOSAL_AUDIT_UNAVAILABLE")
+            elif (
+                packaged
+                and proposal is not None
+                and proposal_audit_status == "CONSISTENT"
+            ):
+                # A CONSISTENT audit must name the exact proposal carried
+                # by the Task 158 envelope being aggregated.
+                session_ok = audit_verdict.audited_session_id == proposal.session_id
+                fingerprint_ok = (
+                    audit_verdict.audited_proposal_fingerprint
+                    == proposal.context_fingerprint
+                )
+                if not session_ok:
+                    findings.append("PROPOSAL_AUDIT_SESSION_MISMATCH")
+                if not fingerprint_ok:
+                    findings.append("PROPOSAL_AUDIT_FINGERPRINT_MISMATCH")
+                proposal_audit_binding_ok = session_ok and fingerprint_ok
+            findings.extend(audit_verdict.findings)
 
         # ---- Deterministic classification -------------------------------
         material_missing = (
-            request_status != "PACKAGED"
-            or session_id == ""
-            or fingerprint is None
+            not packaged
             or request_audit_status is None
             or not proposal_known
             or (proposal_status == "VALIDATED" and proposal_audit_status is None)
         )
-        request_consistent = request_audit_status == "CONSISTENT"
+        request_consistent = request_audit_status == "CONSISTENT" and request_binding_ok
         proposal_consistent = (
             proposal_status == "VALIDATED"
             and proposal_audit_status == "CONSISTENT"
-            and proposal_material_ok
-            and session_matches
-            and fingerprint_matches
+            and proposal_audit_consistent
+            and proposal_audit_binding_ok
+            and proposal_binding_ok
         )
+
+        provider_name: str | None = None
+        model_name: str | None = None
+        if proposal_status == "VALIDATED" and proposal is not None:
+            # The Task 158 contract guarantees provider and model exactly
+            # when the status is VALIDATED, so they are read, not inferred.
+            provider_name = proposal.provider
+            model_name = proposal.model
 
         if material_missing:
             result_status = "UNAVAILABLE"
             request_consistent = False
             proposal_consistent = False
-            provider_name = None
-            model_name = None
-        elif proposal_status == "VALIDATED":
-            integrity_failure = not (request_consistent and proposal_consistent)
-            result_status = "INCONSISTENT" if integrity_failure else "READY"
         elif proposal_status in _MODEL_OUTPUT_OUTCOMES:
-            proposal_consistent = False
             result_status = "INCONSISTENT"
         elif proposal_status == OUTCOME_MODEL_UNAVAILABLE:
-            proposal_consistent = False
-            integrity_failure = not (request_consistent and session_matches)
+            provider_name = None
+            model_name = None
+            integrity_failure = not (request_consistent and proposal_binding_ok)
             result_status = "INCONSISTENT" if integrity_failure else "MODEL_UNAVAILABLE"
-        else:  # pragma: no cover - proposal_known guarantees a known status
-            proposal_consistent = False
+        elif request_consistent and proposal_consistent:
+            result_status = "READY"
+        else:
             result_status = "INCONSISTENT"
+
+        if result_status == "UNAVAILABLE":
+            provider_name = None
+            model_name = None
 
         result: dict[str, Any] = {
             "session_id": session_id,
@@ -246,13 +321,6 @@ class ReasoningRunStage7ResultService:
             "source": REASONING_RUN_STAGE_7_RESULT_SOURCE_TASK_160,
         }
         return ReasoningRunStage7ResultService._project(result)
-
-    @staticmethod
-    def _child_findings(material: Mapping[str, Any]) -> list[str]:
-        raw = material.get("findings")
-        if not isinstance(raw, list):
-            return []
-        return [str(item) for item in raw]
 
     @staticmethod
     def _project(result: dict[str, Any]) -> dict[str, Any]:
