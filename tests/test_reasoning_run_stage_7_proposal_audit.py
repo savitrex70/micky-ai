@@ -2,11 +2,18 @@
 
 Covers the independent deterministic audit of a returned Task 158
 proposal result against the canonical Task 055 context. Task 103 is
-the authoritative audit: every verdict, dimension flag, and finding in
-the projection is Task 103 evidence, and the service never
-reimplements, weakens, or extends the canonical checks. Corrupting
-the audited proposal must never touch the canonical request package,
-and a missing canonical context is UNAVAILABLE, never a success.
+the authoritative audit: every verdict, dimension flag, and consistency
+finding in the projection is Task 103 evidence, and the service never
+reimplements, weakens, or extends the canonical checks.
+
+The outer Task 158 envelope is provenance, not decoration. It must
+validate against the existing Task 158 contract and agree with the
+nested Task 057 proposal on ``session_id``, ``context_fingerprint``,
+``provider``, and ``model`` before Task 103 is consulted, so a forged
+or internally split envelope is UNAVAILABLE and never reaches the
+canonical audit. Corrupting the audited proposal must never touch the
+canonical request package, and a missing canonical context is
+UNAVAILABLE, never a success.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ import copy
 import importlib.util
 import inspect
 import json
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -33,6 +40,7 @@ from rop.schemas.reasoning_run_stage_7_proposal_audit import (
     ReasoningRunStage7ProposalAuditRead,
 )
 from rop.services.llm_reasoning import LLM_REASONING_TASK_057, LLMReasoningService
+from rop.services.llm_reasoning_audit import LLMReasoningAuditService
 from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderError,
     LLMReasoningProviderResponse,
@@ -46,6 +54,7 @@ from rop.services.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchService,
 )
 from rop.services.reasoning_run_stage_7_proposal import (
+    REASONING_RUN_STAGE_7_PROPOSAL_SOURCE_TASK_158,
     ReasoningRunStage7ProposalService,
 )
 from rop.services.reasoning_run_stage_7_proposal_audit import (
@@ -293,6 +302,38 @@ def _corrupted(result: dict) -> dict:
     return copy.deepcopy(result)
 
 
+def _coherently_corrupted(result: dict, field: str, value: object) -> dict:
+    """Corrupt one duplicated provenance field in BOTH copies.
+
+    Task 159 requires the Task 158 envelope and the nested Task 057
+    proposal to agree on the duplicated provenance fields, so a
+    corruption that is meant to reach Task 103 has to be applied to
+    both copies. A single-copy change is a binding mismatch instead and
+    is covered by its own tests.
+    """
+    corrupted = _corrupted(result)
+    corrupted[field] = value
+    corrupted["proposal"][field] = value
+    return corrupted
+
+
+def _spy_task_103(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record and reject every canonical Task 103 call.
+
+    Used to prove that a rejected Task 158 envelope never reaches the
+    authoritative audit, so no CONSISTENT verdict can be manufactured
+    from material that failed the provenance gates.
+    """
+    calls: list[object] = []
+
+    def _spy(*args: object, **kwargs: object) -> dict:
+        calls.append(kwargs or args)
+        raise AssertionError("Task 103 must not audit a rejected envelope")
+
+    monkeypatch.setattr(LLMReasoningAuditService, "build", _spy)
+    return calls
+
+
 def _table_counts() -> dict[str, int]:
     with TestingSessionLocal() as db:
         return {
@@ -335,8 +376,7 @@ def test_fingerprint_mismatch_is_inconsistent() -> None:
     sid = _seed_full_session("Task 159 fingerprint mismatch")
     with TestingSessionLocal() as db:
         result, context, _ = _validated_pipeline(db, sid)
-        corrupted = _corrupted(result)
-        corrupted["proposal"]["context_fingerprint"] = "0" * 64
+        corrupted = _coherently_corrupted(result, "context_fingerprint", "0" * 64)
         audit = _audit_proposal(corrupted, context)
         pristine = _audit_proposal(result, context)
 
@@ -351,8 +391,7 @@ def test_session_mismatch_is_inconsistent() -> None:
     sid = _seed_full_session("Task 159 session mismatch")
     with TestingSessionLocal() as db:
         result, context, _ = _validated_pipeline(db, sid)
-        corrupted = _corrupted(result)
-        corrupted["proposal"]["session_id"] = str(uuid4())
+        corrupted = _coherently_corrupted(result, "session_id", str(uuid4()))
         audit = _audit_proposal(corrupted, context)
 
     assert audit["proposal_audit_status"] == "INCONSISTENT"
@@ -475,14 +514,12 @@ def test_provider_or_model_metadata_failure_is_inconsistent() -> None:
     sid = _seed_full_session("Task 159 metadata failure")
     with TestingSessionLocal() as db:
         result, context, _ = _validated_pipeline(db, sid)
-
-        no_provider = _corrupted(result)
-        no_provider["proposal"]["provider"] = ""
-        provider_audit = _audit_proposal(no_provider, context)
-
-        no_model = _corrupted(result)
-        no_model["proposal"]["model"] = ""
-        model_audit = _audit_proposal(no_model, context)
+        provider_audit = _audit_proposal(
+            _coherently_corrupted(result, "provider", ""), context
+        )
+        model_audit = _audit_proposal(
+            _coherently_corrupted(result, "model", ""), context
+        )
 
     assert provider_audit["proposal_audit_status"] == "INCONSISTENT"
     assert provider_audit["provenance_consistent"] is False
@@ -564,14 +601,212 @@ def test_missing_proposal_material_is_unavailable() -> None:
     assert absent["proposal_audit_status"] == "UNAVAILABLE"
     assert absent["findings"] == ["PROPOSAL_RESULT_MISSING"]
 
+    # An empty mapping is not a readable Task 158 envelope, so the
+    # strict Task 158 contract rejects it before any status is trusted.
     assert empty["proposal_audit_status"] == "UNAVAILABLE"
-    assert empty["findings"] == ["PROPOSAL_NOT_VALIDATED:None"]
+    assert empty["findings"] == ["PROPOSAL_RESULT_INVALID:available:missing"]
 
     assert not_validated["proposal_audit_status"] == "UNAVAILABLE"
     assert not_validated["findings"] == ["PROPOSAL_NOT_VALIDATED:MODEL_UNAVAILABLE"]
 
+    # A VALIDATED envelope without its nested proposal contradicts the
+    # Task 158 coherence rule and is rejected by that same contract.
     assert no_material["proposal_audit_status"] == "UNAVAILABLE"
-    assert no_material["findings"] == ["PROPOSAL_MATERIAL_MISSING"]
+    assert no_material["findings"] == ["PROPOSAL_RESULT_INVALID:available:missing"]
+
+    for verdict in (absent, empty, not_validated, no_material):
+        assert verdict["available"] is False
+        assert verdict["proposal_consistent"] is False
+        for name in _DIMENSION_NAMES:
+            assert verdict[name] is False, name
+
+
+# ---------------------------------------------------------------------------
+# Provenance gates: a split, forged, or hostile Task 158 envelope is
+# UNAVAILABLE and never reaches the canonical Task 103 audit
+# ---------------------------------------------------------------------------
+
+
+def _assert_unavailable(verdict: dict, expected_finding: str) -> None:
+    assert verdict["proposal_audit_status"] == "UNAVAILABLE"
+    assert verdict["available"] is False
+    assert verdict["proposal_consistent"] is False
+    for name in _DIMENSION_NAMES:
+        assert verdict[name] is False, name
+    assert any(
+        finding.startswith(expected_finding) for finding in verdict["findings"]
+    ), verdict["findings"]
+
+
+def test_outer_session_split_from_nested_proposal_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 159 outer session split")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        forged = _corrupted(result)
+        forged["session_id"] = str(uuid4())
+        audit = _audit_proposal(forged, context)
+
+    _assert_unavailable(audit, "PROPOSAL_SESSION_BINDING_MISMATCH")
+    assert calls == []
+
+
+def test_outer_fingerprint_split_from_nested_proposal_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 159 outer fingerprint split")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        forged = _corrupted(result)
+        forged["context_fingerprint"] = "0" * 64
+        audit = _audit_proposal(forged, context)
+
+    _assert_unavailable(audit, "PROPOSAL_FINGERPRINT_BINDING_MISMATCH")
+    assert calls == []
+
+
+def test_outer_provider_split_from_nested_proposal_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 159 outer provider split")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        forged = _corrupted(result)
+        forged["provider"] = "other-provider"
+        audit = _audit_proposal(forged, context)
+
+    _assert_unavailable(audit, "PROPOSAL_PROVIDER_BINDING_MISMATCH")
+    assert calls == []
+
+
+def test_outer_model_split_from_nested_proposal_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 159 outer model split")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        forged = _corrupted(result)
+        forged["model"] = "other-model"
+        audit = _audit_proposal(forged, context)
+
+    _assert_unavailable(audit, "PROPOSAL_MODEL_BINDING_MISMATCH")
+    assert calls == []
+
+
+def test_forged_envelope_cannot_manufacture_consistent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A VALIDATED status wrapping a genuine proposal is not enough."""
+    sid = _seed_full_session("Task 159 forged envelope")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+
+        forged = {
+            "proposal_status": "VALIDATED",
+            "available": True,
+            "proposal_source": REASONING_RUN_STAGE_7_PROPOSAL_SOURCE_TASK_158,
+            "proposal": copy.deepcopy(result["proposal"]),
+        }
+        coerced = _audit_proposal(forged, context)
+        _assert_unavailable(coerced, "PROPOSAL_RESULT_INVALID:context_fingerprint:")
+
+        incomplete = _corrupted(result)
+        del incomplete["proposal_source"]
+        _assert_unavailable(
+            _audit_proposal(incomplete, context),
+            "PROPOSAL_RESULT_INVALID:proposal_source:missing",
+        )
+
+        corrupted_status = _corrupted(result)
+        corrupted_status["proposal_status"] = "SOMETHING_ELSE"
+        assert (
+            _audit_proposal(corrupted_status, context)["proposal_audit_status"]
+            == "UNAVAILABLE"
+        )
+
+    assert calls == []
+
+
+def test_extra_outer_field_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sid = _seed_full_session("Task 159 extra outer field")
+    calls = _spy_task_103(monkeypatch)
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        padded = _corrupted(result)
+        padded["unpaid_attestation"] = True
+        audit = _audit_proposal(padded, context)
+
+    _assert_unavailable(
+        audit, "PROPOSAL_RESULT_INVALID:unpaid_attestation:extra_forbidden"
+    )
+    assert calls == []
+
+
+def test_hostile_mapping_fails_closed() -> None:
+    class _Hostile(Mapping):
+        def __getitem__(self, key: object) -> object:
+            raise RuntimeError("hostile mapping")
+
+        def __len__(self) -> int:
+            return 1
+
+        def __iter__(self) -> object:
+            raise RuntimeError("hostile mapping")
+
+        def keys(self) -> object:
+            raise RuntimeError("hostile mapping")
+
+    sid = _seed_full_session("Task 159 hostile mapping")
+    with TestingSessionLocal() as db:
+        _, context, _ = _validated_pipeline(db, sid)
+        audit = _audit_proposal(_Hostile(), context)
+
+    _assert_unavailable(audit, "PROPOSAL_RESULT_INVALID:RuntimeError")
+
+
+def test_genuine_envelope_still_projects_task_103_exactly() -> None:
+    """Task 159 is a projection of Task 103, not a second implementation."""
+    sid = _seed_full_session("Task 159 exact projection")
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        canonical = LLMReasoningAuditService.build(
+            proposal=result["proposal"], context=context
+        )
+        audit = _audit_proposal(result, context)
+
+    assert audit["proposal_consistent"] is canonical["proposal_consistent"]
+    for name in _DIMENSION_NAMES:
+        assert audit[name] is canonical[name], name
+    assert audit["findings"] == sorted(set(canonical["consistency_issues"]))
+    assert audit["finding_count"] == len(audit["findings"])
+    assert audit["proposal_audit_status"] == (
+        "CONSISTENT" if canonical["proposal_consistent"] else "INCONSISTENT"
+    )
+
+
+def test_inconsistent_proposal_still_projects_task_103_exactly() -> None:
+    sid = _seed_full_session("Task 159 exact projection inconsistent")
+    with TestingSessionLocal() as db:
+        result, context, _ = _validated_pipeline(db, sid)
+        corrupted = _coherently_corrupted(result, "context_fingerprint", "0" * 64)
+        canonical = LLMReasoningAuditService.build(
+            proposal=corrupted["proposal"], context=context
+        )
+        audit = _audit_proposal(corrupted, context)
+
+    assert audit["proposal_consistent"] is canonical["proposal_consistent"]
+    for name in _DIMENSION_NAMES:
+        assert audit[name] is canonical[name], name
+    assert audit["findings"] == sorted(set(canonical["consistency_issues"]))
+    assert audit["proposal_audit_status"] == "INCONSISTENT"
 
 
 # ---------------------------------------------------------------------------
@@ -591,8 +826,7 @@ def test_audit_independence_preserves_canonical_package() -> None:
         pristine = _audit_proposal(result, context)
         assert pristine["proposal_audit_status"] == "CONSISTENT"
 
-        corrupted = _corrupted(result)
-        corrupted["proposal"]["provider"] = ""
+        corrupted = _coherently_corrupted(result, "provider", "")
         corrupted["proposal"]["candidate_assessments"][0]["candidate_id"] = str(uuid4())
         corrupted["proposal"]["candidate_assessments"][0]["supporting_evidence_ids"] = [
             str(uuid4())

@@ -1,11 +1,30 @@
 """Task 159: Stage 7 proposal provenance and consistency audit service.
 
-Independent deterministic audit of a returned Task 158 proposal result
-against the canonical Task 055 context that produced it. The Task 103
-audit is authoritative: this service orchestrates it and projects its
-evidence into the Stage 7 verdict. It never reimplements, weakens, or
-extends the canonical Task 103 checks, and the verdict is never
-derived from any other source.
+Independent deterministic audit of one returned Task 158 proposal
+result against the canonical Task 055 context that produced it.
+
+Two provenance gates run before the canonical audit is consulted, and
+both fail closed:
+
+1. The complete outer mapping must validate as the existing Task 158
+   contract, ``ReasoningRunStage7ProposalRead``. Those rules are reused,
+   never duplicated here, so a mapping that is not a mapping, has
+   missing or extra fields, carries an invalid ``proposal_status``,
+   violates ``available`` coherence, supplies ``proposal`` while not
+   validated, omits it while validated, or has an incoherent
+   ``context_fingerprint``/``provider``/``model`` presence is rejected
+   instead of being trusted.
+2. The validated envelope must be internally bound to the nested Task
+   057 proposal: ``session_id``, ``context_fingerprint``, ``provider``,
+   and ``model`` must be exactly equal in both copies. Neither copy is
+   preferred, so a forged Task 158 envelope wrapped around a genuine
+   proposal can never reach the canonical audit.
+
+Only once both gates pass is the nested proposal handed to Task 103,
+which remains the sole authority for proposal consistency. This service
+orchestrates it and projects its evidence into the Stage 7 verdict. It
+never reimplements, weakens, or extends the canonical Task 103 checks,
+and the verdict is never derived from any other source.
 
 Provenance is verified, not assumed. The canonical context is
 REQUIRED: without it session identity, the context fingerprint, and
@@ -24,6 +43,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from rop.schemas.reasoning_run_stage_7_proposal import (
+    ReasoningRunStage7ProposalRead,
+)
 from rop.schemas.reasoning_run_stage_7_proposal_audit import (
     ReasoningRunStage7ProposalAuditRead,
 )
@@ -47,6 +69,16 @@ _DIMENSION_NAMES = (
     "metadata_consistent",
 )
 
+# Provenance fields the Task 158 envelope duplicates from the nested
+# Task 057 proposal, with the diagnostic raised when the two copies
+# disagree.
+_BINDING_FIELDS = (
+    ("session_id", "PROPOSAL_SESSION_BINDING_MISMATCH"),
+    ("context_fingerprint", "PROPOSAL_FINGERPRINT_BINDING_MISMATCH"),
+    ("provider", "PROPOSAL_PROVIDER_BINDING_MISMATCH"),
+    ("model", "PROPOSAL_MODEL_BINDING_MISMATCH"),
+)
+
 
 class ReasoningRunStage7ProposalAuditContractError(Exception):
     """Task 159: the proposal audit result cannot be projected."""
@@ -54,6 +86,22 @@ class ReasoningRunStage7ProposalAuditContractError(Exception):
     def __init__(self, invariant: str, detail: str) -> None:
         self.invariant = invariant
         super().__init__(f"[{invariant}] {detail}")
+
+
+def _observed(value: object) -> str:
+    """Render an observed nested value for a deterministic diagnostic."""
+    if isinstance(value, str):
+        return value
+    return "None" if value is None else type(value).__name__
+
+
+def _invalid_detail(exc: ValidationError) -> str:
+    """Render one deterministic Task 158 schema rejection reason."""
+    details = sorted(
+        f"{'.'.join(str(part) for part in error['loc']) or 'model'}:{error['type']}"
+        for error in exc.errors()
+    )
+    return details[0]
 
 
 class ReasoningRunStage7ProposalAuditService:
@@ -73,11 +121,34 @@ class ReasoningRunStage7ProposalAuditService:
 
         Statuses: ``CONSISTENT`` (Task 103 certified the returned
         proposal consistent), ``INCONSISTENT`` (the Task 103 audit ran
-        and did not certify consistency), ``UNAVAILABLE`` (the proposal
-        material, the canonical context, or the audit itself is
-        unreadable -- no dimension is certified). Every dimension flag
-        and every finding of the result is Task 103 evidence; this
-        service derives nothing on its own.
+        and did not certify consistency), ``UNAVAILABLE`` (the Task 158
+        envelope is unreadable or not validated, its provenance is not
+        bound to the nested proposal, the canonical context is missing,
+        or the canonical audit itself could not run -- no dimension is
+        certified).
+
+        ``findings`` carries two disjoint kinds of evidence and never
+        mixes them in one result:
+
+        * when Task 103 runs, ``findings`` is exactly its
+          ``consistency_issues`` -- the canonical Task 103 vocabulary,
+          unaltered and unextended;
+        * when required Task 158 or canonical material is missing,
+          invalid, or unbound, Task 103 never runs and ``findings`` is
+          this service's own deterministic availability/provenance
+          diagnostic: ``PROPOSAL_RESULT_MISSING``,
+          ``PROPOSAL_RESULT_INVALID:<field>:<reason>``,
+          ``PROPOSAL_NOT_VALIDATED:<status>``,
+          ``PROPOSAL_SESSION_BINDING_MISMATCH:<observed>``,
+          ``PROPOSAL_FINGERPRINT_BINDING_MISMATCH:<observed>``,
+          ``PROPOSAL_PROVIDER_BINDING_MISMATCH:<observed>``,
+          ``PROPOSAL_MODEL_BINDING_MISMATCH:<observed>``,
+          ``CANONICAL_CONTEXT_MISSING``,
+          ``PROPOSAL_AUDIT_UNAVAILABLE:<invariant>``,
+          ``PROPOSAL_AUDIT_FAILED:<error>``.
+
+        Every dimension flag of a non-unavailable result is Task 103
+        evidence; this service derives no consistency of its own.
         """
         if not isinstance(proposal_result, Mapping):
             return ReasoningRunStage7ProposalAuditService._finalize(
@@ -87,22 +158,55 @@ class ReasoningRunStage7ProposalAuditService:
                 findings=["PROPOSAL_RESULT_MISSING"],
             )
 
-        proposal_status = proposal_result.get("proposal_status")
-        if proposal_status != "VALIDATED":
+        # Gate 1: the outer mapping must be a genuine Task 158 result.
+        # The Task 158 schema is the only definition of that contract.
+        try:
+            envelope = ReasoningRunStage7ProposalRead.model_validate(
+                dict(proposal_result)
+            )
+        except ValidationError as exc:
             return ReasoningRunStage7ProposalAuditService._finalize(
                 "UNAVAILABLE",
                 proposal_consistent=False,
                 dimensions={},
-                findings=[f"PROPOSAL_NOT_VALIDATED:{proposal_status}"],
+                findings=[f"PROPOSAL_RESULT_INVALID:{_invalid_detail(exc)}"],
+            )
+        except Exception as exc:
+            # A hostile mapping can fail conversion in arbitrary ways;
+            # it is unreadable material, never an auditable proposal.
+            return ReasoningRunStage7ProposalAuditService._finalize(
+                "UNAVAILABLE",
+                proposal_consistent=False,
+                dimensions={},
+                findings=[f"PROPOSAL_RESULT_INVALID:{type(exc).__name__}"],
             )
 
-        proposal = proposal_result.get("proposal")
-        if not isinstance(proposal, Mapping):
+        if envelope.proposal_status != "VALIDATED":
             return ReasoningRunStage7ProposalAuditService._finalize(
                 "UNAVAILABLE",
                 proposal_consistent=False,
                 dimensions={},
-                findings=["PROPOSAL_MATERIAL_MISSING"],
+                findings=[f"PROPOSAL_NOT_VALIDATED:{envelope.proposal_status}"],
+            )
+
+        # The Task 158 contract already guarantees a nested proposal
+        # exactly when the status is VALIDATED, so its presence is not
+        # re-checked here.
+        proposal = envelope.proposal
+
+        # Gate 2: the envelope must be internally coherent with the
+        # nested proposal it claims to carry.
+        binding_findings = [
+            f"{finding}:{_observed(proposal.get(field))}"
+            for field, finding in _BINDING_FIELDS
+            if proposal.get(field) != getattr(envelope, field)
+        ]
+        if binding_findings:
+            return ReasoningRunStage7ProposalAuditService._finalize(
+                "UNAVAILABLE",
+                proposal_consistent=False,
+                dimensions={},
+                findings=binding_findings,
             )
 
         if not isinstance(context, Mapping):

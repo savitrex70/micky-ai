@@ -2,9 +2,18 @@
 
 The strict read-only audit verdict for one returned Task 158 proposal
 result, audited against the canonical Task 055 context that produced
-it. The verdict is a projection of the authoritative Task 103 proposal
-audit: every dimension flag and every finding is Task 103 evidence,
-never a second definition of proposal consistency.
+it. The verdict and every consistency dimension are a projection of the
+authoritative Task 103 proposal audit, never a second definition of
+proposal consistency.
+
+``findings`` carries two disjoint kinds of evidence and never mixes
+them in one result. When Task 103 ran -- ``CONSISTENT`` or
+``INCONSISTENT`` -- the list is exactly its ``consistency_issues``, in
+the canonical Task 103 vocabulary, unaltered and unextended. When the
+required Task 158 envelope or canonical context was missing, invalid,
+or not bound to the nested proposal, Task 103 never ran and the list is
+the Task 159 availability/provenance diagnostic explaining why nothing
+could be certified.
 """
 
 from __future__ import annotations
@@ -31,13 +40,16 @@ class ReasoningRunStage7ProposalAuditRead(BaseModel):
     ``proposal_audit_status`` is the canonical verdict: ``CONSISTENT``
     (the Task 103 audit certified the returned proposal consistent),
     ``INCONSISTENT`` (the Task 103 audit ran and did not certify
-    consistency), or ``UNAVAILABLE`` (the proposal material, the
-    canonical context, or the audit itself is unreadable -- no
+    consistency), or ``UNAVAILABLE`` (the Task 158 envelope or the
+    canonical context is unreadable, invalid, or not bound to the
+    nested proposal, or the canonical audit itself could not run -- no
     dimension is certified, every flag is ``False``). ``available`` is
     always exactly
     ``proposal_audit_status != "UNAVAILABLE"``. ``proposal_consistent``
     and every dimension flag carry the Task 103 result verbatim.
-    ``findings`` are deterministic, sorted, and deduplicated.
+    ``findings`` are deterministic, sorted, and deduplicated: Task 103
+    ``consistency_issues`` when Task 103 ran, otherwise the Task 159
+    availability/provenance diagnostic for the rejected material.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
