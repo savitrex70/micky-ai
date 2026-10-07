@@ -21,15 +21,19 @@ from pydantic import BaseModel, ConfigDict, model_validator
 class ReasoningRunStage7ProposalRead(BaseModel):
     """Strict proposal verdict for one Task 157 dispatch result.
 
-    ``proposal_status`` is ``VALIDATED`` (the raw provider response
-    passed every canonical stage and ``proposal`` carries the approved
-    Task 057 public surface), one of the canonical Task 057 outcome
-    values (``MODEL_UNAVAILABLE``, ``MODEL_OUTPUT_INVALID``,
+    ``proposal_status`` is ``VALIDATED`` (the dispatch result validated
+    as a genuine Task 157 projection, the supplied canonical context was
+    proven available, consistent, and bound to the dispatched request
+    fingerprint, and the raw provider response then passed every
+    canonical stage so ``proposal`` carries the approved Task 057 public
+    surface), one of the canonical Task 057 outcome values
+    (``MODEL_UNAVAILABLE``, ``MODEL_OUTPUT_INVALID``,
     ``MODEL_OUTPUT_INCONSISTENT``), or ``UNAVAILABLE`` (the dispatch or
-    the validation material could not be read). ``available`` is
-    always exactly ``proposal_status == "VALIDATED"``;
-    ``context_fingerprint``, ``provider``, ``model``, and ``proposal``
-    are present exactly when ``VALIDATED``.
+    the validation material could not be read, or it did not prove
+    provenance). ``available`` is always exactly
+    ``proposal_status == "VALIDATED"``; ``context_fingerprint``,
+    ``provider``, ``model``, and ``proposal`` are present exactly when
+    ``VALIDATED``.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")

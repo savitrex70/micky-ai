@@ -21,6 +21,16 @@ Task 057 outcome values verbatim. Raw provider text, the raw provider
 response object, and any provider-specific surface never appear in the
 returned projection: the projection carries the approved public Task
 057 proposal only when the complete pipeline validated it.
+
+Provenance is bound before any raw provider surface is read. The
+supplied dispatch mapping must itself validate against the strict Task
+157 projection, so a forged or incoherent dispatch never reaches the
+pipeline. The supplied canonical context must report itself available
+and consistent, and its recomputed canonical serialization fingerprint
+must equal the fingerprint the Task 157 dispatch actually handed to the
+provider; a different or stale context for the very same session
+therefore fails closed instead of validating model output against
+material that was never dispatched.
 """
 
 from __future__ import annotations
@@ -38,6 +48,9 @@ from rop.schemas.llm_reasoning import (
     ReasoningCandidateAssessmentRead,
     _RawLLMReasoningProposal,
 )
+from rop.schemas.reasoning_run_stage_7_dispatch import (
+    ReasoningRunStage7DispatchRead,
+)
 from rop.schemas.reasoning_run_stage_7_proposal import (
     ReasoningRunStage7ProposalRead,
 )
@@ -49,6 +62,10 @@ from rop.services.llm_boundary_contract import (
 from rop.services.llm_output_validation import validate_raw_proposal
 from rop.services.llm_provider_isolation import ProviderFailureBoundary
 from rop.services.llm_reasoning import LLM_REASONING_TASK_057
+from rop.services.llm_request_serialization import (
+    compute_fingerprint,
+    serialize_context,
+)
 
 REASONING_RUN_STAGE_7_PROPOSAL_SOURCE_TASK_158 = (
     "REASONING_RUN_STAGE_7_PROPOSAL_TASK_158"
@@ -80,13 +97,19 @@ class ReasoningRunStage7ProposalService:
     ) -> dict[str, Any]:
         """Validate the raw response carried by one dispatch result.
 
-        Material gates run first: anything other than a ``DISPATCHED``
-        result with a readable fingerprint and a matching canonical
-        context is ``UNAVAILABLE`` -- except that the canonical Task
-        057 model-failure outcomes observed at dispatch time pass
-        through verbatim. Only a dispatched raw response is validated,
-        strictly in the canonical Task 057 order; every failure maps to
-        the canonical Task 057 outcome value, never to a new taxonomy.
+        Provenance gates run first. The dispatch mapping must validate
+        against the strict Task 157 projection, and only a ``DISPATCHED``
+        verdict with a readable fingerprint continues -- except that the
+        canonical Task 057 model-failure outcomes carried by an
+        otherwise valid non-dispatched Task 157 result pass through
+        verbatim. The supplied canonical context must be bound to the
+        exact dispatched session, report itself available and
+        consistent, and serialize to precisely the dispatched request
+        fingerprint; anything else is ``UNAVAILABLE`` and the raw
+        provider response is never inspected. Only a fully bound raw
+        response is validated, strictly in the canonical Task 057 order;
+        every failure maps to the canonical Task 057 outcome value,
+        never to a new taxonomy.
         """
         result: dict[str, Any] = {
             "proposal_status": "UNAVAILABLE",
@@ -106,8 +129,23 @@ class ReasoningRunStage7ProposalService:
         if isinstance(raw_session, str):
             result["session_id"] = raw_session
 
-        if dispatch_result.get("dispatch_status") != "DISPATCHED":
-            outcome = dispatch_result.get("outcome")
+        # The raw provider response is untrusted surface and is not part
+        # of the Task 157 projection, so it is withheld here and read
+        # only once the dispatch itself is proven genuine.
+        try:
+            validated_dispatch = ReasoningRunStage7DispatchRead.model_validate(
+                {
+                    key: value
+                    for key, value in dict(dispatch_result).items()
+                    if key != "provider_response"
+                }
+            )
+        except (TypeError, ValueError):
+            # Pydantic validation failures are ValueError subclasses.
+            return self._project(result)
+
+        if validated_dispatch.dispatch_status != "DISPATCHED":
+            outcome = validated_dispatch.outcome
             if outcome in (
                 OUTCOME_MODEL_UNAVAILABLE,
                 OUTCOME_MODEL_OUTPUT_INVALID,
@@ -120,8 +158,8 @@ class ReasoningRunStage7ProposalService:
         if provider_response is None:
             return self._project(result)
 
-        fingerprint = dispatch_result.get("request_fingerprint")
-        if not isinstance(fingerprint, str) or not fingerprint:
+        fingerprint = validated_dispatch.request_fingerprint
+        if not fingerprint:
             return self._project(result)
 
         if not isinstance(context, Mapping):
@@ -136,9 +174,22 @@ class ReasoningRunStage7ProposalService:
         session_id = snapshot.get("session_id")
         if not isinstance(session_id, UUID):
             return self._project(result)
-        if str(session_id) != result["session_id"]:
+        if str(session_id) != validated_dispatch.session_id:
             return self._project(result)
         if snapshot.get("available") is not True:
+            return self._project(result)
+        if snapshot.get("context_consistent") is not True:
+            return self._project(result)
+
+        # Bind the supplied context to the dispatched package: the
+        # fingerprint Task 155 computed and Task 157 shipped must be
+        # reproducible from this exact context, so a foreign or stale
+        # context for the same session can never validate model output.
+        try:
+            recomputed_fingerprint = compute_fingerprint(serialize_context(snapshot))
+        except (KeyError, TypeError, ValueError):
+            return self._project(result)
+        if recomputed_fingerprint != fingerprint:
             return self._project(result)
 
         # Canonical Task 057 validation pipeline, order unchanged.

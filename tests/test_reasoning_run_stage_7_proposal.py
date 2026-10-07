@@ -9,6 +9,14 @@ response and raw provider text never appear in the returned
 projection. No heuristic repair, no regex correction, no retry loop,
 and no provider invocation while validating an already-produced
 response.
+
+Provenance is bound before any raw response is read: the supplied
+dispatch mapping must itself validate against the strict Task 157
+projection, and the supplied canonical context must be bound to the
+dispatched session, report itself available and consistent, and
+serialize to exactly the dispatched request fingerprint. A forged
+dispatch or a foreign context for the very same session therefore fails
+closed as ``UNAVAILABLE`` instead of validating model output.
 """
 
 from __future__ import annotations
@@ -45,7 +53,10 @@ from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderError,
     LLMReasoningProviderResponse,
 )
-from rop.services.llm_request_serialization import serialize_context
+from rop.services.llm_request_serialization import (
+    compute_fingerprint,
+    serialize_context,
+)
 from rop.services.reasoning_context import ReasoningContextService
 from rop.services.reasoning_run_stage_7_admission import (
     ReasoningRunStage7AdmissionService,
@@ -694,6 +705,242 @@ def test_missing_or_mismatched_material_is_unavailable() -> None:
 
     assert dispatch["session_id"] == sid
     assert dispatch["request_fingerprint"] == package["context_fingerprint"]
+
+
+# ---------------------------------------------------------------------------
+# Provenance binding: dispatched context fingerprint (Task 158 correction)
+# ---------------------------------------------------------------------------
+
+
+def test_same_session_foreign_context_is_unavailable() -> None:
+    sid = _seed_full_session("Task 158 same session foreign context")
+    provider = _FakeProvider()
+    with TestingSessionLocal() as db:
+        dispatched_context = _context(db, sid)
+        provider.response = _response(_valid_model_output(dispatched_context))
+        dispatch, package = _dispatch(db, sid, provider)
+        calls_after_dispatch = len(provider.calls)
+
+    later = client.post(
+        f"/sessions/{sid}/observations",
+        json={
+            "text": "Patient later reports shortness of breath",
+            "type": "symptom",
+            "confidence": 0.8,
+            "source": "unit_test",
+        },
+    )
+    assert later.status_code == 201
+    with TestingSessionLocal() as db:
+        stale_context = _context(db, sid)
+
+    assert dispatch["request_fingerprint"] == package["context_fingerprint"]
+    assert stale_context["session_id"] == dispatched_context["session_id"]
+    assert stale_context["available"] is True
+    assert stale_context["context_consistent"] is True
+    assert serialize_context(stale_context) != serialize_context(dispatched_context)
+    assert (
+        compute_fingerprint(serialize_context(stale_context))
+        != dispatch["request_fingerprint"]
+    )
+
+    tampered_context = {
+        **dispatched_context,
+        "reasoning_pipeline": {
+            **dispatched_context["reasoning_pipeline"],
+            "stage_7": "tampered",
+        },
+    }
+    assert (
+        compute_fingerprint(serialize_context(tampered_context))
+        != dispatch["request_fingerprint"]
+    )
+
+    stale_result = _propose(dispatch, stale_context)
+    tampered_result = _propose(dispatch, tampered_context)
+    stale_hostile = _propose(
+        _swap_response(dispatch, _HostileResponse()), stale_context
+    )
+    control = _propose(dispatch, dispatched_context)
+
+    for result in (stale_result, tampered_result, stale_hostile):
+        assert set(result) == PROPOSAL_KEYS
+        assert result["proposal_status"] == "UNAVAILABLE"
+        assert result["available"] is False
+        assert result["proposal"] is None
+        assert result["context_fingerprint"] is None
+        assert result["provider"] is None
+        assert result["model"] is None
+        assert result["session_id"] == sid
+        assert (
+            result["proposal_source"] == REASONING_RUN_STAGE_7_PROPOSAL_SOURCE_TASK_158
+        )
+
+    assert control["proposal_status"] == "VALIDATED"
+    assert control["context_fingerprint"] == dispatch["request_fingerprint"]
+    assert len(provider.calls) == calls_after_dispatch
+
+
+def test_inconsistent_context_is_unavailable() -> None:
+    sid = _seed_full_session("Task 158 inconsistent context")
+    provider = _FakeProvider()
+    with TestingSessionLocal() as db:
+        context = _context(db, sid)
+        provider.response = _response(_valid_model_output(context))
+        dispatch, package = _dispatch(db, sid, provider)
+
+    inconsistent = {**context, "context_consistent": False}
+    missing_flag = {
+        key: value for key, value in context.items() if key != "context_consistent"
+    }
+    assert inconsistent["available"] is True
+    assert missing_flag["available"] is True
+    # The serialization never carries the consistency flag, so only the
+    # explicit gate can reject these two contexts.
+    assert (
+        compute_fingerprint(serialize_context(inconsistent))
+        == package["context_fingerprint"]
+    )
+    assert (
+        compute_fingerprint(serialize_context(missing_flag))
+        == package["context_fingerprint"]
+    )
+
+    inconsistent_result = _propose(dispatch, inconsistent)
+    missing_flag_result = _propose(dispatch, missing_flag)
+    inconsistent_hostile = _propose(
+        _swap_response(dispatch, _HostileResponse()), inconsistent
+    )
+    control = _propose(dispatch, context)
+
+    for result in (inconsistent_result, missing_flag_result, inconsistent_hostile):
+        assert result["proposal_status"] == "UNAVAILABLE"
+        assert result["available"] is False
+        assert result["proposal"] is None
+        assert result["context_fingerprint"] is None
+        assert result["provider"] is None
+        assert result["model"] is None
+        assert result["session_id"] == sid
+
+    assert control["proposal_status"] == "VALIDATED"
+
+
+# ---------------------------------------------------------------------------
+# Provenance binding: the Task 157 dispatch projection (Task 158 correction)
+# ---------------------------------------------------------------------------
+
+
+def test_forged_dispatch_projection_is_unavailable() -> None:
+    sid = _seed_full_session("Task 158 forged dispatch projection")
+    provider = _FakeProvider()
+    with TestingSessionLocal() as db:
+        context = _context(db, sid)
+        provider.response = _response(_valid_model_output(context))
+        dispatch, package = _dispatch(db, sid, provider)
+
+        forgeries = (
+            {**dispatch, "available": False},
+            {**dispatch, "request_status": "BLOCKED"},
+            {**dispatch, "request_status": "UNAVAILABLE"},
+            {**dispatch, "request_audit_status": "INCONSISTENT"},
+            {**dispatch, "request_audit_status": "UNAVAILABLE"},
+            {**dispatch, "request_fingerprint": None},
+            {**dispatch, "outcome": OUTCOME_MODEL_UNAVAILABLE},
+            {**dispatch, "dispatch_status": "FORGED"},
+            {**dispatch, "provider": "smuggled"},
+        )
+        results = [
+            _propose(_swap_response(forgery, _HostileResponse()), context)
+            for forgery in forgeries
+        ]
+        valid_results = [_propose(forgery, context) for forgery in forgeries]
+        control = _propose(dispatch, context)
+
+    assert len(dispatch) == 9
+    assert dispatch["request_fingerprint"] == package["context_fingerprint"]
+    for result in (*results, *valid_results):
+        assert set(result) == PROPOSAL_KEYS
+        assert result["proposal_status"] == "UNAVAILABLE"
+        assert result["available"] is False
+        assert result["proposal"] is None
+        assert result["context_fingerprint"] is None
+        assert result["provider"] is None
+        assert result["model"] is None
+        assert result["session_id"] == sid
+
+    assert control["proposal_status"] == "VALIDATED"
+
+
+def test_minimal_forged_dispatch_is_unavailable() -> None:
+    sid = _seed_full_session("Task 158 minimal forged dispatch")
+    provider = _FakeProvider()
+    with TestingSessionLocal() as db:
+        context = _context(db, sid)
+        good_output = _valid_model_output(context)
+        provider.response = _response(good_output)
+        dispatch, package = _dispatch(db, sid, provider)
+
+        # The exact forgery the reviewer described: a mapping claiming
+        # DISPATCHED with a valid-looking fingerprint and a raw response,
+        # never produced by the Task 157 boundary.
+        forged = {
+            "dispatch_status": "DISPATCHED",
+            "session_id": sid,
+            "request_fingerprint": package["context_fingerprint"],
+            "provider_response": _response(good_output),
+        }
+        forged_result = _propose(forged, context)
+
+        forged_hostile = _propose(
+            {**forged, "provider_response": _HostileResponse()}, context
+        )
+
+        # A minimal non-dispatched mapping is not a Task 157 result, so
+        # its outcome must not travel through as a model failure.
+        minimal = {
+            "dispatch_status": "UNAVAILABLE",
+            "outcome": OUTCOME_MODEL_UNAVAILABLE,
+        }
+        minimal_result = _propose(minimal, context)
+
+        control = _propose(dispatch, context)
+
+    assert forged_result["proposal_status"] == "UNAVAILABLE"
+    assert forged_result["available"] is False
+    assert forged_result["proposal"] is None
+    assert forged_result["context_fingerprint"] is None
+    assert forged_result["provider"] is None
+    assert forged_result["model"] is None
+    assert forged_result["session_id"] == sid
+
+    assert forged_hostile["proposal_status"] == "UNAVAILABLE"
+    assert forged_hostile["proposal"] is None
+
+    assert minimal_result["proposal_status"] == "UNAVAILABLE"
+    assert minimal_result["available"] is False
+    assert minimal_result["proposal"] is None
+
+    assert control["proposal_status"] == "VALIDATED"
+
+
+def test_valid_task_157_failures_still_pass_through() -> None:
+    sid = _seed_full_session("Task 158 valid failure pass-through")
+    with TestingSessionLocal() as db:
+        context = _context(db, sid)
+        package = _build_package(db, sid)
+        audit = _audit(db, package)
+        provider = _FailingProvider(ValueError("invalid json output"))
+        dispatch = ReasoningRunStage7DispatchService(provider=provider).dispatch(
+            request=package, request_audit=audit
+        )
+        assert dispatch["dispatch_status"] == "UNAVAILABLE"
+        assert dispatch["outcome"] == OUTCOME_MODEL_OUTPUT_INVALID
+        result = _propose(dispatch, context)
+
+    assert result["proposal_status"] == OUTCOME_MODEL_OUTPUT_INVALID
+    assert result["available"] is False
+    assert result["proposal"] is None
+    assert result["session_id"] == sid
 
 
 # ---------------------------------------------------------------------------
