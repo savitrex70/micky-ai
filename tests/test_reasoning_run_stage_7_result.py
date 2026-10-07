@@ -9,9 +9,11 @@ binding evidence names the exact package or proposal being aggregated,
 so forged, detached, or malformed child material can never manufacture
 READY. The canonical child verdicts then decide the aggregate status
 with deterministic precedence (UNAVAILABLE -> INCONSISTENT ->
-MODEL_UNAVAILABLE -> READY), raw provider text and the raw provider
-response object never appear in the projection, and the service is
-read-only and provider-free over the four material mappings.
+MODEL_UNAVAILABLE -> READY), a child verdict whose own status is
+UNAVAILABLE counts as unavailable evidence rather than an integrity
+contradiction, raw provider text and the raw provider response object
+never appear in the projection, and the service is read-only and
+provider-free over the four material mappings.
 """
 
 from __future__ import annotations
@@ -474,6 +476,11 @@ def test_provider_unavailable_result() -> None:
         )
         result = _combine(package, request_audit, proposal_result, proposal_audit)
 
+    # The unavailable Task 159 verdict is the expected consequence of a
+    # provider that never answered, not additional missing material: the
+    # established request chain keeps the canonical Task 057 outcome.
+    assert request_audit["request_audit_status"] == "CONSISTENT"
+    assert proposal_audit["proposal_audit_status"] == "UNAVAILABLE"
     assert result["result_status"] == "MODEL_UNAVAILABLE"
     assert result["proposal_status"] == "MODEL_UNAVAILABLE"
     assert result["request_status"] == "PACKAGED"
@@ -497,6 +504,11 @@ def test_model_output_failure_folds_to_inconsistent() -> None:
                 _model_failure_material(db, sid, error)
             )
             assert proposal_result["proposal_status"] == expected
+            # This path needs no proposal audit evidence at all: there is
+            # no validated proposal to audit, so the unavailable Task 159
+            # verdict must not turn the outcome into UNAVAILABLE.
+            assert request_audit["request_audit_status"] == "CONSISTENT"
+            assert proposal_audit["proposal_audit_status"] == "UNAVAILABLE"
             result = _combine(package, request_audit, proposal_result, proposal_audit)
             assert result["result_status"] == "INCONSISTENT"
             assert result["proposal_status"] == expected
@@ -572,6 +584,76 @@ def test_missing_result_material_is_unavailable() -> None:
     assert blocked_package["findings"] == ["REQUEST_NOT_PACKAGED:BLOCKED"]
     assert blocked_package["request_status"] == "UNAVAILABLE"
     assert unavailable_proposal["findings"] == ["PROPOSAL_UNAVAILABLE"]
+
+
+# ---------------------------------------------------------------------------
+# UNAVAILABLE: a valid child verdict that established nothing is
+# unavailable evidence, never an integrity contradiction
+# ---------------------------------------------------------------------------
+
+
+def test_request_audit_unavailable_is_unavailable() -> None:
+    sid = _seed_full_session("Task 160 unavailable request audit")
+    with TestingSessionLocal() as db:
+        package, _, proposal_result, proposal_audit, _, _ = _healthy_material(db, sid)
+        # A genuine Task 156 verdict that established nothing: the audit
+        # could not read the package it was asked to verify.
+        unavailable_audit = _audit_request(db, None)
+
+    assert unavailable_audit["request_audit_status"] == "UNAVAILABLE"
+    result = _combine(package, unavailable_audit, proposal_result, proposal_audit)
+
+    assert result["result_status"] == "UNAVAILABLE"
+    assert result["request_consistent"] is False
+    assert result["proposal_consistent"] is False
+    assert result["provider_name"] is None
+    assert result["model_name"] is None
+    # The children stay verbatim: the package really is packaged and the
+    # proposal really is validated. Only the audit evidence is absent.
+    assert result["request_status"] == "PACKAGED"
+    assert result["proposal_status"] == "VALIDATED"
+    assert "REQUEST_AUDIT_UNAVAILABLE" in result["findings"]
+    # The validated child keeps its own diagnostic, unread and unhidden.
+    assert "REQUEST_PACKAGE_MISSING" in result["findings"]
+
+
+def test_proposal_audit_unavailable_is_unavailable() -> None:
+    sid = _seed_full_session("Task 160 unavailable proposal audit")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, _, _, _ = _healthy_material(db, sid)
+        # A genuine Task 159 verdict that never reached Task 103 at all.
+        _, _, _, unavailable_audit = _outage_material(db, sid)
+
+    assert unavailable_audit["proposal_audit_status"] == "UNAVAILABLE"
+    result = _combine(package, request_audit, proposal_result, unavailable_audit)
+
+    assert result["result_status"] == "UNAVAILABLE"
+    assert result["request_consistent"] is False
+    assert result["proposal_consistent"] is False
+    assert result["provider_name"] is None
+    assert result["model_name"] is None
+    assert result["proposal_status"] == "VALIDATED"
+    assert "PROPOSAL_AUDIT_UNAVAILABLE" in result["findings"]
+
+
+def test_unavailable_request_audit_outranks_model_output_failure() -> None:
+    sid = _seed_full_session("Task 160 unavailable outranks provider failure")
+    with TestingSessionLocal() as db:
+        package, _, proposal_result, proposal_audit = _model_failure_material(
+            db, sid, ValueError("invalid json output")
+        )
+        unavailable_audit = _audit_request(db, None)
+
+    assert proposal_result["proposal_status"] == "MODEL_OUTPUT_INVALID"
+    assert unavailable_audit["request_audit_status"] == "UNAVAILABLE"
+    result = _combine(package, unavailable_audit, proposal_result, proposal_audit)
+
+    # Required provenance evidence was never established, so availability
+    # outranks the readable-but-failed provider outcome.
+    assert result["result_status"] == "UNAVAILABLE"
+    assert result["request_consistent"] is False
+    assert result["proposal_consistent"] is False
+    assert "REQUEST_AUDIT_UNAVAILABLE" in result["findings"]
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,18 @@ detached-but-internally-valid ``CONSISTENT`` audit can therefore never
 manufacture ``READY``: ``READY`` requires the whole provenance chain to
 name the same session and fingerprint end to end.
 
+The two failure classes stay distinct. ``INCONSISTENT`` means the
+required material was established and then contradicted itself or its
+provenance. ``UNAVAILABLE`` means a required child verdict could not
+establish the needed evidence at all -- including a *validated* child
+whose own status is ``UNAVAILABLE``, such as a Task 156 request audit
+that could not read its package or a Task 159 proposal audit that could
+not reach Task 103 for a ``VALIDATED`` proposal. Unavailable evidence is
+never reinterpreted as an integrity failure, and it outranks every other
+aggregate category: unavailability first, then established
+contradictions, then the canonical Task 057 provider failure, and only
+then ``READY``.
+
 Only validated children contribute findings. Task 160 adds nothing to
 the children's own vocabularies, only its clearly identified
 cross-material mismatch and material-unavailability diagnostics.
@@ -138,11 +150,13 @@ class ReasoningRunStage7ResultService:
         Every child is validated against its own contract first, then
         bound: a ``CONSISTENT`` verdict counts only when the audit names
         the exact package or proposal being aggregated. Material this
-        boundary cannot validly establish is ``UNAVAILABLE`` with no
-        consistency claim; material that exists but contradicts its own
-        provenance is ``INCONSISTENT``; a canonical Task 057 provider
-        failure is ``MODEL_UNAVAILABLE``; only a fully bound and audited
-        chain is ``READY``.
+        boundary cannot validly establish -- including a validated child
+        whose own verdict is ``UNAVAILABLE`` -- is ``UNAVAILABLE`` with
+        no consistency claim; material that is established but
+        contradicts its own provenance is ``INCONSISTENT``. A canonical
+        Task 057 provider failure with a fully established and bound
+        request chain is ``MODEL_UNAVAILABLE``, and only a fully bound,
+        fully audited chain is ``READY``.
         """
         findings: list[str] = []
 
@@ -263,11 +277,20 @@ class ReasoningRunStage7ResultService:
             findings.extend(audit_verdict.findings)
 
         # ---- Deterministic classification -------------------------------
-        material_missing = (
+        # A child verdict that is itself UNAVAILABLE is unavailable
+        # material, not an integrity contradiction: the evidence was never
+        # established, so nothing can be certified from it.
+        request_audit_unavailable = request_audit_status == "UNAVAILABLE"
+        proposal_audit_unavailable = (
+            proposal_status == "VALIDATED" and proposal_audit_status == "UNAVAILABLE"
+        )
+        required_material_unavailable = (
             not packaged
             or request_audit_status is None
+            or request_audit_unavailable
             or not proposal_known
             or (proposal_status == "VALIDATED" and proposal_audit_status is None)
+            or proposal_audit_unavailable
         )
         request_consistent = request_audit_status == "CONSISTENT" and request_binding_ok
         proposal_consistent = (
@@ -286,7 +309,7 @@ class ReasoningRunStage7ResultService:
             provider_name = proposal.provider
             model_name = proposal.model
 
-        if material_missing:
+        if required_material_unavailable:
             result_status = "UNAVAILABLE"
             request_consistent = False
             proposal_consistent = False
