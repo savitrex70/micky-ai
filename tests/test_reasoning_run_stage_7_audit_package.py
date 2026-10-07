@@ -1214,6 +1214,215 @@ def test_caller_material_is_never_mutated() -> None:
     assert materials == before
 
 
+_BINDING_MARKERS = (
+    "REQUEST_AUDIT_SESSION_MISMATCH",
+    "REQUEST_AUDIT_FINGERPRINT_MISMATCH",
+    "PROPOSAL_AUDIT_SESSION_MISMATCH",
+    "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH",
+)
+
+
+# ---------------------------------------------------------------------------
+# Exact audit-to-material provenance binding
+# ---------------------------------------------------------------------------
+
+
+def test_exact_audit_bindings_are_accepted() -> None:
+    sid = _seed_full_session("Task 162 exact audit bindings")
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        result = _package(**materials)
+
+    assert materials["request_audit"]["audited_session_id"] == sid
+    assert (
+        materials["request_audit"]["audited_request_fingerprint"]
+        == materials["package"]["context_fingerprint"]
+    )
+    assert materials["proposal_audit"]["audited_session_id"] == sid
+    assert (
+        materials["proposal_audit"]["audited_proposal_fingerprint"]
+        == materials["proposal_result"]["context_fingerprint"]
+    )
+    assert result["request_audit_status"] == "CONSISTENT"
+    assert result["proposal_audit_status"] == "CONSISTENT"
+    assert result["diagnostics_status"] == "HEALTHY"
+    for marker in _BINDING_MARKERS:
+        assert marker not in result["findings"]
+
+
+def test_request_audit_fingerprint_binding() -> None:
+    """A CONSISTENT audit naming a different request is detached evidence.
+
+    The audit stays structurally perfect -- only its published binding
+    fingerprint moves -- so nothing but the exact comparison can catch it.
+    The genuine healthy diagnostics verdict is supplied unchanged, which
+    proves Task 162 performs this check itself instead of inheriting it.
+    """
+    sid = _seed_full_session("Task 162 request audit fingerprint binding")
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        detached = {
+            **copy.deepcopy(materials["request_audit"]),
+            "audited_request_fingerprint": "b" * 64,
+        }
+        ReasoningRunStage7RequestAuditRead.model_validate(detached)
+        result = _package(**{**materials, "request_audit": detached})
+
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" not in result["findings"]
+    assert result["request_audit_status"] is None
+    assert result["diagnostics_status"] == "HEALTHY"
+
+
+def test_request_audit_session_binding() -> None:
+    sid = _seed_full_session("Task 162 request audit session binding")
+    other = str(uuid4())
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        detached = {
+            **copy.deepcopy(materials["request_audit"]),
+            "audited_session_id": other,
+        }
+        ReasoningRunStage7RequestAuditRead.model_validate(detached)
+        result = _package(**{**materials, "request_audit": detached})
+
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" not in result["findings"]
+    assert result["request_audit_status"] is None
+    assert other not in json.dumps(result)
+
+
+def test_proposal_audit_fingerprint_binding() -> None:
+    sid = _seed_full_session("Task 162 proposal audit fingerprint binding")
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        detached = {
+            **copy.deepcopy(materials["proposal_audit"]),
+            "audited_proposal_fingerprint": "c" * 64,
+        }
+        ReasoningRunStage7ProposalAuditRead.model_validate(detached)
+        result = _package(**{**materials, "proposal_audit": detached})
+
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" not in result["findings"]
+    assert result["proposal_audit_status"] is None
+
+
+def test_proposal_audit_session_binding() -> None:
+    sid = _seed_full_session("Task 162 proposal audit session binding")
+    other = str(uuid4())
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        detached = {
+            **copy.deepcopy(materials["proposal_audit"]),
+            "audited_session_id": other,
+        }
+        ReasoningRunStage7ProposalAuditRead.model_validate(detached)
+        result = _package(**{**materials, "proposal_audit": detached})
+
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" not in result["findings"]
+    assert result["proposal_audit_status"] is None
+    assert other not in json.dumps(result)
+
+
+def test_cross_package_request_audit_is_rejected() -> None:
+    sid_a = _seed_full_session("Task 162 cross package request audit A")
+    sid_b = _seed_full_session("Task 162 cross package request audit B")
+    with TestingSessionLocal() as db:
+        materials_a = _healthy_six(db, sid_a)
+        audit_b = _audit_request(db, _build_package(db, sid_b))
+        assert audit_b["request_audit_status"] == "CONSISTENT"
+        assert audit_b["audited_session_id"] == sid_b
+        result = _package(**{**materials_a, "request_audit": audit_b})
+
+    # Session A stays the package identity; the foreign audit is simply
+    # unusable evidence, and both of its binding fields fail.
+    assert result["session_id"] == sid_a
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert result["request_audit_status"] is None
+
+
+def test_cross_package_proposal_audit_is_rejected() -> None:
+    sid_a = _seed_full_session("Task 162 cross package proposal audit A")
+    sid_b = _seed_full_session("Task 162 cross package proposal audit B")
+    with TestingSessionLocal() as db:
+        materials_a = _healthy_six(db, sid_a)
+        materials_b = _healthy_six(db, sid_b)
+        assert materials_b["proposal_audit"]["proposal_audit_status"] == "CONSISTENT"
+        result = _package(
+            **{**materials_a, "proposal_audit": materials_b["proposal_audit"]}
+        )
+
+    assert result["session_id"] == sid_a
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert result["proposal_audit_status"] is None
+
+
+def test_cross_fingerprint_request_audit_is_rejected() -> None:
+    """Same session, different exact request."""
+    sid = _seed_full_session("Task 162 cross fingerprint request audit")
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        forged_package = {
+            **copy.deepcopy(materials["package"]),
+            "context_fingerprint": "d" * 64,
+        }
+        ReasoningRunStage7RequestRead.model_validate(forged_package)
+        result = _package(**{**materials, "package": forged_package})
+
+    assert result["session_id"] == sid
+    assert result["request_fingerprint"] == "d" * 64
+    assert "REQUEST_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert "REQUEST_AUDIT_SESSION_MISMATCH" not in result["findings"]
+    assert result["request_audit_status"] is None
+
+
+def test_cross_fingerprint_proposal_audit_is_rejected() -> None:
+    """Same session, different exact proposal."""
+    sid = _seed_full_session("Task 162 cross fingerprint proposal audit")
+    with TestingSessionLocal() as db:
+        materials = _healthy_six(db, sid)
+        forged_proposal = {
+            **copy.deepcopy(materials["proposal_result"]),
+            "context_fingerprint": "e" * 64,
+        }
+        ReasoningRunStage7ProposalRead.model_validate(forged_proposal)
+        result = _package(**{**materials, "proposal_result": forged_proposal})
+
+    assert result["session_id"] == sid
+    assert result["provider_name"] == "fake-provider"
+    assert "PROPOSAL_AUDIT_FINGERPRINT_MISMATCH" in result["findings"]
+    assert "PROPOSAL_AUDIT_SESSION_MISMATCH" not in result["findings"]
+    assert result["proposal_audit_status"] is None
+
+
+def test_detached_consistent_audits_never_certify_together() -> None:
+    """Both provenance chains detached at once, from another session."""
+    sid_a = _seed_full_session("Task 162 both detached A")
+    sid_b = _seed_full_session("Task 162 both detached B")
+    with TestingSessionLocal() as db:
+        materials_a = _healthy_six(db, sid_a)
+        materials_b = _healthy_six(db, sid_b)
+        result = _package(
+            admission=materials_a["admission"],
+            package=materials_a["package"],
+            request_audit=materials_b["request_audit"],
+            proposal_result=materials_a["proposal_result"],
+            proposal_audit=materials_b["proposal_audit"],
+            diagnostics=materials_a["diagnostics"],
+        )
+
+    assert result["session_id"] == sid_a
+    assert result["request_audit_status"] is None
+    assert result["proposal_audit_status"] is None
+    for marker in _BINDING_MARKERS:
+        assert marker in result["findings"], marker
+    assert result["findings"] == sorted(set(result["findings"]))
+
+
 # ---------------------------------------------------------------------------
 # Read-only, provider-free inspection
 # ---------------------------------------------------------------------------

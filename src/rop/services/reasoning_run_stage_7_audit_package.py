@@ -32,6 +32,16 @@ contract guarantees the 64-hexadecimal shape; and session identity is
 established only from validated children, so invalid material can never
 claim a session.
 
+Validation is not binding, though. A ``CONSISTENT`` audit verdict only
+certifies the exact material its own binding fields name, so the
+published Task 156 ``audited_session_id`` / ``audited_request_fingerprint``
+are compared against the validated Task 155 package and the published
+Task 159 ``audited_session_id`` / ``audited_proposal_fingerprint`` against
+the validated Task 158 proposal. A detached audit is unusable evidence:
+its status is not projected and one of Task 162's own structural
+mismatch markers reports why. No audit service is re-run and no
+fingerprint is recomputed to make that comparison.
+
 Read-only and pure: no database session, no persistence, no provider
 invocation, no network, no replay, and no mutation of the inspected
 material. Raw provider text and the raw provider response object can
@@ -165,11 +175,13 @@ class ReasoningRunStage7AuditPackageService:
         the contract requires, folding to ``NO_MATERIAL``. Session
         identity is established only after validation, from the children
         that legitimately carry one, and contradictory validated claims
-        leave the identity empty with the canonical mismatch finding.
-        Findings are this service's own structural markers combined with
-        the validated children's canonical findings in one deterministic
-        sorted union. No child service is invoked and no child verdict
-        is recomputed here.
+        leave the identity empty with the canonical mismatch finding. A
+        ``CONSISTENT`` audit is projected only when its published binding
+        session and fingerprint name the validated package or proposal
+        beside it. Findings are this service's own structural markers
+        combined with the validated children's canonical findings in one
+        deterministic sorted union. No child service is invoked and no
+        child verdict is recomputed here.
         """
         materials: tuple[Mapping[str, Any] | None, ...] = (
             admission_result,
@@ -207,12 +219,36 @@ class ReasoningRunStage7AuditPackageService:
             findings=findings,
         )
 
+        # A CONSISTENT audit verdict is only evidence for the exact
+        # material its own binding fields name, so those already-published
+        # values are compared here before the status is projected.
+        request_audit_status = _bound_audit_status(
+            request_verdict,
+            request,
+            status_field="request_audit_status",
+            audited_session_field="audited_session_id",
+            audited_fingerprint_field="audited_request_fingerprint",
+            session_marker="REQUEST_AUDIT_SESSION_MISMATCH",
+            fingerprint_marker="REQUEST_AUDIT_FINGERPRINT_MISMATCH",
+            findings=findings,
+        )
+        proposal_audit_status = _bound_audit_status(
+            proposal_verdict,
+            proposal,
+            status_field="proposal_audit_status",
+            audited_session_field="audited_session_id",
+            audited_fingerprint_field="audited_proposal_fingerprint",
+            session_marker="PROPOSAL_AUDIT_SESSION_MISMATCH",
+            fingerprint_marker="PROPOSAL_AUDIT_FINGERPRINT_MISMATCH",
+            findings=findings,
+        )
+
         result: dict[str, Any] = {
             "session_id": session_id,
             "admission_status": _value(admission, "admission_status"),
             "request_fingerprint": _packaged_fingerprint(request),
-            "request_audit_status": _value(request_verdict, "request_audit_status"),
-            "proposal_audit_status": _value(proposal_verdict, "proposal_audit_status"),
+            "request_audit_status": request_audit_status,
+            "proposal_audit_status": proposal_audit_status,
             "diagnostics_status": _value(diagnostics, "diagnostics_status")
             or "NO_MATERIAL",
             "provider_name": _validated_metadata(proposal, "provider"),
@@ -298,6 +334,53 @@ def _packaged_fingerprint(request: BaseModel | None) -> str | None:
         return None
     fingerprint = request.context_fingerprint
     return str(fingerprint) if fingerprint is not None else None
+
+
+def _bound_audit_status(
+    verdict: BaseModel | None,
+    material: BaseModel | None,
+    *,
+    status_field: str,
+    audited_session_field: str,
+    audited_fingerprint_field: str,
+    session_marker: str,
+    fingerprint_marker: str,
+    findings: list[str],
+) -> str | None:
+    """Project an audit status only when it names this exact material.
+
+    Validation alone cannot prove that a ``CONSISTENT`` audit belongs to
+    the request or proposal being packaged, so the binding evidence the
+    audit itself publishes is compared exactly. Nothing is re-audited and
+    no fingerprint is recomputed here -- both values are already canonical
+    child output, and the child contracts guarantee a ``CONSISTENT``
+    verdict names a non-empty session and fingerprint.
+
+    An audit that names other material is detached evidence, so its
+    status is not usable for this package and the mismatch is reported as
+    one of Task 162's own structural markers. A non-``CONSISTENT`` verdict
+    certifies nothing in the first place, so its canonical status is
+    carried through untouched. When the counterpart material is absent or
+    invalid there is nothing to bind to; the status is unusable and the
+    already-reported ``*_MISSING`` or ``*_INVALID`` marker explains why,
+    without inventing a new vocabulary.
+    """
+    if verdict is None:
+        return None
+    status = str(getattr(verdict, status_field))
+    if status != "CONSISTENT":
+        return status
+    if material is None:
+        return None
+
+    bound = True
+    if getattr(verdict, audited_session_field) != material.session_id:
+        findings.append(session_marker)
+        bound = False
+    if getattr(verdict, audited_fingerprint_field) != material.context_fingerprint:
+        findings.append(fingerprint_marker)
+        bound = False
+    return status if bound else None
 
 
 def _validated_metadata(proposal: BaseModel | None, field: str) -> str | None:
