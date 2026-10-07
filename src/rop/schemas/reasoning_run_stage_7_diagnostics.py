@@ -18,24 +18,30 @@ from pydantic import BaseModel, ConfigDict, model_validator
 class ReasoningRunStage7DiagnosticsRead(BaseModel):
     """Strict deterministic Stage 7 health classification.
 
-    ``diagnostics_status`` semantics: ``HEALTHY`` -- request valid,
-    proposal valid, audits consistent, no unresolved integrity issue;
-    ``DEGRADED`` -- a validated result exists but required provenance
-    or evidence is unavailable; ``UNHEALTHY`` -- request/proposal
-    consistency contradiction or a provider failure that makes the
-    result unusable; ``NO_MATERIAL`` -- no admitted reasoning result
-    exists. ``available`` is exactly ``diagnostics_status !=
-    "NO_MATERIAL"``. ``result_status`` carries the canonical Task 160
-    aggregate verdict and ``proposal_status`` the canonical Task 158
-    status verbatim, so no health state can conceal the evidence that
-    determined it. ``findings`` are deterministic, sorted, and
-    deduplicated; ``finding_count`` always equals ``len(findings)``.
+    ``diagnostics_status`` semantics: ``HEALTHY`` -- the canonical result
+    is READY, so the request, proposal, and both audits are established
+    and consistent, with no unresolved finding; ``DEGRADED`` -- an
+    admitted result genuinely exists (a packaged request AND a validated
+    proposal) but required provenance/audit evidence is unavailable;
+    ``UNHEALTHY`` -- request/proposal consistency contradiction or a
+    provider failure that makes the result unusable; ``NO_MATERIAL`` --
+    no admitted reasoning result exists, which includes a detached
+    validated proposal with no packaged request. ``available`` is
+    exactly ``diagnostics_status != "NO_MATERIAL"``. ``result_status``,
+    ``request_status``, and ``proposal_status`` carry the canonical
+    Task 160 aggregate verdict, the canonical packaged-request evidence,
+    and the canonical Task 158 status verbatim, so no health state can
+    conceal the evidence that determined it and ``DEGRADED`` can never
+    be claimed for an unadmitted request. ``findings`` are the canonical
+    Task 160 findings, deterministic, sorted, and deduplicated;
+    ``finding_count`` always equals ``len(findings)``.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     session_id: str
     result_status: Literal["READY", "INCONSISTENT", "MODEL_UNAVAILABLE", "UNAVAILABLE"]
+    request_status: Literal["PACKAGED", "UNAVAILABLE"]
     proposal_status: Literal[
         "VALIDATED",
         "UNAVAILABLE",
@@ -68,6 +74,11 @@ class ReasoningRunStage7DiagnosticsRead(BaseModel):
         elif self.diagnostics_status == "DEGRADED":
             if self.result_status != "UNAVAILABLE":
                 raise ValueError("DEGRADED requires an unaudited result")
+            if self.request_status != "PACKAGED":
+                raise ValueError(
+                    "DEGRADED requires an admitted packaged request, so a detached "
+                    "validated proposal cannot be called a degraded result"
+                )
             if self.proposal_status != "VALIDATED":
                 raise ValueError("DEGRADED requires an existing validated proposal")
         elif self.diagnostics_status == "UNHEALTHY":
@@ -78,6 +89,12 @@ class ReasoningRunStage7DiagnosticsRead(BaseModel):
         else:
             if self.result_status != "UNAVAILABLE":
                 raise ValueError("NO_MATERIAL requires the absence of a result")
-            if self.proposal_status == "VALIDATED":
-                raise ValueError("NO_MATERIAL cannot coexist with a validated proposal")
+            if (
+                self.request_status == "PACKAGED"
+                and self.proposal_status == "VALIDATED"
+            ):
+                raise ValueError(
+                    "NO_MATERIAL cannot coexist with an admitted packaged request "
+                    "and a validated proposal"
+                )
         return self

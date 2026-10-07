@@ -2,11 +2,14 @@
 
 Covers the deterministic diagnostic layer over the completed Stage 7
 request/result/audit surfaces. Health states are derived exclusively
-from canonical deterministic evidence -- a model's own claim of
-confidence can never determine health -- and every transition is
-covered independently: READY -> HEALTHY, request/proposal contradiction
-or provider failure -> UNHEALTHY, unauditable-but-existing result ->
-DEGRADED, absent result -> NO_MATERIAL. The service is read-only,
+from canonical Task 160 evidence -- a model's own claim of confidence
+can never determine health -- and every transition is covered
+independently: READY -> HEALTHY, request/proposal contradiction or
+provider failure -> UNHEALTHY, and the DEGRADED/NO_MATERIAL split is
+pinned exactly: degradation requires an admitted packaged request with a
+validated proposal whose unavailable material is specifically the
+required audit evidence, while a detached validated proposal with no
+packaged request stays NO_MATERIAL. The service is read-only,
 provider-free, and projects only approved aggregate evidence.
 """
 
@@ -84,6 +87,7 @@ client = TestClient(app)
 DIAGNOSTICS_KEYS = {
     "session_id",
     "result_status",
+    "request_status",
     "proposal_status",
     "diagnostics_status",
     "available",
@@ -349,6 +353,19 @@ def _diagnose(
     )
 
 
+def _non_packaged(package: dict) -> dict:
+    """A genuinely coherent Task 155 BLOCKED projection, not a forgery."""
+    return {
+        **copy.deepcopy(package),
+        "request_status": "BLOCKED",
+        "available": False,
+        "admission_status": "BLOCKED",
+        "stage_6_certification_status": "BLOCKED",
+        "context_fingerprint": None,
+        "payload": None,
+    }
+
+
 def _table_counts() -> dict[str, int]:
     with TestingSessionLocal() as db:
         return {
@@ -377,6 +394,7 @@ def test_fully_audited_valid_proposal_is_healthy() -> None:
     assert result["available"] is True
     assert result["session_id"] == sid
     assert result["result_status"] == "READY"
+    assert result["request_status"] == "PACKAGED"
     assert result["proposal_status"] == "VALIDATED"
     assert result["finding_count"] == 0
     assert result["findings"] == []
@@ -457,9 +475,45 @@ def test_canonical_audit_unavailable_is_degraded() -> None:
         assert result["diagnostics_status"] == "DEGRADED"
         assert result["available"] is True
         assert result["result_status"] == "UNAVAILABLE"
+        assert result["request_status"] == "PACKAGED"
         assert result["proposal_status"] == "VALIDATED"
         assert result["session_id"] == sid
         assert marker in result["findings"]
+
+
+def test_malformed_audit_evidence_is_degraded() -> None:
+    sid = _seed_full_session("Task 161 malformed audit")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        unreadable_request_audit = _diagnose(
+            package,
+            {**copy.deepcopy(request_audit), "unpaid_attestation": "AUDITED"},
+            proposal_result,
+            proposal_audit,
+        )
+        unreadable_proposal_audit = _diagnose(
+            package,
+            request_audit,
+            proposal_result,
+            {**copy.deepcopy(proposal_audit), "audited_session_id": 12345},
+        )
+
+    # An unreadable audit is unavailable provenance, not absent material:
+    # the admitted result exists and Task 160 says so.
+    for result, marker in (
+        (unreadable_request_audit, "REQUEST_AUDIT_INVALID"),
+        (unreadable_proposal_audit, "PROPOSAL_AUDIT_INVALID"),
+    ):
+        assert result["diagnostics_status"] == "DEGRADED"
+        assert result["available"] is True
+        assert result["result_status"] == "UNAVAILABLE"
+        assert result["request_status"] == "PACKAGED"
+        assert result["proposal_status"] == "VALIDATED"
+        assert any(
+            finding.startswith(marker) for finding in result["findings"]
+        ), result["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +559,46 @@ def test_no_material_is_no_material() -> None:
     assert unavailable_proposal["findings"] == ["PROPOSAL_UNAVAILABLE"]
 
 
+def test_detached_validated_proposal_is_no_material() -> None:
+    """A standalone validated proposal proves nothing about its request."""
+    sid = _seed_full_session("Task 161 detached proposal")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        no_package = _diagnose(None, request_audit, proposal_result, proposal_audit)
+        audits_only = _diagnose(None, None, proposal_result, proposal_audit)
+
+    for result in (no_package, audits_only):
+        assert result["diagnostics_status"] == "NO_MATERIAL"
+        assert result["available"] is False
+        assert result["result_status"] == "UNAVAILABLE"
+        assert result["request_status"] == "UNAVAILABLE"
+        # The validated proposal stays visible verbatim. It simply is not
+        # enough to make the reasoning result a degraded one.
+        assert result["proposal_status"] == "VALIDATED"
+        assert result["session_id"] == ""
+        assert "REQUEST_PACKAGE_MISSING" in result["findings"]
+
+
+def test_non_packaged_request_with_validated_proposal_is_no_material() -> None:
+    sid = _seed_full_session("Task 161 non packaged request")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, proposal_audit, _, _ = (
+            _healthy_material(db, sid)
+        )
+        result = _diagnose(
+            _non_packaged(package), request_audit, proposal_result, proposal_audit
+        )
+
+    assert result["diagnostics_status"] == "NO_MATERIAL"
+    assert result["available"] is False
+    assert result["result_status"] == "UNAVAILABLE"
+    assert result["request_status"] == "UNAVAILABLE"
+    assert result["proposal_status"] == "VALIDATED"
+    assert "REQUEST_NOT_PACKAGED:BLOCKED" in result["findings"]
+
+
 # ---------------------------------------------------------------------------
 # UNHEALTHY: contradiction or provider failure
 # ---------------------------------------------------------------------------
@@ -524,6 +618,31 @@ def test_request_contradiction_is_unhealthy() -> None:
     assert result["result_status"] == "INCONSISTENT"
     assert result["proposal_status"] == "VALIDATED"
     assert "FINGERPRINT_MISMATCH" in result["findings"]
+
+
+def test_proposal_contradiction_is_unhealthy() -> None:
+    sid = _seed_full_session("Task 161 proposal contradiction")
+    with TestingSessionLocal() as db:
+        package, request_audit, proposal_result, _, context, _ = _healthy_material(
+            db, sid
+        )
+        corrupted = copy.deepcopy(proposal_result)
+        # Task 159 binds the envelope to its nested proposal, so a genuine
+        # integrity corruption changes both copies.
+        corrupted["proposal"]["provider"] = ""
+        corrupted["provider"] = ""
+        inconsistent_audit = ReasoningRunStage7ProposalAuditService.audit(
+            proposal_result=corrupted, context=context
+        )
+        assert inconsistent_audit["proposal_audit_status"] == "INCONSISTENT"
+        result = _diagnose(package, request_audit, corrupted, inconsistent_audit)
+
+    assert result["diagnostics_status"] == "UNHEALTHY"
+    assert result["available"] is True
+    assert result["result_status"] == "INCONSISTENT"
+    assert result["request_status"] == "PACKAGED"
+    assert result["proposal_status"] == "VALIDATED"
+    assert "empty_provider" in result["findings"]
 
 
 def test_provider_failure_is_unhealthy() -> None:
@@ -610,8 +729,25 @@ def test_diagnostics_delegate_to_canonical_result(
         "proposal_audit",
     }
     assert calls[0]["request_package"] is package
+    assert calls[0]["request_audit"] is request_audit
+    assert calls[0]["proposal_result"] is proposal_result
     assert calls[0]["proposal_audit"] is proposal_audit
     assert result["diagnostics_status"] == "HEALTHY"
+
+    # Task 161 projects Task 160's evidence, it does not renormalize it.
+    aggregate = original(
+        request_package=package,
+        request_audit=request_audit,
+        proposal_result=proposal_result,
+        proposal_audit=proposal_audit,
+    )
+    assert len(calls) == 1
+    assert result["findings"] == aggregate["findings"]
+    assert result["finding_count"] == aggregate["finding_count"]
+    assert result["session_id"] == aggregate["session_id"]
+    assert result["result_status"] == aggregate["result_status"]
+    assert result["request_status"] == aggregate["request_status"]
+    assert result["proposal_status"] == aggregate["proposal_status"]
 
 
 def test_diagnostics_are_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -654,6 +790,7 @@ def _healthy_payload() -> dict:
     return {
         "session_id": "0b8b1f9a-3f1e-4a1c-9c2f-9a5a1f9a3f1e",
         "result_status": "READY",
+        "request_status": "PACKAGED",
         "proposal_status": "VALIDATED",
         "diagnostics_status": "HEALTHY",
         "available": True,
@@ -752,6 +889,20 @@ def test_diagnostics_schema_is_strict() -> None:
             }
         )
 
+    # Degradation is only meaningful for an admitted result: without a
+    # packaged request a detached validated proposal is no material.
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7DiagnosticsRead.model_validate(
+            {
+                **_healthy_payload(),
+                "request_status": "UNAVAILABLE",
+                "result_status": "UNAVAILABLE",
+                "diagnostics_status": "DEGRADED",
+                "findings": ["REQUEST_PACKAGE_MISSING"],
+                "finding_count": 1,
+            }
+        )
+
     unhealthy = ReasoningRunStage7DiagnosticsRead.model_validate(
         {
             **_healthy_payload(),
@@ -804,6 +955,24 @@ def test_diagnostics_schema_is_strict() -> None:
     )
     assert no_material.diagnostics_status == "NO_MATERIAL"
 
+    # A detached validated proposal is legitimate no-material evidence:
+    # the proposal mapping exists, the admitted request does not.
+    detached = ReasoningRunStage7DiagnosticsRead.model_validate(
+        {
+            **_healthy_payload(),
+            "request_status": "UNAVAILABLE",
+            "result_status": "UNAVAILABLE",
+            "proposal_status": "VALIDATED",
+            "diagnostics_status": "NO_MATERIAL",
+            "available": False,
+            "findings": ["REQUEST_PACKAGE_MISSING"],
+            "finding_count": 1,
+        }
+    )
+    assert detached.diagnostics_status == "NO_MATERIAL"
+
+    # An admitted packaged request with a validated proposal is a result
+    # that exists, so it can never be reported as absent material.
     with pytest.raises(ValidationError):
         ReasoningRunStage7DiagnosticsRead.model_validate(
             {
@@ -812,7 +981,7 @@ def test_diagnostics_schema_is_strict() -> None:
                 "proposal_status": "VALIDATED",
                 "diagnostics_status": "NO_MATERIAL",
                 "available": False,
-                "findings": ["REQUEST_PACKAGE_MISSING"],
+                "findings": ["REQUEST_AUDIT_MISSING"],
                 "finding_count": 1,
             }
         )
