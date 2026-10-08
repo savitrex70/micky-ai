@@ -1113,6 +1113,165 @@ def test_combined_source_forgery_is_not_ready() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Canonical request fingerprint shape and strict attribution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "fingerprint"),
+    [
+        ("too short", "a" * 63),
+        ("too long", "a" * 65),
+        ("non-hex characters", "g" * 64),
+        ("uppercase hexadecimal", "A" * 64),
+        ("mixed case hexadecimal", ("a" * 63) + "F"),
+        ("trailing newline", ("a" * 64) + "\n"),
+        ("surrounding whitespace", " " + ("a" * 64)),
+        ("whitespace only", " " * 64),
+    ],
+)
+def test_malformed_request_fingerprint_is_not_ready(
+    label: str, fingerprint: str
+) -> None:
+    """The fingerprint must already be canonical; it is never repaired."""
+    sid = _seed_full_session("Task 163 malformed request fingerprint")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    tampered = {**healthy, "request_fingerprint": fingerprint}
+    ReasoningRunStage7AuditPackageRead.model_validate(tampered)
+
+    verdict = _certify(tampered)
+
+    assert verdict["slice_status"] == "UNAVAILABLE", label
+    assert verdict["provider_name"] is None, label
+    assert verdict["model_name"] is None, label
+    assert verdict["findings"] == [], label
+
+
+def test_request_fingerprint_is_checked_not_recomputed() -> None:
+    """A different canonical-shaped digest still passes: shape only."""
+    sid = _seed_full_session("Task 163 fingerprint shape only")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    other = "0123456789abcdef" * 4
+    assert other != healthy["request_fingerprint"]
+
+    verdict = _certify({**healthy, "request_fingerprint": other})
+
+    assert verdict["slice_status"] == "READY"
+
+
+@pytest.mark.parametrize("field", ["provider_name", "model_name"])
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_each_attribution_field_must_be_a_usable_string(field: str, blank: str) -> None:
+    sid = _seed_full_session("Task 163 usable attribution")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    tampered = {**healthy, field: blank}
+    ReasoningRunStage7AuditPackageRead.model_validate(tampered)
+
+    verdict = _certify(tampered)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+
+
+def test_blocked_condition_keeps_precedence_over_fingerprint_gate() -> None:
+    """Explicit BLOCKED conditions still win and keep their attribution."""
+    sid = _seed_full_session("Task 163 blocked precedence")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    blocked = {
+        **healthy,
+        "request_audit_status": "INCONSISTENT",
+        "request_fingerprint": None,
+    }
+    ReasoningRunStage7AuditPackageRead.model_validate(blocked)
+
+    verdict = _certify(blocked)
+
+    assert verdict["slice_status"] == "BLOCKED"
+    assert verdict["provider_name"] == "fake-provider"
+    assert verdict["model_name"] == "fake-model"
+
+
+def test_genuine_healthy_package_preserves_canonical_evidence() -> None:
+    sid = _seed_full_session("Task 163 genuine evidence preserved")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    assert healthy["audit_source"] == (
+        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
+    )
+    assert isinstance(healthy["request_fingerprint"], str)
+    assert len(healthy["request_fingerprint"]) == 64
+    assert healthy["request_fingerprint"] == healthy["request_fingerprint"].lower()
+    int(healthy["request_fingerprint"], 16)
+    assert healthy["finding_count"] == 0
+
+    verdict = _certify(healthy)
+
+    assert verdict["slice_status"] == "READY"
+    assert verdict["session_id"] == sid
+    assert verdict["provider_name"] == healthy["provider_name"]
+    assert verdict["model_name"] == healthy["model_name"]
+    assert verdict["finding_count"] == 0
+    assert verdict["findings"] == []
+    assert verdict["certification_source"] == (
+        REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163
+    )
+
+
+def test_combined_certification_field_tampering_is_not_ready() -> None:
+    """No single new check carries the gate: several fields forged together."""
+    sid = _seed_full_session("Task 163 combined tampering")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    tampered = {
+        **healthy,
+        "request_fingerprint": None,
+        "audit_source": "FORGED_SOURCE",
+        "provider_name": "",
+        "model_name": "",
+    }
+    ReasoningRunStage7AuditPackageRead.model_validate(tampered)
+
+    verdict = _certify(tampered)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+    assert "FORGED_SOURCE" not in json.dumps(verdict)
+
+    # Each field alone is enough to refuse certification as well.
+    for field, value in (
+        ("request_fingerprint", None),
+        ("audit_source", "FORGED_SOURCE"),
+        ("provider_name", ""),
+        ("model_name", ""),
+    ):
+        single = _certify({**healthy, field: value})
+        assert single["slice_status"] == "UNAVAILABLE", field
+
+
+def test_strict_task_162_contract_is_untouched() -> None:
+    assert ReasoningRunStage7AuditPackageRead.model_config["extra"] == "forbid"
+    sid = _seed_full_session("Task 163 strict contract untouched")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7AuditPackageRead.model_validate(
+            {**healthy, "unexpected_field": "x"}
+        )
+
+
+# ---------------------------------------------------------------------------
 # Session isolation and determinism
 # ---------------------------------------------------------------------------
 

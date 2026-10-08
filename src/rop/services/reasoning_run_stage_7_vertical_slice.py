@@ -20,10 +20,10 @@ itself with the canonical Task 162 source is not Task 162 material at
 all and is rejected the same way. Schema validity is still not
 completeness: Task 162 legitimately projects ``None`` for unavailable
 evidence, so ``READY`` additionally requires the published request
-fingerprint, session identity, and provider metadata to actually be
-present. Nothing is re-derived to make a package usable -- no child
-service is invoked, no audit is re-run, and no fingerprint is
-recomputed.
+fingerprint -- present and of the canonical 64-lowercase-hex shape --
+plus session identity and provider metadata to actually be present.
+Nothing is re-derived to make a package usable -- no child service is
+invoked, no audit is re-run, and no fingerprint is recomputed.
 
 Read-only and pure: no database session, no persistence, no provider
 invocation, no network, no replay, and no mutation of the inspected
@@ -33,6 +33,7 @@ never appear in the returned verdict.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -51,6 +52,12 @@ from rop.services.reasoning_run_stage_7_audit_package import (
 REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163 = (
     "REASONING_RUN_STAGE_7_VERTICAL_SLICE_TASK_163"
 )
+
+# Canonical Task 155 request fingerprint shape: SHA-256 hex digest, exactly
+# 64 lowercase hexadecimal characters. Matched with ``fullmatch`` so no
+# trailing newline slips through. The value is only shape-checked here; it
+# is never recomputed, normalized, or repaired.
+_REQUEST_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class ReasoningRunStage7VerticalSliceContractError(Exception):
@@ -72,7 +79,14 @@ def _invalid_detail(exc: ValidationError) -> str:
 
 def _present(value: str | None) -> bool:
     """Report whether a published evidence field actually carries content."""
-    return value is not None and value.strip() != ""
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _canonical_fingerprint(value: str | None) -> bool:
+    """Report whether a request fingerprint has the canonical Task 155 shape."""
+    return (
+        isinstance(value, str) and _REQUEST_FINGERPRINT_RE.fullmatch(value) is not None
+    )
 
 
 def _read_package(
@@ -179,10 +193,13 @@ class ReasoningRunStage7VerticalSliceService:
             and package.request_audit_status == "CONSISTENT"
             and package.proposal_audit_status == "CONSISTENT"
             and _present(package.session_id)
-            and _present(package.request_fingerprint)
+            and _canonical_fingerprint(package.request_fingerprint)
             and _present(package.provider_name)
             and _present(package.model_name)
-            and not package.findings
+            and package.findings == []
+            and package.finding_count == 0
+            and package.audit_source
+            == REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
         ):
             return "READY"
         return "UNAVAILABLE"
