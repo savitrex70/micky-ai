@@ -1071,3 +1071,357 @@ def test_session_isolation() -> None:
     cross = _assemble(pkg_a, verdict_b, audit_a)
     assert cross["bundle_status"] == "UNAVAILABLE"
     assert "STAGE_7_SESSION_MISMATCH" in cross["bundle_findings"]
+
+
+# ---------------------------------------------------------------------------
+# Category 10 — Direct schema hardening (bypasses assemble() completely)
+# ---------------------------------------------------------------------------
+
+_T162_SOURCE_FIELD = "t162_audit_source"
+_SCHEMA_VALIDATE = ReasoningRunStage7EvidenceBundleRead.model_validate
+
+
+def _genuine_ready_bundle(label: str = "Task 165 schema ready") -> dict:
+    _, pkg, verdict, audit = _produce_ready_inputs(label)
+    bundle = _assemble(pkg, verdict, audit)
+    assert bundle["bundle_status"] == "READY"
+    return bundle
+
+
+def _genuine_blocked_bundle() -> dict:
+    _, pkg, verdict, audit = _produce_blocked_inputs("Task 165 schema blocked")
+    bundle = _assemble(pkg, verdict, audit)
+    assert bundle["bundle_status"] == "BLOCKED"
+    return bundle
+
+
+def _genuine_unavailable_bundle() -> dict:
+    _, pkg, verdict, _ = _produce_ready_inputs("Task 165 schema unavailable")
+    bundle = _assemble(pkg, verdict, _audit164())
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    return bundle
+
+
+def test_schema_accepts_genuine_ready_blocked_and_unavailable_bundles() -> None:
+    for bundle in (
+        _genuine_ready_bundle(),
+        _genuine_blocked_bundle(),
+        _genuine_unavailable_bundle(),
+    ):
+        validated = _SCHEMA_VALIDATE(bundle)
+        assert validated.model_dump() == bundle
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["t162_audit_source", "certification_source", "audit_source", "bundle_source"],
+)
+@pytest.mark.parametrize("forged", ["FORGED", "", " ", "FORGED\n"])
+def test_schema_rejects_forged_source_in_ready_bundle(field: str, forged: str) -> None:
+    bundle = _genuine_ready_bundle()
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**bundle, field: forged})
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["t162_audit_source", "certification_source", "audit_source"],
+)
+def test_schema_rejects_unexplained_forged_source_in_non_ready_bundle(
+    field: str,
+) -> None:
+    unavailable = _genuine_unavailable_bundle()
+    blocked = _genuine_blocked_bundle()
+    for bundle in (unavailable, blocked):
+        with pytest.raises(ValidationError):
+            _SCHEMA_VALIDATE({**bundle, field: "FORGED"})
+
+
+def test_schema_always_requires_the_canonical_bundle_source() -> None:
+    for bundle in (_genuine_unavailable_bundle(), _genuine_blocked_bundle()):
+        with pytest.raises(ValidationError):
+            _SCHEMA_VALIDATE({**bundle, "bundle_source": "FORGED"})
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [
+        None,
+        "",
+        "a" * 63,
+        "a" * 65,
+        "g" * 64,
+        "A" * 64,
+        ("a" * 32) + ("A" * 32),
+        ("a" * 64) + "\n",
+        " " + ("a" * 63),
+        ("a" * 64) + " ",
+        " " + ("a" * 64) + " ",
+    ],
+)
+def test_schema_rejects_forged_fingerprint_in_ready_bundle(
+    fingerprint: str | None,
+) -> None:
+    bundle = _genuine_ready_bundle()
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**bundle, "request_fingerprint": fingerprint})
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    ["", "a" * 63, "A" * 64, ("a" * 64) + "\n", " " + ("a" * 64)],
+)
+def test_schema_rejects_malformed_fingerprint_in_any_status(
+    fingerprint: str,
+) -> None:
+    for bundle in (_genuine_unavailable_bundle(), _genuine_blocked_bundle()):
+        with pytest.raises(ValidationError):
+            _SCHEMA_VALIDATE({**bundle, "request_fingerprint": fingerprint})
+
+
+def test_schema_allows_absent_fingerprint_for_non_ready_bundle() -> None:
+    bundle = {
+        **_genuine_unavailable_bundle(),
+        "request_fingerprint": None,
+        "bundle_findings": ["REQUEST_FINGERPRINT_MISSING_OR_MALFORMED"],
+        "bundle_finding_count": 1,
+    }
+    assert _SCHEMA_VALIDATE(bundle).request_fingerprint is None
+
+
+_READY_TAMPERS: dict[str, dict[str, Any]] = {
+    "slice_status": {"slice_status": "UNAVAILABLE"},
+    "slice_status_blocked": {"slice_status": "BLOCKED"},
+    "admission_status": {"admission_status": "UNAVAILABLE"},
+    "admission_status_none": {"admission_status": None},
+    "diagnostics_status": {"diagnostics_status": "DEGRADED"},
+    "diagnostics_status_none": {"diagnostics_status": None},
+    "request_audit_status": {"request_audit_status": "UNAVAILABLE"},
+    "request_audit_status_none": {"request_audit_status": None},
+    "proposal_audit_status": {"proposal_audit_status": "UNAVAILABLE"},
+    "proposal_audit_status_none": {"proposal_audit_status": None},
+    "provider_name_none": {"provider_name": None},
+    "provider_name_blank": {"provider_name": "   "},
+    "provider_name_empty": {"provider_name": ""},
+    "model_name_none": {"model_name": None},
+    "model_name_blank": {"model_name": "   "},
+    "model_name_empty": {"model_name": ""},
+    "both_names_none": {"provider_name": None, "model_name": None},
+    "finding_count": {"finding_count": 1},
+    "findings": {"findings": ["X_FINDING"]},
+    "findings_with_count": {"findings": ["X_FINDING"], "finding_count": 1},
+    "slice_audit_status_inconsistent": {
+        "slice_audit_status": "INCONSISTENT",
+        "audit_consistent": False,
+    },
+    "slice_audit_status_unavailable": {
+        "slice_audit_status": "UNAVAILABLE",
+        "audit_available": False,
+        "audit_consistent": False,
+    },
+    "audit_available": {"audit_available": False},
+    "audit_consistent": {"audit_consistent": False},
+    "published_slice_status": {"published_slice_status": "BLOCKED"},
+    "published_slice_status_none": {"published_slice_status": None},
+    "expected_slice_status": {"expected_slice_status": "BLOCKED"},
+    "expected_slice_status_none": {"expected_slice_status": None},
+    "audit_finding_count": {"audit_finding_count": 1},
+    "audit_findings": {"audit_findings": ["X_AUDIT_FINDING"]},
+    "audit_findings_with_count": {
+        "audit_findings": ["X_AUDIT_FINDING"],
+        "audit_finding_count": 1,
+    },
+    "request_fingerprint_none": {"request_fingerprint": None},
+    "session_id_empty": {"session_id": ""},
+    "session_id_blank": {"session_id": "   "},
+    "bundle_findings": {
+        "bundle_findings": ["STAGE_7_SESSION_MISMATCH"],
+        "bundle_finding_count": 1,
+    },
+    "bundle_finding_count": {"bundle_finding_count": 1},
+}
+
+
+@pytest.mark.parametrize("tamper", sorted(_READY_TAMPERS))
+def test_schema_rejects_ready_bundle_with_broken_ready_invariant(tamper: str) -> None:
+    bundle = _genuine_ready_bundle()
+    forged = {**bundle, **_READY_TAMPERS[tamper]}
+    assert forged != bundle
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+def test_schema_rejects_blocked_bundle_without_a_blocking_condition() -> None:
+    forged = {**_genuine_ready_bundle(), "bundle_status": "BLOCKED"}
+    # No blocked admission, healthy diagnostics, consistent audits, READY
+    # Task 163, CONSISTENT Task 164, no findings.
+    assert forged["admission_status"] == "ADMITTED"
+    assert forged["diagnostics_status"] == "HEALTHY"
+    assert forged["request_audit_status"] == "CONSISTENT"
+    assert forged["proposal_audit_status"] == "CONSISTENT"
+    assert forged["slice_status"] == "READY"
+    assert forged["slice_audit_status"] == "CONSISTENT"
+    assert forged["findings"] == [] and forged["audit_findings"] == []
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"slice_status": "UNAVAILABLE"},
+        {"admission_status": "UNAVAILABLE"},
+        {"diagnostics_status": "DEGRADED"},
+        {"diagnostics_status": "NO_MATERIAL"},
+        {"request_audit_status": "UNAVAILABLE"},
+        {"proposal_audit_status": None},
+        {"slice_audit_status": "INCONSISTENT", "audit_consistent": False},
+    ],
+)
+def test_schema_rejects_blocked_bundle_with_only_non_blocking_degradation(
+    changes: dict[str, Any],
+) -> None:
+    forged = {**_genuine_ready_bundle(), **changes, "bundle_status": "BLOCKED"}
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"slice_status": "BLOCKED"},
+        {"admission_status": "BLOCKED"},
+        {"diagnostics_status": "UNHEALTHY"},
+        {"request_audit_status": "INCONSISTENT"},
+        {"proposal_audit_status": "INCONSISTENT"},
+    ],
+)
+def test_schema_accepts_blocked_bundle_with_a_published_blocking_condition(
+    changes: dict[str, Any],
+) -> None:
+    bundle = {**_genuine_ready_bundle(), **changes, "bundle_status": "BLOCKED"}
+    assert _SCHEMA_VALIDATE(bundle).bundle_status == "BLOCKED"
+
+
+def test_schema_rejects_unavailable_bundle_that_withholds_ready_evidence() -> None:
+    forged = {**_genuine_ready_bundle(), "bundle_status": "UNAVAILABLE"}
+    assert forged["bundle_findings"] == [] and forged["bundle_finding_count"] == 0
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+def test_schema_accepts_unavailable_bundle_explained_by_a_bundle_finding() -> None:
+    bundle = {
+        **_genuine_ready_bundle(),
+        "bundle_status": "UNAVAILABLE",
+        "bundle_findings": ["PROVIDER_ATTRIBUTION_MISSING"],
+        "bundle_finding_count": 1,
+    }
+    assert _SCHEMA_VALIDATE(bundle).bundle_status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"slice_status": "UNAVAILABLE"},
+        {"admission_status": None},
+        {"request_fingerprint": None},
+        {"provider_name": None, "model_name": None},
+        {"session_id": ""},
+        {
+            "slice_audit_status": "UNAVAILABLE",
+            "audit_available": False,
+            "audit_consistent": False,
+        },
+    ],
+)
+def test_schema_accepts_unavailable_bundle_when_evidence_is_incomplete(
+    changes: dict[str, Any],
+) -> None:
+    bundle = {**_genuine_ready_bundle(), **changes, "bundle_status": "UNAVAILABLE"}
+    assert _SCHEMA_VALIDATE(bundle).bundle_status == "UNAVAILABLE"
+
+
+def test_schema_still_rejects_extra_fields_and_blank_attribution_xor() -> None:
+    bundle = _genuine_ready_bundle()
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**bundle, "unexpected_field": "x"})
+    unavailable = _genuine_unavailable_bundle()
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**unavailable, "provider_name": "p", "model_name": None})
+
+
+def test_schema_imports_only_source_constants_from_services() -> None:
+    tree = ast.parse(_SCHEMA_FILE.read_text())
+    allowed = {
+        "REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162",
+        "REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163",
+        "REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164",
+    }
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.startswith("rop.services"):
+                imported.update(alias.name for alias in node.names)
+            assert not node.module.startswith("rop.models")
+            assert not node.module.startswith("rop.repositories")
+    assert imported == allowed
+    source = _SCHEMA_FILE.read_text()
+    for forbidden in ("hashlib", "sha256", "hexdigest", "Session"):
+        assert forbidden not in source
+
+
+# ---------------------------------------------------------------------------
+# Category 11 — Service output stays schema-coherent under tampered inputs
+# ---------------------------------------------------------------------------
+
+
+def test_service_withholds_malformed_fingerprint_instead_of_publishing_it() -> None:
+    _, pkg, verdict, audit = _produce_ready_inputs("Task 165 withheld fingerprint")
+    for bad in ("", "a" * 63, "A" * 64, ("a" * 64) + "\n"):
+        result = _assemble(_with(pkg, request_fingerprint=bad), verdict, audit)
+        assert result["request_fingerprint"] is None
+        assert result["bundle_status"] == "UNAVAILABLE"
+        assert "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED" in result["bundle_findings"]
+
+
+def test_service_publishes_the_blocking_state_that_makes_a_bundle_blocked() -> None:
+    _, pkg, verdict, audit = _produce_ready_inputs("Task 165 published blocking")
+
+    admission = _assemble(_with(pkg, admission_status="BLOCKED"), verdict, audit)
+    assert admission["bundle_status"] == "BLOCKED"
+    assert admission["admission_status"] == "BLOCKED"
+
+    diagnostics = _assemble(_with(pkg, diagnostics_status="UNHEALTHY"), verdict, audit)
+    assert diagnostics["bundle_status"] == "BLOCKED"
+    assert diagnostics["diagnostics_status"] == "UNHEALTHY"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"admission_status": "UNAVAILABLE"},
+        {"admission_status": None},
+        {"diagnostics_status": "DEGRADED"},
+        {"diagnostics_status": "NO_MATERIAL"},
+    ],
+)
+def test_service_never_shows_ready_evidence_it_withholds(
+    changes: dict[str, Any],
+) -> None:
+    _, pkg, verdict, audit = _produce_ready_inputs("Task 165 no withheld ready")
+
+    result = _assemble(_with(pkg, **changes), verdict, audit)
+
+    assert result["bundle_status"] == "UNAVAILABLE"
+    # Coherent by construction: the same payload passes the strict contract.
+    assert _SCHEMA_VALIDATE(result).bundle_status == "UNAVAILABLE"
+
+
+def test_service_blank_task_163_attribution_is_not_ready() -> None:
+    _, pkg, verdict, audit = _produce_ready_inputs("Task 165 blank t163 attribution")
+
+    result = _assemble(pkg, _with(verdict, provider_name=" ", model_name=" "), audit)
+
+    assert result["bundle_status"] == "UNAVAILABLE"
+    assert _SCHEMA_VALIDATE(result).bundle_status == "UNAVAILABLE"

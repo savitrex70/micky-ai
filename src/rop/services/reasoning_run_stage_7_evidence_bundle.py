@@ -35,7 +35,9 @@ from rop.schemas.reasoning_run_stage_7_audit_package import (
     ReasoningRunStage7AuditPackageRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
     ReasoningRunStage7EvidenceBundleRead,
+    stage_7_bundle_ready_conditions_hold,
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
@@ -53,9 +55,11 @@ from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
     REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
 )
 
-REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165 = (
-    "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165"
-)
+__all__ = [
+    "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165",
+    "ReasoningRunStage7EvidenceBundleContractError",
+    "ReasoningRunStage7EvidenceBundleService",
+]
 
 # Canonical Task 155 request fingerprint shape: SHA-256 hex digest, exactly
 # 64 lowercase hexadecimal characters. Checked with fullmatch so no trailing
@@ -80,6 +84,30 @@ def _canonical_fingerprint(value: str | None) -> bool:
     return (
         isinstance(value, str) and _REQUEST_FINGERPRINT_RE.fullmatch(value) is not None
     )
+
+
+def _published_status(
+    slice_value: str | None,
+    package_value: str | None,
+    *,
+    favorable: str,
+    blocking: str,
+) -> str | None:
+    """Pick the status the bundle publishes for a field both children carry.
+
+    The bundle shows the Task 163 value verbatim. Only when the Task 162
+    package disagrees in the unfavorable direction does the package value
+    surface instead: a blocking package value always, and any non-favorable
+    package value over a favorable Task 163 value. The bundle therefore
+    never presents READY-level evidence the package contradicts, and never
+    claims a blocking state its published fields do not show. Nothing is
+    recomputed; both inputs are already-validated published values.
+    """
+    if package_value == blocking:
+        return package_value
+    if slice_value == favorable and package_value != favorable:
+        return package_value
+    return slice_value
 
 
 class ReasoningRunStage7EvidenceBundleService:
@@ -136,19 +164,79 @@ class ReasoningRunStage7EvidenceBundleService:
         if not pkg162.provider_name or not pkg162.model_name:
             bundle_findings.append("PROVIDER_ATTRIBUTION_MISSING")
 
-        # Step E — Determine bundle_status
-        # BLOCKED conditions: explicit blocking evidence from validated inputs
+        # Step E — Published evidence (what the bundle will actually show)
+        admission_status = _published_status(
+            slice163.admission_status,
+            pkg162.admission_status,
+            favorable="ADMITTED",
+            blocking="BLOCKED",
+        )
+        diagnostics_status = _published_status(
+            slice163.diagnostics_status,
+            pkg162.diagnostics_status,
+            favorable="HEALTHY",
+            blocking="UNHEALTHY",
+        )
+        # A malformed request fingerprint is withheld, never published,
+        # repaired, or recomputed; REQUEST_FINGERPRINT_MISSING_OR_MALFORMED
+        # records why.
+        request_fingerprint = (
+            pkg162.request_fingerprint
+            if _canonical_fingerprint(pkg162.request_fingerprint)
+            else None
+        )
+
+        # Step F — Determine bundle_status
+        # BLOCKED conditions: explicit blocking evidence the bundle publishes
         blocked = (
             slice163.slice_status == "BLOCKED"
-            or pkg162.admission_status == "BLOCKED"
-            or pkg162.diagnostics_status == "UNHEALTHY"
+            or admission_status == "BLOCKED"
+            or diagnostics_status == "UNHEALTHY"
             or pkg162.request_audit_status == "INCONSISTENT"
             or pkg162.proposal_audit_status == "INCONSISTENT"
         )
 
-        # READY conditions: ALL must hold; any failure → UNAVAILABLE
+        # Step G — Populate result dict (bundle_status filled in below)
+        bundle_findings = sorted(set(bundle_findings))
+        result: dict[str, Any] = {
+            # Identity
+            "session_id": session_id,
+            # Task 163 surface (verbatim from validated slice163)
+            "slice_status": slice163.slice_status,
+            "admission_status": admission_status,
+            "diagnostics_status": diagnostics_status,
+            "provider_name": slice163.provider_name,
+            "model_name": slice163.model_name,
+            "finding_count": slice163.finding_count,
+            "findings": list(slice163.findings),
+            "certification_source": slice163.certification_source,
+            # Task 164 surface (verbatim from validated audit164)
+            "slice_audit_status": audit164.slice_audit_status,
+            "audit_available": audit164.available,
+            "audit_consistent": audit164.consistent,
+            "published_slice_status": audit164.published_slice_status,
+            "expected_slice_status": audit164.expected_slice_status,
+            "audit_finding_count": audit164.finding_count,
+            "audit_findings": list(audit164.findings),
+            "audit_source": audit164.audit_source,
+            # Task 162 attribution surface (verbatim from validated pkg162)
+            "request_fingerprint": request_fingerprint,
+            "request_audit_status": pkg162.request_audit_status,
+            "proposal_audit_status": pkg162.proposal_audit_status,
+            "t162_audit_source": pkg162.audit_source,
+            # Aggregate
+            "bundle_status": "UNAVAILABLE",
+            "bundle_finding_count": len(bundle_findings),
+            "bundle_findings": bundle_findings,
+            "bundle_source": REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
+        }
+
+        # READY conditions: ALL must hold; any failure → UNAVAILABLE. The
+        # shared schema predicate guarantees the verdict never claims more
+        # (or less) than the published evidence supports.
         ready = (
             not bundle_findings
+            and stage_7_bundle_ready_conditions_hold(result)
             and slice163.slice_status == "READY"
             and audit164.slice_audit_status == "CONSISTENT"
             and audit164.available is True
@@ -177,48 +265,9 @@ class ReasoningRunStage7EvidenceBundleService:
 
         # Priority: BLOCKED first, then READY, then UNAVAILABLE
         if blocked:
-            bundle_status = "BLOCKED"
+            result["bundle_status"] = "BLOCKED"
         elif ready:
-            bundle_status = "READY"
-        else:
-            bundle_status = "UNAVAILABLE"
-
-        # Step F — Finalize bundle_findings (sorted, deduplicated)
-        bundle_findings = sorted(set(bundle_findings))
-
-        # Step G — Populate result dict
-        result: dict[str, Any] = {
-            # Identity
-            "session_id": session_id,
-            # Task 163 surface (verbatim from validated slice163)
-            "slice_status": slice163.slice_status,
-            "admission_status": slice163.admission_status,
-            "diagnostics_status": slice163.diagnostics_status,
-            "provider_name": slice163.provider_name,
-            "model_name": slice163.model_name,
-            "finding_count": slice163.finding_count,
-            "findings": list(slice163.findings),
-            "certification_source": slice163.certification_source,
-            # Task 164 surface (verbatim from validated audit164)
-            "slice_audit_status": audit164.slice_audit_status,
-            "audit_available": audit164.available,
-            "audit_consistent": audit164.consistent,
-            "published_slice_status": audit164.published_slice_status,
-            "expected_slice_status": audit164.expected_slice_status,
-            "audit_finding_count": audit164.finding_count,
-            "audit_findings": list(audit164.findings),
-            "audit_source": audit164.audit_source,
-            # Task 162 attribution surface (verbatim from validated pkg162)
-            "request_fingerprint": pkg162.request_fingerprint,
-            "request_audit_status": pkg162.request_audit_status,
-            "proposal_audit_status": pkg162.proposal_audit_status,
-            "t162_audit_source": pkg162.audit_source,
-            # Aggregate
-            "bundle_status": bundle_status,
-            "bundle_finding_count": len(bundle_findings),
-            "bundle_findings": bundle_findings,
-            "bundle_source": REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
-        }
+            result["bundle_status"] = "READY"
 
         # Step H — _project: validate through schema, raise on contract error
         return ReasoningRunStage7EvidenceBundleService._project(result)

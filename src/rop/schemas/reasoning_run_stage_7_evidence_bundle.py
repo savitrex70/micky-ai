@@ -17,9 +17,102 @@ never appear.
 
 from __future__ import annotations
 
-from typing import Literal
+import re
+from collections.abc import Mapping
+from functools import cache
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+# The Task 165 source constant lives here, next to the contract that enforces
+# it, so the schema never has to import the service that imports the schema.
+# The service re-exports the same name.
+REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165 = (
+    "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165"
+)
+
+# Canonical request fingerprint shape: exactly 64 lowercase hexadecimal
+# characters, matched with fullmatch so no trailing newline slips through.
+# Shape only -- the value is never recomputed, normalised, or repaired.
+_REQUEST_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+
+# Bundle-level finding codes that explain a published non-canonical source.
+_SOURCE_FINDING_CODES = {
+    "t162_audit_source": "T162_AUDIT_SOURCE_NOT_CANONICAL",
+    "certification_source": "T163_CERTIFICATION_SOURCE_NOT_CANONICAL",
+    "audit_source": "T164_AUDIT_SOURCE_NOT_CANONICAL",
+}
+
+
+@cache
+def _canonical_sources() -> dict[str, str]:
+    """Return the canonical Task 162/163/164 source constants by bundle field.
+
+    The constants are imported on first use rather than at module import
+    time: the schemas package is loaded before the services package, and
+    the services import the schemas, so a top-level import here would be
+    circular. Only the three source constants are ever read; no service
+    is called.
+    """
+    from rop.services.reasoning_run_stage_7_audit_package import (
+        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+    )
+    from rop.services.reasoning_run_stage_7_vertical_slice import (
+        REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
+    )
+    from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
+        REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+    )
+
+    return {
+        "t162_audit_source": REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+        "certification_source": (REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163),
+        "audit_source": REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+    }
+
+
+def _present(value: object) -> bool:
+    return isinstance(value, str) and value.strip() != ""
+
+
+def stage_7_bundle_ready_conditions_hold(values: Mapping[str, Any]) -> bool:
+    """Report whether the published bundle evidence meets every READY condition.
+
+    Pure and schema-local: it reads only the bundle's own published fields.
+    The bundle schema uses it to reject a forged READY and to reject an
+    UNAVAILABLE that withholds a decision the evidence fully supports; the
+    service uses the same function so the two can never disagree.
+    """
+    fingerprint = values["request_fingerprint"]
+    sources = _canonical_sources()
+    return (
+        _present(values["session_id"])
+        and values["slice_status"] == "READY"
+        and values["admission_status"] == "ADMITTED"
+        and values["diagnostics_status"] == "HEALTHY"
+        and values["request_audit_status"] == "CONSISTENT"
+        and values["proposal_audit_status"] == "CONSISTENT"
+        and isinstance(fingerprint, str)
+        and _REQUEST_FINGERPRINT_RE.fullmatch(fingerprint) is not None
+        and _present(values["provider_name"])
+        and _present(values["model_name"])
+        and values["finding_count"] == 0
+        and values["findings"] == []
+        and values["slice_audit_status"] == "CONSISTENT"
+        and values["audit_available"] is True
+        and values["audit_consistent"] is True
+        and values["published_slice_status"] == "READY"
+        and values["expected_slice_status"] == "READY"
+        and values["audit_finding_count"] == 0
+        and values["audit_findings"] == []
+        and values["t162_audit_source"] == sources["t162_audit_source"]
+        and values["certification_source"] == sources["certification_source"]
+        and values["audit_source"] == sources["audit_source"]
+        and values["bundle_source"]
+        == REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165
+        and values["bundle_finding_count"] == 0
+        and values["bundle_findings"] == []
+    )
 
 
 class ReasoningRunStage7EvidenceBundleRead(BaseModel):
@@ -73,6 +166,15 @@ class ReasoningRunStage7EvidenceBundleRead(BaseModel):
     bundle_findings: list[str]
     bundle_source: str  # Task 165 source constant
 
+    @field_validator("request_fingerprint")
+    @classmethod
+    def _canonical_request_fingerprint(cls, value: str | None) -> str | None:
+        if value is not None and _REQUEST_FINGERPRINT_RE.fullmatch(value) is None:
+            raise ValueError(
+                "request_fingerprint must be 64 lowercase hexadecimal characters"
+            )
+        return value
+
     @model_validator(mode="after")
     def _coherent_bundle(self) -> ReasoningRunStage7EvidenceBundleRead:
         # Task 163 surface: finding_count == len(findings), sorted, deduplicated
@@ -109,10 +211,36 @@ class ReasoningRunStage7EvidenceBundleRead(BaseModel):
         # provider_name and model_name must be set together
         if (self.provider_name is None) != (self.model_name is None):
             raise ValueError("provider_name and model_name must be set together")
-        # READY bundle structural coherence
+        # Task 165 bundle source is always the canonical constant
+        if self.bundle_source != REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165:
+            raise ValueError("bundle_source must be the canonical Task 165 source")
+        # Child sources are canonical, or the bundle itself names the problem
+        canonical_sources = _canonical_sources()
+        for field_name, finding_code in _SOURCE_FINDING_CODES.items():
+            if (
+                getattr(self, field_name) != canonical_sources[field_name]
+                and finding_code not in self.bundle_findings
+            ):
+                raise ValueError(
+                    f"{field_name} is not canonical and is not explained by "
+                    f"{finding_code}"
+                )
+        values = {name: getattr(self, name) for name in type(self).model_fields}
+        ready_evidence = stage_7_bundle_ready_conditions_hold(values)
         if self.bundle_status == "READY":
-            if self.session_id == "":
-                raise ValueError("READY bundle requires a session identity")
-            if self.bundle_findings:
-                raise ValueError("READY bundle requires no bundle findings")
+            if not ready_evidence:
+                raise ValueError("READY bundle requires complete READY evidence")
+        elif self.bundle_status == "BLOCKED":
+            if not (
+                self.slice_status == "BLOCKED"
+                or self.admission_status == "BLOCKED"
+                or self.diagnostics_status == "UNHEALTHY"
+                or self.request_audit_status == "INCONSISTENT"
+                or self.proposal_audit_status == "INCONSISTENT"
+            ):
+                raise ValueError("BLOCKED bundle requires a published blocking state")
+        elif ready_evidence:
+            raise ValueError(
+                "UNAVAILABLE bundle must not withhold fully supported READY evidence"
+            )
         return self
