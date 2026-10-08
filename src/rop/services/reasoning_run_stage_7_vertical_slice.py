@@ -15,9 +15,15 @@ package is genuine material. The complete mapping is validated against
 in certification, so a hand-written mapping of legal-looking status
 strings cannot manufacture ``READY``: unreadable material is rejected as
 ``AUDIT_PACKAGE_INVALID`` with one deterministic detail and absent
-material as ``AUDIT_PACKAGE_MISSING``. Nothing is re-derived to make a
-package usable -- no child service is invoked, no audit is re-run, and
-no fingerprint is recomputed.
+material as ``AUDIT_PACKAGE_MISSING``. A package that does not identify
+itself with the canonical Task 162 source is not Task 162 material at
+all and is rejected the same way. Schema validity is still not
+completeness: Task 162 legitimately projects ``None`` for unavailable
+evidence, so ``READY`` additionally requires the published request
+fingerprint, session identity, and provider metadata to actually be
+present. Nothing is re-derived to make a package usable -- no child
+service is invoked, no audit is re-run, and no fingerprint is
+recomputed.
 
 Read-only and pure: no database session, no persistence, no provider
 invocation, no network, no replay, and no mutation of the inspected
@@ -37,6 +43,9 @@ from rop.schemas.reasoning_run_stage_7_audit_package import (
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
+)
+from rop.services.reasoning_run_stage_7_audit_package import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
 )
 
 REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163 = (
@@ -61,6 +70,11 @@ def _invalid_detail(exc: ValidationError) -> str:
     return details[0]
 
 
+def _present(value: str | None) -> bool:
+    """Report whether a published evidence field actually carries content."""
+    return value is not None and value.strip() != ""
+
+
 def _read_package(
     audit_package: Mapping[str, Any] | None,
 ) -> tuple[ReasoningRunStage7AuditPackageRead | None, list[str]]:
@@ -68,21 +82,24 @@ def _read_package(
 
     Malformed material is rejected, never repaired. The contract forbids
     extra fields and carries its own coherence rules, so a mapping that
-    merely looks healthy contributes no evidence at all.
+    merely looks healthy contributes no evidence at all. The canonical
+    Task 162 source identifier is part of what makes the material Task
+    162 material: an altered source string is unusable evidence, not a
+    package to be certified.
     """
     if not isinstance(audit_package, Mapping):
         return None, ["AUDIT_PACKAGE_MISSING"]
     try:
-        return (
-            ReasoningRunStage7AuditPackageRead.model_validate(dict(audit_package)),
-            [],
-        )
+        package = ReasoningRunStage7AuditPackageRead.model_validate(dict(audit_package))
     except ValidationError as exc:
         return None, [f"AUDIT_PACKAGE_INVALID:{_invalid_detail(exc)}"]
     except Exception as exc:
         # Material that cannot even be converted is unreadable,
         # never certifying evidence.
         return None, [f"AUDIT_PACKAGE_INVALID:{type(exc).__name__}"]
+    if package.audit_source != REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162:
+        return None, ["AUDIT_PACKAGE_SOURCE_NOT_CANONICAL"]
+    return package, []
 
 
 class ReasoningRunStage7VerticalSliceService:
@@ -95,16 +112,19 @@ class ReasoningRunStage7VerticalSliceService:
         The validated Task 162 package decides with no new reasoning: a
         blocked admission, an inconsistent request or proposal audit, or
         unhealthy diagnostics is ``BLOCKED``; only an admitted, healthy,
-        fully consistent, attributable, finding-free package with a real
-        session identity is ``READY``; anything else -- a missing or
-        contract-violating package, degraded or absent health material,
-        unusable audit evidence, an empty session, or missing provider
-        attribution -- is ``UNAVAILABLE``. The verdict is built only from
-        fields the Task 162 contract has already accepted, so no raw
-        mapping value can influence it. Findings are the validated
-        package findings preserved verbatim, or this gate's own single
-        structural marker for unusable material; nothing is re-sorted or
-        re-deduplicated to launder malformed input.
+        fully consistent package that carries the complete evidence for
+        the request path -- a real session identity, the published
+        request fingerprint, provider and model attribution, and no open
+        findings -- is ``READY``; anything else -- a missing,
+        contract-violating, or non-Task-162-sourced package, degraded or
+        absent health material, unusable audit evidence, or an evidence
+        field the package legitimately projected as absent -- is
+        ``UNAVAILABLE``. The verdict is built only from fields the Task
+        162 contract has already accepted, so no raw mapping value can
+        influence it. Findings are the validated package findings
+        preserved verbatim, or this gate's own single structural marker
+        for unusable material; nothing is re-sorted or re-deduplicated to
+        launder malformed input.
         """
         package, findings = _read_package(audit_package)
         if package is None:
@@ -158,9 +178,10 @@ class ReasoningRunStage7VerticalSliceService:
             and package.diagnostics_status == "HEALTHY"
             and package.request_audit_status == "CONSISTENT"
             and package.proposal_audit_status == "CONSISTENT"
-            and package.session_id != ""
-            and package.provider_name is not None
-            and package.model_name is not None
+            and _present(package.session_id)
+            and _present(package.request_fingerprint)
+            and _present(package.provider_name)
+            and _present(package.model_name)
             and not package.findings
         ):
             return "READY"

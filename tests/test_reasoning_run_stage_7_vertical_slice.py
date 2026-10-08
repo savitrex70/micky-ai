@@ -973,6 +973,146 @@ def test_degraded_and_no_material_never_attribute_a_provider() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Schema validity is not evidence completeness
+# ---------------------------------------------------------------------------
+
+
+def test_ready_requires_request_fingerprint() -> None:
+    """A package that legitimately projects no fingerprint cannot certify.
+
+    Task 162 is allowed to publish ``request_fingerprint = None`` for
+    unavailable material, so the contract accepts the shape. Only the
+    final gate can refuse to certify a request path it cannot point at.
+    """
+    sid = _seed_full_session("Task 163 ready requires fingerprint")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+    assert healthy["request_fingerprint"] is not None
+
+    incomplete = {**healthy, "request_fingerprint": None}
+    validated = ReasoningRunStage7AuditPackageRead.model_validate(incomplete)
+    assert validated.admission_status == "ADMITTED"
+    assert validated.request_audit_status == "CONSISTENT"
+    assert validated.diagnostics_status == "HEALTHY"
+    assert validated.findings == []
+
+    verdict = _certify(incomplete)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+    assert verdict["admission_status"] == "ADMITTED"
+    assert verdict["findings"] == []
+
+
+def test_empty_request_fingerprint_is_not_ready() -> None:
+    sid = _seed_full_session("Task 163 empty request fingerprint")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    blank = {**healthy, "request_fingerprint": ""}
+    ReasoningRunStage7AuditPackageRead.model_validate(blank)
+
+    verdict = _certify(blank)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["provider_name"] is None
+    assert verdict["model_name"] is None
+
+
+def test_ready_requires_canonical_audit_source() -> None:
+    sid = _seed_full_session("Task 163 canonical audit source")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    forged_source = {**healthy, "audit_source": "FORGED-TASK-162-SOURCE"}
+    assert healthy["audit_source"] == (
+        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
+    )
+    # The Task 162 contract only types the source string, so this forgery
+    # is schema-valid -- the canonical identity is this gate's own check.
+    ReasoningRunStage7AuditPackageRead.model_validate(forged_source)
+
+    verdict = _certify(forged_source)
+
+    _assert_unavailable(verdict, "AUDIT_PACKAGE_SOURCE_NOT_CANONICAL")
+    assert verdict["findings"] == ["AUDIT_PACKAGE_SOURCE_NOT_CANONICAL"]
+    assert verdict["session_id"] == ""
+    assert "FORGED-TASK-162-SOURCE" not in json.dumps(verdict)
+
+
+def test_blank_evidence_fields_are_not_ready() -> None:
+    sid = _seed_full_session("Task 163 blank evidence fields")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    cases = (
+        ("whitespace session", {**healthy, "session_id": "   "}),
+        ("blank attribution", {**healthy, "provider_name": "", "model_name": ""}),
+    )
+    for label, tampered in cases:
+        ReasoningRunStage7AuditPackageRead.model_validate(tampered)
+
+        verdict = _certify(tampered)
+
+        assert verdict["slice_status"] == "UNAVAILABLE", label
+        assert verdict["provider_name"] is None, label
+        assert verdict["model_name"] is None, label
+
+
+def test_ready_full_evidence() -> None:
+    """The complete genuine package stays READY under the tightened gate."""
+    sid = _seed_full_session("Task 163 ready full evidence")
+    with TestingSessionLocal() as db:
+        healthy = _healthy_package(db, sid)
+
+    assert (
+        healthy["audit_source"] == REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
+    )
+    assert healthy["request_fingerprint"] is not None
+    assert healthy["request_audit_status"] == "CONSISTENT"
+    assert healthy["proposal_audit_status"] == "CONSISTENT"
+    assert healthy["findings"] == []
+
+    verdict = _certify(healthy)
+
+    assert verdict["slice_status"] == "READY"
+    assert verdict["session_id"] == sid
+    assert verdict["provider_name"] == "fake-provider"
+    assert verdict["model_name"] == "fake-model"
+
+
+def test_combined_forgery_is_not_ready() -> None:
+    """Healthy on every status string, absent on the packaged request."""
+    forged = {**_forged_package_payload(), "request_fingerprint": None}
+    validated = ReasoningRunStage7AuditPackageRead.model_validate(forged)
+    assert validated.diagnostics_status == "HEALTHY"
+
+    verdict = _certify(forged)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["provider_name"] is None
+    assert verdict["findings"] == []
+
+
+def test_combined_source_forgery_is_not_ready() -> None:
+    """Complete-looking evidence from a package that is not Task 162."""
+    forged = {
+        **_forged_package_payload(),
+        "request_fingerprint": "a" * 64,
+        "audit_source": "SOME-OTHER-PIPELINE-SOURCE",
+    }
+    ReasoningRunStage7AuditPackageRead.model_validate(forged)
+
+    verdict = _certify(forged)
+
+    assert verdict["slice_status"] == "UNAVAILABLE"
+    assert verdict["findings"] == ["AUDIT_PACKAGE_SOURCE_NOT_CANONICAL"]
+    assert verdict["provider_name"] is None
+    assert "SOME-OTHER-PIPELINE-SOURCE" not in json.dumps(verdict)
+
+
+# ---------------------------------------------------------------------------
 # Session isolation and determinism
 # ---------------------------------------------------------------------------
 
