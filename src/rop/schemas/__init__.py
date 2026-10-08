@@ -293,6 +293,18 @@ from rop.schemas.reasoning_run_stage_6_release_manifest import (
     ReasoningRunStage6ReleaseManifestComponentRead,
     ReasoningRunStage6ReleaseManifestRead,
 )
+from rop.schemas.reasoning_run_stage_7_audit_package import (
+    ReasoningRunStage7AuditPackageRead,
+)
+from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
+    ReasoningRunStage7EvidenceBundleRead,
+)
+from rop.schemas.reasoning_run_stage_7_vertical_slice import (
+    ReasoningRunStage7VerticalSliceRead,
+)
+from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+    ReasoningRunStage7VerticalSliceAuditRead,
+)
 from rop.schemas.reasoning_session import (
     ReasoningSessionCreate,
     ReasoningSessionRead,
@@ -426,6 +438,10 @@ __all__ = [
     "ReasoningRunStage6ReleaseManifestRead",
     "ReasoningRunStage6ManifestConsistencyAuditRead",
     "ReasoningRunStage6CertificationRead",
+    "ReasoningRunStage7AuditPackageRead",
+    "ReasoningRunStage7EvidenceBundleRead",
+    "ReasoningRunStage7VerticalSliceAuditRead",
+    "ReasoningRunStage7VerticalSliceRead",
     "ReasoningRunInspectionRead",
     "ReasoningRunReplayConsistencyAuditRead",
     "ReasoningRunReplayConsistencyFindingRead",
