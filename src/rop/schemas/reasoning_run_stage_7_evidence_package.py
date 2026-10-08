@@ -47,9 +47,7 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
     # Task 162 evidence (verbatim)
     t162_session_id: str
     t162_admission_status: Literal["ADMITTED", "BLOCKED", "UNAVAILABLE"] | None
-    t162_diagnostics_status: (
-        Literal["HEALTHY", "DEGRADED", "UNHEALTHY", "NO_MATERIAL"]
-    )
+    t162_diagnostics_status: Literal["HEALTHY", "DEGRADED", "UNHEALTHY", "NO_MATERIAL"]
     t162_request_fingerprint: str | None
     t162_request_audit_status: (
         Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"] | None
@@ -130,7 +128,9 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
         if self.t164_finding_count != len(self.t164_findings):
             raise ValueError("t164_finding_count must equal len(t164_findings)")
         if self.t165_bundle_finding_count != len(self.t165_bundle_findings):
-            raise ValueError("t165_bundle_finding_count must equal len(t165_bundle_findings)")
+            raise ValueError(
+                "t165_bundle_finding_count must equal len(t165_bundle_findings)"
+            )
         if self.t166_finding_count != len(self.t166_findings):
             raise ValueError("t166_finding_count must equal len(t166_findings)")
         if self.t167_finding_count != len(self.t167_findings):
@@ -199,7 +199,8 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
             )
 
         # Task 168 source is always the canonical constant
-        if self.package_source != REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168:
+        expected_source = REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168
+        if self.package_source != expected_source:
             raise ValueError("package_source must be the canonical Task 168 source")
 
         # Precedence: BLOCKED > READY > UNAVAILABLE
