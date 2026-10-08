@@ -469,6 +469,11 @@ from rop.services.reasoning_run_stage_7_evidence_bundle_audit import (
     ReasoningRunStage7EvidenceBundleAuditContractError,
     ReasoningRunStage7EvidenceBundleAuditService,
 )
+from rop.services.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
+    ReasoningRunStage7EvidenceBundleAuditConsistencyContractError,
+    ReasoningRunStage7EvidenceBundleAuditConsistencyService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -721,6 +726,9 @@ __all__ = [
     "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166",
     "ReasoningRunStage7EvidenceBundleAuditContractError",
     "ReasoningRunStage7EvidenceBundleAuditService",
+    "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167",
+    "ReasoningRunStage7EvidenceBundleAuditConsistencyContractError",
+    "ReasoningRunStage7EvidenceBundleAuditConsistencyService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",

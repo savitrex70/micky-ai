@@ -303,6 +303,10 @@ from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
     ReasoningRunStage7EvidenceBundleAuditRead,
 )
+from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
+    ReasoningRunStage7EvidenceBundleAuditConsistencyRead,
+)
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
 )
@@ -443,8 +447,10 @@ __all__ = [
     "ReasoningRunStage6ManifestConsistencyAuditRead",
     "ReasoningRunStage6CertificationRead",
     "ReasoningRunStage7AuditPackageRead",
+    "ReasoningRunStage7EvidenceBundleAuditConsistencyRead",
     "ReasoningRunStage7EvidenceBundleAuditRead",
     "ReasoningRunStage7EvidenceBundleRead",
+    "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167",
     "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166",
     "ReasoningRunStage7VerticalSliceAuditRead",
     "ReasoningRunStage7VerticalSliceRead",
