@@ -37,6 +37,7 @@ from rop.schemas.reasoning_run_stage_7_audit_package import (
 from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
     ReasoningRunStage7EvidenceBundleRead,
+    stage_7_bundle_blocking_condition_holds,
     stage_7_bundle_ready_conditions_hold,
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
@@ -186,16 +187,6 @@ class ReasoningRunStage7EvidenceBundleService:
             else None
         )
 
-        # Step F — Determine bundle_status
-        # BLOCKED conditions: explicit blocking evidence the bundle publishes
-        blocked = (
-            slice163.slice_status == "BLOCKED"
-            or admission_status == "BLOCKED"
-            or diagnostics_status == "UNHEALTHY"
-            or pkg162.request_audit_status == "INCONSISTENT"
-            or pkg162.proposal_audit_status == "INCONSISTENT"
-        )
-
         # Step G — Populate result dict (bundle_status filled in below)
         bundle_findings = sorted(set(bundle_findings))
         result: dict[str, Any] = {
@@ -262,6 +253,10 @@ class ReasoningRunStage7EvidenceBundleService:
             and bool(pkg162.provider_name and pkg162.provider_name.strip())
             and bool(pkg162.model_name and pkg162.model_name.strip())
         )
+
+        # BLOCKED conditions: the blocking evidence the bundle itself publishes
+        # (same shared predicate the schema enforces)
+        blocked = stage_7_bundle_blocking_condition_holds(result)
 
         # Priority: BLOCKED first, then READY, then UNAVAILABLE
         if blocked:

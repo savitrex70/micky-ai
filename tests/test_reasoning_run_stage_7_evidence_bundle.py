@@ -1425,3 +1425,101 @@ def test_service_blank_task_163_attribution_is_not_ready() -> None:
 
     assert result["bundle_status"] == "UNAVAILABLE"
     assert _SCHEMA_VALIDATE(result).bundle_status == "UNAVAILABLE"
+
+
+# ---------------------------------------------------------------------------
+# Category 12 — Bidirectional aggregate BLOCKED invariant (direct schema)
+# ---------------------------------------------------------------------------
+
+_BLOCKING_CHANGES: dict[str, dict[str, Any]] = {
+    "slice_status": {"slice_status": "BLOCKED"},
+    "admission_status": {"admission_status": "BLOCKED"},
+    "diagnostics_status": {"diagnostics_status": "UNHEALTHY"},
+    "request_audit_status": {"request_audit_status": "INCONSISTENT"},
+    "proposal_audit_status": {"proposal_audit_status": "INCONSISTENT"},
+}
+
+
+def test_schema_rejects_unavailable_bundle_with_all_ready_evidence() -> None:
+    forged = {**_genuine_ready_bundle(), "bundle_status": "UNAVAILABLE"}
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+@pytest.mark.parametrize("blocker", sorted(_BLOCKING_CHANGES))
+def test_schema_rejects_unavailable_bundle_with_a_published_blocking_state(
+    blocker: str,
+) -> None:
+    forged = {
+        **_genuine_ready_bundle(),
+        **_BLOCKING_CHANGES[blocker],
+        "bundle_status": "UNAVAILABLE",
+    }
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+@pytest.mark.parametrize("blocker", sorted(_BLOCKING_CHANGES))
+def test_schema_rejects_unavailable_bundle_with_blocker_and_incomplete_evidence(
+    blocker: str,
+) -> None:
+    # Incomplete evidence and an explaining bundle finding do not excuse a
+    # published blocking state: BLOCKED outranks UNAVAILABLE.
+    forged = {
+        **_genuine_unavailable_bundle(),
+        **_BLOCKING_CHANGES[blocker],
+        "request_fingerprint": None,
+        "bundle_findings": ["REQUEST_FINGERPRINT_MISSING_OR_MALFORMED"],
+        "bundle_finding_count": 1,
+        "bundle_status": "UNAVAILABLE",
+    }
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE(forged)
+
+
+@pytest.mark.parametrize("blocker", sorted(_BLOCKING_CHANGES))
+def test_blocking_condition_holds_if_and_only_if_bundle_is_blocked(
+    blocker: str,
+) -> None:
+    base = _genuine_ready_bundle()
+    blocking = {**base, **_BLOCKING_CHANGES[blocker]}
+
+    # Blocking condition present: only BLOCKED is coherent.
+    assert _SCHEMA_VALIDATE({**blocking, "bundle_status": "BLOCKED"})
+    for status in ("READY", "UNAVAILABLE"):
+        with pytest.raises(ValidationError):
+            _SCHEMA_VALIDATE({**blocking, "bundle_status": status})
+
+    # No blocking condition: BLOCKED is never coherent; READY is.
+    assert _SCHEMA_VALIDATE(base).bundle_status == "READY"
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**base, "bundle_status": "BLOCKED"})
+
+
+def test_schema_blocked_precedence_survives_noncanonical_source_findings() -> None:
+    # A blocked bundle that also names a forged source stays BLOCKED...
+    bundle = {
+        **_genuine_ready_bundle(),
+        **_BLOCKING_CHANGES["slice_status"],
+        "t162_audit_source": "FORGED",
+        "bundle_findings": ["T162_AUDIT_SOURCE_NOT_CANONICAL"],
+        "bundle_finding_count": 1,
+        "bundle_status": "BLOCKED",
+    }
+    assert _SCHEMA_VALIDATE(bundle).bundle_status == "BLOCKED"
+    # ...and cannot be downgraded to UNAVAILABLE.
+    with pytest.raises(ValidationError):
+        _SCHEMA_VALIDATE({**bundle, "bundle_status": "UNAVAILABLE"})
+
+
+def test_service_blocked_precedence_matches_the_schema_predicate() -> None:
+    _, pkg, verdict, audit = _produce_ready_inputs("Task 165 blocked precedence")
+    forged_source_and_blocker = _with(
+        pkg, audit_source="FORGED", request_audit_status="INCONSISTENT"
+    )
+
+    result = _assemble(forged_source_and_blocker, verdict, audit)
+
+    assert result["bundle_status"] == "BLOCKED"
+    assert "T162_AUDIT_SOURCE_NOT_CANONICAL" in result["bundle_findings"]
+    assert _SCHEMA_VALIDATE(result).bundle_status == "BLOCKED"

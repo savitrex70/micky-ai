@@ -75,6 +75,23 @@ def _present(value: object) -> bool:
     return isinstance(value, str) and value.strip() != ""
 
 
+def stage_7_bundle_blocking_condition_holds(values: Mapping[str, Any]) -> bool:
+    """Report whether the bundle publishes any canonical blocking condition.
+
+    Pure and schema-local: it reads only the bundle's own published fields.
+    The schema uses it in both directions (a BLOCKED bundle needs one, and
+    any bundle that shows one must be BLOCKED); the service uses the same
+    function so the two can never disagree.
+    """
+    return (
+        values["slice_status"] == "BLOCKED"
+        or values["admission_status"] == "BLOCKED"
+        or values["diagnostics_status"] == "UNHEALTHY"
+        or values["request_audit_status"] == "INCONSISTENT"
+        or values["proposal_audit_status"] == "INCONSISTENT"
+    )
+
+
 def stage_7_bundle_ready_conditions_hold(values: Mapping[str, Any]) -> bool:
     """Report whether the published bundle evidence meets every READY condition.
 
@@ -227,18 +244,18 @@ class ReasoningRunStage7EvidenceBundleRead(BaseModel):
                 )
         values = {name: getattr(self, name) for name in type(self).model_fields}
         ready_evidence = stage_7_bundle_ready_conditions_hold(values)
-        if self.bundle_status == "READY":
+        blocking = stage_7_bundle_blocking_condition_holds(values)
+        # Precedence BLOCKED > READY > UNAVAILABLE, enforced in both directions
+        if self.bundle_status == "BLOCKED":
+            if not blocking:
+                raise ValueError("BLOCKED bundle requires a published blocking state")
+        elif blocking:
+            raise ValueError(
+                "a published blocking state requires bundle_status BLOCKED"
+            )
+        elif self.bundle_status == "READY":
             if not ready_evidence:
                 raise ValueError("READY bundle requires complete READY evidence")
-        elif self.bundle_status == "BLOCKED":
-            if not (
-                self.slice_status == "BLOCKED"
-                or self.admission_status == "BLOCKED"
-                or self.diagnostics_status == "UNHEALTHY"
-                or self.request_audit_status == "INCONSISTENT"
-                or self.proposal_audit_status == "INCONSISTENT"
-            ):
-                raise ValueError("BLOCKED bundle requires a published blocking state")
         elif ready_evidence:
             raise ValueError(
                 "UNAVAILABLE bundle must not withhold fully supported READY evidence"
