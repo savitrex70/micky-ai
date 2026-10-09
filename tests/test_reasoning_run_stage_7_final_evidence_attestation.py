@@ -171,6 +171,9 @@ def test_schema_forbids_extra_fields() -> None:
             certified=True,
             blocked=False,
             available=True,
+            package_status="READY",
+            package_audit_status="CONSISTENT",
+            consistency_status="CONSISTENT",
             finding_count=0,
             findings=[],
             attestation_source=ATTESTATION_SOURCE,
@@ -188,6 +191,9 @@ def test_schema_certified_requires_zero_findings() -> None:
             certified=True,
             blocked=False,
             available=True,
+            package_status="READY",
+            package_audit_status="CONSISTENT",
+            consistency_status="CONSISTENT",
             finding_count=1,
             findings=["SOME_FINDING"],
             attestation_source=ATTESTATION_SOURCE,
@@ -203,6 +209,9 @@ def test_schema_certified_requires_valid_session() -> None:
             certified=True,
             blocked=False,
             available=True,
+            package_status="READY",
+            package_audit_status="CONSISTENT",
+            consistency_status="CONSISTENT",
             finding_count=0,
             findings=[],
             attestation_source=ATTESTATION_SOURCE,
@@ -219,6 +228,7 @@ def test_schema_blocked_requires_findings() -> None:
             certified=False,
             blocked=True,
             available=True,
+            package_status="BLOCKED",
             finding_count=0,
             findings=[],
             attestation_source=ATTESTATION_SOURCE,
@@ -402,10 +412,17 @@ def test_service_blocked_attestation(
     consistent_consistency: ReasoningRunStage7EvidencePackageAuditConsistencyRead,
 ) -> None:
     """Service produces BLOCKED when package status is BLOCKED."""
-    # Convert package to BLOCKED
+    # Build a schema-valid BLOCKED package from genuine blocking evidence.
     blocked_package = copy.deepcopy(ready_package)
+    blocked_package.t162_admission_status = "BLOCKED"
+    blocked_package.t162_finding_count = 1
+    blocked_package.t162_findings = ["BLOCKED"]
     blocked_package.package_status = "BLOCKED"
-    blocked_package.t163_slice_status = "BLOCKED"
+    blocked_package.finding_count = 1
+    blocked_package.findings = ["BLOCKED"]
+    blocked_package = ReasoningRunStage7EvidencePackageRead.model_validate(
+        blocked_package.model_dump()
+    )
 
     # Audit must reflect the BLOCKED status
     blocked_audit = copy.deepcopy(consistent_audit)
@@ -513,7 +530,7 @@ def test_service_detects_invalid_package_source(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "PACKAGE_SOURCE_INVALID" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_invalid_audit_source(
@@ -532,7 +549,7 @@ def test_service_detects_invalid_audit_source(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "AUDIT_SOURCE_INVALID" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_invalid_consistency_source(
@@ -551,7 +568,7 @@ def test_service_detects_invalid_consistency_source(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "CONSISTENCY_SOURCE_INVALID" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_invalid_fingerprint_length(
@@ -570,7 +587,7 @@ def test_service_detects_invalid_fingerprint_length(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "FINGERPRINT_INVALID_LENGTH" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_invalid_fingerprint_format(
@@ -589,7 +606,7 @@ def test_service_detects_invalid_fingerprint_format(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "FINGERPRINT_INVALID_FORMAT" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_missing_provider_name(
@@ -608,7 +625,7 @@ def test_service_detects_missing_provider_name(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "PROVIDER_NAME_MISSING" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_missing_model_name(
@@ -627,7 +644,33 @@ def test_service_detects_missing_model_name(
     )
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
-    assert "MODEL_NAME_MISSING" in attestation["findings"]
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_service_rejects_aligned_blank_provider_and_model_attribution(
+    ready_package: ReasoningRunStage7EvidencePackageRead,
+    consistent_audit: ReasoningRunStage7EvidencePackageAuditRead,
+    consistent_consistency: ReasoningRunStage7EvidencePackageAuditConsistencyRead,
+) -> None:
+    """Aligned mutations cannot bypass Task 165's READY attribution rules."""
+    bad_package = copy.deepcopy(ready_package)
+    bad_package.t162_provider_name = " "
+    bad_package.t163_provider_name = " "
+    bad_package.t162_model_name = ""
+    bad_package.t163_model_name = ""
+    bad_package.t165_bundle_evidence.provider_name = " "
+    bad_package.t165_bundle_evidence.model_name = ""
+    bad_package.t166_audited_bundle.provider_name = " "
+    bad_package.t166_audited_bundle.model_name = ""
+
+    attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
+        package=bad_package,
+        audit=consistent_audit,
+        consistency=consistent_consistency,
+    )
+
+    assert attestation["attestation_status"] == "UNAVAILABLE"
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_service_detects_package_status_contradiction(
@@ -637,7 +680,11 @@ def test_service_detects_package_status_contradiction(
 ) -> None:
     """Service detects package status contradiction."""
     bad_audit = copy.deepcopy(consistent_audit)
-    bad_audit.expected_package_status = "UNAVAILABLE"  # Contradicts published
+    bad_audit.package_audit_status = "INCONSISTENT"
+    bad_audit.consistent = False
+    bad_audit.expected_package_status = "UNAVAILABLE"
+    bad_audit.finding_count = 1
+    bad_audit.findings = ["STATUS_MISMATCH"]
 
     attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
         package=ready_package,
@@ -647,6 +694,7 @@ def test_service_detects_package_status_contradiction(
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
     assert "PACKAGE_STATUS_CONTRADICTION" in attestation["findings"]
+    assert "PACKAGE_AUDIT_STATUS_MISMATCH" in attestation["findings"]
 
 
 def test_service_sorts_and_deduplicates_findings(
@@ -710,9 +758,11 @@ def test_service_unavailable_when_package_not_ready_or_blocked(
 ) -> None:
     """Service produces UNAVAILABLE when package is neither READY nor BLOCKED."""
     unavailable_package = copy.deepcopy(ready_package)
+    unavailable_package.t162_admission_status = "UNAVAILABLE"
     unavailable_package.package_status = "UNAVAILABLE"
-    unavailable_package.finding_count = 1
-    unavailable_package.findings = ["SOME_ISSUE"]
+    unavailable_package = ReasoningRunStage7EvidencePackageRead.model_validate(
+        unavailable_package.model_dump()
+    )
 
     attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
         package=unavailable_package,
@@ -722,4 +772,95 @@ def test_service_unavailable_when_package_not_ready_or_blocked(
 
     assert attestation["attestation_status"] == "UNAVAILABLE"
     assert "PACKAGE_NOT_READY_OR_BLOCKED" in attestation["findings"]
-    assert "PACKAGE_HAS_FINDINGS" in attestation["findings"]
+
+
+def test_service_revalidates_post_construction_mutations(
+    ready_package: ReasoningRunStage7EvidencePackageRead,
+    consistent_audit: ReasoningRunStage7EvidencePackageAuditRead,
+    consistent_consistency: ReasoningRunStage7EvidencePackageAuditConsistencyRead,
+) -> None:
+    """Mutated evidence is unavailable rather than trusted as certified."""
+    ready_package.session_id = []
+
+    attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
+        package=ready_package,
+        audit=consistent_audit,
+        consistency=consistent_consistency,
+    )
+
+    assert attestation["attestation_status"] == "UNAVAILABLE"
+    assert attestation["session_id"] == ""
+    assert attestation["package_status"] is None
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_service_is_deterministic_and_does_not_mutate_inputs(
+    ready_package: ReasoningRunStage7EvidencePackageRead,
+    consistent_audit: ReasoningRunStage7EvidencePackageAuditRead,
+    consistent_consistency: ReasoningRunStage7EvidencePackageAuditConsistencyRead,
+) -> None:
+    """Repeated attestations are identical and leave published inputs intact."""
+    original = (
+        copy.deepcopy(ready_package),
+        copy.deepcopy(consistent_audit),
+        copy.deepcopy(consistent_consistency),
+    )
+    first = ReasoningRunStage7FinalEvidenceAttestationService.attest(
+        package=ready_package,
+        audit=consistent_audit,
+        consistency=consistent_consistency,
+    )
+    second = ReasoningRunStage7FinalEvidenceAttestationService.attest(
+        package=ready_package,
+        audit=consistent_audit,
+        consistency=consistent_consistency,
+    )
+
+    assert first == second
+    assert ready_package == original[0]
+    assert consistent_audit == original[1]
+    assert consistent_consistency == original[2]
+
+
+def test_service_rejects_wrong_input_types() -> None:
+    """Unexpected objects do not leak attribute errors."""
+    attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
+        package=None,  # type: ignore[arg-type]
+        audit=None,  # type: ignore[arg-type]
+        consistency=None,  # type: ignore[arg-type]
+    )
+
+    assert attestation["attestation_status"] == "UNAVAILABLE"
+    assert attestation["session_id"] == ""
+    assert attestation["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_attestation_schema_certified_requires_consistent_upstream_statuses() -> None:
+    """A direct schema caller cannot claim certification without source verdicts."""
+    with pytest.raises(ValidationError, match="CERTIFIED requires READY"):
+        ReasoningRunStage7FinalEvidenceAttestationRead(
+            session_id=str(uuid4()),
+            attestation_status="CERTIFIED",
+            certified=True,
+            blocked=False,
+            available=True,
+            finding_count=0,
+            findings=[],
+            attestation_source=ATTESTATION_SOURCE,
+        )
+
+
+def test_attestation_schema_blocked_requires_blocked_package() -> None:
+    """A direct schema caller cannot claim BLOCKED for a non-blocked package."""
+    with pytest.raises(ValidationError, match="BLOCKED requires a BLOCKED package"):
+        ReasoningRunStage7FinalEvidenceAttestationRead(
+            session_id=str(uuid4()),
+            attestation_status="BLOCKED",
+            certified=False,
+            blocked=True,
+            available=True,
+            package_status="READY",
+            finding_count=1,
+            findings=["BLOCKING_EVIDENCE"],
+            attestation_source=ATTESTATION_SOURCE,
+        )

@@ -80,6 +80,45 @@ class ReasoningRunStage7FinalEvidenceAttestationService:
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
+        try:
+            if not isinstance(package, ReasoningRunStage7EvidencePackageRead):
+                raise TypeError("package has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7EvidencePackageAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            if not isinstance(
+                consistency, ReasoningRunStage7EvidencePackageAuditConsistencyRead
+            ):
+                raise TypeError("consistency has an unexpected model type")
+            package = ReasoningRunStage7EvidencePackageRead.model_validate(
+                package.model_dump()
+            )
+            audit = ReasoningRunStage7EvidencePackageAuditRead.model_validate(
+                audit.model_dump()
+            )
+            consistency = (
+                ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+                    consistency.model_dump()
+                )
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7FinalEvidenceAttestationService._project(
+                {
+                    "session_id": "",
+                    "attestation_status": "UNAVAILABLE",
+                    "certified": False,
+                    "blocked": False,
+                    "available": False,
+                    "package_status": None,
+                    "package_audit_status": None,
+                    "consistency_status": None,
+                    "finding_count": 1,
+                    "findings": ["EVIDENCE_INPUT_INVALID"],
+                    "attestation_source": (
+                        REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A — Session binding across the three inputs
@@ -131,14 +170,29 @@ class ReasoningRunStage7FinalEvidenceAttestationService:
 
         # Step E — Provider/model attribution for READY packages
         if package.package_status == "READY":
-            if not package.t162_provider_name:
+            if (
+                not isinstance(package.t162_provider_name, str)
+                or not package.t162_provider_name.strip()
+                or not isinstance(package.t163_provider_name, str)
+                or not package.t163_provider_name.strip()
+            ):
                 findings.append("PROVIDER_NAME_MISSING")
-            if not package.t162_model_name:
+            if (
+                not isinstance(package.t162_model_name, str)
+                or not package.t162_model_name.strip()
+                or not isinstance(package.t163_model_name, str)
+                or not package.t163_model_name.strip()
+            ):
                 findings.append("MODEL_NAME_MISSING")
 
         # Step F — Audit internal contradiction
         if audit.published_package_status != audit.expected_package_status:
             findings.append("PACKAGE_STATUS_CONTRADICTION")
+        if (
+            audit.published_package_status != package.package_status
+            or audit.expected_package_status != package.package_status
+        ):
+            findings.append("PACKAGE_AUDIT_STATUS_MISMATCH")
 
         # Step G — Audit and consistency verdicts
         if audit.package_audit_status != "CONSISTENT":

@@ -70,10 +70,20 @@ class ReasoningRunStage7FinalEvidenceAttestationRead(BaseModel):
                 raise ValueError("CERTIFIED requires a finding-free attestation")
             if not self.session_id:
                 raise ValueError("CERTIFIED requires a valid session_id")
+            if (
+                self.package_status != "READY"
+                or self.package_audit_status != "CONSISTENT"
+                or self.consistency_status != "CONSISTENT"
+            ):
+                raise ValueError(
+                    "CERTIFIED requires READY, CONSISTENT package and audit evidence"
+                )
         # BLOCKED requires genuine blocking evidence
         if self.attestation_status == "BLOCKED":
             if self.finding_count == 0:
                 raise ValueError("BLOCKED requires at least one finding")
+            if self.package_status != "BLOCKED":
+                raise ValueError("BLOCKED requires a BLOCKED package")
         # UNAVAILABLE requires a diagnostic finding
         if self.attestation_status == "UNAVAILABLE":
             if self.finding_count == 0:

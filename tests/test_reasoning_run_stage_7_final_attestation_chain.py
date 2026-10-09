@@ -172,6 +172,18 @@ def ready_chain(ready_bundle_evidence):
     return {"package": package, "audit": audit, "consistency": consistency}
 
 
+def _mark_package_blocked(
+    package: ReasoningRunStage7EvidencePackageRead,
+) -> ReasoningRunStage7EvidencePackageRead:
+    package.t162_admission_status = "BLOCKED"
+    package.t162_finding_count = 1
+    package.t162_findings = ["BLOCKED"]
+    package.package_status = "BLOCKED"
+    package.finding_count = 1
+    package.findings = ["BLOCKED"]
+    return ReasoningRunStage7EvidencePackageRead.model_validate(package.model_dump())
+
+
 # ---------------------------------------------------------------------------
 # Task 171: Final Evidence Attestation
 # ---------------------------------------------------------------------------
@@ -192,7 +204,9 @@ def test_task_171_ready_chain_certifies(ready_chain):
 
 def test_task_171_blocked_chain_blocks(ready_chain):
     """Blocked chain attests to BLOCKED."""
-    ready_chain["package"].package_status = "BLOCKED"
+    ready_chain["package"] = _mark_package_blocked(ready_chain["package"])
+    ready_chain["audit"].published_package_status = "BLOCKED"
+    ready_chain["audit"].expected_package_status = "BLOCKED"
     attestation = ReasoningRunStage7FinalEvidenceAttestationService.attest(
         **ready_chain
     )
@@ -328,7 +342,9 @@ def test_task_174_certified_chain_projects_ready(ready_chain):
 
 def test_task_174_blocked_chain_projects_blocked(ready_chain):
     """Blocked chain projects to BLOCKED."""
-    ready_chain["package"].package_status = "BLOCKED"
+    ready_chain["package"] = _mark_package_blocked(ready_chain["package"])
+    ready_chain["audit"].published_package_status = "BLOCKED"
+    ready_chain["audit"].expected_package_status = "BLOCKED"
     attestation_dict = ReasoningRunStage7FinalEvidenceAttestationService.attest(
         **ready_chain
     )

@@ -294,10 +294,21 @@ def test_audit_certified_chain_is_consistent(ready_chain) -> None:
     assert audit["audit_source"] == AUDIT_SOURCE
 
 
+def _blocked_package(
+    package: ReasoningRunStage7EvidencePackageRead,
+) -> ReasoningRunStage7EvidencePackageRead:
+    package.t162_admission_status = "BLOCKED"
+    package.t162_finding_count = 1
+    package.t162_findings = ["BLOCKED"]
+    package.package_status = "BLOCKED"
+    package.finding_count = 1
+    package.findings = ["BLOCKED"]
+    return ReasoningRunStage7EvidencePackageRead.model_validate(package.model_dump())
+
+
 def test_audit_blocked_chain_is_consistent(ready_chain) -> None:
     """Genuine BLOCKED attestation with matching evidence audits CONSISTENT."""
-    package = copy.deepcopy(ready_chain["package"])
-    package.package_status = "BLOCKED"
+    package = _blocked_package(copy.deepcopy(ready_chain["package"]))
     audit_inputs = copy.deepcopy(ready_chain["audit"])
     audit_inputs.published_package_status = "BLOCKED"
     audit_inputs.expected_package_status = "BLOCKED"
@@ -323,8 +334,7 @@ def test_audit_blocked_chain_is_consistent(ready_chain) -> None:
 
 def test_audit_detects_forged_certified_status(ready_chain) -> None:
     """Forged CERTIFIED status over BLOCKED evidence is INCONSISTENT."""
-    package = copy.deepcopy(ready_chain["package"])
-    package.package_status = "BLOCKED"
+    package = _blocked_package(copy.deepcopy(ready_chain["package"]))
     attestation_dict = ReasoningRunStage7FinalEvidenceAttestationService.attest(
         package=package,
         audit=ready_chain["audit"],
