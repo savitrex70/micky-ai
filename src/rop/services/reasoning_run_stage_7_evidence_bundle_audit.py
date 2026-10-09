@@ -324,13 +324,24 @@ class ReasoningRunStage7EvidenceBundleAuditService:
             ):
                 findings.add(audit_code)
 
-        # Step D — Validate fingerprint shape (no recomputation, only for READY)
-        if published_status == "READY" and not _canonical_fingerprint(
-            values["request_fingerprint"]
+        # Step D — Validate fingerprint shape in every bundle state (no
+        # recomputation). The Task 165 schema rejects any non-null fingerprint
+        # that is not canonical, so a malformed value is a contradiction even
+        # in a BLOCKED or UNAVAILABLE bundle and is never excused by the
+        # missing-or-malformed finding. A genuinely absent fingerprint is
+        # valid outside READY when that finding explains it (Step J).
+        fingerprint = values["request_fingerprint"]
+        if (fingerprint is not None and not _canonical_fingerprint(fingerprint)) or (
+            published_status == "READY" and not _canonical_fingerprint(fingerprint)
         ):
             findings.add("FINGERPRINT_MISMATCH")
 
-        # Step E — Validate provider/model attribution (only for READY bundles)
+        # Step E — Validate provider/model attribution. The pairing invariant
+        # holds in every bundle state and is never excused by an explained
+        # missing-attribution finding; nonblank attribution is additionally
+        # required for READY.
+        if (values["provider_name"] is None) != (values["model_name"] is None):
+            findings.add("PROVIDER_MODEL_ATTRIBUTION_MISMATCH")
         if published_status == "READY":
             if not _present(values["provider_name"]):
                 findings.add("PROVIDER_NAME_MISMATCH")

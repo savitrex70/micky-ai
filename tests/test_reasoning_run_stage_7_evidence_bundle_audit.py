@@ -1426,3 +1426,214 @@ def test_session_findings_are_sorted_and_deduplicated(genuine_blocked_bundle):
     audit = _audit(bundle)
     assert audit["findings"] == sorted(set(audit["findings"]))
     assert audit["finding_count"] == len(audit["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint shape and provider/model pairing in every aggregate status
+# ---------------------------------------------------------------------------
+
+_MALFORMED_FINGERPRINTS = [
+    "",
+    "not-a-fingerprint",
+    "a" * 63,
+    "a" * 65,
+    "A" * 64,
+    "g" * 64,
+    ("a" * 64) + "\n",
+]
+_FINGERPRINT_FINDING = "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED"
+
+
+@pytest.mark.parametrize("malformed", _MALFORMED_FINGERPRINTS)
+def test_blocked_bundle_with_malformed_fingerprint_is_inconsistent(
+    genuine_blocked_bundle, malformed
+):
+    """BLOCKED precedence must not let a malformed fingerprint audit as consistent."""
+    bundle = _tamper(
+        genuine_blocked_bundle,
+        request_fingerprint=malformed,
+        bundle_findings=[_FINGERPRINT_FINDING],
+        bundle_finding_count=1,
+    )
+    audit = _audit(bundle)
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["FINGERPRINT_MISMATCH"]
+
+
+@pytest.mark.parametrize("malformed", _MALFORMED_FINGERPRINTS)
+def test_unavailable_bundle_with_malformed_fingerprint_is_inconsistent(
+    genuine_unavailable_bundle, malformed
+):
+    """UNAVAILABLE does not excuse a non-null malformed fingerprint."""
+    bundle = _tamper(genuine_unavailable_bundle, request_fingerprint=malformed)
+    audit = _audit(bundle)
+    assert audit["published_bundle_status"] == "UNAVAILABLE"
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["FINGERPRINT_MISMATCH"]
+
+
+def test_malformed_fingerprint_is_not_normalized_or_recomputed(
+    genuine_blocked_bundle,
+):
+    """An uppercase digest is reported, never lowercased into validity."""
+    bundle = _tamper(
+        genuine_blocked_bundle,
+        request_fingerprint="A" * 64,
+        bundle_findings=[_FINGERPRINT_FINDING],
+        bundle_finding_count=1,
+    )
+    audit = _audit(bundle)
+    assert "FINGERPRINT_MISMATCH" in audit["findings"]
+    assert bundle.request_fingerprint == "A" * 64
+
+
+def test_blocked_bundle_with_absent_fingerprint_and_finding_is_consistent(
+    genuine_blocked_bundle,
+):
+    """A genuinely absent fingerprint explained by the finding stays faithful."""
+    bundle = _tamper(
+        genuine_blocked_bundle,
+        request_fingerprint=None,
+        bundle_findings=[_FINGERPRINT_FINDING],
+        bundle_finding_count=1,
+    )
+    audit = _audit(bundle)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["findings"] == []
+
+
+def test_blocked_bundle_with_absent_fingerprint_and_no_finding_is_inconsistent(
+    genuine_blocked_bundle,
+):
+    """An absent fingerprint still needs its canonical explaining finding."""
+    bundle = _tamper(genuine_blocked_bundle, request_fingerprint=None)
+    audit = _audit(bundle)
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "BUNDLE_FINDING_MISMATCH" in audit["findings"]
+    assert "FINGERPRINT_MISMATCH" not in audit["findings"]
+
+
+def test_genuine_unavailable_bundle_with_absent_fingerprint_is_consistent(
+    genuine_unavailable_bundle,
+):
+    assert genuine_unavailable_bundle.request_fingerprint is None
+    audit = _audit(genuine_unavailable_bundle)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["findings"] == []
+
+
+@pytest.mark.parametrize("explained", [False, True])
+def test_blocked_bundle_with_missing_provider_only_is_inconsistent(
+    genuine_blocked_bundle, explained
+):
+    """provider_name=None with a populated model_name violates the pairing."""
+    changes = {"provider_name": None}
+    if explained:
+        changes.update(
+            bundle_findings=["PROVIDER_ATTRIBUTION_MISSING"],
+            bundle_finding_count=1,
+        )
+    audit = _audit(_tamper(genuine_blocked_bundle, **changes))
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "PROVIDER_MODEL_ATTRIBUTION_MISMATCH" in audit["findings"]
+
+
+@pytest.mark.parametrize("explained", [False, True])
+def test_blocked_bundle_with_missing_model_only_is_inconsistent(
+    genuine_blocked_bundle, explained
+):
+    """model_name=None with a populated provider_name violates the pairing."""
+    changes = {"model_name": None}
+    if explained:
+        changes.update(
+            bundle_findings=["PROVIDER_ATTRIBUTION_MISSING"],
+            bundle_finding_count=1,
+        )
+    audit = _audit(_tamper(genuine_blocked_bundle, **changes))
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "PROVIDER_MODEL_ATTRIBUTION_MISMATCH" in audit["findings"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"provider_name": "test-provider"},
+        {"model_name": "test-model"},
+    ],
+)
+def test_unavailable_bundle_with_attribution_xor_is_inconsistent(
+    genuine_unavailable_bundle, changes
+):
+    """UNAVAILABLE does not excuse a provider/model XOR."""
+    audit = _audit(_tamper(genuine_unavailable_bundle, **changes))
+    assert audit["published_bundle_status"] == "UNAVAILABLE"
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["PROVIDER_MODEL_ATTRIBUTION_MISMATCH"]
+
+
+def test_ready_bundle_with_attribution_xor_is_inconsistent(genuine_ready_bundle):
+    audit = _audit(_tamper(genuine_ready_bundle, model_name=None))
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "PROVIDER_MODEL_ATTRIBUTION_MISMATCH" in audit["findings"]
+    assert "MODEL_NAME_MISMATCH" in audit["findings"]
+
+
+def test_non_ready_bundles_with_both_attribution_fields_absent_stay_consistent(
+    genuine_blocked_bundle, genuine_unavailable_bundle
+):
+    """Both fields absent together is legitimate when the evidence explains it."""
+    blocked = _tamper(
+        genuine_blocked_bundle,
+        provider_name=None,
+        model_name=None,
+        bundle_findings=["PROVIDER_ATTRIBUTION_MISSING"],
+        bundle_finding_count=1,
+    )
+    audit = _audit(blocked)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["findings"] == []
+    assert genuine_unavailable_bundle.provider_name is None
+    assert genuine_unavailable_bundle.model_name is None
+    assert _audit(genuine_unavailable_bundle)["bundle_audit_status"] == "CONSISTENT"
+
+
+def test_genuine_bundles_remain_consistent_after_invariant_checks(
+    genuine_ready_bundle, genuine_blocked_bundle, genuine_unavailable_bundle
+):
+    for bundle, expected in (
+        (genuine_ready_bundle, "READY"),
+        (genuine_blocked_bundle, "BLOCKED"),
+        (genuine_unavailable_bundle, "UNAVAILABLE"),
+    ):
+        audit = _audit(bundle)
+        assert audit["bundle_audit_status"] == "CONSISTENT"
+        assert audit["published_bundle_status"] == expected
+        assert audit["expected_bundle_status"] == expected
+        assert audit["findings"] == []
+
+
+def test_invariant_findings_are_sorted_and_deduplicated(genuine_blocked_bundle):
+    """Fingerprint and attribution findings join one sorted, unique list."""
+    bundle = _tamper(
+        genuine_blocked_bundle,
+        request_fingerprint="bad",
+        provider_name=None,
+        bundle_findings=[_FINGERPRINT_FINDING, "PROVIDER_ATTRIBUTION_MISSING"],
+        bundle_finding_count=2,
+    )
+    audit = _audit(bundle)
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert "FINGERPRINT_MISMATCH" in audit["findings"]
+    assert "PROVIDER_MODEL_ATTRIBUTION_MISMATCH" in audit["findings"]
+    assert audit["findings"] == sorted(set(audit["findings"]))
+    assert audit["finding_count"] == len(audit["findings"])
