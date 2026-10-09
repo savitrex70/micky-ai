@@ -55,6 +55,22 @@ __all__ = [
 ]
 
 _AUDIT_STATUSES = ("CONSISTENT", "INCONSISTENT", "UNAVAILABLE")
+_BUNDLE_STATUSES = ("READY", "BLOCKED", "UNAVAILABLE")
+
+# Permitted values for every restricted status field of the Task 165 bundle
+# (and of its snapshot). Pydantic ``Literal`` annotations only guard
+# construction, so a typed object altered afterwards is checked here.
+_BUNDLE_ENUMS: dict[str, tuple[str | None, ...]] = {
+    "bundle_status": _BUNDLE_STATUSES,
+    "slice_status": _BUNDLE_STATUSES,
+    "admission_status": ("ADMITTED", "BLOCKED", "UNAVAILABLE", None),
+    "diagnostics_status": ("HEALTHY", "DEGRADED", "UNHEALTHY", "NO_MATERIAL", None),
+    "slice_audit_status": _AUDIT_STATUSES,
+    "published_slice_status": (*_BUNDLE_STATUSES, None),
+    "expected_slice_status": (*_BUNDLE_STATUSES, None),
+    "request_audit_status": (*_AUDIT_STATUSES, None),
+    "proposal_audit_status": (*_AUDIT_STATUSES, None),
+}
 
 # Unavailable-input diagnostics. Detail suffixes name a field and a reason
 # only; a published value is never echoed.
@@ -137,6 +153,9 @@ def _bundle_shape_problem(values: Mapping[str, Any]) -> str | None:
     for name in _BUNDLE_BOOLS:
         if not isinstance(values[name], bool):
             return f"{name}:not_a_boolean"
+    for name, allowed in _BUNDLE_ENUMS.items():
+        if values[name] not in allowed:
+            return f"{name}:not_a_permitted_status"
     return None
 
 
@@ -223,6 +242,9 @@ def _read_audit(
         return None, None, f"{_AUDIT_INVALID}:findings:not_a_string_list"
     if values["bundle_audit_status"] not in _AUDIT_STATUSES:
         return None, None, f"{_AUDIT_INVALID}:bundle_audit_status:not_an_audit_status"
+    for name in _AUDIT_OPTIONAL_STR:
+        if values[name] is not None and values[name] not in _BUNDLE_STATUSES:
+            return None, None, f"{_AUDIT_INVALID}:{name}:not_a_permitted_status"
 
     snapshot = values["audited_bundle"]
     if snapshot is None:

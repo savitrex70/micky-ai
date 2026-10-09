@@ -689,3 +689,185 @@ def test_consistency_source_constant_is_correct():
         REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167
         == "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_TASK_167"
     )
+
+
+# ---------------------------------------------------------------------------
+# Status enums are enforced on objects altered after construction
+# ---------------------------------------------------------------------------
+
+_FORGED_STATUSES = ["FORGED", "ready", "", " READY", "READY\n"]
+
+
+@pytest.mark.parametrize("forged", _FORGED_STATUSES)
+def test_mutated_bundle_status_is_never_consistent(ready_bundle, ready_audit, forged):
+    bundle = _tamper(ready_bundle, bundle_status=forged)
+    result = _verify(bundle, ready_audit)
+    assert result["consistency_status"] != "CONSISTENT"
+    _assert_unavailable(result, "TASK_165_BUNDLE_INVALID:bundle_status")
+
+
+@pytest.mark.parametrize("forged", _FORGED_STATUSES)
+def test_mutated_audit_published_status_is_never_consistent(
+    ready_bundle, ready_audit, forged
+):
+    audit = _tamper(ready_audit, published_bundle_status=forged)
+    result = _verify(ready_bundle, audit)
+    assert result["consistency_status"] != "CONSISTENT"
+    _assert_unavailable(result, "TASK_166_AUDIT_INVALID:published_bundle_status")
+
+
+@pytest.mark.parametrize("forged", _FORGED_STATUSES)
+def test_mutated_audit_expected_status_is_never_consistent(
+    ready_bundle, ready_audit, forged
+):
+    audit = _tamper(ready_audit, expected_bundle_status=forged)
+    result = _verify(ready_bundle, audit)
+    assert result["consistency_status"] != "CONSISTENT"
+    _assert_unavailable(result, "TASK_166_AUDIT_INVALID:expected_bundle_status")
+
+
+@pytest.mark.parametrize("forged", _FORGED_STATUSES)
+def test_matching_forged_statuses_across_bundle_audit_and_snapshot(
+    ready_bundle, ready_audit, forged
+):
+    """Agreement between forged values must not read as consistency."""
+    bundle = _tamper(ready_bundle, bundle_status=forged)
+    snapshot = _tamper(ready_audit.audited_bundle, bundle_status=forged)
+    audit = _tamper(
+        ready_audit,
+        published_bundle_status=forged,
+        expected_bundle_status=forged,
+        audited_bundle=snapshot,
+    )
+    assert bundle.bundle_status == audit.published_bundle_status == forged
+    assert audit.expected_bundle_status == snapshot.bundle_status == forged
+    result = _verify(bundle, audit)
+    assert result["consistency_status"] != "CONSISTENT"
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["session_id"] == ""
+
+
+def test_forged_audit_status_is_never_consistent(ready_bundle, ready_audit):
+    audit = _tamper(ready_audit, bundle_audit_status="FORGED")
+    result = _verify(ready_bundle, audit)
+    _assert_unavailable(result, "TASK_166_AUDIT_INVALID:bundle_audit_status")
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        ("slice_status", "FORGED"),
+        ("admission_status", "FORGED"),
+        ("admission_status", "READY"),
+        ("diagnostics_status", "FORGED"),
+        ("diagnostics_status", "ADMITTED"),
+        ("slice_audit_status", "READY"),
+        ("published_slice_status", "CONSISTENT"),
+        ("expected_slice_status", "FORGED"),
+        ("request_audit_status", "READY"),
+        ("proposal_audit_status", "FORGED"),
+    ],
+)
+def test_other_mutated_bundle_statuses_are_unavailable(
+    ready_bundle, ready_audit, field, forged
+):
+    bundle = _tamper(ready_bundle, **{field: forged})
+    _assert_unavailable(
+        _verify(bundle, ready_audit), f"TASK_165_BUNDLE_INVALID:{field}"
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "slice_status",
+        "admission_status",
+        "diagnostics_status",
+        "slice_audit_status",
+        "published_slice_status",
+        "expected_slice_status",
+        "request_audit_status",
+        "proposal_audit_status",
+        "bundle_status",
+    ],
+)
+def test_mutated_snapshot_status_is_never_consistent(ready_bundle, ready_audit, field):
+    """A forged status recorded only in the snapshot is malformed evidence."""
+    snapshot = _tamper(ready_audit.audited_bundle, **{field: "FORGED"})
+    audit = _tamper(ready_audit, audited_bundle=snapshot)
+    result = _verify(ready_bundle, audit)
+    assert result["consistency_status"] != "CONSISTENT"
+    _assert_unavailable(result, f"TASK_166_AUDIT_INVALID:audited_bundle.{field}")
+
+
+@pytest.mark.parametrize("field", ["slice_status", "request_audit_status"])
+def test_forged_status_matching_in_bundle_and_snapshot_is_never_consistent(
+    ready_bundle, ready_audit, field
+):
+    bundle = _tamper(ready_bundle, **{field: "FORGED"})
+    snapshot = _tamper(ready_audit.audited_bundle, **{field: "FORGED"})
+    audit = _tamper(ready_audit, audited_bundle=snapshot)
+    result = _verify(bundle, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
+
+
+def test_forged_status_in_mapping_inputs_is_unavailable(ready_bundle, ready_audit):
+    bundle = ready_bundle.model_dump()
+    bundle["bundle_status"] = "FORGED"
+    _assert_unavailable(_verify(bundle, ready_audit), "TASK_165_BUNDLE_INVALID")
+    audit = ready_audit.model_dump()
+    audit["expected_bundle_status"] = "FORGED"
+    _assert_unavailable(_verify(ready_bundle, audit), "TASK_166_AUDIT_INVALID")
+
+
+@pytest.mark.parametrize("fixture_name", ["ready_bundle", "blocked_bundle"])
+def test_valid_permitted_statuses_still_bind_consistently(fixture_name, request):
+    bundle = request.getfixturevalue(fixture_name)
+    result = _verify(bundle, _make_audit(bundle))
+    assert result["consistency_status"] == "CONSISTENT"
+    assert result["findings"] == []
+
+
+def test_valid_unavailable_bundle_still_binds_consistently(unavailable_bundle):
+    result = _verify(unavailable_bundle, _make_audit(unavailable_bundle))
+    assert result["consistency_status"] == "CONSISTENT"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"published_bundle_status": "BLOCKED"},
+        {"published_bundle_status": "UNAVAILABLE"},
+        {"expected_bundle_status": "BLOCKED"},
+        {"expected_bundle_status": "UNAVAILABLE"},
+    ],
+)
+def test_valid_but_contradictory_statuses_are_inconsistent(
+    ready_bundle, ready_audit, changes
+):
+    result = _verify(ready_bundle, _tamper(ready_audit, **changes))
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["available"] is True
+    assert result["findings"]
+
+
+def test_valid_but_contradictory_bundle_status_is_inconsistent(
+    ready_bundle, ready_audit
+):
+    bundle = _tamper(ready_bundle, bundle_status="BLOCKED")
+    result = _verify(bundle, ready_audit)
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert "BUNDLE_SNAPSHOT_MISMATCH" in result["findings"]
+    assert "PUBLISHED_STATUS_MISMATCH" in result["findings"]
+
+
+def test_status_enum_checks_do_not_mutate_inputs(ready_bundle, ready_audit):
+    bundle = _tamper(ready_bundle, bundle_status="FORGED")
+    audit = _tamper(ready_audit, expected_bundle_status="FORGED")
+    bundle_before = copy.deepcopy(bundle)
+    audit_before = copy.deepcopy(audit)
+    first = _verify(bundle, audit)
+    assert _verify(bundle, audit) == first
+    assert bundle == bundle_before
+    assert audit == audit_before

@@ -479,6 +479,41 @@ from rop.services.reasoning_run_stage_7_evidence_package import (
     ReasoningRunStage7EvidencePackageContractError,
     ReasoningRunStage7EvidencePackageService,
 )
+from rop.services.reasoning_run_stage_7_evidence_package_audit import (
+    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169,
+    ReasoningRunStage7EvidencePackageAuditContractError,
+    ReasoningRunStage7EvidencePackageAuditService,
+)
+from rop.services.reasoning_run_stage_7_evidence_package_audit_consistency import (
+    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170,
+    ReasoningRunStage7EvidencePackageAuditConsistencyContractError,
+    ReasoningRunStage7EvidencePackageAuditConsistencyService,
+)
+from rop.services.reasoning_run_stage_7_final_evidence_attestation import (
+    REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171,
+    ReasoningRunStage7FinalEvidenceAttestationContractError,
+    ReasoningRunStage7FinalEvidenceAttestationService,
+)
+from rop.services.reasoning_run_stage_7_final_attestation_audit import (
+    REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172,
+    ReasoningRunStage7FinalAttestationAuditContractError,
+    ReasoningRunStage7FinalAttestationAuditService,
+)
+from rop.services.reasoning_run_stage_7_final_attestation_consistency import (
+    REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173,
+    ReasoningRunStage7FinalAttestationConsistencyContractError,
+    ReasoningRunStage7FinalAttestationConsistencyService,
+)
+from rop.services.reasoning_run_stage_7_release_readiness_projection import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
+    ReasoningRunStage7ReleaseReadinessProjectionContractError,
+    ReasoningRunStage7ReleaseReadinessProjectionService,
+)
+from rop.services.reasoning_run_stage_7_release_readiness_audit import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+    ReasoningRunStage7ReleaseReadinessAuditContractError,
+    ReasoningRunStage7ReleaseReadinessAuditService,
+)
 from rop.services.reasoning_session import ReasoningSessionService
 from rop.services.reasoning_step import ReasoningStepService
 from rop.services.template_match import TemplateMatchService
@@ -737,6 +772,30 @@ __all__ = [
     "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168",
     "ReasoningRunStage7EvidencePackageContractError",
     "ReasoningRunStage7EvidencePackageService",
+    "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169",
+    "ReasoningRunStage7EvidencePackageAuditContractError",
+    "ReasoningRunStage7EvidencePackageAuditService",
+    "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170",
+    "ReasoningRunStage7EvidencePackageAuditConsistencyContractError",
+    "ReasoningRunStage7EvidencePackageAuditConsistencyService",
+    "REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171",
+    "ReasoningRunStage7FinalEvidenceAttestationContractError",
+    "ReasoningRunStage7FinalEvidenceAttestationService",
+    "REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172",
+    "ReasoningRunStage7FinalAttestationAuditContractError",
+    "ReasoningRunStage7FinalAttestationAuditService",
+    "REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173",
+    "ReasoningRunStage7FinalAttestationConsistencyContractError",
+    "ReasoningRunStage7FinalAttestationConsistencyService",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174",
+    "ReasoningRunStage7ReleaseReadinessProjectionContractError",
+    "ReasoningRunStage7ReleaseReadinessProjectionService",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175",
+    "ReasoningRunStage7ReleaseReadinessAuditContractError",
+    "ReasoningRunStage7ReleaseReadinessAuditService",
+    "REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171",
+    "ReasoningRunStage7FinalEvidenceAttestationContractError",
+    "ReasoningRunStage7FinalEvidenceAttestationService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
