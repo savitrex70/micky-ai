@@ -209,6 +209,34 @@ def test_schema_ready_requires_certified_inputs() -> None:
         )
 
 
+def test_schema_requires_canonical_source() -> None:
+    with pytest.raises(ValidationError, match="canonical Task 174 source"):
+        ReasoningRunStage7ReleaseReadinessProjectionRead(
+            session_id="",
+            readiness_status="UNAVAILABLE",
+            attestation_status="UNAVAILABLE",
+            attestation_audit_status="UNAVAILABLE",
+            consistency_status="UNAVAILABLE",
+            finding_count=1,
+            findings=["INPUT_UNAVAILABLE"],
+            projection_source="FORGED_SOURCE",
+        )
+
+
+def test_schema_unavailable_requires_findings() -> None:
+    with pytest.raises(ValidationError, match="UNAVAILABLE requires"):
+        ReasoningRunStage7ReleaseReadinessProjectionRead(
+            session_id=str(uuid4()),
+            readiness_status="UNAVAILABLE",
+            attestation_status="UNAVAILABLE",
+            attestation_audit_status="UNAVAILABLE",
+            consistency_status="UNAVAILABLE",
+            finding_count=0,
+            findings=[],
+            projection_source=PROJECTION_SOURCE,
+        )
+
+
 def test_schema_ready_requires_finding_free() -> None:
     session_id = str(uuid4())
     with pytest.raises(ValidationError, match="READY requires a finding-free"):
@@ -277,12 +305,17 @@ def test_project_blocked_attestation_projects_blocked(ready_chain) -> None:
     attestation.attestation_status = "BLOCKED"
     attestation.certified = False
     attestation.blocked = True
+    attestation.package_status = "BLOCKED"
     attestation.finding_count = 1
     attestation.findings = ["PACKAGE_BLOCKED"]
+    audit = copy.deepcopy(ready_chain["audit"])
+    audit.published_attestation_status = "BLOCKED"
+    audit.expected_attestation_status = "BLOCKED"
+    consistency = copy.deepcopy(ready_chain["consistency"])
     result = ReasoningRunStage7ReleaseReadinessProjectionService.project(
         attestation=attestation,
-        audit=ready_chain["audit"],
-        consistency=ready_chain["consistency"],
+        audit=audit,
+        consistency=consistency,
     )
     assert result["readiness_status"] == "BLOCKED"
 
@@ -326,7 +359,7 @@ def test_project_detects_wrong_attestation_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
     )
     assert result["readiness_status"] == "UNAVAILABLE"
-    assert "ATTESTATION_SOURCE_INVALID" in result["findings"]
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_project_detects_wrong_audit_source(ready_chain) -> None:
@@ -338,7 +371,7 @@ def test_project_detects_wrong_audit_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
     )
     assert result["readiness_status"] == "UNAVAILABLE"
-    assert "AUDIT_SOURCE_INVALID" in result["findings"]
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_project_detects_wrong_consistency_source(ready_chain) -> None:
@@ -350,7 +383,48 @@ def test_project_detects_wrong_consistency_source(ready_chain) -> None:
         consistency=consistency,
     )
     assert result["readiness_status"] == "UNAVAILABLE"
-    assert "CONSISTENCY_SOURCE_INVALID" in result["findings"]
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_project_revalidates_post_construction_mutations(ready_chain) -> None:
+    ready_chain["attestation"].session_id = []
+
+    result = ReasoningRunStage7ReleaseReadinessProjectionService.project(
+        attestation=ready_chain["attestation"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+    )
+
+    assert result["readiness_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_project_rejects_wrong_input_types(ready_chain) -> None:
+    result = ReasoningRunStage7ReleaseReadinessProjectionService.project(
+        attestation=None,  # type: ignore[arg-type]
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+    )
+
+    assert result["readiness_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_project_detects_audit_status_detached_from_attestation(ready_chain) -> None:
+    audit = copy.deepcopy(ready_chain["audit"])
+    audit.published_attestation_status = "BLOCKED"
+    audit.expected_attestation_status = "BLOCKED"
+
+    result = ReasoningRunStage7ReleaseReadinessProjectionService.project(
+        attestation=ready_chain["attestation"],
+        audit=audit,
+        consistency=ready_chain["consistency"],
+    )
+
+    assert result["readiness_status"] == "UNAVAILABLE"
+    assert "ATTESTATION_AUDIT_STATUS_MISMATCH" in result["findings"]
 
 
 def test_project_does_not_mutate_inputs(ready_chain) -> None:

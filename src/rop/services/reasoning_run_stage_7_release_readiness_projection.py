@@ -65,6 +65,44 @@ class ReasoningRunStage7ReleaseReadinessProjectionService:
         service is invoked, no fingerprint is recomputed, and no database is
         written.
         """
+        try:
+            if not isinstance(
+                attestation, ReasoningRunStage7FinalEvidenceAttestationRead
+            ):
+                raise TypeError("attestation has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7FinalAttestationAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            if not isinstance(
+                consistency, ReasoningRunStage7FinalAttestationConsistencyRead
+            ):
+                raise TypeError("consistency has an unexpected model type")
+            attestation = ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
+                attestation.model_dump()
+            )
+            audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(
+                audit.model_dump()
+            )
+            consistency = (
+                ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
+                    consistency.model_dump()
+                )
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7ReleaseReadinessProjectionService._project(
+                {
+                    "session_id": "",
+                    "readiness_status": "UNAVAILABLE",
+                    "attestation_status": "UNAVAILABLE",
+                    "attestation_audit_status": "UNAVAILABLE",
+                    "consistency_status": "UNAVAILABLE",
+                    "finding_count": 1,
+                    "findings": ["EVIDENCE_INPUT_INVALID"],
+                    "projection_source": (
+                        REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A0 — Canonical sources for Tasks 171/172/173
@@ -94,14 +132,23 @@ class ReasoningRunStage7ReleaseReadinessProjectionService:
         # Step B — Attestation must be CERTIFIED
         if attestation.attestation_status != "CERTIFIED":
             findings.append("ATTESTATION_NOT_CERTIFIED")
+        if (
+            attestation.attestation_status != audit.published_attestation_status
+            or attestation.attestation_status != audit.expected_attestation_status
+        ):
+            findings.append("ATTESTATION_AUDIT_STATUS_MISMATCH")
 
         # Step C — Audit must be CONSISTENT
         if audit.attestation_audit_status != "CONSISTENT":
             findings.append("ATTESTATION_AUDIT_INCONSISTENT")
+        if audit.findings:
+            findings.append("ATTESTATION_AUDIT_HAS_FINDINGS")
 
         # Step D — Consistency must be CONSISTENT
         if consistency.consistency_status != "CONSISTENT":
             findings.append("CONSISTENCY_INCONSISTENT")
+        if consistency.findings:
+            findings.append("CONSISTENCY_HAS_FINDINGS")
 
         # Step E — Aggregate findings from all inputs
         all_findings = attestation.findings + audit.findings + consistency.findings
@@ -123,6 +170,13 @@ class ReasoningRunStage7ReleaseReadinessProjectionService:
             and audit.attestation_audit_status == "CONSISTENT"
             and consistency.consistency_status == "CONSISTENT"
             and attestation.session_id != ""
+            and attestation.session_id == audit.session_id
+            and attestation.session_id == consistency.session_id
+            and attestation.attestation_status == audit.published_attestation_status
+            and attestation.attestation_status == audit.expected_attestation_status
+            and not attestation.findings
+            and not audit.findings
+            and not consistency.findings
         )
 
         if blocked:

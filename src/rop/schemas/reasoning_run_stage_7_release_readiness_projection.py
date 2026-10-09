@@ -51,8 +51,14 @@ class ReasoningRunStage7ReleaseReadinessProjectionRead(BaseModel):
             raise ValueError("findings must not contain duplicates")
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
+        if self.projection_source != (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
+        ):
+            raise ValueError("projection_source must be the canonical Task 174 source")
         # READY requires all conditions
         if self.readiness_status == "READY":
+            if not self.session_id:
+                raise ValueError("READY requires a valid session_id")
             if self.attestation_status != "CERTIFIED":
                 raise ValueError("READY requires CERTIFIED attestation")
             if self.attestation_audit_status != "CONSISTENT":
@@ -61,13 +67,15 @@ class ReasoningRunStage7ReleaseReadinessProjectionRead(BaseModel):
                 raise ValueError("READY requires CONSISTENT consistency")
             if self.finding_count != 0:
                 raise ValueError("READY requires a finding-free projection")
+        # UNAVAILABLE represents insufficient evidence, not a positive verdict.
+        if self.readiness_status == "UNAVAILABLE" and self.finding_count == 0:
+            raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
         # BLOCKED requires genuine blocking evidence
         if self.readiness_status == "BLOCKED":
             blocking = (
                 self.attestation_status == "BLOCKED"
                 or self.attestation_audit_status == "INCONSISTENT"
                 or self.consistency_status == "INCONSISTENT"
-                or self.finding_count > 0
             )
             if not blocking:
                 raise ValueError("BLOCKED requires published blocking evidence")
