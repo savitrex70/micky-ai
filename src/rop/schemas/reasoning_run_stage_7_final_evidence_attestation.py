@@ -49,9 +49,9 @@ class ReasoningRunStage7FinalEvidenceAttestationRead(BaseModel):
     package_audit_status: (
         Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"] | None
     ) = None
-    consistency_status: (
-        Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"] | None
-    ) = None
+    consistency_status: Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"] | None = (
+        None
+    )
     finding_count: int
     findings: list[str]
     attestation_source: str

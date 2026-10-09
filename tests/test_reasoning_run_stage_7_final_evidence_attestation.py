@@ -262,7 +262,8 @@ def test_schema_blocked_flag_coherence() -> None:
     """blocked flag must equal (attestation_status == 'BLOCKED')."""
     session_id = str(uuid4())
     with pytest.raises(
-        ValidationError, match="blocked must equal \\(attestation_status == 'BLOCKED'\\)"
+        ValidationError,
+        match="blocked must equal \\(attestation_status == 'BLOCKED'\\)",
     ):
         ReasoningRunStage7FinalEvidenceAttestationRead(
             session_id=session_id,
@@ -298,7 +299,9 @@ def test_schema_available_flag_coherence() -> None:
 def test_schema_finding_count_must_match_findings() -> None:
     """finding_count must equal len(findings)."""
     session_id = str(uuid4())
-    with pytest.raises(ValidationError, match="finding_count must equal len\\(findings\\)"):
+    with pytest.raises(
+        ValidationError, match="finding_count must equal len\\(findings\\)"
+    ):
         ReasoningRunStage7FinalEvidenceAttestationRead(
             session_id=session_id,
             attestation_status="UNAVAILABLE",
