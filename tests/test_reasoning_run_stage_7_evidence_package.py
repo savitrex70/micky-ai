@@ -24,6 +24,7 @@ from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
     ReasoningRunStage7EvidenceBundleAuditRead,
+    ReasoningRunStage7EvidenceBundleSnapshot,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
     ReasoningRunStage7EvidenceBundleAuditConsistencyRead,
@@ -155,6 +156,24 @@ def ready_inputs():
     }
 
 
+def rebind_task_166_and_167_to_bundle(ready_inputs):
+    """Build matching published Task 166/167 evidence for a changed bundle."""
+    bundle = ready_inputs["bundle165"]
+    audit = ready_inputs["audit166"]
+    audit.audited_bundle = ReasoningRunStage7EvidenceBundleSnapshot.model_validate(
+        bundle.model_dump()
+    )
+    audit.published_bundle_status = bundle.bundle_status
+    audit.expected_bundle_status = bundle.bundle_status
+    ready_inputs["consistency167"] = (
+        ReasoningRunStage7EvidenceBundleAuditConsistencyRead.model_validate(
+            ReasoningRunStage7EvidenceBundleAuditConsistencyService.verify(
+                bundle=bundle, audit=audit
+            )
+        )
+    )
+
+
 def test_ready_package_assembles_correctly(ready_inputs):
     """All READY/CONSISTENT inputs assemble to READY package."""
     package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
@@ -205,8 +224,10 @@ def test_findings_aggregate_from_all_inputs(ready_inputs):
     ready_inputs["slice163"].findings = ["FINDING_2"]
     ready_inputs["slice163"].finding_count = 1
     package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
-    assert package["finding_count"] == 2
-    assert set(package["findings"]) == {"FINDING_1", "FINDING_2"}
+    assert package["finding_count"] == 3
+    assert {"FINDING_1", "FINDING_2", "T165_T163_EVIDENCE_MISMATCH"} == set(
+        package["findings"]
+    )
 
 
 def test_evidence_preserved_verbatim(ready_inputs):
@@ -312,6 +333,79 @@ def test_changed_task_165_bundle_cannot_reuse_old_audit(ready_inputs):
     assert "T166_SNAPSHOT_MISMATCH" in package["findings"]
 
 
+def test_task_162_fingerprint_cannot_disagree_with_rebound_task_165(ready_inputs):
+    ready_inputs["bundle165"].request_fingerprint = "b" * 64
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T165_T162_EVIDENCE_MISMATCH" in package["findings"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("provider_name", "other-provider"), ("model_name", "other-model")],
+)
+def test_task_162_163_attribution_cannot_disagree_with_rebound_task_165(
+    ready_inputs, field, value
+):
+    setattr(ready_inputs["bundle165"], field, value)
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T165_T163_EVIDENCE_MISMATCH" in package["findings"]
+
+
+def test_task_165_slice_status_must_match_task_163_and_task_164(ready_inputs):
+    ready_inputs["bundle165"].slice_status = "BLOCKED"
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T165_T163_EVIDENCE_MISMATCH" in package["findings"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "finding"),
+    [
+        ("published_slice_status", "BLOCKED", "T164_PUBLISHED_STATUS_MISMATCH"),
+        ("expected_slice_status", "BLOCKED", "T164_EXPECTED_STATUS_MISMATCH"),
+    ],
+)
+def test_task_164_slice_status_must_match_task_163(ready_inputs, field, value, finding):
+    setattr(ready_inputs["audit164"], field, value)
+    setattr(ready_inputs["bundle165"], field, value)
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert finding in package["findings"]
+
+
+def test_unsupported_embedded_task_165_status_cannot_be_ready(ready_inputs):
+    ready_inputs["bundle165"].slice_status = "FORGED"
+    ready_inputs["audit166"].audited_bundle.slice_status = "FORGED"
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T165_STATUS_INVALID" in package["findings"]
+
+
+def test_stale_task_167_consistent_result_cannot_be_reused(ready_inputs):
+    ready_inputs["bundle165"].request_fingerprint = "b" * 64
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T167_RESULT_MISMATCH" in package["findings"]
+
+
 def test_noncanonical_source_inside_task_165_bundle_cannot_be_ready(ready_inputs):
     ready_inputs["bundle165"].certification_source = "FORGED_SOURCE"
 
@@ -412,6 +506,34 @@ def test_direct_schema_rejects_noncanonical_source_even_when_ready(ready_inputs)
 def test_direct_schema_rejects_task_165_166_snapshot_substitution(ready_inputs):
     package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
     package["t166_audited_bundle"]["provider_name"] = "different-provider"
+
+    with pytest.raises(ValidationError, match="findings must equal"):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package)
+
+
+def test_direct_schema_rejects_task_165_upstream_contradiction(ready_inputs):
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    package["t165_bundle_evidence"]["request_fingerprint"] = "b" * 64
+    package["t166_audited_bundle"]["request_fingerprint"] = "b" * 64
+
+    with pytest.raises(ValidationError, match="findings must equal"):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package)
+
+
+def test_direct_schema_rejects_task_164_status_contradiction(ready_inputs):
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    package["t164_expected_slice_status"] = "BLOCKED"
+    package["t165_bundle_evidence"]["expected_slice_status"] = "BLOCKED"
+    package["t166_audited_bundle"]["expected_slice_status"] = "BLOCKED"
+
+    with pytest.raises(ValidationError, match="findings must equal"):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package)
+
+
+def test_direct_schema_rejects_unsupported_task_165_status(ready_inputs):
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    package["t165_bundle_evidence"]["slice_status"] = "FORGED"
+    package["t166_audited_bundle"]["slice_status"] = "FORGED"
 
     with pytest.raises(ValidationError, match="findings must equal"):
         ReasoningRunStage7EvidencePackageRead.model_validate(package)

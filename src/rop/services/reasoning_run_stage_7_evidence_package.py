@@ -40,6 +40,8 @@ from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import 
 from rop.schemas.reasoning_run_stage_7_evidence_package import (
     REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168,
     ReasoningRunStage7EvidencePackageRead,
+    _bundle_status_is_valid,
+    _expected_task167,
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
@@ -70,6 +72,19 @@ class ReasoningRunStage7EvidencePackageContractError(Exception):
     def __init__(self, invariant: str, detail: str) -> None:
         self.invariant = invariant
         super().__init__(f"[{invariant}] {detail}")
+
+
+def _exactly_equal(left: Any, right: Any) -> bool:
+    """Compare published values without Python's bool/int equality overlap."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _exactly_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _exactly_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return type(left) is type(right) and left == right
 
 
 class ReasoningRunStage7EvidencePackageService:
@@ -172,7 +187,85 @@ class ReasoningRunStage7EvidencePackageService:
             ):
                 problems.add("T167_SOURCE_MISMATCH")
 
-            # Step C — Cross-task status and binding invariants. The
+            # Step C — Bind the complete Task 165 surface to its sources.
+            bundle_values = bundle165.model_dump()
+            for field_name in (
+                "bundle_status",
+                "slice_status",
+                "admission_status",
+                "diagnostics_status",
+                "slice_audit_status",
+                "published_slice_status",
+                "expected_slice_status",
+                "request_audit_status",
+                "proposal_audit_status",
+            ):
+                if not _bundle_status_is_valid(field_name, bundle_values[field_name]):
+                    problems.add("T165_STATUS_INVALID")
+
+            if bundle165.session_id != pkg162.session_id:
+                problems.add("T165_SESSION_MISMATCH")
+            if any(
+                not _exactly_equal(getattr(bundle165, field), getattr(pkg162, source))
+                for field, source in (
+                    ("request_fingerprint", "request_fingerprint"),
+                    ("request_audit_status", "request_audit_status"),
+                    ("proposal_audit_status", "proposal_audit_status"),
+                    ("t162_audit_source", "audit_source"),
+                )
+            ):
+                problems.add("T165_T162_EVIDENCE_MISMATCH")
+
+            if any(
+                not _exactly_equal(getattr(bundle165, field), getattr(slice163, source))
+                for field, source in (
+                    ("slice_status", "slice_status"),
+                    ("admission_status", "admission_status"),
+                    ("diagnostics_status", "diagnostics_status"),
+                    ("provider_name", "provider_name"),
+                    ("model_name", "model_name"),
+                    ("finding_count", "finding_count"),
+                    ("findings", "findings"),
+                    ("certification_source", "certification_source"),
+                )
+            ):
+                problems.add("T165_T163_EVIDENCE_MISMATCH")
+            if (
+                pkg162.provider_name != slice163.provider_name
+                or pkg162.model_name != slice163.model_name
+            ):
+                problems.add("T162_T163_ATTRIBUTION_MISMATCH")
+
+            if any(
+                not _exactly_equal(
+                    getattr(bundle165, bundle_field),
+                    getattr(audit164, audit_field),
+                )
+                for bundle_field, audit_field in (
+                    ("slice_audit_status", "slice_audit_status"),
+                    ("audit_available", "available"),
+                    ("audit_consistent", "consistent"),
+                    ("published_slice_status", "published_slice_status"),
+                    ("expected_slice_status", "expected_slice_status"),
+                    ("audit_finding_count", "finding_count"),
+                    ("audit_findings", "findings"),
+                    ("audit_source", "audit_source"),
+                )
+            ):
+                problems.add("T165_T164_EVIDENCE_MISMATCH")
+            if audit164.published_slice_status != slice163.slice_status:
+                problems.add("T164_PUBLISHED_STATUS_MISMATCH")
+            if audit164.expected_slice_status != slice163.slice_status:
+                problems.add("T164_EXPECTED_STATUS_MISMATCH")
+            if audit164.slice_audit_status == "CONSISTENT" and (
+                audit164.published_slice_status != audit164.expected_slice_status
+                or audit164.available is not True
+                or audit164.consistent is not True
+                or audit164.findings
+            ):
+                problems.add("T164_CONSISTENCY_INVALID")
+
+            # Step D — Task 166's audit and snapshot are bound to the exact
             # Task 166 verdict is only evidence about the Task 165
             # bundle it actually compared: its published status must
             # agree with the supplied bundle whenever it names one, its
@@ -198,17 +291,37 @@ class ReasoningRunStage7EvidencePackageService:
                     problems.add("T166_SNAPSHOT_MISSING")
                 else:
                     snapshot_fields = snapshot.model_dump()
-                    if snapshot_fields != {
-                        name: getattr(bundle165, name) for name in snapshot_fields
-                    }:
+                    if not _exactly_equal(snapshot_fields, bundle_values):
                         problems.add("T166_SNAPSHOT_MISMATCH")
             if (
                 consistency167.consistency_status == "CONSISTENT"
                 and audit166.bundle_audit_status != "CONSISTENT"
             ):
                 problems.add("T167_BINDING_MISMATCH")
+            expected_t167_status, expected_t167_findings = _expected_task167(
+                ReasoningRunStage7EvidenceBundleSnapshot.model_validate(bundle_values),
+                (
+                    snapshot
+                    if isinstance(snapshot, ReasoningRunStage7EvidenceBundleSnapshot)
+                    else None
+                ),
+                audit166.session_id,
+                audit166.bundle_audit_status,
+                audit166.available,
+                audit166.consistent,
+                audit166.published_bundle_status,
+                audit166.expected_bundle_status,
+                audit166.finding_count,
+                audit166.findings,
+                audit166.audit_source,
+            )
+            if (
+                consistency167.consistency_status != expected_t167_status
+                or consistency167.findings != expected_t167_findings
+            ):
+                problems.add("T167_RESULT_MISMATCH")
 
-            # Step D — Aggregate findings from all inputs. Any problem
+            # Step E — Aggregate findings from all inputs. Any problem
             # found above joins them; the aggregate is the sorted,
             # deduplicated union the package reports verbatim.
             all_findings = (
@@ -220,13 +333,13 @@ class ReasoningRunStage7EvidencePackageService:
                 + consistency167.findings
             )
             findings = sorted(set(all_findings) | problems)
-        except (AttributeError, TypeError) as exc:
+        except (AttributeError, TypeError, ValidationError) as exc:
             raise ReasoningRunStage7EvidencePackageContractError(
                 "EVIDENCE_PACKAGE_UNREADABLE",
                 "published evidence has an unreadable shape",
             ) from exc
 
-        # Step E — Determine package status
+        # Step F — Determine package status
         # BLOCKED takes precedence; it requires a genuine published
         # blocking state, so a bare contradiction (forged source,
         # detached binding) without one yields UNAVAILABLE instead.

@@ -68,6 +68,124 @@ def _canonical_upstream_sources() -> dict[str, str]:
     }
 
 
+def _bundle_status_is_valid(field_name: str, value: object) -> bool:
+    allowed: dict[str, tuple[object, ...]] = {
+        "bundle_status": ("READY", "BLOCKED", "UNAVAILABLE"),
+        "slice_status": ("READY", "BLOCKED", "UNAVAILABLE"),
+        "admission_status": ("ADMITTED", "BLOCKED", "UNAVAILABLE", None),
+        "diagnostics_status": (
+            "HEALTHY",
+            "DEGRADED",
+            "UNHEALTHY",
+            "NO_MATERIAL",
+            None,
+        ),
+        "slice_audit_status": ("CONSISTENT", "INCONSISTENT", "UNAVAILABLE"),
+        "published_slice_status": ("READY", "BLOCKED", "UNAVAILABLE", None),
+        "expected_slice_status": ("READY", "BLOCKED", "UNAVAILABLE", None),
+        "request_audit_status": ("CONSISTENT", "INCONSISTENT", "UNAVAILABLE", None),
+        "proposal_audit_status": (
+            "CONSISTENT",
+            "INCONSISTENT",
+            "UNAVAILABLE",
+            None,
+        ),
+    }
+    return value in allowed[field_name]
+
+
+def _snapshot_values_match(
+    left: ReasoningRunStage7EvidenceBundleSnapshot,
+    right: ReasoningRunStage7EvidenceBundleSnapshot,
+) -> bool:
+    def values_match(a: object, b: object) -> bool:
+        if isinstance(a, list) and isinstance(b, list):
+            return len(a) == len(b) and all(
+                values_match(item_a, item_b)
+                for item_a, item_b in zip(a, b, strict=True)
+            )
+        return type(a) is type(b) and a == b
+
+    left_values = left.model_dump()
+    right_values = right.model_dump()
+    return left_values.keys() == right_values.keys() and all(
+        values_match(left_values[name], right_values[name]) for name in left_values
+    )
+
+
+def _expected_task167(
+    bundle: ReasoningRunStage7EvidenceBundleSnapshot,
+    audit_snapshot: ReasoningRunStage7EvidenceBundleSnapshot | None,
+    audit_session_id: str,
+    audit_status: str,
+    audit_available: bool,
+    audit_consistent: bool,
+    audit_published_status: str | None,
+    audit_expected_status: str | None,
+    audit_finding_count: int,
+    audit_findings: list[str],
+    audit_source: str,
+) -> tuple[str, list[str]]:
+    """Independently derive Task 167's published result from Tasks 165/166."""
+    status_fields = (
+        "bundle_status",
+        "slice_status",
+        "admission_status",
+        "diagnostics_status",
+        "slice_audit_status",
+        "published_slice_status",
+        "expected_slice_status",
+        "request_audit_status",
+        "proposal_audit_status",
+    )
+    for field_name in status_fields:
+        value = getattr(bundle, field_name)
+        if not _bundle_status_is_valid(field_name, value):
+            return (
+                "UNAVAILABLE",
+                [f"TASK_165_BUNDLE_INVALID:{field_name}:not_a_permitted_status"],
+            )
+    if audit_status == "UNAVAILABLE":
+        return "UNAVAILABLE", ["TASK_166_AUDIT_UNAVAILABLE"]
+    if audit_snapshot is None:
+        return "UNAVAILABLE", ["TASK_166_AUDITED_BUNDLE_MISSING"]
+
+    findings: set[str] = set()
+    if bundle.bundle_source != _canonical_upstream_sources()["t165_bundle_source"]:
+        findings.add("BUNDLE_SOURCE_MISMATCH")
+    if audit_source != REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166:
+        findings.add("AUDIT_SOURCE_MISMATCH")
+    if not _snapshot_values_match(bundle, audit_snapshot):
+        findings.add("BUNDLE_SNAPSHOT_MISMATCH")
+    if bundle.session_id != audit_snapshot.session_id:
+        findings.add("SESSION_MISMATCH")
+    if bundle.bundle_status != audit_published_status:
+        findings.add("PUBLISHED_STATUS_MISMATCH")
+    if (
+        audit_available is not True
+        or audit_consistent is not (audit_status == "CONSISTENT")
+        or audit_finding_count != len(audit_findings)
+        or len(set(audit_findings)) != len(audit_findings)
+        or audit_findings != sorted(audit_findings)
+        or (
+            audit_status == "CONSISTENT"
+            and (audit_findings or audit_published_status != audit_expected_status)
+        )
+        or (audit_status == "INCONSISTENT" and not audit_findings)
+        or audit_snapshot.session_id != audit_session_id
+        or audit_snapshot.bundle_status != audit_published_status
+    ):
+        findings.add("AUDIT_INTERNAL_MISMATCH")
+    if audit_status == "CONSISTENT":
+        if bundle.bundle_status != audit_expected_status:
+            findings.add("EXPECTED_STATUS_CONTRADICTION")
+    else:
+        findings.add("AUDIT_REPORTS_BUNDLE_INCONSISTENT")
+
+    ordered = sorted(findings)
+    return ("INCONSISTENT" if ordered else "CONSISTENT"), ordered
+
+
 class ReasoningRunStage7EvidencePackageRead(BaseModel):
     """Strict read model for one canonical Stage 7 evidence package.
 
@@ -255,6 +373,80 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
             if getattr(self.t165_bundle_evidence, source_field) != sources[field_name]:
                 package_findings.add(f"T{field_name[1:4]}_SOURCE_MISMATCH")
 
+        bundle = self.t165_bundle_evidence
+        for field_name in (
+            "bundle_status",
+            "slice_status",
+            "admission_status",
+            "diagnostics_status",
+            "slice_audit_status",
+            "published_slice_status",
+            "expected_slice_status",
+            "request_audit_status",
+            "proposal_audit_status",
+        ):
+            if not _bundle_status_is_valid(field_name, getattr(bundle, field_name)):
+                package_findings.add("T165_STATUS_INVALID")
+
+        if bundle.session_id != self.t162_session_id:
+            package_findings.add("T165_SESSION_MISMATCH")
+        t162_bundle_fields = {
+            "request_fingerprint": self.t162_request_fingerprint,
+            "request_audit_status": self.t162_request_audit_status,
+            "proposal_audit_status": self.t162_proposal_audit_status,
+            "t162_audit_source": self.t162_audit_source,
+        }
+        if any(
+            getattr(bundle, name) != value for name, value in t162_bundle_fields.items()
+        ):
+            package_findings.add("T165_T162_EVIDENCE_MISMATCH")
+
+        t163_bundle_fields = {
+            "slice_status": self.t163_slice_status,
+            "admission_status": self.t163_admission_status,
+            "diagnostics_status": self.t163_diagnostics_status,
+            "provider_name": self.t163_provider_name,
+            "model_name": self.t163_model_name,
+            "finding_count": self.t163_finding_count,
+            "findings": self.t163_findings,
+            "certification_source": self.t163_certification_source,
+        }
+        if any(
+            getattr(bundle, name) != value for name, value in t163_bundle_fields.items()
+        ):
+            package_findings.add("T165_T163_EVIDENCE_MISMATCH")
+        if (
+            self.t162_provider_name != self.t163_provider_name
+            or self.t162_model_name != self.t163_model_name
+        ):
+            package_findings.add("T162_T163_ATTRIBUTION_MISMATCH")
+
+        t164_bundle_fields = {
+            "slice_audit_status": self.t164_slice_audit_status,
+            "audit_available": self.t164_available,
+            "audit_consistent": self.t164_consistent,
+            "published_slice_status": self.t164_published_slice_status,
+            "expected_slice_status": self.t164_expected_slice_status,
+            "audit_finding_count": self.t164_finding_count,
+            "audit_findings": self.t164_findings,
+            "audit_source": self.t164_audit_source,
+        }
+        if any(
+            getattr(bundle, name) != value for name, value in t164_bundle_fields.items()
+        ):
+            package_findings.add("T165_T164_EVIDENCE_MISMATCH")
+        if self.t164_published_slice_status != self.t163_slice_status:
+            package_findings.add("T164_PUBLISHED_STATUS_MISMATCH")
+        if self.t164_expected_slice_status != self.t163_slice_status:
+            package_findings.add("T164_EXPECTED_STATUS_MISMATCH")
+        if self.t164_slice_audit_status == "CONSISTENT" and (
+            self.t164_published_slice_status != self.t164_expected_slice_status
+            or not self.t164_available
+            or not self.t164_consistent
+            or self.t164_findings
+        ):
+            package_findings.add("T164_CONSISTENCY_INVALID")
+
         if (
             self.t166_published_bundle_status is not None
             and self.t166_published_bundle_status != self.t165_bundle_status
@@ -290,6 +482,24 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
             and self.t166_bundle_audit_status != "CONSISTENT"
         ):
             package_findings.add("T167_BINDING_MISMATCH")
+        expected_t167_status, expected_t167_findings = _expected_task167(
+            bundle,
+            self.t166_audited_bundle,
+            self.t166_session_id,
+            self.t166_bundle_audit_status,
+            self.t166_available,
+            self.t166_consistent,
+            self.t166_published_bundle_status,
+            self.t166_expected_bundle_status,
+            self.t166_finding_count,
+            self.t166_findings,
+            self.t166_audit_source,
+        )
+        if (
+            self.t167_consistency_status != expected_t167_status
+            or self.t167_findings != expected_t167_findings
+        ):
+            package_findings.add("T167_RESULT_MISMATCH")
 
         expected_findings = sorted(set(child_findings) | package_findings)
         if self.findings != expected_findings:
