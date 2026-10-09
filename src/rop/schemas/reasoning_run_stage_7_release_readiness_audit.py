@@ -62,11 +62,19 @@ class ReasoningRunStage7ReleaseReadinessAuditRead(BaseModel):
             raise ValueError("findings must not contain duplicates")
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
+        if self.audit_source != (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
+        ):
+            raise ValueError("audit_source must be the canonical Task 175 source")
         if self.readiness_audit_status == "UNAVAILABLE":
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
+            if self.session_id != "":
+                raise ValueError("UNAVAILABLE must not claim a session identity")
             return self
         if self.readiness_audit_status == "CONSISTENT":
+            if not self.session_id:
+                raise ValueError("CONSISTENT requires a session identity")
             if self.published_readiness_status != self.expected_readiness_status:
                 raise ValueError(
                     "CONSISTENT requires published and expected "

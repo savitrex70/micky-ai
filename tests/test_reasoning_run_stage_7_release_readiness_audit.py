@@ -243,6 +243,36 @@ def test_schema_consistent_requires_no_findings() -> None:
         )
 
 
+def test_schema_requires_canonical_source() -> None:
+    with pytest.raises(ValidationError, match="canonical Task 175 source"):
+        ReasoningRunStage7ReleaseReadinessAuditRead(
+            session_id=str(uuid4()),
+            readiness_audit_status="CONSISTENT",
+            available=True,
+            consistent=True,
+            published_readiness_status="READY",
+            expected_readiness_status="READY",
+            finding_count=0,
+            findings=[],
+            audit_source="FORGED",
+        )
+
+
+def test_schema_unavailable_must_not_claim_session() -> None:
+    with pytest.raises(ValidationError, match="must not claim a session"):
+        ReasoningRunStage7ReleaseReadinessAuditRead(
+            session_id=str(uuid4()),
+            readiness_audit_status="UNAVAILABLE",
+            available=False,
+            consistent=False,
+            published_readiness_status="UNAVAILABLE",
+            expected_readiness_status="UNAVAILABLE",
+            finding_count=1,
+            findings=["EVIDENCE_INPUT_INVALID"],
+            audit_source=AUDIT_SOURCE,
+        )
+
+
 def test_schema_inconsistent_requires_findings() -> None:
     session_id = str(uuid4())
     with pytest.raises(ValidationError, match="INCONSISTENT requires at least one"):
@@ -317,6 +347,7 @@ def test_audit_detects_forged_ready_status(ready_chain) -> None:
     attestation.attestation_status = "BLOCKED"
     attestation.certified = False
     attestation.blocked = True
+    attestation.package_status = "BLOCKED"
     attestation.finding_count = 1
     attestation.findings = ["PACKAGE_BLOCKED"]
     forged_projection = {
@@ -366,6 +397,7 @@ def test_audit_detects_blocking_evidence_hidden_under_unavailable(
     attestation.attestation_status = "BLOCKED"
     attestation.certified = False
     attestation.blocked = True
+    attestation.package_status = "BLOCKED"
     attestation.finding_count = 1
     attestation.findings = ["PACKAGE_BLOCKED"]
     projection = copy.deepcopy(ready_chain["projection"])
@@ -455,6 +487,34 @@ def test_audit_detects_wrong_consistency_source(ready_chain) -> None:
     )
     assert audit["readiness_audit_status"] == "INCONSISTENT"
     assert "CONSISTENCY_SOURCE_INVALID" in audit["findings"]
+
+
+@pytest.mark.parametrize("bad_session_id", [None, 7, []])
+def test_audit_rejects_mutated_upstream_identity(ready_chain, bad_session_id) -> None:
+    attestation = copy.deepcopy(ready_chain["attestation"])
+    attestation.session_id = bad_session_id
+    result = ReasoningRunStage7ReleaseReadinessAuditService.audit(
+        attestation=attestation,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        projection=ready_chain["projection"],
+    )
+    assert result["readiness_audit_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_audit_detects_projection_upstream_status_echo_mismatch(ready_chain) -> None:
+    projection = ready_chain["projection"].model_dump()
+    projection["attestation_audit_status"] = "UNAVAILABLE"
+    result = ReasoningRunStage7ReleaseReadinessAuditService.audit(
+        attestation=ready_chain["attestation"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        projection=projection,
+    )
+    assert result["readiness_audit_status"] == "INCONSISTENT"
+    assert "UPSTREAM_STATUS_MISMATCH" in result["findings"]
 
 
 def test_audit_malformed_projection_dict_is_unavailable(ready_chain) -> None:

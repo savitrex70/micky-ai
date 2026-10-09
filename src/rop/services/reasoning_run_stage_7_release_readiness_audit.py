@@ -32,8 +32,21 @@ from rop.schemas.reasoning_run_stage_7_release_readiness_audit import (
     ReasoningRunStage7ReleaseReadinessAuditRead,
 )
 from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionRead,
 )
+
+
+def _revalidate_or_recover_semantic_conflict(model_type: Any, value: Any) -> Any:
+    """Revalidate fields while retaining readable semantic contradictions."""
+    payload = value.model_dump()
+    try:
+        return model_type.model_validate(payload)
+    except ValidationError as exc:
+        if all(not error["loc"] for error in exc.errors()):
+            return model_type.model_construct(**payload)
+        raise
+
 
 __all__ = [
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175",
@@ -75,6 +88,43 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
+        try:
+            if not isinstance(
+                attestation, ReasoningRunStage7FinalEvidenceAttestationRead
+            ):
+                raise TypeError("attestation has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7FinalAttestationAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            if not isinstance(
+                consistency, ReasoningRunStage7FinalAttestationConsistencyRead
+            ):
+                raise TypeError("consistency has an unexpected model type")
+            attestation = _revalidate_or_recover_semantic_conflict(
+                ReasoningRunStage7FinalEvidenceAttestationRead, attestation
+            )
+            audit = _revalidate_or_recover_semantic_conflict(
+                ReasoningRunStage7FinalAttestationAuditRead, audit
+            )
+            consistency = _revalidate_or_recover_semantic_conflict(
+                ReasoningRunStage7FinalAttestationConsistencyRead, consistency
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7ReleaseReadinessAuditService._project(
+                {
+                    "session_id": "",
+                    "readiness_audit_status": "UNAVAILABLE",
+                    "available": False,
+                    "consistent": False,
+                    "published_readiness_status": "UNAVAILABLE",
+                    "expected_readiness_status": "UNAVAILABLE",
+                    "finding_count": 1,
+                    "findings": ["EVIDENCE_INPUT_INVALID"],
+                    "audit_source": (
+                        REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A0 — Canonical sources for Tasks 171/172/173
@@ -94,20 +144,78 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
         ):
             findings.append("CONSISTENCY_SOURCE_INVALID")
 
+        if (
+            attestation.certified != (attestation.attestation_status == "CERTIFIED")
+            or attestation.blocked != (attestation.attestation_status == "BLOCKED")
+            or attestation.available
+            != (attestation.attestation_status != "UNAVAILABLE")
+            or attestation.finding_count != len(attestation.findings)
+            or attestation.findings != sorted(set(attestation.findings))
+        ):
+            findings.append("ATTESTATION_INVARIANT_INVALID")
+        if (
+            audit.available != (audit.attestation_audit_status != "UNAVAILABLE")
+            or audit.consistent != (audit.attestation_audit_status == "CONSISTENT")
+            or audit.finding_count != len(audit.findings)
+            or audit.findings != sorted(set(audit.findings))
+            or (
+                audit.attestation_audit_status == "CONSISTENT"
+                and (
+                    audit.published_attestation_status
+                    != audit.expected_attestation_status
+                    or audit.findings
+                )
+            )
+            or (audit.attestation_audit_status == "INCONSISTENT" and not audit.findings)
+        ):
+            findings.append("AUDIT_INVARIANT_INVALID")
+        if (
+            consistency.available != (consistency.consistency_status != "UNAVAILABLE")
+            or consistency.consistent
+            != (consistency.consistency_status == "CONSISTENT")
+            or consistency.finding_count != len(consistency.findings)
+            or consistency.findings != sorted(set(consistency.findings))
+            or (consistency.consistency_status == "CONSISTENT" and consistency.findings)
+            or (
+                consistency.consistency_status == "INCONSISTENT"
+                and not consistency.findings
+            )
+            or (
+                consistency.consistency_status == "UNAVAILABLE"
+                and consistency.session_id != ""
+            )
+        ):
+            findings.append("CONSISTENCY_INVARIANT_INVALID")
+
         # Step A — Derive expected readiness status independently
         # BLOCKED takes precedence
         blocked = (
-            attestation.attestation_status == "BLOCKED"
-            or audit.attestation_audit_status == "INCONSISTENT"
-            or consistency.consistency_status == "INCONSISTENT"
+            (
+                attestation.attestation_status == "BLOCKED"
+                and attestation.package_status == "BLOCKED"
+                and bool(attestation.findings)
+            )
+            or (
+                audit.attestation_audit_status == "INCONSISTENT"
+                and bool(audit.findings)
+            )
+            or (
+                consistency.consistency_status == "INCONSISTENT"
+                and bool(consistency.findings)
+            )
         )
 
-        # READY requires all conditions
+        # READY requires the full Task 174 projection binding, not just
+        # individually positive status flags.
         ready = (
             attestation.attestation_status == "CERTIFIED"
             and audit.attestation_audit_status == "CONSISTENT"
             and consistency.consistency_status == "CONSISTENT"
-            and attestation.session_id != ""
+            and bool(attestation.session_id)
+            and attestation.session_id == audit.session_id
+            and attestation.session_id == consistency.session_id
+            and attestation.attestation_status == audit.published_attestation_status
+            and attestation.attestation_status == audit.expected_attestation_status
             and not attestation.findings
             and not audit.findings
             and not consistency.findings
@@ -120,29 +228,47 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
         else:
             expected_status = "UNAVAILABLE"
 
-        # Step B — Convert projection to model if dict
-        if isinstance(projection, dict):
-            # Validate through schema to catch invariants
-            try:
-                projection_obj = (
-                    ReasoningRunStage7ReleaseReadinessProjectionRead.model_validate(
-                        projection
+        # Step B — Revalidate the published Task 174 projection, including
+        # objects mutated after Pydantic construction.
+        raw_projection: Any = None
+        try:
+            raw_projection = (
+                projection.model_dump()
+                if isinstance(
+                    projection, ReasoningRunStage7ReleaseReadinessProjectionRead
+                )
+                else projection
+            )
+            if not isinstance(raw_projection, dict):
+                raise TypeError("projection has an unexpected model type")
+            projection_model = projection
+            if not isinstance(
+                projection_model, ReasoningRunStage7ReleaseReadinessProjectionRead
+            ):
+                projection_model = (
+                    ReasoningRunStage7ReleaseReadinessProjectionRead.model_construct(
+                        **raw_projection
                     )
                 )
-            except ValidationError:
-                # If validation fails, treat as UNAVAILABLE
-                projection_obj = None
-                findings.append("PROJECTION_INVALID")
-        else:
-            projection_obj = projection
+            projection_obj = _revalidate_or_recover_semantic_conflict(
+                ReasoningRunStage7ReleaseReadinessProjectionRead,
+                projection_model,
+            )
+        except (TypeError, ValidationError):
+            projection_obj = None
+            findings.append("PROJECTION_INVALID")
+
+        if projection_obj is not None and projection_obj.projection_source != (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
+        ):
+            findings.append("PROJECTION_SOURCE_INVALID")
 
         if projection_obj is None:
             raw_status = (
-                projection.get("readiness_status")
-                if isinstance(projection, dict)
+                raw_projection.get("readiness_status")
+                if isinstance(raw_projection, dict)
                 else None
             )
-            findings.append("PROJECTION_INVALID")
             if raw_status in ("READY", "BLOCKED", "UNAVAILABLE"):
                 published_status = raw_status
                 if raw_status != expected_status:
@@ -154,7 +280,13 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
                 findings = sorted(set(findings))
                 audit_status = "UNAVAILABLE"
             result: dict[str, Any] = {
-                "session_id": attestation.session_id,
+                "session_id": (
+                    attestation.session_id
+                    if audit_status != "UNAVAILABLE"
+                    and attestation.session_id == audit.session_id
+                    and attestation.session_id == consistency.session_id
+                    else ""
+                ),
                 "readiness_audit_status": audit_status,
                 "available": audit_status != "UNAVAILABLE",
                 "consistent": audit_status == "CONSISTENT",
@@ -180,14 +312,23 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
         # independently derived in Step A; it is never recomputed here)
         if expected_status != projection_obj.readiness_status:
             findings.append("READINESS_STATUS_MISMATCH")
+        if (
+            projection_obj.attestation_status != attestation.attestation_status
+            or projection_obj.attestation_audit_status != audit.attestation_audit_status
+            or projection_obj.consistency_status != consistency.consistency_status
+        ):
+            findings.append("UPSTREAM_STATUS_MISMATCH")
 
         # Step E — Validate findings coherence
         if projection_obj.finding_count != len(projection_obj.findings):
             findings.append("FINDINGS_MISMATCH")
+            findings.append("PROJECTION_INVALID")
         if len(set(projection_obj.findings)) != len(projection_obj.findings):
             findings.append("FINDINGS_MISMATCH")
+            findings.append("PROJECTION_INVALID")
         if projection_obj.findings != sorted(projection_obj.findings):
             findings.append("FINDINGS_MISMATCH")
+            findings.append("PROJECTION_INVALID")
 
         # Step E — Populate result dict
         findings = sorted(set(findings))
