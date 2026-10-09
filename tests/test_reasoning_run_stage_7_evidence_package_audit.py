@@ -23,6 +23,7 @@ from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
     ReasoningRunStage7EvidenceBundleAuditRead,
+    ReasoningRunStage7EvidenceBundleSnapshot,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
@@ -138,6 +139,9 @@ def ready_evidence(ready_bundle_evidence):
         finding_count=0,
         findings=[],
         audit_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+        audited_bundle=ReasoningRunStage7EvidenceBundleSnapshot.model_validate(
+            bundle165.model_dump()
+        ),
     )
 
     consistency167 = ReasoningRunStage7EvidenceBundleAuditConsistencyRead(
@@ -396,15 +400,15 @@ def test_missing_input_detection(ready_evidence):
     ready_evidence["package"].t162_model_name = None
     ready_evidence["pkg162"].model_name = None
 
-    # Change status to UNAVAILABLE since provider/model are None
+    # Task 168's READY attribution contract must reject this post-construction
+    # mutation even though the copied Task 162 fields agree.
     ready_evidence["pkg162"].admission_status = "UNAVAILABLE"
     ready_evidence["package"].t162_admission_status = "UNAVAILABLE"
     ready_evidence["package"].package_status = "UNAVAILABLE"
 
     audit = ReasoningRunStage7EvidencePackageAuditService.audit(**ready_evidence)
-    # Fields match, so should be consistent
-    assert audit["package_audit_status"] == "CONSISTENT"
-    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert "TASK_168_PACKAGE_INVALID" in audit["findings"]
 
 
 def test_audit_service_is_independent(ready_evidence):
@@ -496,3 +500,65 @@ def test_audit_findings_sorted_deduplicated(ready_evidence):
     findings = audit["findings"]
     assert findings == sorted(findings)
     assert len(findings) == len(set(findings))
+
+
+@pytest.mark.parametrize("mutation", ["fingerprint", "attribution"])
+def test_audit_rejects_aligned_invalid_task_165_evidence(ready_evidence, mutation):
+    package = ready_evidence["package"]
+    embedded = package.t165_bundle_evidence
+    audited = package.t166_audited_bundle
+    if mutation == "fingerprint":
+        package.t162_request_fingerprint = "malformed"
+        embedded.request_fingerprint = "malformed"
+        audited.request_fingerprint = "malformed"
+    else:
+        package.t162_provider_name = None
+        package.t162_model_name = None
+        package.t163_provider_name = None
+        package.t163_model_name = None
+        embedded.provider_name = None
+        embedded.model_name = None
+        audited.provider_name = None
+        audited.model_name = None
+
+    result = ReasoningRunStage7EvidencePackageAuditService.audit(**ready_evidence)
+
+    assert result["package_audit_status"] == "INCONSISTENT"
+    assert "TASK_168_PACKAGE_INVALID" in result["findings"]
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package.model_dump())
+
+
+@pytest.mark.parametrize(
+    ("finding_count", "findings"),
+    [(1, []), (1, ["FORGED_BUNDLE_FINDING"])],
+)
+def test_audit_rejects_task_165_bundle_finding_mutation(
+    ready_evidence, finding_count, findings
+):
+    package = ready_evidence["package"]
+    package.t165_bundle_finding_count = finding_count
+    package.t165_bundle_findings = findings
+    package.t165_bundle_evidence.bundle_finding_count = finding_count
+    package.t165_bundle_evidence.bundle_findings = findings
+    package.t166_audited_bundle.bundle_finding_count = finding_count
+    package.t166_audited_bundle.bundle_findings = findings
+    package.findings = sorted(set(findings))
+    package.finding_count = len(package.findings)
+
+    result = ReasoningRunStage7EvidencePackageAuditService.audit(**ready_evidence)
+
+    assert result["package_audit_status"] == "INCONSISTENT"
+    assert "TASK_168_PACKAGE_INVALID" in result["findings"]
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package.model_dump())
+
+
+def test_audit_detects_substituted_task_165_snapshot(ready_evidence):
+    ready_evidence["package"].t165_bundle_evidence.request_fingerprint = "b" * 64
+    ready_evidence["package"].t166_audited_bundle.request_fingerprint = "b" * 64
+
+    result = ReasoningRunStage7EvidencePackageAuditService.audit(**ready_evidence)
+
+    assert result["package_audit_status"] == "INCONSISTENT"
+    assert "T165_BUNDLE_EVIDENCE_MISMATCH" in result["findings"]

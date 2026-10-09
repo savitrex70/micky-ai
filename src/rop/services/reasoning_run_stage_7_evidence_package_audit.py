@@ -65,6 +65,19 @@ class ReasoningRunStage7EvidencePackageAuditContractError(Exception):
         super().__init__(f"[{invariant}] {detail}")
 
 
+def _exactly_equal(left: Any, right: Any) -> bool:
+    """Compare published evidence recursively without bool/int overlap."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _exactly_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _exactly_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return type(left) is type(right) and left == right
+
+
 class ReasoningRunStage7EvidencePackageAuditService:
     """Deterministic read-only audit of one Stage 7 evidence package."""
 
@@ -97,6 +110,13 @@ class ReasoningRunStage7EvidencePackageAuditService:
         """
         findings: list[str] = []
 
+        # Re-run the strict Task 168 contract at this boundary. Existing
+        # model instances may have been mutated after construction.
+        try:
+            ReasoningRunStage7EvidencePackageRead.model_validate(package.model_dump())
+        except (AttributeError, TypeError, ValidationError):
+            findings.append("TASK_168_PACKAGE_INVALID")
+
         # Step A — Validate package source
         expected_pkg_source = REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168
         if package.package_source != expected_pkg_source:
@@ -105,16 +125,19 @@ class ReasoningRunStage7EvidencePackageAuditService:
         # Step B — Validate session identity
         # All inputs must share the same session_id, and package session must
         # match when all inputs agree
-        input_sessions = {
+        input_sessions = (
             pkg162.session_id,
             slice163.session_id,
             audit164.session_id,
             bundle165.session_id,
             audit166.session_id,
             consistency167.session_id,
-        }
+        )
 
-        if len(input_sessions) == 1 and pkg162.session_id != "":
+        if not all(isinstance(session, str) for session in input_sessions):
+            findings.append("SESSION_ID_INVALID")
+            expected_session = ""
+        elif len(set(input_sessions)) == 1 and pkg162.session_id != "":
             expected_session = pkg162.session_id
         else:
             expected_session = ""
@@ -195,6 +218,10 @@ class ReasoningRunStage7EvidencePackageAuditService:
             findings.append("T165_BUNDLE_FINDINGS_MISMATCH")
         if package.t165_bundle_source != bundle165.bundle_source:
             findings.append("T165_BUNDLE_SOURCE_MISMATCH")
+        if not _exactly_equal(
+            package.t165_bundle_evidence.model_dump(), bundle165.model_dump()
+        ):
+            findings.append("T165_BUNDLE_EVIDENCE_MISMATCH")
 
         if package.t166_session_id != audit166.session_id:
             findings.append("T166_SESSION_MISMATCH")
@@ -214,6 +241,20 @@ class ReasoningRunStage7EvidencePackageAuditService:
             findings.append("T166_FINDINGS_MISMATCH")
         if package.t166_audit_source != audit166.audit_source:
             findings.append("T166_AUDIT_SOURCE_MISMATCH")
+        package_audited_bundle = (
+            package.t166_audited_bundle.model_dump()
+            if package.t166_audited_bundle is not None
+            else None
+        )
+        audit_audited_bundle = (
+            audit166.audited_bundle.model_dump()
+            if audit166.audited_bundle is not None
+            else None
+        )
+        if not _exactly_equal(package_audited_bundle, audit_audited_bundle):
+            findings.append("T166_AUDITED_BUNDLE_MISMATCH")
+        if not _exactly_equal(audit_audited_bundle, bundle165.model_dump()):
+            findings.append("T166_BUNDLE_BINDING_MISMATCH")
 
         if package.t167_session_id != consistency167.session_id:
             findings.append("T167_SESSION_MISMATCH")
