@@ -245,6 +245,15 @@ def _read_audit(
     for name in _AUDIT_OPTIONAL_STR:
         if values[name] is not None and values[name] not in _BUNDLE_STATUSES:
             return None, None, f"{_AUDIT_INVALID}:{name}:not_a_permitted_status"
+    # The Task 166 contract makes both bundle statuses mandatory for an audit
+    # that compared a bundle (CONSISTENT or INCONSISTENT) and forbids them only
+    # for an UNAVAILABLE audit. Pydantic enforces that at construction alone,
+    # so an audit altered afterwards that lost a required status is malformed
+    # evidence, not readable evidence that contradicts itself.
+    if values["bundle_audit_status"] != "UNAVAILABLE":
+        for name in _AUDIT_OPTIONAL_STR:
+            if values[name] not in _BUNDLE_STATUSES:
+                return None, None, f"{_AUDIT_INVALID}:{name}:required_status_missing"
 
     snapshot = values["audited_bundle"]
     if snapshot is None:
@@ -284,11 +293,6 @@ def _audit_internal_findings(
     if audit["finding_count"] != len(findings):
         found.add("AUDIT_INTERNAL_MISMATCH")
     if len(set(findings)) != len(findings) or findings != sorted(findings):
-        found.add("AUDIT_INTERNAL_MISMATCH")
-    if (
-        audit["published_bundle_status"] is None
-        or audit["expected_bundle_status"] is None
-    ):
         found.add("AUDIT_INTERNAL_MISMATCH")
     if status == "CONSISTENT" and (
         findings or audit["published_bundle_status"] != audit["expected_bundle_status"]

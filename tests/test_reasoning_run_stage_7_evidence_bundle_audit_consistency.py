@@ -871,3 +871,124 @@ def test_status_enum_checks_do_not_mutate_inputs(ready_bundle, ready_audit):
     assert _verify(bundle, audit) == first
     assert bundle == bundle_before
     assert audit == audit_before
+
+
+# ---------------------------------------------------------------------------
+# Required audit statuses are enforced on objects altered after construction
+# ---------------------------------------------------------------------------
+
+_REQUIRED_STATUS_FIELDS = ["published_bundle_status", "expected_bundle_status"]
+
+
+def _missing_status_marker(field: str) -> str:
+    return f"TASK_166_AUDIT_INVALID:{field}:required_status_missing"
+
+
+@pytest.fixture
+def inconsistent_pair(ready_bundle):
+    """A tampered bundle and the genuine INCONSISTENT audit bound to it."""
+    bundle = _tamper(ready_bundle, bundle_status="BLOCKED")
+    audit = _make_audit(bundle)
+    assert audit.bundle_audit_status == "INCONSISTENT"
+    assert audit.published_bundle_status is not None
+    assert audit.expected_bundle_status is not None
+    return bundle, audit
+
+
+@pytest.mark.parametrize("field", _REQUIRED_STATUS_FIELDS)
+def test_consistent_audit_missing_required_status_is_unavailable(
+    ready_bundle, ready_audit, field
+):
+    assert ready_audit.bundle_audit_status == "CONSISTENT"
+    audit = _tamper(ready_audit, **{field: None})
+    assert getattr(audit, field) is None
+    result = _verify(ready_bundle, audit)
+    assert result["consistency_status"] != "INCONSISTENT"
+    _assert_unavailable(result, f"TASK_166_AUDIT_INVALID:{field}")
+    assert result["findings"] == [_missing_status_marker(field)]
+
+
+@pytest.mark.parametrize("field", _REQUIRED_STATUS_FIELDS)
+def test_inconsistent_audit_missing_required_status_is_unavailable(
+    inconsistent_pair, field
+):
+    bundle, genuine = inconsistent_pair
+    audit = _tamper(genuine, **{field: None})
+    assert getattr(audit, field) is None
+    result = _verify(bundle, audit)
+    assert result["consistency_status"] != "INCONSISTENT"
+    _assert_unavailable(result, f"TASK_166_AUDIT_INVALID:{field}")
+    assert result["findings"] == [_missing_status_marker(field)]
+
+
+def test_missing_required_status_is_unavailable_not_a_finding(
+    ready_bundle, ready_audit
+):
+    """Malformed audit evidence is never read onward as a contradiction."""
+    audit = _tamper(
+        ready_audit, published_bundle_status=None, expected_bundle_status=None
+    )
+    result = _verify(ready_bundle, audit)
+    _assert_unavailable(result, "TASK_166_AUDIT_INVALID:published_bundle_status")
+    assert result["finding_count"] == 1
+    for code in (
+        "AUDIT_INTERNAL_MISMATCH",
+        "PUBLISHED_STATUS_MISMATCH",
+        "EXPECTED_STATUS_CONTRADICTION",
+        "BUNDLE_SNAPSHOT_MISMATCH",
+    ):
+        assert code not in result["findings"]
+
+
+def test_genuinely_unavailable_audit_keeps_existing_behaviour(ready_bundle):
+    audit = _make_audit(None)
+    assert audit.bundle_audit_status == "UNAVAILABLE"
+    assert audit.published_bundle_status is None
+    assert audit.expected_bundle_status is None
+    result = _verify(ready_bundle, audit)
+    _assert_unavailable(result, "TASK_166_AUDIT_UNAVAILABLE")
+    # Absent statuses are legitimate here: it is not reported as malformed.
+    assert not any(f.startswith("TASK_166_AUDIT_INVALID") for f in result["findings"])
+
+
+_BUNDLE_STATUS_VALUES = ["READY", "BLOCKED", "UNAVAILABLE"]
+
+
+@pytest.mark.parametrize("expected", _BUNDLE_STATUS_VALUES)
+@pytest.mark.parametrize("published", _BUNDLE_STATUS_VALUES)
+def test_permitted_but_contradictory_statuses_stay_inconsistent(
+    ready_bundle, ready_audit, published, expected
+):
+    audit = _tamper(
+        ready_audit,
+        published_bundle_status=published,
+        expected_bundle_status=expected,
+    )
+    result = _verify(ready_bundle, audit)
+    if published == "READY" and expected == "READY":
+        assert result["consistency_status"] == "CONSISTENT"
+        return
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["available"] is True
+    assert result["session_id"] == ready_bundle.session_id
+    assert result["findings"]
+    assert not any(f.startswith("TASK_166_AUDIT_INVALID") for f in result["findings"])
+
+
+@pytest.mark.parametrize("field", _REQUIRED_STATUS_FIELDS)
+def test_missing_required_status_is_deterministic_and_unmodified(
+    inconsistent_pair, ready_bundle, ready_audit, field
+):
+    cases = [
+        (ready_bundle, _tamper(ready_audit, **{field: None})),
+        (inconsistent_pair[0], _tamper(inconsistent_pair[1], **{field: None})),
+    ]
+    for bundle, audit in cases:
+        bundle_before = copy.deepcopy(bundle)
+        audit_before = copy.deepcopy(audit)
+        first = _verify(bundle, audit)
+        assert _verify(bundle, audit) == first
+        assert first["consistency_status"] == "UNAVAILABLE"
+        assert bundle == bundle_before
+        assert audit == audit_before
+        assert getattr(audit, field) is None
