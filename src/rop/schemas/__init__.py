@@ -319,10 +319,6 @@ from rop.schemas.reasoning_run_stage_7_evidence_package_audit_consistency import
     REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170,
     ReasoningRunStage7EvidencePackageAuditConsistencyRead,
 )
-from rop.schemas.reasoning_run_stage_7_final_evidence_attestation import (
-    REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171,
-    ReasoningRunStage7FinalEvidenceAttestationRead,
-)
 from rop.schemas.reasoning_run_stage_7_final_attestation_audit import (
     REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172,
     ReasoningRunStage7FinalAttestationAuditRead,
@@ -330,6 +326,10 @@ from rop.schemas.reasoning_run_stage_7_final_attestation_audit import (
 from rop.schemas.reasoning_run_stage_7_final_attestation_consistency import (
     REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173,
     ReasoningRunStage7FinalAttestationConsistencyRead,
+)
+from rop.schemas.reasoning_run_stage_7_final_evidence_attestation import (
+    REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171,
+    ReasoningRunStage7FinalEvidenceAttestationRead,
 )
 from rop.schemas.reasoning_run_stage_7_release_readiness_audit import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
@@ -500,8 +500,6 @@ __all__ = [
     "ReasoningRunStage7ReleaseReadinessProjectionRead",
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175",
     "ReasoningRunStage7ReleaseReadinessAuditRead",
-    "ReasoningRunStage7FinalEvidenceAttestationRead",
-    "REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TASK_171",
     "ReasoningRunStage7VerticalSliceAuditRead",
     "ReasoningRunStage7VerticalSliceRead",
     "ReasoningRunInspectionRead",

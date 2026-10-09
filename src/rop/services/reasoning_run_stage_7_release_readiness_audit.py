@@ -162,7 +162,9 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
                 "expected_readiness_status": expected_status,
                 "finding_count": len(findings),
                 "findings": findings,
-                "audit_source": REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+                "audit_source": (
+                    REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
+                ),
             }
             return ReasoningRunStage7ReleaseReadinessAuditService._project(result)
 
@@ -204,7 +206,9 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
             "expected_readiness_status": expected_status,
             "finding_count": len(findings),
             "findings": findings,
-            "audit_source": REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+            "audit_source": (
+                REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
+            ),
         }
 
         # Step F — Validate through schema, raise on contract error
@@ -214,7 +218,9 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
     def _project(result: dict[str, Any]) -> dict[str, Any]:
         """Validate the audit result through the strict contract."""
         try:
-            validated = ReasoningRunStage7ReleaseReadinessAuditRead.model_validate(result)
+            validated = ReasoningRunStage7ReleaseReadinessAuditRead.model_validate(
+                result
+            )
         except ValidationError as exc:
             raise ReasoningRunStage7ReleaseReadinessAuditContractError(
                 "RELEASE_READINESS_AUDIT_RESULT_INVALID", str(exc)

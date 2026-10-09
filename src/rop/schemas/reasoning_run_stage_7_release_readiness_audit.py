@@ -67,11 +67,10 @@ class ReasoningRunStage7ReleaseReadinessAuditRead(BaseModel):
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
             return self
         if self.readiness_audit_status == "CONSISTENT":
-            if (
-                self.published_readiness_status != self.expected_readiness_status
-            ):
+            if self.published_readiness_status != self.expected_readiness_status:
                 raise ValueError(
-                    "CONSISTENT requires published and expected readiness status to match"
+                    "CONSISTENT requires published and expected "
+                    "readiness status to match"
                 )
             if self.findings:
                 raise ValueError("CONSISTENT requires a finding-free audit")

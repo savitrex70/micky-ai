@@ -17,7 +17,9 @@ from pydantic import ValidationError
 os.environ.setdefault("ROP_APP_NAME", "test")
 os.environ.setdefault("ROP_ENVIRONMENT", "testing")
 os.environ.setdefault("ROP_LOG_LEVEL", "INFO")
-os.environ.setdefault("ROP_DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/test")
+os.environ.setdefault(
+    "ROP_DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/test"
+)
 
 from rop.schemas.reasoning_run_stage_7_evidence_package import (
     ReasoningRunStage7EvidencePackageRead,
@@ -42,26 +44,13 @@ from rop.schemas.reasoning_run_stage_7_final_evidence_attestation import (
 )
 from rop.schemas.reasoning_run_stage_7_release_readiness_audit import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
-    ReasoningRunStage7ReleaseReadinessAuditRead,
 )
 from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionRead,
 )
-from rop.services.reasoning_run_stage_7_final_evidence_attestation import (
-    ReasoningRunStage7FinalEvidenceAttestationService,
-)
-from rop.services.reasoning_run_stage_7_final_attestation_audit import (
-    ReasoningRunStage7FinalAttestationAuditService,
-)
-from rop.services.reasoning_run_stage_7_final_attestation_consistency import (
-    ReasoningRunStage7FinalAttestationConsistencyService,
-)
-from rop.services.reasoning_run_stage_7_release_readiness_projection import (
-    ReasoningRunStage7ReleaseReadinessProjectionService,
-)
-from rop.services.reasoning_run_stage_7_release_readiness_audit import (
-    ReasoningRunStage7ReleaseReadinessAuditService,
+from rop.services.reasoning_run_stage_7_audit_package import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
 )
 from rop.services.reasoning_run_stage_7_evidence_package import (
     REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168,
@@ -69,8 +58,20 @@ from rop.services.reasoning_run_stage_7_evidence_package import (
 from rop.services.reasoning_run_stage_7_evidence_package_audit_consistency import (
     REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170,
 )
-from rop.services.reasoning_run_stage_7_audit_package import (
-    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+from rop.services.reasoning_run_stage_7_final_attestation_audit import (
+    ReasoningRunStage7FinalAttestationAuditService,
+)
+from rop.services.reasoning_run_stage_7_final_attestation_consistency import (
+    ReasoningRunStage7FinalAttestationConsistencyService,
+)
+from rop.services.reasoning_run_stage_7_final_evidence_attestation import (
+    ReasoningRunStage7FinalEvidenceAttestationService,
+)
+from rop.services.reasoning_run_stage_7_release_readiness_audit import (
+    ReasoningRunStage7ReleaseReadinessAuditService,
+)
+from rop.services.reasoning_run_stage_7_release_readiness_projection import (
+    ReasoningRunStage7ReleaseReadinessProjectionService,
 )
 from rop.services.reasoning_run_stage_7_vertical_slice import (
     REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
@@ -83,11 +84,12 @@ from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
 # Test fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def ready_chain():
     """All inputs in READY/CONSISTENT/CERTIFIED state."""
     session_id = str(uuid4())
-    
+
     package = ReasoningRunStage7EvidencePackageRead(
         session_id=session_id,
         t162_session_id=session_id,
@@ -145,7 +147,7 @@ def ready_chain():
         findings=[],
         package_source=REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168,
     )
-    
+
     audit = ReasoningRunStage7EvidencePackageAuditRead(
         session_id=session_id,
         package_audit_status="CONSISTENT",
@@ -157,7 +159,7 @@ def ready_chain():
         findings=[],
         audit_source="REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_TASK_169",
     )
-    
+
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyRead(
         session_id=session_id,
         consistency_status="CONSISTENT",
@@ -167,13 +169,14 @@ def ready_chain():
         findings=[],
         consistency_source="REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_TASK_170",
     )
-    
+
     return {"package": package, "audit": audit, "consistency": consistency}
 
 
 # ---------------------------------------------------------------------------
 # Task 171: Final Evidence Attestation
 # ---------------------------------------------------------------------------
+
 
 def test_task_171_ready_chain_certifies(ready_chain):
     """READY/CONSISTENT chain certifies to CERTIFIED."""
@@ -210,6 +213,7 @@ def test_task_171_schema_rejects_extra_fields(ready_chain):
 # ---------------------------------------------------------------------------
 # Task 172: Final Attestation Audit
 # ---------------------------------------------------------------------------
+
 
 def test_task_172_certified_attestation_audits_consistent(ready_chain):
     """CERTIFIED attestation with consistent evidence audits CONSISTENT."""
@@ -248,6 +252,7 @@ def test_task_172_forge_certified_detected(ready_chain):
 # ---------------------------------------------------------------------------
 # Task 173: Final Attestation Consistency
 # ---------------------------------------------------------------------------
+
 
 def test_task_173_certified_attestation_with_consistent_audit_is_consistent(
     ready_chain,
@@ -293,6 +298,7 @@ def test_task_173_session_mismatch_detected(ready_chain):
 # Task 174: Release Readiness Projection
 # ---------------------------------------------------------------------------
 
+
 def test_task_174_certified_chain_projects_ready(ready_chain):
     """CERTIFIED chain projects to READY."""
     attestation_dict = ReasoningRunStage7FinalEvidenceAttestationService.attest(
@@ -305,10 +311,8 @@ def test_task_174_certified_chain_projects_ready(ready_chain):
         **ready_chain, attestation=attestation
     )
     audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(audit_dict)
-    consistency_dict = (
-        ReasoningRunStage7FinalAttestationConsistencyService.verify(
-            attestation=attestation, audit=audit
-        )
+    consistency_dict = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=attestation, audit=audit
     )
     consistency = ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
         consistency_dict
@@ -336,10 +340,8 @@ def test_task_174_blocked_chain_projects_blocked(ready_chain):
         **ready_chain, attestation=attestation
     )
     audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(audit_dict)
-    consistency_dict = (
-        ReasoningRunStage7FinalAttestationConsistencyService.verify(
-            attestation=attestation, audit=audit
-        )
+    consistency_dict = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=attestation, audit=audit
     )
     consistency = ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
         consistency_dict
@@ -354,6 +356,7 @@ def test_task_174_blocked_chain_projects_blocked(ready_chain):
 # Task 175: Release Readiness Audit
 # ---------------------------------------------------------------------------
 
+
 def test_task_175_ready_projection_audits_consistent(ready_chain):
     """READY projection with consistent evidence audits CONSISTENT."""
     attestation_dict = ReasoningRunStage7FinalEvidenceAttestationService.attest(
@@ -366,18 +369,14 @@ def test_task_175_ready_projection_audits_consistent(ready_chain):
         **ready_chain, attestation=attestation
     )
     audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(audit_dict)
-    consistency_dict = (
-        ReasoningRunStage7FinalAttestationConsistencyService.verify(
-            attestation=attestation, audit=audit
-        )
+    consistency_dict = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=attestation, audit=audit
     )
     consistency = ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
         consistency_dict
     )
-    projection_dict = (
-        ReasoningRunStage7ReleaseReadinessProjectionService.project(
-            attestation=attestation, audit=audit, consistency=consistency
-        )
+    projection_dict = ReasoningRunStage7ReleaseReadinessProjectionService.project(
+        attestation=attestation, audit=audit, consistency=consistency
     )
     projection = ReasoningRunStage7ReleaseReadinessProjectionRead.model_validate(
         projection_dict
@@ -406,18 +405,14 @@ def test_task_175_forge_ready_detected(ready_chain):
         **ready_chain, attestation=attestation
     )
     audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(audit_dict)
-    consistency_dict = (
-        ReasoningRunStage7FinalAttestationConsistencyService.verify(
-            attestation=attestation, audit=audit
-        )
+    consistency_dict = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=attestation, audit=audit
     )
     consistency = ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
         consistency_dict
     )
-    projection_dict = (
-        ReasoningRunStage7ReleaseReadinessProjectionService.project(
-            attestation=attestation, audit=audit, consistency=consistency
-        )
+    projection_dict = ReasoningRunStage7ReleaseReadinessProjectionService.project(
+        attestation=attestation, audit=audit, consistency=consistency
     )
     tampered_dict = copy.deepcopy(projection_dict)
     tampered_dict["readiness_status"] = "BLOCKED"
@@ -438,6 +433,7 @@ def test_task_175_forge_ready_detected(ready_chain):
 # Independence tests
 # ---------------------------------------------------------------------------
 
+
 def test_all_services_are_pure(ready_chain):
     """All services are pure functions."""
     attestation1_dict = ReasoningRunStage7FinalEvidenceAttestationService.attest(
@@ -447,7 +443,7 @@ def test_all_services_are_pure(ready_chain):
         **ready_chain
     )
     assert attestation1_dict == attestation2_dict
-    
+
     attestation = ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
         attestation1_dict
     )
@@ -471,6 +467,7 @@ def test_no_database_or_provider_access(ready_chain):
 # ---------------------------------------------------------------------------
 # Source constant tests
 # ---------------------------------------------------------------------------
+
 
 def test_source_constants_are_correct():
     """All source constants are exported correctly."""
