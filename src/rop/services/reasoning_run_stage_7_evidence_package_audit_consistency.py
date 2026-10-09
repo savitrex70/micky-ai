@@ -6,9 +6,30 @@ session identity, package status, package source, evidence presence,
 findings, finding counts, published versus expected status, audit source,
 and audit status.
 
+Readable versus unreadable evidence
+-----------------------------------
+The service separates two very different ways an input can be wrong:
+
+* **Unreadable** -- the input is not the expected model, an attribute is
+  missing, a field has the wrong type, a status or identity value lies
+  outside its permitted set, or a nested evidence object is malformed. The
+  comparison cannot be evaluated safely, so the result is ``UNAVAILABLE``.
+* **Readable but contradictory** -- every field can be read and compared, but
+  the values contradict each other or fail their own contract (a forged
+  source, a detached session, disagreeing statuses, wrong flags, a finding
+  count that does not match its findings). The comparison continues and the
+  result is ``INCONSISTENT`` with the specific findings, so a schema contract
+  failure never hides *what* is wrong.
+
+A structurally valid Task 169 audit whose own status is ``UNAVAILABLE`` is a
+third, distinct case: the audit is readable and honest that it verified
+nothing, so there is no audited package state to bind. The result is
+``UNAVAILABLE`` with the single finding ``AUDIT_UNAVAILABLE`` -- never the
+generic ``PACKAGE_OR_AUDIT_INVALID`` reserved for unreadable inputs.
+
 The service never calls Task 168 or Task 169 services, never recomputes
 fingerprints, never invokes a provider, and never accesses a database. It
-only reads the already-published validated Pydantic objects.
+only reads the already-published Pydantic objects.
 
 Read-only and pure: no database session, no persistence, no provider
 invocation, no network, no replay, no mutation.
@@ -16,14 +37,17 @@ invocation, no network, no replay, no mutation.
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from rop.schemas.reasoning_run_stage_7_evidence_package import (
+    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168,
     ReasoningRunStage7EvidencePackageRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_package_audit import (
+    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169,
     ReasoningRunStage7EvidencePackageAuditRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_package_audit_consistency import (
@@ -36,6 +60,56 @@ __all__ = [
     "ReasoningRunStage7EvidencePackageAuditConsistencyContractError",
     "ReasoningRunStage7EvidencePackageAuditConsistencyService",
 ]
+
+_MISSING = object()
+
+
+@cache
+def _field_adapter(annotation: Any) -> TypeAdapter[Any]:
+    """Return the cached type adapter for one field annotation."""
+    return TypeAdapter(annotation)
+
+
+def _is_readable(value: object, model_type: type[BaseModel]) -> bool:
+    """Report whether ``value`` can be read field by field as ``model_type``.
+
+    Readability is deliberately narrower than the model's own contract. It
+    asks only whether every declared field is present with a value of the
+    declared type (including permitted status literals) and whether every
+    nested evidence object is itself readable. Cross-field rules -- canonical
+    sources, flag/status agreement, finding counts, aggregate coherence -- are
+    *not* checked here: a value that is readable but breaks those rules is
+    evidence to compare, not evidence that cannot be read.
+    """
+    if not isinstance(value, model_type):
+        return False
+    try:
+        for name, info in model_type.model_fields.items():
+            attribute = getattr(value, name, _MISSING)
+            if attribute is _MISSING:
+                return False
+            _field_adapter(info.annotation).validate_python(attribute, strict=True)
+            if isinstance(attribute, BaseModel) and not _is_readable(
+                attribute, type(attribute)
+            ):
+                return False
+    except (AttributeError, TypeError, ValueError):
+        # ``ValidationError`` is a ``ValueError``.
+        return False
+    return True
+
+
+def _satisfies_contract(value: BaseModel) -> bool:
+    """Report whether a readable value still satisfies its full own contract.
+
+    Models are not revalidated on assignment, so a package or audit mutated
+    after construction can be perfectly readable yet no longer coherent.
+    """
+    try:
+        type(value).model_validate(value.model_dump())
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
 
 
 class ReasoningRunStage7EvidencePackageAuditConsistencyContractError(Exception):
@@ -58,111 +132,142 @@ class ReasoningRunStage7EvidencePackageAuditConsistencyService:
         """Verify exact binding between package and audit.
 
         ``CONSISTENT`` when the audit is canonically bound to the exact
-        Task 168 package represented. ``INCONSISTENT`` when the audit is
-        detached or contradicts the package. ``UNAVAILABLE`` when either input
-        is missing or fails its own contract.
+        Task 168 package represented. ``INCONSISTENT`` when both inputs are
+        readable but the audit is detached from, or contradicts, the package
+        (or either input fails its own contract). ``UNAVAILABLE`` when an
+        input is unreadable -- missing, the wrong model type, missing
+        attributes, wrongly typed fields, or malformed nested evidence -- or
+        when the Task 169 audit is itself a valid ``UNAVAILABLE`` audit that
+        verified nothing.
 
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
-        try:
-            if not isinstance(package, ReasoningRunStage7EvidencePackageRead):
-                raise TypeError("package has an unexpected model type")
-            if not isinstance(audit, ReasoningRunStage7EvidencePackageAuditRead):
-                raise TypeError("audit has an unexpected model type")
-            package = ReasoningRunStage7EvidencePackageRead.model_validate(
-                package.model_dump()
-            )
-            audit = ReasoningRunStage7EvidencePackageAuditRead.model_validate(
-                audit.model_dump()
-            )
-        except (AttributeError, TypeError, ValidationError):
-            return ReasoningRunStage7EvidencePackageAuditConsistencyService._project(
-                {
-                    "session_id": "",
-                    "consistency_status": "UNAVAILABLE",
-                    "available": False,
-                    "consistent": False,
-                    "finding_count": 1,
-                    "findings": ["PACKAGE_OR_AUDIT_INVALID"],
-                    "consistency_source": (
-                        REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170
-                    ),
-                }
-            )
+        service = ReasoningRunStage7EvidencePackageAuditConsistencyService
 
-        findings: list[str] = []
+        # Step 1 — Readability. Only inputs that cannot be evaluated safely
+        # are UNAVAILABLE; this gate never judges semantic consistency.
+        package_unreadable = not _is_readable(
+            package, ReasoningRunStage7EvidencePackageRead
+        )
+        audit_unreadable = not _is_readable(
+            audit, ReasoningRunStage7EvidencePackageAuditRead
+        )
+        if package_unreadable or audit_unreadable:
+            unreadable = {"PACKAGE_OR_AUDIT_INVALID"}
+            if package_unreadable:
+                unreadable.add("PACKAGE_UNREADABLE")
+            if audit_unreadable:
+                unreadable.add("AUDIT_UNREADABLE")
+            return service._unavailable(sorted(unreadable))
+
+        # Step 2 — Own-contract status of each readable input. A failure is a
+        # finding to report alongside the comparison, never a reason to stop.
+        package_contract_valid = _satisfies_contract(package)
+        audit_contract_valid = _satisfies_contract(audit)
+
+        # Step 3 — A structurally valid UNAVAILABLE audit verified nothing:
+        # it names no session and no package status, so there is nothing to
+        # bind. This is distinct from a malformed audit object.
+        if audit_contract_valid and audit.package_audit_status == "UNAVAILABLE":
+            return service._unavailable(["AUDIT_UNAVAILABLE"])
+
+        findings: set[str] = set()
 
         # Step A — Session identity must match exactly
         if package.session_id != audit.session_id:
-            findings.append("SESSION_MISMATCH")
+            findings.add("SESSION_MISMATCH")
 
         # Step B — Package source must be canonical Task 168 source
-        expected_package_source = "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_TASK_168"
-        if package.package_source != expected_package_source:
-            findings.append("PACKAGE_SOURCE_MISMATCH")
+        if (
+            package.package_source
+            != REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168
+        ):
+            findings.add("PACKAGE_SOURCE_MISMATCH")
 
         # Step C — Audit source must be canonical Task 169 source
-        expected_audit_source = "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_TASK_169"
-        if audit.audit_source != expected_audit_source:
-            findings.append("AUDIT_SOURCE_MISMATCH")
+        if (
+            audit.audit_source
+            != REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169
+        ):
+            findings.add("AUDIT_SOURCE_MISMATCH")
 
         # Step D — Published package status must match audit's published status
         if package.package_status != audit.published_package_status:
-            findings.append("PUBLISHED_STATUS_MISMATCH")
+            findings.add("PUBLISHED_STATUS_MISMATCH")
 
-        # Step E — Expected package status must match audit's expected status
-        # The audit independently derives expected status, and it should match
-        # the actual package status if everything is consistent
+        # Step E — The audit independently derives the expected package
+        # status; it must match the actual package status.
         if package.package_status != audit.expected_package_status:
-            findings.append("EXPECTED_STATUS_CONTRADICTION")
+            findings.add("EXPECTED_STATUS_CONTRADICTION")
 
         # Step F — Audit status must be CONSISTENT for the binding to be valid
-        # If the audit found inconsistencies, the binding is not valid
         if audit.package_audit_status != "CONSISTENT":
-            findings.append("AUDIT_STATUS_NOT_CONSISTENT")
+            findings.add("AUDIT_STATUS_NOT_CONSISTENT")
 
-        # Findings describe different layers: Task 168 carries evidence
-        # findings; Task 169 carries findings about package coherence. A
-        # valid Task 169 audit must be finding-free when it claims consistency.
+        # Step G — Findings describe different layers: Task 168 carries
+        # evidence findings; Task 169 carries findings about package
+        # coherence. A Task 169 audit that claims consistency must be
+        # finding-free, and every finding count must equal its findings.
         if audit.package_audit_status == "CONSISTENT" and audit.findings:
-            findings.append("AUDIT_FINDINGS_MISMATCH")
+            findings.add("AUDIT_FINDINGS_MISMATCH")
         if package.finding_count != len(package.findings):
-            findings.append("FINDING_COUNT_MISMATCH")
+            findings.add("FINDING_COUNT_MISMATCH")
+        if audit.finding_count != len(audit.findings):
+            findings.add("FINDING_COUNT_MISMATCH")
 
-        # Step I — Audit availability and consistency flags must align with
-        # the published audit status (also revalidated above).
+        # Step H — Audit availability and consistency flags must align with
+        # the published audit status.
         if not audit.available:
-            findings.append("AUDIT_UNAVAILABLE")
+            findings.add("AUDIT_UNAVAILABLE")
         if not audit.consistent:
-            findings.append("AUDIT_INCONSISTENT")
+            findings.add("AUDIT_INCONSISTENT")
 
+        # Step I — The package must name a session.
         if package.session_id == "":
-            findings.append("PACKAGE_SESSION_EMPTY")
+            findings.add("PACKAGE_SESSION_EMPTY")
 
-        # Step L — Populate result dict
-        findings = sorted(set(findings))
-        if findings:
-            consistency_status = "INCONSISTENT"
-        else:
-            consistency_status = "CONSISTENT"
+        # Step J — Own-contract failures stay visible next to the specific
+        # findings above, so a mutated object can never read as CONSISTENT.
+        if not package_contract_valid:
+            findings.add("PACKAGE_CONTRACT_INVALID")
+        if not audit_contract_valid:
+            findings.add("AUDIT_CONTRACT_INVALID")
 
+        # Step K — Populate result dict
+        ordered = sorted(findings)
+        consistency_status = "INCONSISTENT" if ordered else "CONSISTENT"
         result: dict[str, Any] = {
-            "session_id": (
-                package.session_id if consistency_status != "UNAVAILABLE" else ""
-            ),
+            "session_id": package.session_id,
             "consistency_status": consistency_status,
-            "available": consistency_status != "UNAVAILABLE",
+            "available": True,
             "consistent": consistency_status == "CONSISTENT",
-            "finding_count": len(findings),
-            "findings": findings,
+            "finding_count": len(ordered),
+            "findings": ordered,
             "consistency_source": (
                 REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170
             ),
         }
 
-        # Step M — Validate through schema, raise on contract error
-        return ReasoningRunStage7EvidencePackageAuditConsistencyService._project(result)
+        # Step L — Validate through schema, raise on contract error
+        return service._project(result)
+
+    @staticmethod
+    def _unavailable(findings: list[str]) -> dict[str, Any]:
+        """Build the schema-valid UNAVAILABLE result for the given findings."""
+        return ReasoningRunStage7EvidencePackageAuditConsistencyService._project(
+            {
+                "session_id": "",
+                "consistency_status": "UNAVAILABLE",
+                "available": False,
+                "consistent": False,
+                "finding_count": len(findings),
+                "findings": findings,
+                "consistency_source": (
+                    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170
+                ),
+            }
+        )
 
     @staticmethod
     def _project(result: dict[str, Any]) -> dict[str, Any]:

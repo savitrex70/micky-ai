@@ -29,15 +29,32 @@ REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170 = (
 class ReasoningRunStage7EvidencePackageAuditConsistencyRead(BaseModel):
     """Strict consistency verdict for package-audit binding.
 
-    ``consistency_status`` is the single canonical verdict: ``CONSISTENT``
-    when the audit is canonically bound to the exact Task 168 package
-    represented, ``INCONSISTENT`` when the audit is detached or contradicts
-    the package, and ``UNAVAILABLE`` when either input is missing or fails
-    its own contract. ``available`` is always exactly
-    ``consistency_status != "UNAVAILABLE"`` and ``consistent`` is always
-    exactly ``consistency_status == "CONSISTENT"``. ``findings`` are
-    deterministic, sorted, and deduplicated; ``finding_count`` always
-    equals ``len(findings)``.
+    ``consistency_status`` is the single canonical verdict:
+
+    * ``CONSISTENT`` -- both inputs are readable, satisfy their own
+      contracts, and the audit is canonically bound to the exact Task 168
+      package represented.
+    * ``INCONSISTENT`` -- both inputs are *readable* but contradict each
+      other or fail their own contract: a non-canonical source, a detached
+      session, conflicting package/audit statuses, a published-versus-expected
+      status mismatch, wrong flags, or a finding count that does not match its
+      findings. The findings name what disagrees; a schema contract failure
+      alone never downgrades a readable input to ``UNAVAILABLE``.
+    * ``UNAVAILABLE`` -- the comparison cannot be evaluated safely. Either an
+      input is *unreadable* (missing, the wrong model type, a missing
+      attribute, a wrongly typed field, a status or identity value outside
+      its permitted set, or malformed nested evidence), reported as
+      ``PACKAGE_OR_AUDIT_INVALID`` with ``PACKAGE_UNREADABLE`` and/or
+      ``AUDIT_UNREADABLE``; or the Task 169 audit is a structurally valid
+      ``UNAVAILABLE`` audit that verified nothing and so names no package
+      status or session, reported as ``AUDIT_UNAVAILABLE`` alone. That second
+      case is a readable, honest audit and is distinct from a malformed one.
+
+    ``available`` is always exactly ``consistency_status != "UNAVAILABLE"``
+    and ``consistent`` is always exactly ``consistency_status ==
+    "CONSISTENT"``. ``UNAVAILABLE`` names no session and carries at least one
+    diagnostic finding. ``findings`` are deterministic, sorted, and
+    deduplicated; ``finding_count`` always equals ``len(findings)``.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")

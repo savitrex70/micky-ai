@@ -9,6 +9,11 @@ and audit status.
 The consistency check is pure and independent: it never calls Task 168
 or Task 169 services, never recomputes fingerprints, never invokes a
 provider, and never accesses a database.
+
+The tests pin the boundary between *readable but contradictory* evidence
+(``INCONSISTENT`` with specific findings) and *unreadable* evidence
+(``UNAVAILABLE``), plus the distinct case of a structurally valid Task 169
+audit that is itself ``UNAVAILABLE``.
 """
 
 from __future__ import annotations
@@ -33,6 +38,12 @@ from rop.schemas.reasoning_run_stage_7_evidence_package_audit_consistency import
 )
 from rop.services.reasoning_run_stage_7_audit_package import (
     REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+)
+from rop.services.reasoning_run_stage_7_evidence_package import (
+    ReasoningRunStage7EvidencePackageService,
+)
+from rop.services.reasoning_run_stage_7_evidence_package_audit import (
+    ReasoningRunStage7EvidencePackageAuditService,
 )
 from rop.services.reasoning_run_stage_7_evidence_package_audit_consistency import (
     ReasoningRunStage7EvidencePackageAuditConsistencyService,
@@ -140,6 +151,125 @@ def ready_audit(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _verify(package, audit):
+    return ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=package, audit=audit
+    )
+
+
+def _set_attr(name, value):
+    """Mutate a model after construction (assignment is not revalidated)."""
+
+    def mutate(model):
+        setattr(model, name, value)
+
+    return mutate
+
+
+def _drop_attr(name):
+    """Remove a declared attribute so it can no longer be read."""
+
+    def mutate(model):
+        del model.__dict__[name]
+
+    return mutate
+
+
+def _set_nested(parent, name, value):
+    def mutate(model):
+        setattr(getattr(model, parent), name, value)
+
+    return mutate
+
+
+def _drop_nested(parent, name):
+    def mutate(model):
+        del getattr(model, parent).__dict__[name]
+
+    return mutate
+
+
+def _mutated(model, mutate):
+    clone = copy.deepcopy(model)
+    mutate(clone)
+    return clone
+
+
+def _assert_unreadable(consistency):
+    """An unreadable-input result is a schema-valid, deterministic UNAVAILABLE."""
+    validated = ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+        consistency
+    )
+    assert validated.consistency_status == "UNAVAILABLE"
+    assert validated.session_id == ""
+    assert validated.available is False
+    assert validated.consistent is False
+    assert validated.finding_count >= 1
+    assert "PACKAGE_OR_AUDIT_INVALID" in validated.findings
+    assert validated.findings == sorted(set(validated.findings))
+    assert validated.consistency_source == CONSISTENCY_SOURCE
+
+
+UNREADABLE_PACKAGE_MUTATIONS = {
+    "session_id_not_a_string": _set_attr("session_id", None),
+    "finding_count_string": _set_attr("finding_count", "1"),
+    "finding_count_bool": _set_attr("finding_count", True),
+    "findings_not_a_list": _set_attr("findings", ("A",)),
+    "finding_item_not_a_string": _set_attr("findings", [1]),
+    "status_outside_permitted_set": _set_attr("package_status", "BOGUS"),
+    "missing_required_attribute": _drop_attr("package_source"),
+    "missing_identity_attribute": _drop_attr("session_id"),
+    "nested_evidence_is_a_dict": _set_attr("t165_bundle_evidence", {"session_id": "x"}),
+    "nested_evidence_is_none": _set_attr("t165_bundle_evidence", None),
+    "nested_audited_bundle_wrong_type": _set_attr("t166_audited_bundle", object()),
+    "nested_evidence_field_wrong_type": _set_nested(
+        "t165_bundle_evidence", "finding_count", "x"
+    ),
+    "nested_audited_bundle_field_wrong_type": _set_nested(
+        "t166_audited_bundle", "findings", "not-a-list"
+    ),
+    "nested_evidence_missing_field": _drop_nested(
+        "t165_bundle_evidence", "bundle_status"
+    ),
+}
+
+UNREADABLE_AUDIT_MUTATIONS = {
+    "session_id_not_a_string": _set_attr("session_id", None),
+    "finding_count_string": _set_attr("finding_count", "0"),
+    "available_not_a_bool": _set_attr("available", "yes"),
+    "findings_not_a_list": _set_attr("findings", ("A",)),
+    "audit_status_outside_permitted_set": _set_attr("package_audit_status", "BOGUS"),
+    "published_status_outside_permitted_set": _set_attr(
+        "published_package_status", "BOGUS"
+    ),
+    "expected_status_outside_permitted_set": _set_attr(
+        "expected_package_status", "BOGUS"
+    ),
+    "missing_required_attribute": _drop_attr("audit_source"),
+    "missing_findings_attribute": _drop_attr("findings"),
+}
+
+
+def _valid_unavailable_audit() -> ReasoningRunStage7EvidencePackageAuditRead:
+    """A structurally valid Task 169 audit that verified nothing."""
+    return ReasoningRunStage7EvidencePackageAuditRead(
+        session_id="",
+        package_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_package_status=None,
+        expected_package_status=None,
+        finding_count=1,
+        findings=["PACKAGE_NOT_READABLE"],
+        audit_source=REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Genuine consistency
 # ---------------------------------------------------------------------------
 
@@ -193,25 +323,31 @@ def test_cross_session_audit_detected(ready_package, ready_audit):
 
 
 def test_package_source_mismatch_detected(ready_package, ready_audit):
-    """Package source forgery is detected."""
+    """A forged package source is a readable contradiction, not unavailable."""
     tampered_package = copy.deepcopy(ready_package)
     tampered_package.package_source = "FORGED_PACKAGE_SOURCE"
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=ready_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "PACKAGE_SOURCE_MISMATCH" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+    assert consistency["session_id"] == ready_package.session_id
+    assert consistency["available"] is True
+    assert consistency["consistent"] is False
 
 
 def test_audit_source_mismatch_detected(ready_package, ready_audit):
-    """Audit source forgery is detected."""
+    """A forged audit source is a readable contradiction, not unavailable."""
     tampered_audit = copy.deepcopy(ready_audit)
     tampered_audit.audit_source = "FORGED_AUDIT_SOURCE"
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_SOURCE_MISMATCH" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+    assert consistency["session_id"] == ready_package.session_id
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +362,9 @@ def test_published_status_mismatch_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "PUBLISHED_STATUS_MISMATCH" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 def test_expected_status_contradiction_detected(ready_package, ready_audit):
@@ -237,12 +374,13 @@ def test_expected_status_contradiction_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 def test_forged_package_status_detected(ready_package, ready_audit):
-    """Forged package status (not matching expected) is detected."""
+    """A package status the audit independently contradicts is detected."""
     tampered_package = copy.deepcopy(ready_package)
     tampered_package.package_status = "BLOCKED"
     tampered_audit = copy.deepcopy(ready_audit)
@@ -251,8 +389,12 @@ def test_forged_package_status_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
+    # The audit published the forged status faithfully, so only the audit's
+    # independently derived status disagrees with the package.
+    assert "PUBLISHED_STATUS_MISMATCH" not in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -275,8 +417,15 @@ def test_audit_not_consistent_detected(ready_package, ready_audit):
     assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
 
 
-def test_unavailable_audit_detected(ready_package, ready_audit):
-    """UNAVAILABLE audit is detected."""
+def test_mutated_unavailable_audit_is_readable_contradiction(
+    ready_package, ready_audit
+):
+    """An audit mutated to claim UNAVAILABLE but still naming statuses is readable.
+
+    It is not a structurally valid UNAVAILABLE audit (that names no status and
+    no session), so it is compared and reported as a contradiction rather than
+    treated as unreadable or as an honest UNAVAILABLE audit.
+    """
     tampered_audit = copy.deepcopy(ready_audit)
     tampered_audit.package_audit_status = "UNAVAILABLE"
     tampered_audit.available = False
@@ -286,8 +435,11 @@ def test_unavailable_audit_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_UNAVAILABLE" in consistency["findings"]
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
+    assert "AUDIT_CONTRACT_INVALID" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -296,16 +448,39 @@ def test_unavailable_audit_detected(ready_package, ready_audit):
 
 
 def test_finding_count_mismatch_package_has_findings(ready_package, ready_audit):
-    """Finding count mismatch when package has findings is detected."""
+    """A package finding_count that disagrees with its findings is detected."""
     tampered_package = copy.deepcopy(ready_package)
-    tampered_package.finding_count = 1
-    tampered_package.findings = ["SOME_FINDING"]
-    tampered_package.package_status = "UNAVAILABLE"
+    tampered_package.finding_count = 3
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=ready_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "FINDING_COUNT_MISMATCH" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+
+
+def test_finding_count_mismatch_audit_count_disagrees(ready_package, ready_audit):
+    """An audit finding_count that disagrees with its findings is detected."""
+    tampered_audit = copy.deepcopy(ready_audit)
+    tampered_audit.finding_count = 2
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=ready_package, audit=tampered_audit
+    )
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "FINDING_COUNT_MISMATCH" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+
+
+def test_consistent_audit_with_findings_is_mismatch(ready_package, ready_audit):
+    """An audit claiming CONSISTENT while carrying findings is detected."""
+    tampered_audit = copy.deepcopy(ready_audit)
+    tampered_audit.finding_count = 1
+    tampered_audit.findings = ["SOME_FINDING"]
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=ready_package, audit=tampered_audit
+    )
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_FINDINGS_MISMATCH" in consistency["findings"]
 
 
 def test_finding_count_mismatch_audit_has_findings(ready_package, ready_audit):
@@ -342,7 +517,7 @@ def test_same_session_different_content_detected(ready_package, ready_audit):
 
 
 def test_audit_unavailable_flag_detected(ready_package, ready_audit):
-    """Audit with unavailable=False is detected."""
+    """An audit whose availability flag was flipped is detected."""
     tampered_audit = copy.deepcopy(ready_audit)
     tampered_audit.available = False
     tampered_audit.package_audit_status = "UNAVAILABLE"
@@ -352,8 +527,9 @@ def test_audit_unavailable_flag_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_UNAVAILABLE" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 def test_audit_inconsistent_flag_detected(ready_package, ready_audit):
@@ -380,8 +556,10 @@ def test_package_empty_session_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "PACKAGE_SESSION_EMPTY" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+    assert consistency["session_id"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -421,12 +599,16 @@ def test_finding_tampering_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
+    # The package's findings no longer equal its child and package-level
+    # findings, which its own contract forbids.
+    assert "PACKAGE_CONTRACT_INVALID" in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
 
 
 def test_multiple_forgeries_detected(ready_package, ready_audit):
-    """Multiple forgeries are all detected."""
+    """Multiple forgeries are all reported, sorted and deduplicated."""
     tampered_package = copy.deepcopy(ready_package)
     tampered_package.package_source = "FORGED"
     tampered_audit = copy.deepcopy(ready_audit)
@@ -436,14 +618,29 @@ def test_multiple_forgeries_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    for expected in (
+        "PACKAGE_SOURCE_MISMATCH",
+        "AUDIT_SOURCE_MISMATCH",
+        "PUBLISHED_STATUS_MISMATCH",
+        "EXPECTED_STATUS_CONTRADICTION",
+    ):
+        assert expected in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+    assert consistency["findings"] == sorted(set(consistency["findings"]))
+    assert consistency["finding_count"] == len(consistency["findings"])
+    ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(consistency)
 
 
 def test_service_revalidates_postconstruction_package_mutation(
     ready_package, ready_audit
 ):
-    """A mutated package that no longer satisfies Task 168 is unavailable."""
+    """A readable package mutated after construction is never CONSISTENT.
+
+    The nested counts are still readable integers, so the package is evidence
+    to compare, not unreadable evidence: the result is INCONSISTENT and says
+    that the package no longer satisfies its own Task 168 contract.
+    """
     ready_package.t165_bundle_evidence.bundle_finding_count = 1
     ready_package.t166_audited_bundle.bundle_finding_count = 1
 
@@ -451,9 +648,11 @@ def test_service_revalidates_postconstruction_package_mutation(
         package=ready_package, audit=ready_audit
     )
 
-    assert consistency["consistency_status"] == "UNAVAILABLE"
-    assert consistency["session_id"] == ""
-    assert consistency["findings"] == ["PACKAGE_OR_AUDIT_INVALID"]
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert consistency["findings"] == ["PACKAGE_CONTRACT_INVALID"]
+    assert consistency["session_id"] == ready_package.session_id
+    assert consistency["available"] is True
+    assert consistency["consistent"] is False
 
 
 @pytest.mark.parametrize(
@@ -462,13 +661,215 @@ def test_service_revalidates_postconstruction_package_mutation(
 )
 def test_missing_or_malformed_inputs_are_unavailable(package, audit):
     """Missing/unreadable inputs do not escape as attribute errors."""
-    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
-        package=package, audit=audit
-    )
+    consistency = _verify(package, audit)
 
-    assert consistency["consistency_status"] == "UNAVAILABLE"
+    _assert_unreadable(consistency)
+    assert "PACKAGE_UNREADABLE" in consistency["findings"]
+    assert "AUDIT_UNREADABLE" in consistency["findings"]
+
+
+def test_unsupported_object_types_are_unavailable(ready_package, ready_audit):
+    """Wrong model types, including swapped inputs, are unreadable."""
+    swapped = _verify(ready_audit, ready_package)
+    _assert_unreadable(swapped)
+    assert "PACKAGE_UNREADABLE" in swapped["findings"]
+    assert "AUDIT_UNREADABLE" in swapped["findings"]
+
+    dict_inputs = _verify(ready_package.model_dump(), ready_audit.model_dump())
+    _assert_unreadable(dict_inputs)
+
+    only_package_missing = _verify(None, ready_audit)
+    _assert_unreadable(only_package_missing)
+    assert "PACKAGE_UNREADABLE" in only_package_missing["findings"]
+    assert "AUDIT_UNREADABLE" not in only_package_missing["findings"]
+
+    only_audit_missing = _verify(ready_package, None)
+    _assert_unreadable(only_audit_missing)
+    assert "AUDIT_UNREADABLE" in only_audit_missing["findings"]
+    assert "PACKAGE_UNREADABLE" not in only_audit_missing["findings"]
+
+
+@pytest.mark.parametrize("name", sorted(UNREADABLE_PACKAGE_MUTATIONS))
+def test_malformed_package_is_unavailable_without_raising(
+    name, ready_package, ready_audit
+):
+    """Malformed package fields and nested evidence are unreadable."""
+    malformed = _mutated(ready_package, UNREADABLE_PACKAGE_MUTATIONS[name])
+
+    consistency = _verify(malformed, ready_audit)
+
+    _assert_unreadable(consistency)
+    assert "PACKAGE_UNREADABLE" in consistency["findings"]
+    assert "AUDIT_UNREADABLE" not in consistency["findings"]
+    assert consistency == _verify(malformed, ready_audit)
+
+
+@pytest.mark.parametrize("name", sorted(UNREADABLE_AUDIT_MUTATIONS))
+def test_malformed_audit_is_unavailable_without_raising(
+    name, ready_package, ready_audit
+):
+    """Malformed audit fields are unreadable."""
+    malformed = _mutated(ready_audit, UNREADABLE_AUDIT_MUTATIONS[name])
+
+    consistency = _verify(ready_package, malformed)
+
+    _assert_unreadable(consistency)
+    assert "AUDIT_UNREADABLE" in consistency["findings"]
+    assert "PACKAGE_UNREADABLE" not in consistency["findings"]
+    assert consistency == _verify(ready_package, malformed)
+
+
+def test_unreadable_input_hides_no_partial_comparison(ready_package, ready_audit):
+    """When either input is unreadable, no half-evaluated findings leak out."""
+    detached_audit = _mutated(ready_audit, _set_attr("session_id", str(uuid4())))
+    malformed_package = _mutated(ready_package, _drop_attr("package_source"))
+
+    consistency = _verify(malformed_package, detached_audit)
+
+    _assert_unreadable(consistency)
+    assert consistency["findings"] == ["PACKAGE_OR_AUDIT_INVALID", "PACKAGE_UNREADABLE"]
+
+
+# ---------------------------------------------------------------------------
+# Readable contradictions are never downgraded to UNAVAILABLE
+# ---------------------------------------------------------------------------
+
+
+READABLE_CONTRADICTIONS = {
+    "forged_package_source": (
+        _set_attr("package_source", "FORGED"),
+        None,
+        "PACKAGE_SOURCE_MISMATCH",
+    ),
+    "forged_audit_source": (
+        None,
+        _set_attr("audit_source", "FORGED"),
+        "AUDIT_SOURCE_MISMATCH",
+    ),
+    "detached_session": (
+        None,
+        _set_attr("session_id", "another-session"),
+        "SESSION_MISMATCH",
+    ),
+    "published_status_conflict": (
+        None,
+        _set_attr("published_package_status", "BLOCKED"),
+        "PUBLISHED_STATUS_MISMATCH",
+    ),
+    "expected_status_conflict": (
+        None,
+        _set_attr("expected_package_status", "BLOCKED"),
+        "EXPECTED_STATUS_CONTRADICTION",
+    ),
+    "package_finding_count_conflict": (
+        _set_attr("finding_count", 4),
+        None,
+        "FINDING_COUNT_MISMATCH",
+    ),
+    "audit_finding_count_conflict": (
+        None,
+        _set_attr("finding_count", 4),
+        "FINDING_COUNT_MISMATCH",
+    ),
+    "audit_flag_conflict": (
+        None,
+        _set_attr("consistent", False),
+        "AUDIT_INCONSISTENT",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(READABLE_CONTRADICTIONS))
+def test_readable_contradiction_keeps_specific_finding(
+    name, ready_package, ready_audit
+):
+    """A contract failure on readable fields reports what disagrees."""
+    mutate_package, mutate_audit, expected = READABLE_CONTRADICTIONS[name]
+    package = (
+        _mutated(ready_package, mutate_package) if mutate_package else ready_package
+    )
+    audit = _mutated(ready_audit, mutate_audit) if mutate_audit else ready_audit
+
+    consistency = _verify(package, audit)
+
+    assert consistency["consistency_status"] == "INCONSISTENT"
+    assert consistency["available"] is True
+    assert consistency["consistent"] is False
+    assert expected in consistency["findings"]
+    assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+    assert "PACKAGE_UNREADABLE" not in consistency["findings"]
+    assert "AUDIT_UNREADABLE" not in consistency["findings"]
+    assert consistency["findings"] == sorted(set(consistency["findings"]))
+    ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(consistency)
+
+
+def test_readable_contract_failure_is_never_consistent(ready_package, ready_audit):
+    """A readable object that fails its own contract can never be CONSISTENT."""
+    nested_mutation = _mutated(
+        ready_package, _set_nested("t165_bundle_evidence", "bundle_finding_count", 1)
+    )
+    missing_snapshot = _mutated(ready_package, _set_attr("t166_audited_bundle", None))
+
+    for package in (nested_mutation, missing_snapshot):
+        consistency = _verify(package, ready_audit)
+        assert consistency["consistency_status"] == "INCONSISTENT"
+        assert "PACKAGE_CONTRACT_INVALID" in consistency["findings"]
+        assert "PACKAGE_OR_AUDIT_INVALID" not in consistency["findings"]
+
+    # The same package/audit pair is CONSISTENT before it is mutated.
+    assert _verify(ready_package, ready_audit)["consistency_status"] == "CONSISTENT"
+
+
+# ---------------------------------------------------------------------------
+# A structurally valid Task 169 UNAVAILABLE audit
+# ---------------------------------------------------------------------------
+
+
+def test_valid_unavailable_audit_is_unavailable_not_malformed(ready_package):
+    """A valid UNAVAILABLE audit verified nothing: UNAVAILABLE, AUDIT_UNAVAILABLE.
+
+    Task 170's contract: UNAVAILABLE when the audit cannot be bound to the
+    package. The audit is readable and honest, so this must not be reported as
+    the generic malformed-input finding.
+    """
+    audit = _valid_unavailable_audit()
+
+    consistency = _verify(ready_package, audit)
+
+    validated = ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+        consistency
+    )
+    assert validated.consistency_status == "UNAVAILABLE"
+    assert validated.session_id == ""
+    assert validated.available is False
+    assert validated.consistent is False
+    assert validated.findings == ["AUDIT_UNAVAILABLE"]
+    assert validated.finding_count == 1
+    assert "PACKAGE_OR_AUDIT_INVALID" not in validated.findings
+    assert "AUDIT_UNREADABLE" not in validated.findings
+    assert consistency == _verify(ready_package, audit)
+
+
+def test_valid_unavailable_audit_differs_from_malformed_audit(
+    ready_package, ready_audit
+):
+    """The valid-UNAVAILABLE and malformed-audit results are distinguishable."""
+    valid_unavailable = _verify(ready_package, _valid_unavailable_audit())
+    malformed = _verify(ready_package, _mutated(ready_audit, _drop_attr("findings")))
+
+    assert valid_unavailable["consistency_status"] == "UNAVAILABLE"
+    assert malformed["consistency_status"] == "UNAVAILABLE"
+    assert valid_unavailable["findings"] == ["AUDIT_UNAVAILABLE"]
+    assert "AUDIT_UNREADABLE" in malformed["findings"]
+    assert valid_unavailable["findings"] != malformed["findings"]
+
+
+def test_valid_unavailable_audit_does_not_claim_a_session_match(ready_package):
+    """Because the audit names no session, a package session is never echoed."""
+    consistency = _verify(ready_package, _valid_unavailable_audit())
+
     assert consistency["session_id"] == ""
-    assert consistency["findings"] == ["PACKAGE_OR_AUDIT_INVALID"]
+    assert "SESSION_MISMATCH" not in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -612,6 +1013,32 @@ def test_consistency_does_not_mutate_inputs(ready_package, ready_audit):
     assert ready_audit.model_dump() == original_audit
 
 
+def test_consistency_does_not_mutate_tampered_or_malformed_inputs(
+    ready_package, ready_audit
+):
+    """Contradictory and malformed inputs are read, never repaired or changed."""
+    cases = [
+        (
+            _mutated(ready_package, _set_attr("package_source", "FORGED")),
+            _mutated(ready_audit, _set_attr("session_id", "other")),
+        ),
+        (
+            _mutated(ready_package, _set_nested("t165_bundle_evidence", "findings", 1)),
+            ready_audit,
+        ),
+        (ready_package, _valid_unavailable_audit()),
+        (ready_package, _mutated(ready_audit, _drop_attr("audit_source"))),
+    ]
+    for package, audit in cases:
+        package_state = copy.deepcopy(package.__dict__)
+        audit_state = copy.deepcopy(audit.__dict__)
+
+        _verify(package, audit)
+
+        assert package.__dict__ == package_state
+        assert audit.__dict__ == audit_state
+
+
 # ---------------------------------------------------------------------------
 # Independence protections
 # ---------------------------------------------------------------------------
@@ -626,6 +1053,35 @@ def test_consistency_is_pure_function(ready_package, ready_audit):
         package=ready_package, audit=ready_audit
     )
     assert consistency1 == consistency2
+
+
+def test_consistency_is_independent_of_upstream_services(
+    ready_package, ready_audit, monkeypatch
+):
+    """The check reads published objects and never calls Task 168 or Task 169."""
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("Task 170 must not call an upstream service")
+
+    monkeypatch.setattr(
+        ReasoningRunStage7EvidencePackageService,
+        "assemble",
+        staticmethod(_must_not_be_called),
+    )
+    monkeypatch.setattr(
+        ReasoningRunStage7EvidencePackageAuditService,
+        "audit",
+        staticmethod(_must_not_be_called),
+    )
+
+    assert _verify(ready_package, ready_audit)["consistency_status"] == "CONSISTENT"
+    assert (
+        _verify(
+            _mutated(ready_package, _set_attr("package_source", "FORGED")), ready_audit
+        )["consistency_status"]
+        == "INCONSISTENT"
+    )
+    assert _verify(None, None)["consistency_status"] == "UNAVAILABLE"
 
 
 def test_consistency_source_constant_is_correct():
