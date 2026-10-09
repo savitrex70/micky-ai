@@ -194,6 +194,21 @@ def test_schema_forbids_extra_fields() -> None:
         )
 
 
+def test_schema_requires_canonical_source() -> None:
+    with pytest.raises(ValidationError, match="canonical Task 172 source"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            session_id=_session_id(),
+            attestation_audit_status="UNAVAILABLE",
+            available=False,
+            consistent=False,
+            published_attestation_status="UNAVAILABLE",
+            expected_attestation_status="UNAVAILABLE",
+            finding_count=1,
+            findings=["INPUT_MISSING"],
+            audit_source="FORGED_SOURCE",
+        )
+
+
 def test_schema_consistent_requires_status_agreement() -> None:
     session_id = _session_id()
     with pytest.raises(ValidationError, match="CONSISTENT requires published"):
@@ -383,8 +398,8 @@ def test_audit_detects_wrong_package_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "INCONSISTENT"
-    assert "PACKAGE_SOURCE_INVALID" in audit["findings"]
+    assert audit["attestation_audit_status"] == "UNAVAILABLE"
+    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_audit_detects_wrong_audit_source(ready_chain) -> None:
@@ -396,8 +411,8 @@ def test_audit_detects_wrong_audit_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "INCONSISTENT"
-    assert "AUDIT_SOURCE_INVALID" in audit["findings"]
+    assert audit["attestation_audit_status"] == "UNAVAILABLE"
+    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_audit_detects_wrong_consistency_source(ready_chain) -> None:
@@ -409,8 +424,8 @@ def test_audit_detects_wrong_consistency_source(ready_chain) -> None:
         consistency=consistency,
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "INCONSISTENT"
-    assert "CONSISTENCY_SOURCE_INVALID" in audit["findings"]
+    assert audit["attestation_audit_status"] == "UNAVAILABLE"
+    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_audit_malformed_attestation_dict_is_unavailable(ready_chain) -> None:
@@ -423,6 +438,71 @@ def test_audit_malformed_attestation_dict_is_unavailable(ready_chain) -> None:
     )
     assert audit["attestation_audit_status"] == "UNAVAILABLE"
     assert "ATTESTATION_INVALID" in audit["findings"]
+
+
+def test_audit_revalidates_post_construction_evidence_mutation(ready_chain) -> None:
+    ready_chain["package"].session_id = []
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_audit_rejects_wrong_evidence_types(ready_chain) -> None:
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=None,  # type: ignore[arg-type]
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_inconsistent_upstream_audit_does_not_claim_blocked(ready_chain) -> None:
+    bad_audit = copy.deepcopy(ready_chain["audit"])
+    bad_audit.package_audit_status = "INCONSISTENT"
+    bad_audit.consistent = False
+    bad_audit.finding_count = 1
+    bad_audit.findings = ["AUDIT_DISAGREES"]
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=bad_audit,
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["attestation_audit_status"] == "INCONSISTENT"
+    assert "ATTESTATION_STATUS_MISMATCH" in result["findings"]
+
+
+def test_session_mismatch_makes_expected_attestation_unavailable(ready_chain) -> None:
+    detached_audit = copy.deepcopy(ready_chain["audit"])
+    detached_audit.session_id = _session_id()
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=detached_audit,
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["attestation_audit_status"] == "INCONSISTENT"
+    assert "SESSION_BINDING_MISMATCH" in result["findings"]
+    assert "ATTESTATION_STATUS_MISMATCH" in result["findings"]
 
 
 def test_audit_does_not_mutate_inputs(ready_chain) -> None:

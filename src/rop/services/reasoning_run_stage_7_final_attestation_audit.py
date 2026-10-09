@@ -75,6 +75,43 @@ class ReasoningRunStage7FinalAttestationAuditService:
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
+        try:
+            if not isinstance(package, ReasoningRunStage7EvidencePackageRead):
+                raise TypeError("package has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7EvidencePackageAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            if not isinstance(
+                consistency, ReasoningRunStage7EvidencePackageAuditConsistencyRead
+            ):
+                raise TypeError("consistency has an unexpected model type")
+            package = ReasoningRunStage7EvidencePackageRead.model_validate(
+                package.model_dump()
+            )
+            audit = ReasoningRunStage7EvidencePackageAuditRead.model_validate(
+                audit.model_dump()
+            )
+            consistency = (
+                ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+                    consistency.model_dump()
+                )
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7FinalAttestationAuditService._project(
+                {
+                    "session_id": "",
+                    "attestation_audit_status": "UNAVAILABLE",
+                    "available": False,
+                    "consistent": False,
+                    "published_attestation_status": "UNAVAILABLE",
+                    "expected_attestation_status": "UNAVAILABLE",
+                    "finding_count": 1,
+                    "findings": ["EVIDENCE_INPUT_INVALID"],
+                    "audit_source": (
+                        REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A0 — Canonical sources for Tasks 168/169/170
@@ -94,20 +131,21 @@ class ReasoningRunStage7FinalAttestationAuditService:
         ):
             findings.append("CONSISTENCY_SOURCE_INVALID")
 
-        # Step A — Derive expected attestation status independently
-        # BLOCKED takes precedence
-        blocked = (
-            package.package_status == "BLOCKED"
-            or audit.package_audit_status == "INCONSISTENT"
-            or consistency.consistency_status == "INCONSISTENT"
-        )
+        # Task 171 gives BLOCKED precedence only to a genuinely blocked
+        # Task 168 package. Inconsistent later audits make certification
+        # unavailable; they do not rewrite the package's blocking state.
+        blocked = package.package_status == "BLOCKED"
 
-        # CERTIFIED requires all conditions
+        # Derive Task 171's complete certification conditions independently.
         certified = (
             package.package_status == "READY"
             and audit.package_audit_status == "CONSISTENT"
             and consistency.consistency_status == "CONSISTENT"
             and package.session_id != ""
+            and package.session_id == audit.session_id
+            and package.session_id == consistency.session_id
+            and audit.published_package_status == package.package_status
+            and audit.expected_package_status == package.package_status
             and not package.findings
             and not audit.findings
             and not consistency.findings
@@ -120,29 +158,34 @@ class ReasoningRunStage7FinalAttestationAuditService:
         else:
             expected_status = "UNAVAILABLE"
 
-        # Step B — Convert attestation to model if dict
-        if isinstance(attestation, dict):
-            # Validate through schema to catch invariants
-            try:
-                attestation_obj = (
-                    ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
-                        attestation
-                    )
+        # Step B — Revalidate the published Task 171 object, including
+        # objects mutated after their original Pydantic construction.
+        raw_attestation: Any = None
+        try:
+            raw_attestation = (
+                attestation.model_dump()
+                if isinstance(
+                    attestation, ReasoningRunStage7FinalEvidenceAttestationRead
                 )
-            except ValidationError:
-                # If validation fails, treat as UNAVAILABLE
-                attestation_obj = None
-                findings.append("ATTESTATION_INVALID")
-        else:
-            attestation_obj = attestation
+                else attestation
+            )
+            if not isinstance(raw_attestation, dict):
+                raise TypeError("attestation has an unexpected model type")
+            attestation_obj = (
+                ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
+                    raw_attestation
+                )
+            )
+        except (TypeError, ValidationError):
+            attestation_obj = None
+            findings.append("ATTESTATION_INVALID")
 
         if attestation_obj is None:
             raw_status = (
-                attestation.get("attestation_status")
-                if isinstance(attestation, dict)
+                raw_attestation.get("attestation_status")
+                if isinstance(raw_attestation, dict)
                 else None
             )
-            findings.append("ATTESTATION_INVALID")
             if raw_status in ("CERTIFIED", "BLOCKED", "UNAVAILABLE"):
                 published_status = raw_status
                 if raw_status != expected_status:
@@ -154,7 +197,12 @@ class ReasoningRunStage7FinalAttestationAuditService:
                 findings = sorted(set(findings))
                 audit_status = "UNAVAILABLE"
             result: dict[str, Any] = {
-                "session_id": package.session_id,
+                "session_id": (
+                    package.session_id
+                    if audit.session_id == package.session_id
+                    and consistency.session_id == package.session_id
+                    else ""
+                ),
                 "attestation_audit_status": audit_status,
                 "available": audit_status != "UNAVAILABLE",
                 "consistent": audit_status == "CONSISTENT",

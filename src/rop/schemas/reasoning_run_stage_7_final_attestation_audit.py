@@ -62,6 +62,10 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
             raise ValueError("findings must not contain duplicates")
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
+        if self.audit_source != (
+            REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172
+        ):
+            raise ValueError("audit_source must be the canonical Task 172 source")
         if self.attestation_audit_status == "UNAVAILABLE":
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
