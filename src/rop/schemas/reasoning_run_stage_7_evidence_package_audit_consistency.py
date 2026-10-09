@@ -69,12 +69,18 @@ class ReasoningRunStage7EvidencePackageAuditConsistencyRead(BaseModel):
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
         if self.consistency_status == "UNAVAILABLE":
+            if self.session_id != "":
+                raise ValueError("UNAVAILABLE must not claim a session identity")
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
-            return self
-        if self.consistency_status == "CONSISTENT":
+        elif self.consistency_status == "CONSISTENT":
             if self.findings:
                 raise ValueError("CONSISTENT requires a finding-free consistency check")
         elif not self.findings:
             raise ValueError("INCONSISTENT requires at least one finding")
+        if (
+            self.consistency_source
+            != REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170
+        ):
+            raise ValueError("consistency_source must be the canonical Task 170 source")
         return self

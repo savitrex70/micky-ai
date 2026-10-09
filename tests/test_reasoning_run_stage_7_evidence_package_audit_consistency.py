@@ -199,8 +199,8 @@ def test_package_source_mismatch_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=ready_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "PACKAGE_SOURCE_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_audit_source_mismatch_detected(ready_package, ready_audit):
@@ -210,8 +210,8 @@ def test_audit_source_mismatch_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_SOURCE_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +226,8 @@ def test_published_status_mismatch_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "PUBLISHED_STATUS_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_expected_status_contradiction_detected(ready_package, ready_audit):
@@ -237,8 +237,8 @@ def test_expected_status_contradiction_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_forged_package_status_detected(ready_package, ready_audit):
@@ -251,8 +251,8 @@ def test_forged_package_status_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -286,8 +286,8 @@ def test_unavailable_audit_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +304,8 @@ def test_finding_count_mismatch_package_has_findings(ready_package, ready_audit)
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=ready_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "FINDING_COUNT_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_finding_count_mismatch_audit_has_findings(ready_package, ready_audit):
@@ -320,7 +320,7 @@ def test_finding_count_mismatch_audit_has_findings(ready_package, ready_audit):
         package=ready_package, audit=tampered_audit
     )
     assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "FINDING_COUNT_MISMATCH" in consistency["findings"]
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
 
 
 def test_same_session_different_content_detected(ready_package, ready_audit):
@@ -333,7 +333,7 @@ def test_same_session_different_content_detected(ready_package, ready_audit):
         package=tampered_package, audit=ready_audit
     )
     assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "PUBLISHED_STATUS_MISMATCH" in consistency["findings"]
+    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +352,8 @@ def test_audit_unavailable_flag_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=ready_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_UNAVAILABLE" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_audit_inconsistent_flag_detected(ready_package, ready_audit):
@@ -380,8 +380,8 @@ def test_package_empty_session_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "PACKAGE_SESSION_EMPTY" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
@@ -421,9 +421,8 @@ def test_finding_tampering_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    # Both have findings, so this is acceptable, but the audit status is not CONSISTENT
-    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
 
 
 def test_multiple_forgeries_detected(ready_package, ready_audit):
@@ -437,11 +436,39 @@ def test_multiple_forgeries_detected(ready_package, ready_audit):
     consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
         package=tampered_package, audit=tampered_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "PACKAGE_SOURCE_MISMATCH" in consistency["findings"]
-    assert "AUDIT_SOURCE_MISMATCH" in consistency["findings"]
-    assert "PUBLISHED_STATUS_MISMATCH" in consistency["findings"]
-    assert "EXPECTED_STATUS_CONTRADICTION" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "PACKAGE_OR_AUDIT_INVALID" in consistency["findings"]
+
+
+def test_service_revalidates_postconstruction_package_mutation(
+    ready_package, ready_audit
+):
+    """A mutated package that no longer satisfies Task 168 is unavailable."""
+    ready_package.t165_bundle_evidence.bundle_finding_count = 1
+    ready_package.t166_audited_bundle.bundle_finding_count = 1
+
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=ready_package, audit=ready_audit
+    )
+
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["session_id"] == ""
+    assert consistency["findings"] == ["PACKAGE_OR_AUDIT_INVALID"]
+
+
+@pytest.mark.parametrize(
+    ("package", "audit"),
+    [(None, None), (object(), object())],
+)
+def test_missing_or_malformed_inputs_are_unavailable(package, audit):
+    """Missing/unreadable inputs do not escape as attribute errors."""
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=package, audit=audit
+    )
+
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["session_id"] == ""
+    assert consistency["findings"] == ["PACKAGE_OR_AUDIT_INVALID"]
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +559,38 @@ def test_unavailable_requires_findings(ready_package, ready_audit):
     consistency["consistency_status"] = "UNAVAILABLE"
     consistency["available"] = False
     consistency["consistent"] = False
+    consistency["session_id"] = ""
     with pytest.raises(ValidationError, match="UNAVAILABLE requires"):
+        ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+            consistency
+        )
+
+
+def test_consistency_schema_requires_canonical_source(ready_package, ready_audit):
+    """The Task 170 read schema rejects a forged source."""
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=ready_package, audit=ready_audit
+    )
+    consistency["consistency_source"] = "FORGED_SOURCE"
+
+    with pytest.raises(ValidationError, match="canonical Task 170 source"):
+        ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
+            consistency
+        )
+
+
+def test_unavailable_consistency_cannot_claim_session(ready_package, ready_audit):
+    """UNAVAILABLE evidence must not expose a session as verified."""
+    consistency = ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+        package=ready_package, audit=ready_audit
+    )
+    consistency["consistency_status"] = "UNAVAILABLE"
+    consistency["available"] = False
+    consistency["consistent"] = False
+    consistency["finding_count"] = 1
+    consistency["findings"] = ["UNAVAILABLE_REASON"]
+
+    with pytest.raises(ValidationError, match="must not claim a session"):
         ReasoningRunStage7EvidencePackageAuditConsistencyRead.model_validate(
             consistency
         )

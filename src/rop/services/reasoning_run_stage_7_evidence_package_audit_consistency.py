@@ -65,6 +65,32 @@ class ReasoningRunStage7EvidencePackageAuditConsistencyService:
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
+        try:
+            if not isinstance(package, ReasoningRunStage7EvidencePackageRead):
+                raise TypeError("package has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7EvidencePackageAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            package = ReasoningRunStage7EvidencePackageRead.model_validate(
+                package.model_dump()
+            )
+            audit = ReasoningRunStage7EvidencePackageAuditRead.model_validate(
+                audit.model_dump()
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7EvidencePackageAuditConsistencyService._project(
+                {
+                    "session_id": "",
+                    "consistency_status": "UNAVAILABLE",
+                    "available": False,
+                    "consistent": False,
+                    "finding_count": 1,
+                    "findings": ["PACKAGE_OR_AUDIT_INVALID"],
+                    "consistency_source": (
+                        REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A — Session identity must match exactly
@@ -96,35 +122,21 @@ class ReasoningRunStage7EvidencePackageAuditConsistencyService:
         if audit.package_audit_status != "CONSISTENT":
             findings.append("AUDIT_STATUS_NOT_CONSISTENT")
 
-        # Step G — Finding counts must be coherent
-        # If the package has findings, the audit should be aware of them
-        if package.finding_count > 0 and audit.finding_count > 0:
-            # Both have findings - this is acceptable if they are related
-            pass
-        elif package.finding_count > 0 and audit.finding_count == 0:
-            # Package has findings but audit doesn't - this is suspicious
+        # Findings describe different layers: Task 168 carries evidence
+        # findings; Task 169 carries findings about package coherence. A
+        # valid Task 169 audit must be finding-free when it claims consistency.
+        if audit.package_audit_status == "CONSISTENT" and audit.findings:
+            findings.append("AUDIT_FINDINGS_MISMATCH")
+        if package.finding_count != len(package.findings):
             findings.append("FINDING_COUNT_MISMATCH")
-        elif package.finding_count == 0 and audit.finding_count > 0:
-            # Audit found issues with the package - this is an inconsistency
-            findings.append("FINDING_COUNT_MISMATCH")
-        # Both zero is fine
 
-        # Step H — Package findings should be reflected in audit context
-        # If both have findings, they should be related
-        if package.findings and audit.findings:
-            # At minimum, both should have findings (basic sanity check)
-            pass
-
-        # Step I — Audit available flag must be true for valid binding
+        # Step I — Audit availability and consistency flags must align with
+        # the published audit status (also revalidated above).
         if not audit.available:
             findings.append("AUDIT_UNAVAILABLE")
-
-        # Step J — Audit consistent flag must be true for valid binding
         if not audit.consistent:
             findings.append("AUDIT_INCONSISTENT")
 
-        # Step K — Evidence presence checks
-        # The package must have all task evidence fields populated
         if package.session_id == "":
             findings.append("PACKAGE_SESSION_EMPTY")
 
@@ -136,7 +148,9 @@ class ReasoningRunStage7EvidencePackageAuditConsistencyService:
             consistency_status = "CONSISTENT"
 
         result: dict[str, Any] = {
-            "session_id": package.session_id,
+            "session_id": (
+                package.session_id if consistency_status != "UNAVAILABLE" else ""
+            ),
             "consistency_status": consistency_status,
             "available": consistency_status != "UNAVAILABLE",
             "consistent": consistency_status == "CONSISTENT",
