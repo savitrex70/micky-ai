@@ -104,9 +104,7 @@ class ReasoningRunStage7ReleaseReadinessProjectionService:
             findings.append("CONSISTENCY_INCONSISTENT")
 
         # Step E — Aggregate findings from all inputs
-        all_findings = (
-            attestation.findings + audit.findings + consistency.findings
-        )
+        all_findings = attestation.findings + audit.findings + consistency.findings
         if all_findings:
             findings.append("UNRESOLVED_FINDINGS_EXIST")
 
