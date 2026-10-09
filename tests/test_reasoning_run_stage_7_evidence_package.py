@@ -239,3 +239,24 @@ def test_blocked_precedence_over_ready(ready_inputs):
     ready_inputs["slice163"].slice_status = "READY"
     package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
     assert package["package_status"] == "BLOCKED"
+
+
+def test_unavailable_task_166_audit_is_packaged_verbatim(ready_inputs):
+    """An UNAVAILABLE Task 166 audit names no bundle status and still packages."""
+    ready_inputs["audit166"] = ReasoningRunStage7EvidenceBundleAuditRead(
+        session_id="",
+        bundle_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_bundle_status=None,
+        expected_bundle_status=None,
+        finding_count=1,
+        findings=["TASK_165_BUNDLE_MISSING"],
+        audit_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+    )
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    assert package["package_status"] == "UNAVAILABLE"
+    assert package["t166_bundle_audit_status"] == "UNAVAILABLE"
+    assert package["t166_published_bundle_status"] is None
+    assert package["t166_expected_bundle_status"] is None
+    assert package["t166_findings"] == ["TASK_165_BUNDLE_MISSING"]

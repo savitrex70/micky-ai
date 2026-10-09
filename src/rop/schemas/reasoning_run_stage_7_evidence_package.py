@@ -97,8 +97,8 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
     t166_bundle_audit_status: Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"]
     t166_available: bool
     t166_consistent: bool
-    t166_published_bundle_status: Literal["READY", "BLOCKED", "UNAVAILABLE"]
-    t166_expected_bundle_status: Literal["READY", "BLOCKED", "UNAVAILABLE"]
+    t166_published_bundle_status: Literal["READY", "BLOCKED", "UNAVAILABLE"] | None
+    t166_expected_bundle_status: Literal["READY", "BLOCKED", "UNAVAILABLE"] | None
     t166_finding_count: int
     t166_findings: list[str]
     t166_audit_source: str
