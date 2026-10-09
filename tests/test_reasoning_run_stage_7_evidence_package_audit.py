@@ -8,6 +8,7 @@ package status.
 
 from __future__ import annotations
 
+import copy
 from uuid import uuid4
 
 import pytest
@@ -45,6 +46,15 @@ from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
 )
 from rop.services.reasoning_run_stage_7_audit_package import (
     REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+)
+from rop.services.reasoning_run_stage_7_evidence_bundle_audit import (
+    ReasoningRunStage7EvidenceBundleAuditService,
+)
+from rop.services.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
+    ReasoningRunStage7EvidenceBundleAuditConsistencyService,
+)
+from rop.services.reasoning_run_stage_7_evidence_package import (
+    ReasoningRunStage7EvidencePackageService,
 )
 from rop.services.reasoning_run_stage_7_evidence_package_audit import (
     ReasoningRunStage7EvidencePackageAuditService,
@@ -562,3 +572,684 @@ def test_audit_detects_substituted_task_165_snapshot(ready_evidence):
 
     assert result["package_audit_status"] == "INCONSISTENT"
     assert "T165_BUNDLE_EVIDENCE_MISMATCH" in result["findings"]
+
+
+# ---------------------------------------------------------------------------
+# Task 169 correction: complete package findings, complete status derivation,
+# and a deterministic result for malformed evidence.
+# ---------------------------------------------------------------------------
+
+AUDIT = ReasoningRunStage7EvidencePackageAuditService
+INPUT_NAMES = (
+    "pkg162",
+    "slice163",
+    "audit164",
+    "bundle165",
+    "audit166",
+    "consistency167",
+)
+
+
+@pytest.fixture
+def real_inputs(ready_evidence):
+    """READY inputs whose Task 166/167 evidence comes from the real services."""
+    inputs = {name: ready_evidence[name] for name in INPUT_NAMES}
+    inputs["audit166"] = ReasoningRunStage7EvidenceBundleAuditRead.model_validate(
+        ReasoningRunStage7EvidenceBundleAuditService.audit(bundle=inputs["bundle165"])
+    )
+    inputs["consistency167"] = (
+        ReasoningRunStage7EvidenceBundleAuditConsistencyRead.model_validate(
+            ReasoningRunStage7EvidenceBundleAuditConsistencyService.verify(
+                bundle=inputs["bundle165"], audit=inputs["audit166"]
+            )
+        )
+    )
+    return inputs
+
+
+def rebind_task_166_and_167(inputs):
+    """Publish Task 166/167 evidence that matches a changed Task 165 bundle."""
+    bundle = inputs["bundle165"]
+    audit = inputs["audit166"]
+    audit.audited_bundle = ReasoningRunStage7EvidenceBundleSnapshot.model_validate(
+        bundle.model_dump()
+    )
+    audit.published_bundle_status = bundle.bundle_status
+    audit.expected_bundle_status = bundle.bundle_status
+    inputs["consistency167"] = (
+        ReasoningRunStage7EvidenceBundleAuditConsistencyRead.model_validate(
+            ReasoningRunStage7EvidenceBundleAuditConsistencyService.verify(
+                bundle=bundle, audit=audit
+            )
+        )
+    )
+
+
+def assemble_package(inputs):
+    """Assemble a package with the real Task 168 service."""
+    return ReasoningRunStage7EvidencePackageRead.model_validate(
+        ReasoningRunStage7EvidencePackageService.assemble(**inputs)
+    )
+
+
+def audit_package(package, inputs):
+    return AUDIT.audit(package=package, **inputs)
+
+
+def child_findings(package):
+    return set(
+        package.t162_findings
+        + package.t163_findings
+        + package.t164_findings
+        + package.t165_bundle_findings
+        + package.t166_findings
+        + package.t167_findings
+    )
+
+
+def _fingerprint_disagreement(inputs):
+    inputs["bundle165"].request_fingerprint = "b" * 64
+    rebind_task_166_and_167(inputs)
+
+
+def _forged_task_162_source(inputs):
+    inputs["pkg162"].audit_source = "FORGED_SOURCE"
+
+
+def _forged_task_166_source(inputs):
+    inputs["audit166"].audit_source = "FORGED_SOURCE"
+
+
+def _forged_task_167_source(inputs):
+    inputs["consistency167"].consistency_source = "FORGED_SOURCE"
+
+
+def _substituted_task_165_bundle(inputs):
+    inputs["bundle165"].provider_name = "substituted-provider"
+
+
+def _missing_task_166_snapshot(inputs):
+    inputs["audit166"].audited_bundle = None
+
+
+def _session_mismatch(inputs):
+    inputs["slice163"].session_id = str(uuid4())
+
+
+def _stale_task_167_verdict(inputs):
+    inputs["bundle165"].request_fingerprint = "b" * 64
+
+
+def _aligned_malformed_fingerprint(inputs):
+    inputs["pkg162"].request_fingerprint = "malformed"
+    inputs["bundle165"].request_fingerprint = "malformed"
+    rebind_task_166_and_167(inputs)
+
+
+def _unsupported_embedded_status(inputs):
+    inputs["bundle165"].slice_status = "FORGED"
+    inputs["audit166"].audited_bundle.slice_status = "FORGED"
+
+
+def _task_164_status_contradiction(inputs):
+    inputs["audit164"].published_slice_status = "BLOCKED"
+    inputs["bundle165"].published_slice_status = "BLOCKED"
+    rebind_task_166_and_167(inputs)
+
+
+def test_valid_unavailable_package_with_fingerprint_disagreement_is_consistent(
+    real_inputs,
+):
+    _fingerprint_disagreement(real_inputs)
+
+    package = assemble_package(real_inputs)
+
+    # Task 168 publishes a valid UNAVAILABLE package whose aggregate carries a
+    # package-level finding that no child list contains.
+    assert package.package_status == "UNAVAILABLE"
+    assert "T165_T162_EVIDENCE_MISMATCH" in package.findings
+    assert "T165_T162_EVIDENCE_MISMATCH" not in child_findings(package)
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT"
+    assert audit["published_package_status"] == "UNAVAILABLE"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["findings"] == []
+    assert audit["finding_count"] == 0
+    ReasoningRunStage7EvidencePackageAuditRead.model_validate(audit)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "package_finding"),
+    [
+        (_forged_task_162_source, "T162_SOURCE_MISMATCH"),
+        (_forged_task_166_source, "T166_SOURCE_MISMATCH"),
+        (_forged_task_167_source, "T167_SOURCE_MISMATCH"),
+        (_substituted_task_165_bundle, "T166_SNAPSHOT_MISMATCH"),
+        (_missing_task_166_snapshot, "T166_SNAPSHOT_MISSING"),
+        (_session_mismatch, "STAGE_7_SESSION_MISMATCH"),
+        (_stale_task_167_verdict, "T167_RESULT_MISMATCH"),
+        (_aligned_malformed_fingerprint, "T165_BUNDLE_INVALID"),
+        (_unsupported_embedded_status, "T165_STATUS_INVALID"),
+        (_task_164_status_contradiction, "T164_PUBLISHED_STATUS_MISMATCH"),
+    ],
+)
+def test_valid_unavailable_package_with_structural_finding_is_consistent(
+    real_inputs, mutate, package_finding
+):
+    mutate(real_inputs)
+
+    package = assemble_package(real_inputs)
+
+    assert package.package_status == "UNAVAILABLE"
+    assert package_finding in package.findings
+    assert package_finding not in child_findings(package)
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT", audit["findings"]
+    assert audit["published_package_status"] == "UNAVAILABLE"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["findings"] == []
+
+
+def test_valid_package_with_unavailable_task_166_audit_is_consistent(real_inputs):
+    real_inputs["audit166"] = ReasoningRunStage7EvidenceBundleAuditRead(
+        session_id="",
+        bundle_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_bundle_status=None,
+        expected_bundle_status=None,
+        finding_count=1,
+        findings=["TASK_165_BUNDLE_MISSING"],
+        audit_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+    )
+    package = assemble_package(real_inputs)
+    assert package.package_status == "UNAVAILABLE"
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT", audit["findings"]
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+
+
+def test_ready_package_from_task_168_assembler_audits_consistent(real_inputs):
+    package = assemble_package(real_inputs)
+    assert package.package_status == "READY"
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT"
+    assert audit["published_package_status"] == "READY"
+    assert audit["expected_package_status"] == "READY"
+    assert audit["findings"] == []
+
+
+def test_genuine_blocked_evidence_derives_blocked(real_inputs):
+    real_inputs["pkg162"].admission_status = "BLOCKED"
+    real_inputs["pkg162"].finding_count = 1
+    real_inputs["pkg162"].findings = ["BLOCKED"]
+    package = assemble_package(real_inputs)
+    assert package.package_status == "BLOCKED"
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT", audit["findings"]
+    assert audit["published_package_status"] == "BLOCKED"
+    assert audit["expected_package_status"] == "BLOCKED"
+
+
+def test_blocked_keeps_precedence_over_package_level_findings(real_inputs):
+    real_inputs["pkg162"].admission_status = "BLOCKED"
+    real_inputs["pkg162"].finding_count = 1
+    real_inputs["pkg162"].findings = ["BLOCKED"]
+    _fingerprint_disagreement(real_inputs)
+    package = assemble_package(real_inputs)
+    assert package.package_status == "BLOCKED"
+    assert "T165_T162_EVIDENCE_MISMATCH" in package.findings
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "CONSISTENT", audit["findings"]
+    assert audit["expected_package_status"] == "BLOCKED"
+
+    # Downgrading the same genuinely BLOCKED package is a contradiction.
+    package.package_status = "UNAVAILABLE"
+    audit = audit_package(package, real_inputs)
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["expected_package_status"] == "BLOCKED"
+    assert audit["published_package_status"] == "UNAVAILABLE"
+    assert "PACKAGE_STATUS_MISMATCH" in audit["findings"]
+
+
+def test_blocked_requires_genuine_blocking_evidence(real_inputs):
+    _fingerprint_disagreement(real_inputs)
+    package = assemble_package(real_inputs)
+    assert package.package_status == "UNAVAILABLE"
+
+    package.package_status = "BLOCKED"
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["published_package_status"] == "BLOCKED"
+    assert "PACKAGE_STATUS_MISMATCH" in audit["findings"]
+
+    package.package_status = "READY"
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert "PACKAGE_STATUS_MISMATCH" in audit["findings"]
+
+
+def test_withheld_package_level_finding_is_detected(real_inputs):
+    _fingerprint_disagreement(real_inputs)
+    package = assemble_package(real_inputs)
+    package.findings = [
+        finding
+        for finding in package.findings
+        if finding != "T165_T162_EVIDENCE_MISMATCH"
+    ]
+    package.finding_count = len(package.findings)
+
+    audit = audit_package(package, real_inputs)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert "AGGREGATE_FINDINGS_MISMATCH" in audit["findings"]
+    # The withheld finding also leaves the published count one short.
+    assert "AGGREGATE_FINDING_COUNT_MISMATCH" in audit["findings"]
+
+
+def test_fabricated_package_level_finding_is_detected(ready_evidence):
+    package = ready_evidence["package"]
+    package.findings = ["T165_T162_EVIDENCE_MISMATCH"]
+    package.finding_count = 1
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert "AGGREGATE_FINDINGS_MISMATCH" in audit["findings"]
+    assert "AGGREGATE_FINDING_COUNT_MISMATCH" in audit["findings"]
+
+
+# --- Malformed evidence: a deterministic, schema-valid result --------------
+
+
+def assert_unavailable_audit(audit, expected_findings):
+    assert audit["package_audit_status"] == "UNAVAILABLE"
+    assert audit["available"] is False
+    assert audit["consistent"] is False
+    assert audit["session_id"] == ""
+    assert audit["published_package_status"] is None
+    assert audit["expected_package_status"] is None
+    assert audit["findings"] == expected_findings
+    assert audit["finding_count"] == len(expected_findings)
+    ReasoningRunStage7EvidencePackageAuditRead.model_validate(audit)
+
+
+@pytest.mark.parametrize("bad_value", [None, "not-a-snapshot", {}, 7])
+@pytest.mark.parametrize("field", ["t165_bundle_evidence", "t166_audited_bundle"])
+def test_malformed_embedded_evidence_is_unavailable_not_a_crash(
+    ready_evidence, field, bad_value
+):
+    if field == "t166_audited_bundle" and bad_value is None:
+        pytest.skip("None is a legitimate Task 166 snapshot value")
+    setattr(ready_evidence["package"], field, bad_value)
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(
+        audit, ["TASK_168_PACKAGE_INVALID", "TASK_168_PACKAGE_UNREADABLE"]
+    )
+    assert audit == AUDIT.audit(**ready_evidence)
+
+
+@pytest.mark.parametrize("bad_value", [None, "findings", 5, [1], [None]])
+def test_malformed_package_finding_lists_are_unavailable(ready_evidence, bad_value):
+    ready_evidence["package"].t162_findings = bad_value
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(
+        audit, ["TASK_168_PACKAGE_INVALID", "TASK_168_PACKAGE_UNREADABLE"]
+    )
+
+
+def test_package_missing_a_required_attribute_is_unavailable(ready_evidence):
+    del ready_evidence["package"].__dict__["t164_findings"]
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "UNAVAILABLE"
+    assert "TASK_168_PACKAGE_UNREADABLE" in audit["findings"]
+    ReasoningRunStage7EvidencePackageAuditRead.model_validate(audit)
+
+
+@pytest.mark.parametrize("not_a_package", [None, {}, "package", object()])
+def test_non_package_object_is_unavailable(ready_evidence, not_a_package):
+    ready_evidence["package"] = not_a_package
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(audit, ["TASK_168_PACKAGE_UNREADABLE"])
+
+
+@pytest.mark.parametrize("bad_status", ["FORGED", "", "ready", None, 7, ["READY"]])
+def test_unsupported_published_package_status_is_unavailable(
+    ready_evidence, bad_status
+):
+    ready_evidence["package"].package_status = bad_status
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    # The published status cannot be read as a permitted value: the result
+    # names no status instead of inventing one.
+    assert_unavailable_audit(
+        audit, ["TASK_168_PACKAGE_INVALID", "TASK_168_PACKAGE_STATUS_UNREADABLE"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("input_name", "mutate", "finding"),
+    [
+        ("audit166", lambda _: None, "T166_INPUT_UNREADABLE"),
+        ("consistency167", lambda _: "garbage", "T167_INPUT_UNREADABLE"),
+        ("pkg162", lambda _: None, "T162_INPUT_UNREADABLE"),
+    ],
+)
+def test_non_model_upstream_input_is_unavailable(
+    ready_evidence, input_name, mutate, finding
+):
+    ready_evidence[input_name] = mutate(ready_evidence[input_name])
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(audit, [finding])
+
+
+@pytest.mark.parametrize(
+    ("input_name", "field", "bad_value", "finding"),
+    [
+        ("slice163", "findings", None, "T163_INPUT_UNREADABLE"),
+        ("audit164", "findings", [1], "T164_INPUT_UNREADABLE"),
+        ("bundle165", "finding_count", True, "T165_INPUT_UNREADABLE"),
+        ("bundle165", "bundle_findings", None, "T165_INPUT_UNREADABLE"),
+        ("audit166", "audited_bundle", "garbage", "T166_INPUT_UNREADABLE"),
+        ("pkg162", "session_id", 123, "SESSION_ID_INVALID"),
+        ("bundle165", "session_id", None, "SESSION_ID_INVALID"),
+    ],
+)
+def test_malformed_postconstruction_upstream_fields_are_unavailable(
+    ready_evidence, input_name, field, bad_value, finding
+):
+    setattr(ready_evidence[input_name], field, bad_value)
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(audit, [finding])
+
+
+def test_unreadable_evidence_reports_every_unreadable_input(ready_evidence):
+    ready_evidence["slice163"].findings = None
+    ready_evidence["audit166"] = None
+    ready_evidence["package"].t165_bundle_evidence = None
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert_unavailable_audit(
+        audit,
+        [
+            "T163_INPUT_UNREADABLE",
+            "T166_INPUT_UNREADABLE",
+            "TASK_168_PACKAGE_INVALID",
+            "TASK_168_PACKAGE_UNREADABLE",
+        ],
+    )
+
+
+def test_readable_but_contradictory_package_stays_inconsistent(ready_evidence):
+    # A readable package that fails Task 168 revalidation is contradictory,
+    # not unauditable: the result must be INCONSISTENT and name both statuses.
+    ready_evidence["package"].t162_request_fingerprint = "malformed"
+    ready_evidence["package"].t165_bundle_evidence.request_fingerprint = "malformed"
+    ready_evidence["package"].t166_audited_bundle.request_fingerprint = "malformed"
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["published_package_status"] == "READY"
+    assert audit["expected_package_status"] in {"READY", "BLOCKED", "UNAVAILABLE"}
+    assert "TASK_168_PACKAGE_INVALID" in audit["findings"]
+
+
+# --- Availability / consistency flags never leave the expected status READY -
+
+
+@pytest.mark.parametrize(
+    ("input_name", "field", "package_field", "flags_finding"),
+    [
+        ("audit164", "available", "t164_available", "T164_FLAGS_INCOHERENT"),
+        ("audit164", "consistent", "t164_consistent", "T164_FLAGS_INCOHERENT"),
+        ("audit166", "available", "t166_available", "T166_FLAGS_INCOHERENT"),
+        ("audit166", "consistent", "t166_consistent", "T166_FLAGS_INCOHERENT"),
+        (
+            "consistency167",
+            "available",
+            "t167_available",
+            "T167_FLAGS_INCOHERENT",
+        ),
+        (
+            "consistency167",
+            "consistent",
+            "t167_consistent",
+            "T167_FLAGS_INCOHERENT",
+        ),
+    ],
+)
+@pytest.mark.parametrize("aligned", [False, True])
+def test_mutated_availability_flags_never_derive_ready(
+    ready_evidence, input_name, field, package_field, flags_finding, aligned
+):
+    setattr(ready_evidence[input_name], field, False)
+    if aligned:
+        setattr(ready_evidence["package"], package_field, False)
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["published_package_status"] == "READY"
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert "PACKAGE_STATUS_MISMATCH" in audit["findings"]
+    assert flags_finding in audit["findings"]
+    if not aligned:
+        assert any(
+            finding.endswith(("_AVAILABLE_MISMATCH", "_CONSISTENT_MISMATCH"))
+            for finding in audit["findings"]
+        )
+
+
+def test_task_166_unavailable_claiming_a_bundle_is_inconsistent(ready_evidence):
+    ready_evidence["audit166"].bundle_audit_status = "UNAVAILABLE"
+    ready_evidence["audit166"].available = False
+    ready_evidence["audit166"].consistent = False
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert "T166_UNAVAILABLE_CLAIMS_BUNDLE" in audit["findings"]
+
+
+def test_compared_task_166_without_statuses_is_inconsistent(ready_evidence):
+    ready_evidence["audit166"].published_bundle_status = None
+    ready_evidence["audit166"].expected_bundle_status = None
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "INCONSISTENT"
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert "T166_COMPARED_STATUS_MISSING" in audit["findings"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda inputs: setattr(inputs["pkg162"], "finding_count", 1),
+        lambda inputs: setattr(inputs["bundle165"], "bundle_finding_count", 1),
+        lambda inputs: setattr(inputs["audit164"], "finding_count", 1),
+    ],
+)
+def test_nonzero_finding_count_never_derives_ready(ready_evidence, mutation):
+    mutation(ready_evidence)
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["expected_package_status"] == "UNAVAILABLE"
+    assert audit["package_audit_status"] == "INCONSISTENT"
+
+
+# --- Result contract --------------------------------------------------------
+
+
+def _audit_payload(**overrides):
+    payload = {
+        "session_id": "s",
+        "package_audit_status": "CONSISTENT",
+        "available": True,
+        "consistent": True,
+        "published_package_status": "READY",
+        "expected_package_status": "READY",
+        "finding_count": 0,
+        "findings": [],
+        "audit_source": REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_169,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"audit_source": "FORGED"},
+        # UNAVAILABLE must not name a package status or a session.
+        {
+            "package_audit_status": "UNAVAILABLE",
+            "available": False,
+            "consistent": False,
+            "finding_count": 1,
+            "findings": ["X"],
+            "session_id": "",
+        },
+        {
+            "package_audit_status": "UNAVAILABLE",
+            "available": False,
+            "consistent": False,
+            "finding_count": 1,
+            "findings": ["X"],
+            "published_package_status": None,
+            "expected_package_status": None,
+        },
+        # A compared (non-UNAVAILABLE) audit must name both statuses.
+        {
+            "package_audit_status": "INCONSISTENT",
+            "consistent": False,
+            "finding_count": 1,
+            "findings": ["X"],
+            "published_package_status": None,
+        },
+        {"published_package_status": "FORGED"},
+        {"expected_package_status": None},
+        {"findings": ["B", "A"], "finding_count": 2},
+        {
+            "package_audit_status": "INCONSISTENT",
+            "consistent": False,
+        },
+    ],
+)
+def test_audit_schema_rejects_incoherent_results(overrides):
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidencePackageAuditRead.model_validate(
+            _audit_payload(**overrides)
+        )
+
+
+def test_audit_schema_accepts_unavailable_without_statuses():
+    payload = _audit_payload(
+        package_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_package_status=None,
+        expected_package_status=None,
+        session_id="",
+        finding_count=1,
+        findings=["TASK_168_PACKAGE_STATUS_UNREADABLE"],
+    )
+    validated = ReasoningRunStage7EvidencePackageAuditRead.model_validate(payload)
+    assert validated.published_package_status is None
+
+
+# --- Determinism, ordering, immutability, independence ----------------------
+
+
+def test_audit_is_deterministic_sorted_and_does_not_mutate_inputs(real_inputs):
+    _fingerprint_disagreement(real_inputs)
+    package = assemble_package(real_inputs)
+    # Tamper with several package copies so the audit has many findings.
+    package.t162_admission_status = "BLOCKED"
+    package.t163_slice_status = "BLOCKED"
+    package.t164_slice_audit_status = "INCONSISTENT"
+    package.t164_consistent = False
+    package.package_status = "READY"
+    models = {**real_inputs, "package": package}
+    before = {name: copy.deepcopy(model.model_dump()) for name, model in models.items()}
+
+    first = audit_package(package, real_inputs)
+    second = audit_package(package, real_inputs)
+
+    assert first == second
+    assert first["package_audit_status"] == "INCONSISTENT"
+    assert first["findings"] == sorted(set(first["findings"]))
+    assert first["finding_count"] == len(first["findings"])
+    assert {name: model.model_dump() for name, model in models.items()} == before
+
+
+def test_malformed_result_is_deterministic_and_does_not_mutate_inputs(ready_evidence):
+    ready_evidence["package"].t165_bundle_evidence = None
+    ready_evidence["package"].package_status = "FORGED"
+    before = {
+        name: copy.deepcopy(model.model_dump())
+        for name, model in ready_evidence.items()
+    }
+
+    first = AUDIT.audit(**ready_evidence)
+    second = AUDIT.audit(**ready_evidence)
+
+    assert first == second
+    assert first["findings"] == sorted(set(first["findings"]))
+    assert {
+        name: model.model_dump() for name, model in ready_evidence.items()
+    } == before
+
+
+def test_audit_never_calls_task_162_to_168_services(ready_evidence, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("the audit must not call upstream services")
+
+    monkeypatch.setattr(
+        ReasoningRunStage7EvidencePackageService, "assemble", staticmethod(forbidden)
+    )
+    monkeypatch.setattr(
+        ReasoningRunStage7EvidenceBundleAuditService, "audit", staticmethod(forbidden)
+    )
+    monkeypatch.setattr(
+        ReasoningRunStage7EvidenceBundleAuditConsistencyService,
+        "verify",
+        staticmethod(forbidden),
+    )
+
+    audit = AUDIT.audit(**ready_evidence)
+
+    assert audit["package_audit_status"] == "CONSISTENT"
