@@ -58,7 +58,7 @@ def _session_id() -> str:
     return str(uuid4())
 
 
-def _ready_package() -> ReasoningRunStage7EvidencePackageRead:
+def _ready_package(ready_bundle_evidence) -> ReasoningRunStage7EvidencePackageRead:
     session_id = _session_id()
     return ReasoningRunStage7EvidencePackageRead(
         session_id=session_id,
@@ -96,6 +96,7 @@ def _ready_package() -> ReasoningRunStage7EvidencePackageRead:
         t165_bundle_finding_count=0,
         t165_bundle_findings=[],
         t165_bundle_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165",
+        t165_bundle_evidence=ready_bundle_evidence(session_id),
         t166_session_id=session_id,
         t166_bundle_audit_status="CONSISTENT",
         t166_available=True,
@@ -105,6 +106,7 @@ def _ready_package() -> ReasoningRunStage7EvidencePackageRead:
         t166_finding_count=0,
         t166_findings=[],
         t166_audit_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_TASK_166",
+        t166_audited_bundle=ready_bundle_evidence(session_id),
         t167_session_id=session_id,
         t167_consistency_status="CONSISTENT",
         t167_available=True,
@@ -157,8 +159,8 @@ def _certified_attestation(package, audit, consistency):
 
 
 @pytest.fixture
-def ready_chain():
-    package = _ready_package()
+def ready_chain(ready_bundle_evidence):
+    package = _ready_package(ready_bundle_evidence)
     audit = _consistent_audit(package)
     consistency = _consistent_consistency(package)
     attestation = _certified_attestation(package, audit, consistency)

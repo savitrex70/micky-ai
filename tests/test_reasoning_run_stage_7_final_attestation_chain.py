@@ -55,9 +55,6 @@ from rop.services.reasoning_run_stage_7_audit_package import (
 from rop.services.reasoning_run_stage_7_evidence_package import (
     REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168,
 )
-from rop.services.reasoning_run_stage_7_evidence_package_audit_consistency import (
-    REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170,
-)
 from rop.services.reasoning_run_stage_7_final_attestation_audit import (
     ReasoningRunStage7FinalAttestationAuditService,
 )
@@ -86,7 +83,7 @@ from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
 
 
 @pytest.fixture
-def ready_chain():
+def ready_chain(ready_bundle_evidence):
     """All inputs in READY/CONSISTENT/CERTIFIED state."""
     session_id = str(uuid4())
 
@@ -125,7 +122,8 @@ def ready_chain():
         t165_bundle_status="READY",
         t165_bundle_finding_count=0,
         t165_bundle_findings=[],
-        t165_bundle_source="REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168",
+        t165_bundle_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165",
+        t165_bundle_evidence=ready_bundle_evidence(session_id),
         t166_session_id=session_id,
         t166_bundle_audit_status="CONSISTENT",
         t166_available=True,
@@ -135,13 +133,14 @@ def ready_chain():
         t166_finding_count=0,
         t166_findings=[],
         t166_audit_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_TASK_166",
+        t166_audited_bundle=ready_bundle_evidence(session_id),
         t167_session_id=session_id,
         t167_consistency_status="CONSISTENT",
         t167_available=True,
         t167_consistent=True,
         t167_finding_count=0,
         t167_findings=[],
-        t167_consistency_source=REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_SOURCE_TASK_170,
+        t167_consistency_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_TASK_167",
         package_status="READY",
         finding_count=0,
         findings=[],

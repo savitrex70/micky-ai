@@ -55,7 +55,9 @@ ATTESTATION_SOURCE = REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_SOURCE_TAS
 
 
 @pytest.fixture
-def ready_package() -> ReasoningRunStage7EvidencePackageRead:
+def ready_package(
+    ready_bundle_evidence,
+) -> ReasoningRunStage7EvidencePackageRead:
     """A READY package for testing."""
     session_id = str(uuid4())
     fingerprint = "a" * 64
@@ -95,6 +97,7 @@ def ready_package() -> ReasoningRunStage7EvidencePackageRead:
         t165_bundle_finding_count=0,
         t165_bundle_findings=[],
         t165_bundle_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165",
+        t165_bundle_evidence=ready_bundle_evidence(session_id, fingerprint),
         t166_session_id=session_id,
         t166_bundle_audit_status="CONSISTENT",
         t166_available=True,
@@ -104,6 +107,7 @@ def ready_package() -> ReasoningRunStage7EvidencePackageRead:
         t166_finding_count=0,
         t166_findings=[],
         t166_audit_source="REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_TASK_166",
+        t166_audited_bundle=ready_bundle_evidence(session_id, fingerprint),
         t167_session_id=session_id,
         t167_consistency_status="CONSISTENT",
         t167_available=True,

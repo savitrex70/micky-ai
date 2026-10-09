@@ -57,7 +57,7 @@ from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
 
 
 @pytest.fixture
-def ready_evidence():
+def ready_evidence(ready_bundle_evidence):
     """All six inputs and package in READY/CONSISTENT state."""
     session_id = str(uuid4())
     fingerprint = "a" * 64
@@ -186,6 +186,7 @@ def ready_evidence():
         t165_bundle_finding_count=0,
         t165_bundle_findings=[],
         t165_bundle_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
+        t165_bundle_evidence=ready_bundle_evidence(session_id, fingerprint),
         t166_session_id=session_id,
         t166_bundle_audit_status="CONSISTENT",
         t166_available=True,
@@ -195,6 +196,7 @@ def ready_evidence():
         t166_finding_count=0,
         t166_findings=[],
         t166_audit_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+        t166_audited_bundle=ready_bundle_evidence(session_id, fingerprint),
         t167_session_id=session_id,
         t167_consistency_status="CONSISTENT",
         t167_available=True,

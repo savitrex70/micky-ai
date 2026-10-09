@@ -25,12 +25,16 @@ from rop.schemas.reasoning_run_stage_7_audit_package import (
     ReasoningRunStage7AuditPackageRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
     ReasoningRunStage7EvidenceBundleRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
     ReasoningRunStage7EvidenceBundleAuditRead,
+    ReasoningRunStage7EvidenceBundleSnapshot,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
     ReasoningRunStage7EvidenceBundleAuditConsistencyRead,
 )
 from rop.schemas.reasoning_run_stage_7_evidence_package import (
@@ -42,6 +46,15 @@ from rop.schemas.reasoning_run_stage_7_vertical_slice import (
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
     ReasoningRunStage7VerticalSliceAuditRead,
+)
+from rop.services.reasoning_run_stage_7_audit_package import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+)
+from rop.services.reasoning_run_stage_7_vertical_slice import (
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
+)
+from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
 )
 
 __all__ = [
@@ -75,45 +88,148 @@ class ReasoningRunStage7EvidencePackageService:
         """Aggregate six already-published, already-validated pieces of material.
 
         ``READY`` only when all six inputs fully agree on every READY
-        condition. ``BLOCKED`` when the validated evidence carries an
+        condition, including canonical upstream provenance and the exact
+        Task 165/166 evidence binding the Task 167 verdict was computed
+        over. ``BLOCKED`` when the validated evidence carries an
         approved blocking state. ``UNAVAILABLE`` for everything else,
-        including session mismatches, missing sources, missing evidence,
-        and any INCONSISTENT or UNAVAILABLE status.
+        including session mismatches, non-canonical sources, missing
+        evidence, unbound audits, and any INCONSISTENT or UNAVAILABLE
+        status.
 
-        No child service is invoked, no fingerprint is recomputed, and no
+        Provenance fields are preserved verbatim in the output; a forged
+        value is never repaired or replaced, only reported. No child
+        service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
-        findings: list[str] = []
+        try:
+            # Step A — Session binding
+            ids = (
+                pkg162.session_id,
+                slice163.session_id,
+                audit164.session_id,
+                bundle165.session_id,
+                audit166.session_id,
+                consistency167.session_id,
+            )
+            if not all(isinstance(session_id, str) for session_id in ids):
+                raise ReasoningRunStage7EvidencePackageContractError(
+                    "EVIDENCE_PACKAGE_UNREADABLE",
+                    "published session identities must be strings",
+                )
+            session_bound = len(set(ids)) == 1 and pkg162.session_id != ""
+            problems: set[str] = set()
+            if not session_bound:
+                problems.add("STAGE_7_SESSION_MISMATCH")
+                session_id = ""
+            else:
+                session_id = pkg162.session_id
 
-        # Step A — Session binding
-        ids = {
-            pkg162.session_id,
-            slice163.session_id,
-            audit164.session_id,
-            bundle165.session_id,
-            audit166.session_id,
-            consistency167.session_id,
-        }
-        if len(ids) == 1 and pkg162.session_id != "":
-            session_id = pkg162.session_id
-        else:
-            findings.append("STAGE_7_SESSION_MISMATCH")
-            session_id = ""
+            # Step B — Canonical upstream provenance. Every source is
+            # checked, because a previously validated input whose source
+            # was subsequently altered must never contribute to READY.
+            if (
+                pkg162.audit_source
+                != REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
+            ):
+                problems.add("T162_SOURCE_MISMATCH")
+            if (
+                slice163.certification_source
+                != REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163
+            ):
+                problems.add("T163_SOURCE_MISMATCH")
+            if (
+                audit164.audit_source
+                != REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164
+            ):
+                problems.add("T164_SOURCE_MISMATCH")
+            if (
+                bundle165.bundle_source
+                != REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165
+            ):
+                problems.add("T165_SOURCE_MISMATCH")
+            if (
+                bundle165.t162_audit_source
+                != REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162
+            ):
+                problems.add("T162_SOURCE_MISMATCH")
+            if (
+                bundle165.certification_source
+                != REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163
+            ):
+                problems.add("T163_SOURCE_MISMATCH")
+            if (
+                bundle165.audit_source
+                != REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164
+            ):
+                problems.add("T164_SOURCE_MISMATCH")
+            if (
+                audit166.audit_source
+                != REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166
+            ):
+                problems.add("T166_SOURCE_MISMATCH")
+            if consistency167.consistency_source != (
+                REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167
+            ):
+                problems.add("T167_SOURCE_MISMATCH")
 
-        # Step B — Aggregate findings from all inputs
-        all_findings = (
-            pkg162.findings
-            + slice163.findings
-            + audit164.findings
-            + bundle165.bundle_findings
-            + audit166.findings
-            + consistency167.findings
-        )
-        findings.extend(all_findings)
-        findings = sorted(set(findings))
+            # Step C — Cross-task status and binding invariants. The
+            # Task 166 verdict is only evidence about the Task 165
+            # bundle it actually compared: its published status must
+            # agree with the supplied bundle whenever it names one, its
+            # expected status must agree with its published status
+            # wherever it claims consistency, and its recorded snapshot
+            # must equal the supplied bundle field for field. A Task
+            # 167 verdict computed over a different pair is not proof
+            # about this pair, so the binding is re-verified here with
+            # exact equality over already-published evidence.
+            if (
+                audit166.published_bundle_status is not None
+                and audit166.published_bundle_status != bundle165.bundle_status
+            ):
+                problems.add("T166_PUBLISHED_STATUS_MISMATCH")
+            if (
+                audit166.bundle_audit_status == "CONSISTENT"
+                and audit166.expected_bundle_status != audit166.published_bundle_status
+            ):
+                problems.add("T166_EXPECTED_STATUS_MISMATCH")
+            snapshot = audit166.audited_bundle
+            if audit166.bundle_audit_status != "UNAVAILABLE":
+                if not isinstance(snapshot, ReasoningRunStage7EvidenceBundleSnapshot):
+                    problems.add("T166_SNAPSHOT_MISSING")
+                else:
+                    snapshot_fields = snapshot.model_dump()
+                    if snapshot_fields != {
+                        name: getattr(bundle165, name) for name in snapshot_fields
+                    }:
+                        problems.add("T166_SNAPSHOT_MISMATCH")
+            if (
+                consistency167.consistency_status == "CONSISTENT"
+                and audit166.bundle_audit_status != "CONSISTENT"
+            ):
+                problems.add("T167_BINDING_MISMATCH")
 
-        # Step C — Determine package status
-        # BLOCKED takes precedence
+            # Step D — Aggregate findings from all inputs. Any problem
+            # found above joins them; the aggregate is the sorted,
+            # deduplicated union the package reports verbatim.
+            all_findings = (
+                pkg162.findings
+                + slice163.findings
+                + audit164.findings
+                + bundle165.bundle_findings
+                + audit166.findings
+                + consistency167.findings
+            )
+            findings = sorted(set(all_findings) | problems)
+        except (AttributeError, TypeError) as exc:
+            raise ReasoningRunStage7EvidencePackageContractError(
+                "EVIDENCE_PACKAGE_UNREADABLE",
+                "published evidence has an unreadable shape",
+            ) from exc
+
+        # Step E — Determine package status
+        # BLOCKED takes precedence; it requires a genuine published
+        # blocking state, so a bare contradiction (forged source,
+        # detached binding) without one yields UNAVAILABLE instead.
         blocked = (
             pkg162.admission_status == "BLOCKED"
             or pkg162.diagnostics_status == "UNHEALTHY"
@@ -123,7 +239,8 @@ class ReasoningRunStage7EvidencePackageService:
             or bundle165.bundle_status == "BLOCKED"
         )
 
-        # READY requires all inputs to be READY/CONSISTENT
+        # READY requires all inputs to be READY/CONSISTENT, canonically
+        # sourced, exactly bound, internally coherent, and finding-free.
         ready = (
             not findings
             and pkg162.admission_status == "ADMITTED"
@@ -134,9 +251,15 @@ class ReasoningRunStage7EvidencePackageService:
             and slice163.admission_status == "ADMITTED"
             and slice163.diagnostics_status == "HEALTHY"
             and audit164.slice_audit_status == "CONSISTENT"
+            and audit164.available is True
+            and audit164.consistent is True
             and bundle165.bundle_status == "READY"
             and audit166.bundle_audit_status == "CONSISTENT"
+            and audit166.available is True
+            and audit166.consistent is True
             and consistency167.consistency_status == "CONSISTENT"
+            and consistency167.available is True
+            and consistency167.consistent is True
             and session_id != ""
         )
 
@@ -190,6 +313,7 @@ class ReasoningRunStage7EvidencePackageService:
             "t165_bundle_finding_count": bundle165.bundle_finding_count,
             "t165_bundle_findings": list(bundle165.bundle_findings),
             "t165_bundle_source": bundle165.bundle_source,
+            "t165_bundle_evidence": bundle165.model_dump(),
             # Task 166 evidence (verbatim)
             "t166_session_id": audit166.session_id,
             "t166_bundle_audit_status": audit166.bundle_audit_status,
@@ -200,6 +324,11 @@ class ReasoningRunStage7EvidencePackageService:
             "t166_finding_count": audit166.finding_count,
             "t166_findings": list(audit166.findings),
             "t166_audit_source": audit166.audit_source,
+            "t166_audited_bundle": (
+                snapshot.model_dump()
+                if isinstance(snapshot, ReasoningRunStage7EvidenceBundleSnapshot)
+                else None
+            ),
             # Task 167 evidence (verbatim)
             "t167_session_id": consistency167.session_id,
             "t167_consistency_status": consistency167.consistency_status,

@@ -19,12 +19,53 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+    ReasoningRunStage7EvidenceBundleSnapshot,
+)
+from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
+    REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
+)
+
 # The Task 168 source constant lives here, next to the contract that enforces
 # it, so the schema never has to import the service that imports the schema.
 # The service re-exports the same name.
 REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168 = (
     "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_TASK_168"
 )
+
+
+def _canonical_upstream_sources() -> dict[str, str]:
+    """Load upstream source constants without a schema/service import cycle."""
+    from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
+        REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
+    )
+    from rop.services.reasoning_run_stage_7_audit_package import (
+        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+    )
+    from rop.services.reasoning_run_stage_7_vertical_slice import (
+        REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
+    )
+    from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
+        REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+    )
+
+    return {
+        "t162_audit_source": REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+        "t163_certification_source": (
+            REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163
+        ),
+        "t164_audit_source": (
+            REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164
+        ),
+        "t165_bundle_source": REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
+        "t166_audit_source": (
+            REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166
+        ),
+        "t167_consistency_source": (
+            REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167
+        ),
+    }
 
 
 class ReasoningRunStage7EvidencePackageRead(BaseModel):
@@ -91,6 +132,7 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
     t165_bundle_finding_count: int
     t165_bundle_findings: list[str]
     t165_bundle_source: str
+    t165_bundle_evidence: ReasoningRunStage7EvidenceBundleSnapshot
 
     # Task 166 evidence (verbatim)
     t166_session_id: str
@@ -102,6 +144,7 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
     t166_finding_count: int
     t166_findings: list[str]
     t166_audit_source: str
+    t166_audited_bundle: ReasoningRunStage7EvidenceBundleSnapshot | None
 
     # Task 167 evidence (verbatim)
     t167_session_id: str
@@ -120,6 +163,15 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
 
     @model_validator(mode="after")
     def _coherent_package(self) -> ReasoningRunStage7EvidencePackageRead:
+        child_findings = (
+            self.t162_findings
+            + self.t163_findings
+            + self.t164_findings
+            + self.t165_bundle_findings
+            + self.t166_findings
+            + self.t167_findings
+        )
+
         # All finding counts must match their findings lists
         if self.t162_finding_count != len(self.t162_findings):
             raise ValueError("t162_finding_count must equal len(t162_findings)")
@@ -168,6 +220,99 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
 
+        # The Task 168 aggregate is exactly the child diagnostics plus the
+        # deterministic package-level findings derived from published data.
+        sessions = (
+            self.t162_session_id,
+            self.t163_session_id,
+            self.t164_session_id,
+            self.t165_session_id,
+            self.t166_session_id,
+            self.t167_session_id,
+        )
+        identity_matches = (
+            bool(sessions[0])
+            and all(session_id == sessions[0] for session_id in sessions)
+            and self.session_id == sessions[0]
+        )
+        if self.session_id != (sessions[0] if identity_matches else ""):
+            raise ValueError("session_id must preserve the common child session")
+
+        package_findings: set[str] = set()
+        if not identity_matches:
+            package_findings.add("STAGE_7_SESSION_MISMATCH")
+
+        sources = _canonical_upstream_sources()
+        for field_name, source in sources.items():
+            if getattr(self, field_name) != source:
+                package_findings.add(f"T{field_name[1:4]}_SOURCE_MISMATCH")
+        for field_name, source_field in (
+            ("t162_audit_source", "t162_audit_source"),
+            ("t163_certification_source", "certification_source"),
+            ("t164_audit_source", "audit_source"),
+            ("t165_bundle_source", "bundle_source"),
+        ):
+            if getattr(self.t165_bundle_evidence, source_field) != sources[field_name]:
+                package_findings.add(f"T{field_name[1:4]}_SOURCE_MISMATCH")
+
+        if (
+            self.t166_published_bundle_status is not None
+            and self.t166_published_bundle_status != self.t165_bundle_status
+        ):
+            package_findings.add("T166_PUBLISHED_STATUS_MISMATCH")
+        if (
+            self.t166_bundle_audit_status == "CONSISTENT"
+            and self.t166_expected_bundle_status != self.t166_published_bundle_status
+        ):
+            package_findings.add("T166_EXPECTED_STATUS_MISMATCH")
+        if self.t166_bundle_audit_status == "UNAVAILABLE":
+            if (
+                self.t166_published_bundle_status is not None
+                or self.t166_expected_bundle_status is not None
+                or self.t166_audited_bundle is not None
+            ):
+                raise ValueError(
+                    "UNAVAILABLE Task 166 evidence must not claim a bundle"
+                )
+        else:
+            if (
+                self.t166_published_bundle_status is None
+                or self.t166_expected_bundle_status is None
+            ):
+                raise ValueError("compared Task 166 evidence requires both statuses")
+            if self.t166_audited_bundle is None:
+                package_findings.add("T166_SNAPSHOT_MISSING")
+            elif self.t166_audited_bundle != self.t165_bundle_evidence:
+                package_findings.add("T166_SNAPSHOT_MISMATCH")
+
+        if (
+            self.t167_consistency_status == "CONSISTENT"
+            and self.t166_bundle_audit_status != "CONSISTENT"
+        ):
+            package_findings.add("T167_BINDING_MISMATCH")
+
+        expected_findings = sorted(set(child_findings) | package_findings)
+        if self.findings != expected_findings:
+            raise ValueError(
+                "findings must equal child findings and package-level findings"
+            )
+
+        if self.t165_bundle_evidence.session_id != self.t165_session_id:
+            raise ValueError("Task 165 bundle evidence session does not match")
+        if (
+            self.t165_bundle_evidence.bundle_status != self.t165_bundle_status
+            or self.t165_bundle_evidence.bundle_findings != self.t165_bundle_findings
+            or self.t165_bundle_evidence.bundle_source != self.t165_bundle_source
+        ):
+            raise ValueError("Task 165 bundle evidence does not match published fields")
+
+        if self.t166_audited_bundle is not None and (
+            self.t166_audited_bundle.session_id != self.t166_session_id
+            or self.t166_audited_bundle.bundle_status
+            != self.t166_published_bundle_status
+        ):
+            raise ValueError("Task 166 snapshot does not match audited identity")
+
         # Task 164 coherence
         if self.t164_available != (self.t164_slice_audit_status != "UNAVAILABLE"):
             raise ValueError(
@@ -204,40 +349,56 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
             raise ValueError("package_source must be the canonical Task 168 source")
 
         # Precedence: BLOCKED > READY > UNAVAILABLE
-        if self.package_status == "BLOCKED":
-            # BLOCKED requires at least one blocking state in the evidence
-            blocking = (
-                self.t162_admission_status == "BLOCKED"
-                or self.t162_diagnostics_status == "UNHEALTHY"
-                or self.t163_slice_status == "BLOCKED"
-                or self.t163_admission_status == "BLOCKED"
-                or self.t163_diagnostics_status == "UNHEALTHY"
-                or self.t165_bundle_status == "BLOCKED"
+        blocked = (
+            self.t162_admission_status == "BLOCKED"
+            or self.t162_diagnostics_status == "UNHEALTHY"
+            or self.t163_slice_status == "BLOCKED"
+            or self.t163_admission_status == "BLOCKED"
+            or self.t163_diagnostics_status == "UNHEALTHY"
+            or self.t165_bundle_status == "BLOCKED"
+        )
+        ready = (
+            identity_matches
+            and all(
+                getattr(self, field_name) == source
+                for field_name, source in sources.items()
             )
-            if not blocking:
-                raise ValueError("BLOCKED package requires a published blocking state")
-        elif self.package_status == "READY":
-            # READY requires all child inputs to be READY/CONSISTENT
-            ready = (
-                self.t162_admission_status == "ADMITTED"
-                and self.t162_diagnostics_status == "HEALTHY"
-                and self.t162_request_audit_status == "CONSISTENT"
-                and self.t162_proposal_audit_status == "CONSISTENT"
-                and self.t163_slice_status == "READY"
-                and self.t163_admission_status == "ADMITTED"
-                and self.t163_diagnostics_status == "HEALTHY"
-                and self.t164_slice_audit_status == "CONSISTENT"
-                and self.t165_bundle_status == "READY"
-                and self.t166_bundle_audit_status == "CONSISTENT"
-                and self.t167_consistency_status == "CONSISTENT"
-                and self.t162_finding_count == 0
-                and self.t163_finding_count == 0
-                and self.t164_finding_count == 0
-                and self.t165_bundle_finding_count == 0
-                and self.t166_finding_count == 0
-                and self.t167_finding_count == 0
-                and self.finding_count == 0
+            and self.t162_admission_status == "ADMITTED"
+            and self.t162_diagnostics_status == "HEALTHY"
+            and self.t162_request_audit_status == "CONSISTENT"
+            and self.t162_proposal_audit_status == "CONSISTENT"
+            and self.t163_slice_status == "READY"
+            and self.t163_admission_status == "ADMITTED"
+            and self.t163_diagnostics_status == "HEALTHY"
+            and self.t164_slice_audit_status == "CONSISTENT"
+            and self.t164_available is True
+            and self.t164_consistent is True
+            and self.t165_bundle_status == "READY"
+            and self.t166_bundle_audit_status == "CONSISTENT"
+            and self.t166_available is True
+            and self.t166_consistent is True
+            and self.t166_published_bundle_status == self.t165_bundle_status
+            and self.t166_expected_bundle_status == self.t165_bundle_status
+            and self.t166_audited_bundle == self.t165_bundle_evidence
+            and self.t167_consistency_status == "CONSISTENT"
+            and self.t167_available is True
+            and self.t167_consistent is True
+            and all(
+                count == 0
+                for count in (
+                    self.t162_finding_count,
+                    self.t163_finding_count,
+                    self.t164_finding_count,
+                    self.t165_bundle_finding_count,
+                    self.t166_finding_count,
+                    self.t167_finding_count,
+                    self.finding_count,
+                )
             )
-            if not ready:
-                raise ValueError("READY package requires complete READY evidence")
+        )
+        expected_status = "BLOCKED" if blocked else "READY" if ready else "UNAVAILABLE"
+        if self.package_status != expected_status:
+            raise ValueError(
+                "package_status must follow BLOCKED > READY > UNAVAILABLE precedence"
+            )
         return self
