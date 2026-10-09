@@ -31,9 +31,12 @@ class ReasoningRunStage7EvidenceBundleAuditConsistencyRead(BaseModel):
 
     ``consistency_status`` is the single canonical verdict: ``CONSISTENT``
     when the audit is canonically bound to the exact Task 165 bundle
-    represented, ``INCONSISTENT`` when the audit is detached or contradicts
-    the bundle, and ``UNAVAILABLE`` when either input is missing or fails
-    its own contract. ``available`` is always exactly
+    represented (the bundle equals the snapshot the audit recorded),
+    ``INCONSISTENT`` when the audit is detached from, or contradicts, the
+    bundle or itself reports the bundle inconsistent, and ``UNAVAILABLE``
+    when either input, or the binding material, is missing or malformed.
+    ``consistency_source`` is always the canonical Task 167 source.
+    ``available`` is always exactly
     ``consistency_status != "UNAVAILABLE"`` and ``consistent`` is always
     exactly ``consistency_status == "CONSISTENT"``. ``findings`` are
     deterministic, sorted, and deduplicated; ``finding_count`` always
@@ -54,6 +57,11 @@ class ReasoningRunStage7EvidenceBundleAuditConsistencyRead(BaseModel):
     def _coherent_consistency(
         self,
     ) -> ReasoningRunStage7EvidenceBundleAuditConsistencyRead:
+        if (
+            self.consistency_source
+            != REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167
+        ):
+            raise ValueError("consistency_source must be the canonical Task 167 source")
         if self.available != (self.consistency_status != "UNAVAILABLE"):
             raise ValueError(
                 "available must equal (consistency_status != 'UNAVAILABLE')"

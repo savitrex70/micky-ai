@@ -28,6 +28,7 @@ verification of the Task 165 bundle's internal coherence.
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -91,6 +92,16 @@ _STR_FIELDS = (
     "bundle_source",
 )
 _OPTIONAL_STR_FIELDS = ("provider_name", "model_name", "request_fingerprint")
+_OPTIONAL_STATUS_FIELDS = (
+    "slice_status",
+    "admission_status",
+    "diagnostics_status",
+    "slice_audit_status",
+    "published_slice_status",
+    "expected_slice_status",
+    "request_audit_status",
+    "proposal_audit_status",
+)
 _LIST_FIELDS = ("findings", "audit_findings", "bundle_findings")
 _INT_FIELDS = ("finding_count", "audit_finding_count", "bundle_finding_count")
 _BOOL_FIELDS = ("audit_available", "audit_consistent")
@@ -135,6 +146,9 @@ def _shape_problem(values: Mapping[str, Any]) -> str | None:
         if not isinstance(values[name], str):
             return f"{name}:not_a_string"
     for name in _OPTIONAL_STR_FIELDS:
+        if values[name] is not None and not isinstance(values[name], str):
+            return f"{name}:not_a_string"
+    for name in _OPTIONAL_STATUS_FIELDS:
         if values[name] is not None and not isinstance(values[name], str):
             return f"{name}:not_a_string"
     for name in _LIST_FIELDS:
@@ -289,6 +303,7 @@ class ReasoningRunStage7EvidenceBundleAuditService:
                     "audit_source": (
                         REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166
                     ),
+                    "audited_bundle": None,
                 }
             )
 
@@ -423,6 +438,10 @@ class ReasoningRunStage7EvidenceBundleAuditService:
             "finding_count": len(sorted_findings),
             "findings": sorted_findings,
             "audit_source": REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
+            # Deep, independent snapshot of exactly what was audited: verbatim,
+            # never recomputed or normalised, and unaffected by later mutation
+            # of the input bundle.
+            "audited_bundle": {name: copy.deepcopy(values[name]) for name in values},
         }
 
         # Step M — Validate through schema, raise on contract error

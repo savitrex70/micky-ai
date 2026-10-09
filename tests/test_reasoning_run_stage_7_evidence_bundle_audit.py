@@ -1295,6 +1295,7 @@ def test_audit_results_expose_no_raw_provider_material(genuine_ready_bundle):
         "finding_count",
         "findings",
         "audit_source",
+        "audited_bundle",
     }
     for payload in _audit_payloads(genuine_ready_bundle):
         assert set(payload) == expected_keys
@@ -1637,3 +1638,108 @@ def test_invariant_findings_are_sorted_and_deduplicated(genuine_blocked_bundle):
     assert "PROVIDER_MODEL_ATTRIBUTION_MISMATCH" in audit["findings"]
     assert audit["findings"] == sorted(set(audit["findings"]))
     assert audit["finding_count"] == len(audit["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Audited-bundle snapshot (Task 167 exact evidence binding)
+# ---------------------------------------------------------------------------
+
+
+def _bundle_fields(bundle):
+    return {name: getattr(bundle, name) for name in type(bundle).model_fields}
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["genuine_ready_bundle", "genuine_blocked_bundle", "genuine_unavailable_bundle"],
+)
+def test_audit_preserves_exact_bundle_snapshot(fixture_name, request):
+    bundle = request.getfixturevalue(fixture_name)
+    audit = _audit(bundle)
+    assert audit["audited_bundle"] == _bundle_fields(bundle)
+    assert set(audit["audited_bundle"]) == set(type(bundle).model_fields)
+
+
+def test_snapshot_is_separate_from_findings(genuine_ready_bundle):
+    audit = _audit(genuine_ready_bundle)
+    assert audit["findings"] == []
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert isinstance(audit["audited_bundle"], dict)
+
+
+def test_snapshot_is_deep_and_independent_of_input(genuine_blocked_bundle):
+    bundle = copy.deepcopy(genuine_blocked_bundle)
+    audit = _audit(bundle)
+    snapshot = copy.deepcopy(audit["audited_bundle"])
+    bundle.findings.append("MUTATED_AFTER_AUDIT")
+    bundle.bundle_findings.append("MUTATED_AFTER_AUDIT")
+    bundle.session_id = "mutated"
+    assert audit["audited_bundle"] == snapshot
+    audit["audited_bundle"]["findings"].append("X")
+    assert "X" not in bundle.findings
+
+
+def test_snapshot_records_tampered_evidence_verbatim(genuine_ready_bundle):
+    """Contradictory evidence is recorded as read, never repaired or recomputed."""
+    tampered = _tamper(
+        genuine_ready_bundle,
+        request_fingerprint="NOT-A-FINGERPRINT",
+        bundle_status="BLOCKED",
+    )
+    audit = _audit(tampered)
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["audited_bundle"]["request_fingerprint"] == "NOT-A-FINGERPRINT"
+    assert audit["audited_bundle"]["bundle_status"] == "BLOCKED"
+
+
+def test_audit_input_is_not_mutated_by_snapshotting(genuine_ready_bundle):
+    before = copy.deepcopy(genuine_ready_bundle)
+    _audit(genuine_ready_bundle)
+    assert genuine_ready_bundle == before
+
+
+@pytest.mark.parametrize("bad", [None, "x", 5, {}, object()])
+def test_unreadable_input_has_no_snapshot(bad):
+    audit = _audit(bad)
+    assert audit["bundle_audit_status"] == "UNAVAILABLE"
+    assert audit["audited_bundle"] is None
+
+
+def test_readable_mapping_input_is_snapshotted(genuine_ready_bundle):
+    audit = _audit(genuine_ready_bundle.model_dump())
+    assert audit["audited_bundle"] == _bundle_fields(genuine_ready_bundle)
+
+
+def test_snapshot_status_and_findings_semantics_unchanged(genuine_blocked_bundle):
+    audit = _audit(genuine_blocked_bundle)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["findings"] == []
+
+
+def test_audit_schema_unavailable_must_not_carry_snapshot(genuine_ready_bundle):
+    payload = _audit(None)
+    payload["audited_bundle"] = _audit(genuine_ready_bundle)["audited_bundle"]
+    with pytest.raises(ValidationError, match="must not carry an audited bundle"):
+        ReasoningRunStage7EvidenceBundleAuditRead.model_validate(payload)
+
+
+def test_audit_schema_snapshot_must_match_audited_subject(genuine_ready_bundle):
+    payload = _audit(genuine_ready_bundle)
+    payload["audited_bundle"]["session_id"] = "other"
+    with pytest.raises(ValidationError, match="audited_bundle must carry"):
+        ReasoningRunStage7EvidenceBundleAuditRead.model_validate(payload)
+
+
+def test_audit_schema_rejects_snapshot_extra_fields(genuine_ready_bundle):
+    payload = _audit(genuine_ready_bundle)
+    payload["audited_bundle"]["extra"] = 1
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidenceBundleAuditRead.model_validate(payload)
+
+
+def test_audit_schema_snapshot_is_optional_for_compatibility(genuine_ready_bundle):
+    payload = _audit(genuine_ready_bundle)
+    del payload["audited_bundle"]
+    assert ReasoningRunStage7EvidenceBundleAuditRead.model_validate(payload)

@@ -20,7 +20,14 @@ from collections.abc import Mapping
 from functools import cache
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 # The Task 166 source constant lives here, next to the contract that enforces
 # it, so the schema never has to import the service that imports the schema.
@@ -189,6 +196,46 @@ def _derive_expected_bundle_status(
     return "UNAVAILABLE"
 
 
+class ReasoningRunStage7EvidenceBundleSnapshot(BaseModel):
+    """Strict snapshot of the exact Task 165 bundle evidence a Task 166 audit read.
+
+    One field per published Task 165 field, carried verbatim: never
+    recomputed, normalised, or repaired. Deliberately free of the Task 165
+    coherence rules: the audit exists to examine bundles whose published
+    values may contradict those rules, so the snapshot must be able to hold
+    exactly what was read. It is evidence, not a verdict, and is separate from
+    the audit findings.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: StrictStr
+    slice_status: StrictStr | None
+    admission_status: StrictStr | None
+    diagnostics_status: StrictStr | None
+    provider_name: StrictStr | None
+    model_name: StrictStr | None
+    finding_count: StrictInt
+    findings: list[StrictStr]
+    certification_source: StrictStr
+    slice_audit_status: StrictStr | None
+    audit_available: StrictBool
+    audit_consistent: StrictBool
+    published_slice_status: StrictStr | None
+    expected_slice_status: StrictStr | None
+    audit_finding_count: StrictInt
+    audit_findings: list[StrictStr]
+    audit_source: StrictStr
+    request_fingerprint: StrictStr | None
+    request_audit_status: StrictStr | None
+    proposal_audit_status: StrictStr | None
+    t162_audit_source: StrictStr
+    bundle_status: StrictStr
+    bundle_finding_count: StrictInt
+    bundle_findings: list[StrictStr]
+    bundle_source: StrictStr
+
+
 class ReasoningRunStage7EvidenceBundleAuditRead(BaseModel):
     """Strict read model for one independent Stage 7 evidence-bundle audit.
 
@@ -217,6 +264,10 @@ class ReasoningRunStage7EvidenceBundleAuditRead(BaseModel):
     finding_count: int
     findings: list[str]
     audit_source: str
+    # The exact Task 165 bundle evidence this audit read, so a later consumer
+    # can prove the audit belongs to one specific bundle. ``None`` exactly when
+    # the audit had no readable bundle (and for a legacy audit without one).
+    audited_bundle: ReasoningRunStage7EvidenceBundleSnapshot | None = None
 
     @model_validator(mode="after")
     def _coherent_audit(self) -> ReasoningRunStage7EvidenceBundleAuditRead:
@@ -249,6 +300,8 @@ class ReasoningRunStage7EvidenceBundleAuditRead(BaseModel):
                 raise ValueError("UNAVAILABLE must not claim a session identity")
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
+            if self.audited_bundle is not None:
+                raise ValueError("UNAVAILABLE must not carry an audited bundle")
             return self
         if self.published_bundle_status is None or self.expected_bundle_status is None:
             raise ValueError("a compared audit requires both bundle statuses")
@@ -261,4 +314,12 @@ class ReasoningRunStage7EvidenceBundleAuditRead(BaseModel):
                 raise ValueError("CONSISTENT requires a finding-free audit")
         elif not self.findings:
             raise ValueError("INCONSISTENT requires at least one finding")
+        snapshot = self.audited_bundle
+        if snapshot is not None and (
+            snapshot.session_id != self.session_id
+            or snapshot.bundle_status != self.published_bundle_status
+        ):
+            raise ValueError(
+                "audited_bundle must carry the audited session and published status"
+            )
         return self
