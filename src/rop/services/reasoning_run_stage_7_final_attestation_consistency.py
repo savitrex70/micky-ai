@@ -124,16 +124,14 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
         }
 
         # Step G — Validate through schema, raise on contract error
-        return (
-            ReasoningRunStage7FinalAttestationConsistencyService._project(result)
-        )
+        return ReasoningRunStage7FinalAttestationConsistencyService._project(result)
 
     @staticmethod
     def _project(result: dict[str, Any]) -> dict[str, Any]:
         """Validate the consistency result through the strict contract."""
         try:
-            validated = ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(
-                result
+            validated = (
+                ReasoningRunStage7FinalAttestationConsistencyRead.model_validate(result)
             )
         except ValidationError as exc:
             raise ReasoningRunStage7FinalAttestationConsistencyContractError(

@@ -43,7 +43,9 @@ class ReasoningRunStage7FinalAttestationConsistencyRead(BaseModel):
     consistency_source: str
 
     @model_validator(mode="after")
-    def _coherent_consistency(self) -> ReasoningRunStage7FinalAttestationConsistencyRead:
+    def _coherent_consistency(
+        self,
+    ) -> ReasoningRunStage7FinalAttestationConsistencyRead:
         if self.available != (self.consistency_status != "UNAVAILABLE"):
             raise ValueError(
                 "available must equal (consistency_status != 'UNAVAILABLE')"
