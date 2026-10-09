@@ -15,9 +15,10 @@ UNAVAILABLE.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_166,
@@ -111,6 +112,19 @@ def _snapshot_values_match(
     return left_values.keys() == right_values.keys() and all(
         values_match(left_values[name], right_values[name]) for name in left_values
     )
+
+
+def _task165_bundle_is_coherent(values: Mapping[str, object]) -> bool:
+    """Revalidate Task 165's full contract at the Task 168 boundary."""
+    from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
+        ReasoningRunStage7EvidenceBundleRead,
+    )
+
+    try:
+        ReasoningRunStage7EvidenceBundleRead.model_validate(dict(values))
+    except (AttributeError, TypeError, ValidationError):
+        return False
+    return True
 
 
 def _expected_task167(
@@ -390,6 +404,13 @@ class ReasoningRunStage7EvidencePackageRead(BaseModel):
 
         if bundle.session_id != self.t162_session_id:
             package_findings.add("T165_SESSION_MISMATCH")
+        if not _task165_bundle_is_coherent(bundle.model_dump()):
+            package_findings.add("T165_BUNDLE_INVALID")
+        if (
+            bundle.bundle_finding_count != self.t165_bundle_finding_count
+            or bundle.bundle_findings != self.t165_bundle_findings
+        ):
+            package_findings.add("T165_PACKAGE_EVIDENCE_MISMATCH")
         t162_bundle_fields = {
             "request_fingerprint": self.t162_request_fingerprint,
             "request_audit_status": self.t162_request_audit_status,

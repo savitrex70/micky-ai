@@ -406,6 +406,110 @@ def test_stale_task_167_consistent_result_cannot_be_reused(ready_inputs):
     assert "T167_RESULT_MISMATCH" in package["findings"]
 
 
+def test_aligned_malformed_fingerprint_cannot_be_ready(ready_inputs):
+    ready_inputs["pkg162"].request_fingerprint = "malformed"
+    ready_inputs["bundle165"].request_fingerprint = "malformed"
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert package["t166_bundle_audit_status"] == "CONSISTENT"
+    assert package["t167_consistency_status"] == "CONSISTENT"
+    assert "T165_BUNDLE_INVALID" in package["findings"]
+
+
+def test_aligned_missing_attribution_cannot_be_ready(ready_inputs):
+    ready_inputs["pkg162"].provider_name = None
+    ready_inputs["pkg162"].model_name = None
+    ready_inputs["slice163"].provider_name = None
+    ready_inputs["slice163"].model_name = None
+    ready_inputs["bundle165"].provider_name = None
+    ready_inputs["bundle165"].model_name = None
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert package["t166_bundle_audit_status"] == "CONSISTENT"
+    assert package["t167_consistency_status"] == "CONSISTENT"
+    assert "T165_BUNDLE_INVALID" in package["findings"]
+
+
+def test_task_165_bundle_finding_count_must_match_its_list(ready_inputs):
+    ready_inputs["bundle165"].bundle_finding_count = 1
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T165_BUNDLE_INVALID" in package["findings"]
+
+
+def test_aligned_task_165_bundle_findings_cannot_bypass_ready_invariants(
+    ready_inputs,
+):
+    ready_inputs["bundle165"].bundle_finding_count = 1
+    ready_inputs["bundle165"].bundle_findings = ["FORGED_BUNDLE_FINDING"]
+    rebind_task_166_and_167_to_bundle(ready_inputs)
+
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert package["t166_bundle_audit_status"] == "CONSISTENT"
+    assert package["t167_consistency_status"] == "CONSISTENT"
+    assert "T165_BUNDLE_INVALID" in package["findings"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "malformed_fingerprint",
+        "missing_attribution",
+        "bundle_finding_count",
+        "bundle_findings",
+    ],
+)
+def test_direct_schema_rejects_aligned_task_165_mutation(ready_inputs, mutation):
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    bundle = package["t165_bundle_evidence"]
+    if mutation == "malformed_fingerprint":
+        package["t162_request_fingerprint"] = "malformed"
+        bundle["request_fingerprint"] = "malformed"
+    elif mutation == "missing_attribution":
+        package["t162_provider_name"] = None
+        package["t162_model_name"] = None
+        package["t163_provider_name"] = None
+        package["t163_model_name"] = None
+        bundle["provider_name"] = None
+        bundle["model_name"] = None
+    elif mutation == "bundle_finding_count":
+        bundle["bundle_finding_count"] = 1
+    else:
+        bundle["bundle_finding_count"] = 1
+        bundle["bundle_findings"] = ["FORGED_BUNDLE_FINDING"]
+    package["t166_audited_bundle"] = copy.deepcopy(bundle)
+
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package)
+
+
+@pytest.mark.parametrize(
+    ("bundle_count", "bundle_findings"),
+    [(1, []), (1, ["FORGED_BUNDLE_FINDING"])],
+)
+def test_direct_schema_binds_task_165_bundle_findings_to_top_level(
+    ready_inputs, bundle_count, bundle_findings
+):
+    package = ReasoningRunStage7EvidencePackageService.assemble(**ready_inputs)
+    package["t165_bundle_evidence"]["bundle_finding_count"] = bundle_count
+    package["t165_bundle_evidence"]["bundle_findings"] = bundle_findings
+    package["t166_audited_bundle"] = copy.deepcopy(package["t165_bundle_evidence"])
+
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7EvidencePackageRead.model_validate(package)
+
+
 def test_noncanonical_source_inside_task_165_bundle_cannot_be_ready(ready_inputs):
     ready_inputs["bundle165"].certification_source = "FORGED_SOURCE"
 

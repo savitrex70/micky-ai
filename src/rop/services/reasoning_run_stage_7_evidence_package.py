@@ -42,6 +42,7 @@ from rop.schemas.reasoning_run_stage_7_evidence_package import (
     ReasoningRunStage7EvidencePackageRead,
     _bundle_status_is_valid,
     _expected_task167,
+    _task165_bundle_is_coherent,
 )
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
@@ -189,6 +190,10 @@ class ReasoningRunStage7EvidencePackageService:
 
             # Step C — Bind the complete Task 165 surface to its sources.
             bundle_values = bundle165.model_dump()
+            if not _task165_bundle_is_coherent(bundle_values):
+                problems.add("T165_BUNDLE_INVALID")
+            if bundle165.bundle_finding_count != len(bundle165.bundle_findings):
+                problems.add("T165_PACKAGE_EVIDENCE_MISMATCH")
             for field_name in (
                 "bundle_status",
                 "slice_status",
@@ -423,7 +428,8 @@ class ReasoningRunStage7EvidencePackageService:
             # Task 165 evidence (verbatim)
             "t165_session_id": bundle165.session_id,
             "t165_bundle_status": bundle165.bundle_status,
-            "t165_bundle_finding_count": bundle165.bundle_finding_count,
+            # The raw Task 165 count remains verbatim in bundle evidence.
+            "t165_bundle_finding_count": len(bundle165.bundle_findings),
             "t165_bundle_findings": list(bundle165.bundle_findings),
             "t165_bundle_source": bundle165.bundle_source,
             "t165_bundle_evidence": bundle165.model_dump(),
