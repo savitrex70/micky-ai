@@ -126,7 +126,7 @@ def genuine_blocked_bundle() -> ReasoningRunStage7EvidenceBundleRead:
 def genuine_unavailable_bundle() -> ReasoningRunStage7EvidenceBundleRead:
     """A genuine UNAVAILABLE bundle with incomplete evidence."""
     return ReasoningRunStage7EvidenceBundleRead(
-        session_id=str(uuid4()),
+        session_id="",
         # Task 163 surface
         slice_status="UNAVAILABLE",
         admission_status=None,
@@ -152,10 +152,11 @@ def genuine_unavailable_bundle() -> ReasoningRunStage7EvidenceBundleRead:
         t162_audit_source=REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
         # Aggregate
         bundle_status="UNAVAILABLE",
-        bundle_finding_count=2,
+        bundle_finding_count=3,
         bundle_findings=[
             "PROVIDER_ATTRIBUTION_MISSING",
             "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED",
+            "STAGE_7_SESSION_MISMATCH",
         ],
         bundle_source=REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
     )
@@ -821,8 +822,11 @@ def test_attribution_finding_is_optional_for_unavailable_slice(
     """An UNAVAILABLE slice hides package attribution, so either way is faithful."""
     without = _tamper(
         genuine_unavailable_bundle,
-        bundle_findings=["REQUEST_FINGERPRINT_MISSING_OR_MALFORMED"],
-        bundle_finding_count=1,
+        bundle_findings=[
+            "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED",
+            "STAGE_7_SESSION_MISMATCH",
+        ],
+        bundle_finding_count=2,
     )
     assert _audit(without)["bundle_audit_status"] == "CONSISTENT"
     assert _audit(genuine_unavailable_bundle)["bundle_audit_status"] == "CONSISTENT"
@@ -1294,3 +1298,131 @@ def test_audit_results_expose_no_raw_provider_material(genuine_ready_bundle):
     }
     for payload in _audit_payloads(genuine_ready_bundle):
         assert set(payload) == expected_keys
+
+
+# ---------------------------------------------------------------------------
+# Session-identity coherence in every aggregate status
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("blank", [" ", "   ", "\t", "\n"])
+def test_blocked_bundle_with_blank_session_and_no_finding_is_inconsistent(
+    genuine_blocked_bundle, blank
+):
+    """A blank session cannot pass as CONSISTENT just because the bundle is BLOCKED."""
+    audit = _audit(_tamper(genuine_blocked_bundle, session_id=blank))
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["BUNDLE_FINDING_MISMATCH", "SESSION_ID_MISMATCH"]
+
+
+@pytest.mark.parametrize("blank", ["", " ", "   "])
+def test_unavailable_bundle_with_blank_session_and_no_finding_is_inconsistent(
+    genuine_ready_bundle, blank
+):
+    """A blank session is not excused by an UNAVAILABLE bundle status."""
+    bundle = _tamper(
+        genuine_ready_bundle, session_id=blank, bundle_status="UNAVAILABLE"
+    )
+    audit = _audit(bundle)
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert audit["published_bundle_status"] == "UNAVAILABLE"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["BUNDLE_FINDING_MISMATCH", "SESSION_ID_MISMATCH"]
+
+
+@pytest.mark.parametrize("blank", ["", " ", "   "])
+def test_blank_session_with_required_finding_is_faithfully_audited(
+    genuine_blocked_bundle, blank
+):
+    """A blank session explained by the canonical finding stays consistent."""
+    bundle = _tamper(
+        genuine_blocked_bundle,
+        session_id=blank,
+        bundle_findings=["STAGE_7_SESSION_MISMATCH"],
+        bundle_finding_count=1,
+    )
+    audit = _audit(bundle)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["published_bundle_status"] == "BLOCKED"
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["findings"] == []
+
+
+def test_blank_session_never_audits_as_ready(genuine_ready_bundle):
+    """A READY claim over a blank session is a contradiction even if explained."""
+    bundle = _tamper(
+        genuine_ready_bundle,
+        session_id=" ",
+        bundle_findings=["STAGE_7_SESSION_MISMATCH"],
+        bundle_finding_count=1,
+    )
+    audit = _audit(bundle)
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert "SESSION_ID_MISMATCH" in audit["findings"]
+    assert "BUNDLE_STATUS_MISMATCH" in audit["findings"]
+
+
+def test_unavailable_slice_audit_with_nonblank_session_is_inconsistent(
+    genuine_unavailable_bundle,
+):
+    """Task 164 UNAVAILABLE cannot bind a nonblank common session."""
+    bundle = _tamper(
+        genuine_unavailable_bundle,
+        session_id=str(uuid4()),
+        bundle_findings=[
+            "PROVIDER_ATTRIBUTION_MISSING",
+            "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED",
+        ],
+        bundle_finding_count=2,
+    )
+    audit = _audit(bundle)
+    assert audit["published_bundle_status"] == "UNAVAILABLE"
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert audit["findings"] == ["SESSION_ID_MISMATCH"]
+
+
+def test_unavailable_slice_audit_with_nonblank_session_is_inconsistent_when_blocked(
+    genuine_unavailable_bundle,
+):
+    """The Task 164 session binding is checked under a BLOCKED outer status too."""
+    bundle = _tamper(
+        genuine_unavailable_bundle,
+        session_id=str(uuid4()),
+        slice_status="BLOCKED",
+        admission_status="BLOCKED",
+        bundle_status="BLOCKED",
+        bundle_findings=[],
+        bundle_finding_count=0,
+        provider_name="test-provider",
+        model_name="test-model",
+        request_fingerprint="a" * 64,
+    )
+    audit = _audit(bundle)
+    assert audit["expected_bundle_status"] == "BLOCKED"
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "SESSION_ID_MISMATCH" in audit["findings"]
+
+
+def test_genuine_unavailable_slice_audit_with_blank_session_is_accepted(
+    genuine_unavailable_bundle,
+):
+    """Task 164 UNAVAILABLE with a blank session and its finding is faithful."""
+    assert genuine_unavailable_bundle.session_id == ""
+    assert genuine_unavailable_bundle.slice_audit_status == "UNAVAILABLE"
+    assert "STAGE_7_SESSION_MISMATCH" in genuine_unavailable_bundle.bundle_findings
+    audit = _audit(genuine_unavailable_bundle)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["session_id"] == ""
+    assert audit["findings"] == []
+
+
+def test_session_findings_are_sorted_and_deduplicated(genuine_blocked_bundle):
+    """Session findings join the sorted, deduplicated finding list."""
+    bundle = _tamper(genuine_blocked_bundle, session_id=" ", bundle_findings=[])
+    audit = _audit(bundle)
+    assert audit["findings"] == sorted(set(audit["findings"]))
+    assert audit["finding_count"] == len(audit["findings"])

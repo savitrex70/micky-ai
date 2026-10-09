@@ -223,6 +223,10 @@ def _task_164_findings(values: Mapping[str, Any]) -> set[str]:
             found.add("EXPECTED_SLICE_STATUS_MISMATCH")
         if not has_audit_findings:
             found.add("AUDIT_STATUS_MISMATCH")
+        # Task 164 names no session when it is UNAVAILABLE, so Task 165 cannot
+        # legitimately bind a common session to it.
+        if _present(values["session_id"]):
+            found.add("SESSION_ID_MISMATCH")
         return found
 
     # A compared audit names both statuses, and the published one must be
@@ -298,8 +302,13 @@ class ReasoningRunStage7EvidenceBundleAuditService:
         ):
             findings.add("TASK_165_SOURCE_MISMATCH")
 
-        # Step B — Validate session identity (only for READY bundles)
-        if published_status == "READY" and not _present(values["session_id"]):
+        # Step B — Validate session identity in every bundle state. A blank
+        # identity is faithful only when the bundle explains it with the
+        # canonical Task 165 finding, and never under a READY claim.
+        if not _present(values["session_id"]) and (
+            published_status == "READY"
+            or "STAGE_7_SESSION_MISMATCH" not in set(values["bundle_findings"])
+        ):
             findings.add("SESSION_ID_MISMATCH")
 
         # Step C — Validate child sources. A non-canonical source the bundle

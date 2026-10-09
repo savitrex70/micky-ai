@@ -98,9 +98,10 @@ def expected_bundle_findings(
     required: set[str] = set()
     optional: set[str] = set()
 
-    # Task 165 empties the session only together with this finding, and
-    # never publishes it for a non-empty session identity.
-    if values["session_id"] == "":
+    # A common session identity must be a present, nonblank string. Whatever
+    # the aggregate status, an empty or whitespace-only identity is session
+    # evidence the bundle must explain with the canonical finding.
+    if not _present(values["session_id"]):
         required.add("STAGE_7_SESSION_MISMATCH")
 
     sources = _canonical_sources()
