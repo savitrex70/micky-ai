@@ -162,7 +162,9 @@ class ReasoningRunStage7FinalAttestationAuditService:
                 "expected_attestation_status": expected_status,
                 "finding_count": len(findings),
                 "findings": findings,
-                "audit_source": REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172,
+                "audit_source": (
+                    REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172
+                ),
             }
             return ReasoningRunStage7FinalAttestationAuditService._project(result)
 
@@ -203,7 +205,9 @@ class ReasoningRunStage7FinalAttestationAuditService:
             "expected_attestation_status": expected_status,
             "finding_count": len(findings),
             "findings": findings,
-            "audit_source": REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172,
+            "audit_source": (
+                REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172
+            ),
         }
 
         # Step F — Validate through schema, raise on contract error

@@ -67,11 +67,10 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
             return self
         if self.attestation_audit_status == "CONSISTENT":
-            if (
-                self.published_attestation_status != self.expected_attestation_status
-            ):
+            if self.published_attestation_status != self.expected_attestation_status:
                 raise ValueError(
-                    "CONSISTENT requires published and expected attestation status to match"
+                    "CONSISTENT requires published and expected "
+                    "attestation status to match"
                 )
             if self.findings:
                 raise ValueError("CONSISTENT requires a finding-free audit")
