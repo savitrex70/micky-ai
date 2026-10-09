@@ -61,6 +61,34 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
+        try:
+            if not isinstance(
+                attestation, ReasoningRunStage7FinalEvidenceAttestationRead
+            ):
+                raise TypeError("attestation has an unexpected model type")
+            if not isinstance(audit, ReasoningRunStage7FinalAttestationAuditRead):
+                raise TypeError("audit has an unexpected model type")
+            attestation = ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
+                attestation.model_dump()
+            )
+            audit = ReasoningRunStage7FinalAttestationAuditRead.model_validate(
+                audit.model_dump()
+            )
+        except (AttributeError, TypeError, ValidationError):
+            return ReasoningRunStage7FinalAttestationConsistencyService._project(
+                {
+                    "session_id": "",
+                    "consistency_status": "UNAVAILABLE",
+                    "available": False,
+                    "consistent": False,
+                    "finding_count": 1,
+                    "findings": ["EVIDENCE_INPUT_INVALID"],
+                    "consistency_source": (
+                        REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A0 — Canonical sources for Tasks 171/172
@@ -87,23 +115,16 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
         if attestation.attestation_status != audit.expected_attestation_status:
             findings.append("EXPECTED_STATUS_MISMATCH")
 
-        # Step D — Audit status must reflect attestation evidence
-        if attestation.attestation_status == "CERTIFIED" and (
-            audit.attestation_audit_status != "CONSISTENT"
-        ):
+        # Step D — The audit must report a successful binding for every
+        # attestation status; an inconsistent audit cannot prove consistency.
+        if audit.attestation_audit_status != "CONSISTENT":
             findings.append("AUDIT_STATUS_MISMATCH")
-        if attestation.attestation_status == "BLOCKED" and (
-            audit.attestation_audit_status != "CONSISTENT"
-        ):
-            findings.append("AUDIT_STATUS_MISMATCH")
+        if audit.findings:
+            findings.append("AUDIT_HAS_FINDINGS")
 
-        # Step E — Finding count must match
-        if attestation.finding_count > 0 and audit.finding_count == 0:
-            findings.append("FINDING_COUNT_MISMATCH")
-        if audit.finding_count > 0 and attestation.finding_count == 0:
-            findings.append("FINDING_COUNT_MISMATCH")
-
-        # Step F — Populate result dict
+        # Task 171 findings and Task 172 audit findings describe different
+        # layers; their counts are not expected to match.
+        # Step E — Populate result dict
         findings = sorted(set(findings))
         consistency_status = "UNAVAILABLE"
         if findings:

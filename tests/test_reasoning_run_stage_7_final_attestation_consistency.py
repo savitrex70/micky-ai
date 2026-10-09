@@ -181,6 +181,19 @@ def test_schema_forbids_extra_fields() -> None:
         )
 
 
+def test_schema_requires_canonical_source() -> None:
+    with pytest.raises(ValidationError, match="canonical Task 173 source"):
+        ReasoningRunStage7FinalAttestationConsistencyRead(
+            session_id="",
+            consistency_status="UNAVAILABLE",
+            available=False,
+            consistent=False,
+            finding_count=1,
+            findings=["EVIDENCE_INPUT_INVALID"],
+            consistency_source="FORGED_SOURCE",
+        )
+
+
 def test_schema_flag_coherence() -> None:
     session_id = str(uuid4())
     with pytest.raises(ValidationError, match="available must equal"):
@@ -233,6 +246,19 @@ def test_schema_inconsistent_requires_findings() -> None:
         )
 
 
+def test_schema_unavailable_requires_blank_session() -> None:
+    with pytest.raises(ValidationError, match="must not claim a session"):
+        ReasoningRunStage7FinalAttestationConsistencyRead(
+            session_id=str(uuid4()),
+            consistency_status="UNAVAILABLE",
+            available=False,
+            consistent=False,
+            finding_count=1,
+            findings=["EVIDENCE_INPUT_INVALID"],
+            consistency_source=CONSISTENCY_SOURCE,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Service tests
 # ---------------------------------------------------------------------------
@@ -263,7 +289,11 @@ def test_verify_detects_session_mismatch(ready_chain) -> None:
 
 def test_verify_detects_published_status_mismatch(ready_chain) -> None:
     audit = copy.deepcopy(ready_chain["audit"])
+    audit.attestation_audit_status = "INCONSISTENT"
+    audit.consistent = False
     audit.published_attestation_status = "BLOCKED"
+    audit.finding_count = 1
+    audit.findings = ["PUBLISHED_STATUS_MISMATCH"]
     result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
         attestation=ready_chain["attestation"], audit=audit
     )
@@ -273,7 +303,11 @@ def test_verify_detects_published_status_mismatch(ready_chain) -> None:
 
 def test_verify_detects_expected_status_mismatch(ready_chain) -> None:
     audit = copy.deepcopy(ready_chain["audit"])
+    audit.attestation_audit_status = "INCONSISTENT"
+    audit.consistent = False
     audit.expected_attestation_status = "BLOCKED"
+    audit.finding_count = 1
+    audit.findings = ["EXPECTED_STATUS_MISMATCH"]
     result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
         attestation=ready_chain["attestation"], audit=audit
     )
@@ -300,8 +334,9 @@ def test_verify_detects_wrong_attestation_source(ready_chain) -> None:
     result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
         attestation=attestation, audit=ready_chain["audit"]
     )
-    assert result["consistency_status"] == "INCONSISTENT"
-    assert "ATTESTATION_SOURCE_INVALID" in result["findings"]
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_verify_detects_wrong_audit_source(ready_chain) -> None:
@@ -310,19 +345,66 @@ def test_verify_detects_wrong_audit_source(ready_chain) -> None:
     result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
         attestation=ready_chain["attestation"], audit=audit
     )
-    assert result["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_SOURCE_INVALID" in result["findings"]
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_verify_detects_finding_count_mismatch(ready_chain) -> None:
     audit = copy.deepcopy(ready_chain["audit"])
+    audit.attestation_audit_status = "INCONSISTENT"
+    audit.consistent = False
     audit.finding_count = 2
     audit.findings = ["ISSUE_ONE", "ISSUE_TWO"]
     result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
         attestation=ready_chain["attestation"], audit=audit
     )
     assert result["consistency_status"] == "INCONSISTENT"
-    assert "FINDING_COUNT_MISMATCH" in result["findings"]
+    assert "AUDIT_STATUS_MISMATCH" in result["findings"]
+    assert "AUDIT_HAS_FINDINGS" in result["findings"]
+
+
+def test_verify_accepts_valid_blocked_attestation_findings(ready_chain) -> None:
+    attestation = copy.deepcopy(ready_chain["attestation"])
+    attestation.attestation_status = "BLOCKED"
+    attestation.certified = False
+    attestation.blocked = True
+    attestation.package_status = "BLOCKED"
+    attestation.finding_count = 1
+    attestation.findings = ["PACKAGE_BLOCKED"]
+    audit = copy.deepcopy(ready_chain["audit"])
+    audit.published_attestation_status = "BLOCKED"
+    audit.expected_attestation_status = "BLOCKED"
+
+    result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=attestation, audit=audit
+    )
+
+    assert result["consistency_status"] == "CONSISTENT"
+    assert result["findings"] == []
+
+
+def test_verify_revalidates_mutated_inputs(ready_chain) -> None:
+    ready_chain["attestation"].session_id = []
+
+    result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=ready_chain["attestation"], audit=ready_chain["audit"]
+    )
+
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+
+
+def test_verify_handles_wrong_input_types(ready_chain) -> None:
+    result = ReasoningRunStage7FinalAttestationConsistencyService.verify(
+        attestation=None,  # type: ignore[arg-type]
+        audit=ready_chain["audit"],
+    )
+
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["session_id"] == ""
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
 
 
 def test_verify_does_not_mutate_inputs(ready_chain) -> None:

@@ -60,9 +60,15 @@ class ReasoningRunStage7FinalAttestationConsistencyRead(BaseModel):
             raise ValueError("findings must not contain duplicates")
         if self.findings != sorted(self.findings):
             raise ValueError("findings must be sorted")
+        if self.consistency_source != (
+            REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173
+        ):
+            raise ValueError("consistency_source must be the canonical Task 173 source")
         if self.consistency_status == "UNAVAILABLE":
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
+            if self.session_id != "":
+                raise ValueError("UNAVAILABLE must not claim a session identity")
             return self
         if self.consistency_status == "CONSISTENT":
             if self.findings:
