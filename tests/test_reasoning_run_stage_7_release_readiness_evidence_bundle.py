@@ -1606,3 +1606,55 @@ def test_schema_rejects_shared_session_under_false_flag(position) -> None:
     bundle["session_id"] = str(uuid4())
     with pytest.raises(ValidationError, match="must not claim a shared session_id"):
         _BUNDLE_READ.model_validate(bundle)
+
+
+# ---------------------------------------------------------------------------
+# Task 177 final session-binding regression: absent shared session
+# ---------------------------------------------------------------------------
+
+
+def _all_empty_session_chain():
+    """Three valid, individually contract-satisfying inputs, all sessionless."""
+    chain = _matrix_chain("UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE")
+    projection = ReasoningRunStage7ReleaseReadinessProjectionRead(
+        **{**chain["projection"].model_dump(), "session_id": ""}
+    )
+    assert chain["audit"].session_id == ""
+    assert chain["consistency"].session_id == ""
+    return {**chain, "projection": projection, "session_id": ""}
+
+
+def test_all_valid_inputs_with_empty_sessions_report_session_mismatch() -> None:
+    chain = _all_empty_session_chain()
+    sessions = {chain[k].session_id for k in ("projection", "audit", "consistency")}
+    assert sessions == {""}
+    bundle, _ = _bundle(chain)
+    assert bundle["session_id"] == ""
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["bundle_findings"] == ["STAGE_7_SESSION_MISMATCH"]
+    assert bundle["bundle_finding_count"] == 1
+    # Every input was individually valid, so every child is marked valid.
+    assert bundle["projection_evidence_valid"] is True
+    assert bundle["audit_evidence_valid"] is True
+    assert bundle["consistency_evidence_valid"] is True
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+def test_all_valid_inputs_with_matching_non_empty_session_bind_it() -> None:
+    chain = _ready_chain()
+    bundle, _ = _bundle(chain)
+    assert bundle["session_id"] == chain["session_id"] != ""
+    assert "STAGE_7_SESSION_MISMATCH" not in bundle["bundle_findings"]
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_all_valid_inputs_with_one_differing_session_report_mismatch(
+    position,
+) -> None:
+    chain = _ready_chain()
+    other = _ready_chain()
+    key = _CHAIN_KEYS[position]
+    chain[key] = other[key]
+    bundle, _ = _bundle(chain)
+    assert bundle["session_id"] == ""
+    assert bundle["bundle_findings"] == ["STAGE_7_SESSION_MISMATCH"]
