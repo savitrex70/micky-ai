@@ -54,9 +54,14 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
         """Verify exact binding between attestation and audit.
 
         ``CONSISTENT`` when the audit is canonically bound to the exact
-        Task 171 attestation represented. ``INCONSISTENT`` when the audit
-        is detached or contradicts the attestation. ``UNAVAILABLE`` when
-        either input is missing or fails its own contract.
+        Task 171 attestation represented. ``INCONSISTENT`` when readable,
+        contract-valid evidence demonstrates that the audit is detached or
+        contradicts the attestation. ``UNAVAILABLE`` when either input is
+        missing or fails its own contract, or when the Task 172 audit is
+        itself ``UNAVAILABLE`` (for example because the published status is
+        unknown): evidence that cannot be verified is not a contradiction.
+        A valid Task 171 attestation whose own status is ``UNAVAILABLE`` is
+        different from an unavailable audit and is still bound normally.
 
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
@@ -89,6 +94,29 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
                 }
             )
 
+        # Step 0 — An UNAVAILABLE Task 172 audit has established nothing to
+        # bind against, so it is handled before any ordinary comparison. An
+        # unknown published status (None) or a blank audit session is not a
+        # proven contradiction and must not be escalated to INCONSISTENT.
+        if audit.attestation_audit_status == "UNAVAILABLE":
+            unavailable_findings = ["AUDIT_UNAVAILABLE"]
+            if audit.published_attestation_status is None:
+                unavailable_findings.append("PUBLISHED_STATUS_UNKNOWN")
+            unavailable_findings = sorted(set(unavailable_findings))
+            return ReasoningRunStage7FinalAttestationConsistencyService._project(
+                {
+                    "session_id": "",
+                    "consistency_status": "UNAVAILABLE",
+                    "available": False,
+                    "consistent": False,
+                    "finding_count": len(unavailable_findings),
+                    "findings": unavailable_findings,
+                    "consistency_source": (
+                        REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_SOURCE_TASK_173
+                    ),
+                }
+            )
+
         findings: list[str] = []
 
         # Step A0 — Canonical sources for Tasks 171/172
@@ -108,7 +136,11 @@ class ReasoningRunStage7FinalAttestationConsistencyService:
             findings.append("SESSION_MISMATCH")
 
         # Step B — Published attestation status must match audit's published status
-        if attestation.attestation_status != audit.published_attestation_status:
+        # An unknown (None) published status is not a mismatch.
+        if (
+            audit.published_attestation_status is not None
+            and attestation.attestation_status != audit.published_attestation_status
+        ):
             findings.append("PUBLISHED_STATUS_MISMATCH")
 
         # Step C — Expected attestation status must match audit's expected status

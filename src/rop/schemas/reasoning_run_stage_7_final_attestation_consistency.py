@@ -26,9 +26,11 @@ class ReasoningRunStage7FinalAttestationConsistencyRead(BaseModel):
 
     ``consistency_status`` is the single canonical verdict: ``CONSISTENT``
     when the audit is canonically bound to the exact Task 171 attestation
-    represented, ``INCONSISTENT`` when the audit is detached or contradicts
-    the attestation, and ``UNAVAILABLE`` when either input is missing or
-    fails its own contract. ``findings`` are deterministic, sorted, and
+    represented, ``INCONSISTENT`` when readable, contract-valid evidence
+    shows the audit is detached or contradicts the attestation, and
+    ``UNAVAILABLE`` when either input is missing or fails its own contract
+    or the Task 172 audit is itself ``UNAVAILABLE`` (unverifiable evidence is
+    not a contradiction). ``findings`` are deterministic, sorted, and
     deduplicated; ``finding_count`` always equals ``len(findings)``.
     """
 
