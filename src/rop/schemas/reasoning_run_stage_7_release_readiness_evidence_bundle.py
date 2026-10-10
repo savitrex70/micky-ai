@@ -104,6 +104,17 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
             raise ValueError("consistency_findings must not contain duplicates")
         if self.consistency_findings != sorted(self.consistency_findings):
             raise ValueError("consistency_findings must be sorted")
+        # Task 177 aggregate surface: coherence
+        if self.bundle_finding_count != len(self.bundle_findings):
+            raise ValueError("bundle_finding_count must equal len(bundle_findings)")
+        if len(set(self.bundle_findings)) != len(self.bundle_findings):
+            raise ValueError("bundle_findings must not contain duplicates")
+        if self.bundle_findings != sorted(self.bundle_findings):
+            raise ValueError("bundle_findings must be sorted")
+        if "STAGE_7_SESSION_MISMATCH" in self.bundle_findings and self.session_id != "":
+            raise ValueError(
+                "a session mismatch finding must not claim a shared session_id"
+            )
         if self.consistency_available != (
             self.audit_consistency_status != "UNAVAILABLE"
         ):
@@ -175,10 +186,13 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
         A READY bundle requires the Task 174 projection to publish READY,
         the Task 175 audit to be CONSISTENT over READY (same published and
         independently expected status), the Task 176 consistency verdict to
-        be CONSISTENT, and every Task 174 finding surface to be finding-free.
+        be CONSISTENT, and every finding surface, including the Task 177
+        aggregate findings, to be finding-free.
         """
         return (
             self.session_id != ""
+            and self.bundle_finding_count == 0
+            and self.bundle_findings == []
             and self.readiness_status == "READY"
             and self.attestation_status == "CERTIFIED"
             and self.attestation_audit_status == "CONSISTENT"
