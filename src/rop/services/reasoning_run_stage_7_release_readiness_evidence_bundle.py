@@ -137,8 +137,12 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
                     "audit_consistency_status": "UNAVAILABLE",
                     "consistency_available": False,
                     "consistency_consistent": False,
-                    "consistency_finding_count": 1,
-                    "consistency_findings": ["EVIDENCE_INPUT_INVALID"],
+                    # No child verdict existed, so no child findings exist
+                    # either: an empty list here is the honest
+                    # representation of unavailable child evidence, never
+                    # a fabricated Task 176 finding.
+                    "consistency_finding_count": 0,
+                    "consistency_findings": [],
                     "consistency_source": (
                         REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
                     ),

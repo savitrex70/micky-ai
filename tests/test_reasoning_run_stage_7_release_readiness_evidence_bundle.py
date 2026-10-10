@@ -289,6 +289,7 @@ def test_blank_session_from_forge_is_unavailable_with_finding() -> None:
     )
     assert forged["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in forged["bundle_findings"]
+    assert forged["consistency_findings"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +346,10 @@ def test_wrong_type_projection_bundles_unavailable() -> None:
     )
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
-    assert "EVIDENCE_INPUT_INVALID" in bundle["consistency_findings"]
+    # The Task 177 structural finding must not be misattributed as a
+    # genuine Task 176 consistency finding.
+    assert bundle["consistency_findings"] == []
+    assert bundle["consistency_finding_count"] == 0
 
 
 def test_wrong_type_audit_bundles_unavailable() -> None:
@@ -357,6 +361,8 @@ def test_wrong_type_audit_bundles_unavailable() -> None:
     )
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["consistency_findings"] == []
+    assert bundle["consistency_finding_count"] == 0
 
 
 def test_wrong_type_consistency_bundles_unavailable() -> None:
@@ -368,6 +374,38 @@ def test_wrong_type_consistency_bundles_unavailable() -> None:
     )
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["consistency_findings"] == []
+    assert bundle["consistency_finding_count"] == 0
+
+
+def test_invalid_fallback_never_fabricates_child_findings() -> None:
+    """The invalid-input fallback reports exactly one Task 177 finding.
+
+    No Task 174, 175, or 176 finding may be fabricated to signal the
+    Task 177 assembly error: every child findings surface stays empty,
+    the bundle is never READY, and the result validates against the
+    revised contract. Each input position is exercised separately.
+    """
+    for position in ("projection174", "audit175", "consistency176"):
+        chain = _ready_chain()
+        kwargs = {
+            "projection174": chain["projection"],
+            "audit175": chain["audit"],
+            "consistency176": chain["consistency"],
+        }
+        kwargs[position] = "not a model"
+        bundle = ReasoningRunStage7ReleaseReadinessEvidenceBundleService.assemble(
+            **kwargs
+        )
+        assert bundle["bundle_status"] == "UNAVAILABLE"
+        assert bundle["session_id"] == ""
+        assert bundle["bundle_findings"] == ["EVIDENCE_INPUT_INVALID"]
+        assert bundle["bundle_finding_count"] == 1
+        assert bundle["findings"] == []
+        assert bundle["audit_findings"] == []
+        assert bundle["consistency_findings"] == []
+        assert bundle["consistency_finding_count"] == 0
+        ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(bundle)
 
 
 def test_mutated_projection_detected() -> None:
@@ -382,6 +420,7 @@ def test_mutated_projection_detected() -> None:
     )
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["consistency_findings"] == []
 
 
 def test_mutated_audit_detected() -> None:
@@ -395,6 +434,7 @@ def test_mutated_audit_detected() -> None:
     )
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["consistency_findings"] == []
 
 
 def test_mutated_consistency_detected() -> None:
