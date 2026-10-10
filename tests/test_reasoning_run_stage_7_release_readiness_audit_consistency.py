@@ -469,21 +469,40 @@ def test_unavailable_audit_with_blocked_projection_is_unavailable(
     ready_projection_and_audit,
 ):
     """BLOCKED projection plus UNAVAILABLE audit is UNAVAILABLE, not INCONSISTENT."""
-    ready_projection_and_audit["projection"].readiness_status = "BLOCKED"
-    ready_projection_and_audit["projection"].finding_count = 1
-    ready_projection_and_audit["projection"].findings = ["BLOCKING_EVIDENCE"]
+    from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
+        ReasoningRunStage7ReleaseReadinessProjectionRead,
+    )
+
+    # A coherent BLOCKED projection: genuine blocking evidence in the
+    # attestation leg, not merely a flipped status on READY evidence.
+    blocked_projection = ReasoningRunStage7ReleaseReadinessProjectionRead(
+        session_id=ready_projection_and_audit["projection"].session_id,
+        readiness_status="BLOCKED",
+        attestation_status="BLOCKED",
+        attestation_audit_status="CONSISTENT",
+        consistency_status="CONSISTENT",
+        finding_count=1,
+        findings=["BLOCKING_EVIDENCE"],
+        projection_source=ready_projection_and_audit["projection"].projection_source,
+    )
     ready_projection_and_audit["audit"].readiness_audit_status = "UNAVAILABLE"
     ready_projection_and_audit["audit"].available = False
     ready_projection_and_audit["audit"].consistent = False
     ready_projection_and_audit["audit"].session_id = ""
     ready_projection_and_audit["audit"].findings = ["PROJECTION_INVALID"]
     ready_projection_and_audit["audit"].finding_count = 1
-    # No contradiction is proven: the audit could not verify anything.
+    # Both inputs pass their own schema validation, so the service must
+    # reach its decision logic rather than returning early. No
+    # contradiction is proven: the audit could not verify anything.
     consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
-        **ready_projection_and_audit
+        projection=blocked_projection,
+        audit=ready_projection_and_audit["audit"],
     )
     assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["available"] is False
+    assert consistency["consistent"] is False
     assert consistency["session_id"] == ""
+    assert consistency["findings"] == ["AUDIT_UNAVAILABLE"]
     assert "SESSION_MISMATCH" not in consistency["findings"]
     assert "AUDIT_STATUS_MISMATCH" not in consistency["findings"]
 
