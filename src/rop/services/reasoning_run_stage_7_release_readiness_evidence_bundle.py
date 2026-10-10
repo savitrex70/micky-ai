@@ -18,7 +18,7 @@ invocation, no network, no replay, no mutation.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
@@ -44,6 +44,8 @@ from rop.services.reasoning_run_stage_7_release_readiness_audit_consistency impo
 from rop.services.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
 )
+
+_ChildT = TypeVar("_ChildT")
 
 __all__ = [
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177",
@@ -84,125 +86,58 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
         No child service is invoked, no readiness is re-derived, and no
         database is written. Inputs are never mutated.
         """
-        try:
-            if not isinstance(
-                projection174, ReasoningRunStage7ReleaseReadinessProjectionRead
-            ):
-                raise TypeError("projection174 has an unexpected model type")
-            if not isinstance(audit175, ReasoningRunStage7ReleaseReadinessAuditRead):
-                raise TypeError("audit175 has an unexpected model type")
-            if not isinstance(
-                consistency176,
-                ReasoningRunStage7ReleaseReadinessAuditConsistencyRead,
-            ):
-                raise TypeError("consistency176 has an unexpected model type")
-            # Revalidate to detect post-construction mutation; malformed
-            # model state is rejected rather than silently accepted.
-            projection174 = (
-                ReasoningRunStage7ReleaseReadinessProjectionRead.model_validate(
-                    projection174.model_dump()
-                )
-            )
-            audit175 = ReasoningRunStage7ReleaseReadinessAuditRead.model_validate(
-                audit175.model_dump()
-            )
-            consistency176 = (
-                ReasoningRunStage7ReleaseReadinessAuditConsistencyRead.model_validate(
-                    consistency176.model_dump()
-                )
-            )
-        except (AttributeError, TypeError, ValidationError):
-            return ReasoningRunStage7ReleaseReadinessEvidenceBundleService._project(
-                {
-                    "session_id": "",
-                    "readiness_status": "UNAVAILABLE",
-                    "attestation_status": "UNAVAILABLE",
-                    "attestation_audit_status": "UNAVAILABLE",
-                    "consistency_status": "UNAVAILABLE",
-                    "finding_count": 0,
-                    "findings": [],
-                    "projection_source": (
-                        REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
-                    ),
-                    "readiness_audit_status": "UNAVAILABLE",
-                    "audit_available": False,
-                    "audit_consistent": False,
-                    "published_readiness_status": "UNAVAILABLE",
-                    "expected_readiness_status": "UNAVAILABLE",
-                    "audit_finding_count": 0,
-                    "audit_findings": [],
-                    "audit_source": (
-                        REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
-                    ),
-                    "audit_consistency_status": "UNAVAILABLE",
-                    "consistency_available": False,
-                    "consistency_consistent": False,
-                    # No child verdict existed, so no child findings exist
-                    # either: an empty list here is the honest
-                    # representation of unavailable child evidence, never
-                    # a fabricated Task 176 finding.
-                    "consistency_finding_count": 0,
-                    "consistency_findings": [],
-                    "consistency_source": (
-                        REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
-                    ),
-                    "bundle_status": "UNAVAILABLE",
-                    "bundle_finding_count": 1,
-                    "bundle_findings": ["EVIDENCE_INPUT_INVALID"],
-                    "bundle_source": (
-                        REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177
-                    ),
-                    # No child evidence could be validated, so every child
-                    # surface is explicitly marked unavailable.
-                    "projection_evidence_valid": False,
-                    "audit_evidence_valid": False,
-                    "consistency_evidence_valid": False,
-                }
-            )
+        # Task 177 validates each child input independently so one invalid
+        # input never misrepresents the provenance of the other two.
+        # ``None`` marks an input that is missing, has the wrong model type,
+        # or fails its own contract (including post-construction mutation).
+        service = ReasoningRunStage7ReleaseReadinessEvidenceBundleService
+        projection_valid = service._validated_child(
+            projection174, ReasoningRunStage7ReleaseReadinessProjectionRead
+        )
+        audit_valid = service._validated_child(
+            audit175, ReasoningRunStage7ReleaseReadinessAuditRead
+        )
+        consistency_valid = service._validated_child(
+            consistency176, ReasoningRunStage7ReleaseReadinessAuditConsistencyRead
+        )
+        all_inputs_valid = (
+            projection_valid is not None
+            and audit_valid is not None
+            and consistency_valid is not None
+        )
 
         bundle_findings: list[str] = []
+        if not all_inputs_valid:
+            bundle_findings.append("EVIDENCE_INPUT_INVALID")
 
-        # Step A — Session binding across the three inputs
-        sessions = {
-            projection174.session_id,
-            audit175.session_id,
-            consistency176.session_id,
-        }
-        if len(sessions) == 1 and projection174.session_id != "":
-            session_id = projection174.session_id
-        else:
-            bundle_findings.append("STAGE_7_SESSION_MISMATCH")
-            session_id = ""
+        # Step A — Session binding. A shared bundle session is claimed only
+        # when all three inputs are valid and agree; child session ids are
+        # never rewritten. With an invalid input no three-way binding
+        # exists, so the bundle session stays empty, and a mismatch is
+        # reported only when the valid children genuinely disagree.
+        valid_sessions = [
+            child.session_id
+            for child in (projection_valid, audit_valid, consistency_valid)
+            if child is not None
+        ]
+        session_id = ""
+        if len(valid_sessions) >= 2:
+            distinct = set(valid_sessions)
+            if len(distinct) == 1 and valid_sessions[0] != "":
+                if all_inputs_valid:
+                    session_id = valid_sessions[0]
+            else:
+                bundle_findings.append("STAGE_7_SESSION_MISMATCH")
 
-        # Step D — Populate result dict (bundle_status filled in below)
+        # Step D — Populate result dict (bundle_status filled in below).
+        # A valid child keeps its genuine, validated evidence verbatim; an
+        # invalid child carries only the canonical unavailable placeholder.
         bundle_findings = sorted(set(bundle_findings))
         result: dict[str, Any] = {
-            # Identity
             "session_id": session_id,
-            # Task 174 surface (verbatim from validated projection174)
-            "readiness_status": projection174.readiness_status,
-            "attestation_status": projection174.attestation_status,
-            "attestation_audit_status": projection174.attestation_audit_status,
-            "consistency_status": projection174.consistency_status,
-            "finding_count": projection174.finding_count,
-            "findings": list(projection174.findings),
-            "projection_source": projection174.projection_source,
-            # Task 175 surface (verbatim from validated audit175)
-            "readiness_audit_status": audit175.readiness_audit_status,
-            "audit_available": audit175.available,
-            "audit_consistent": audit175.consistent,
-            "published_readiness_status": audit175.published_readiness_status,
-            "expected_readiness_status": audit175.expected_readiness_status,
-            "audit_finding_count": audit175.finding_count,
-            "audit_findings": list(audit175.findings),
-            "audit_source": audit175.audit_source,
-            # Task 176 surface (verbatim from validated consistency176)
-            "audit_consistency_status": consistency176.consistency_status,
-            "consistency_available": consistency176.available,
-            "consistency_consistent": consistency176.consistent,
-            "consistency_finding_count": consistency176.finding_count,
-            "consistency_findings": list(consistency176.findings),
-            "consistency_source": consistency176.consistency_source,
+            **service._projection_surface(projection_valid),
+            **service._audit_surface(audit_valid),
+            **service._consistency_surface(consistency_valid),
             # Aggregate
             "bundle_status": "UNAVAILABLE",
             "bundle_finding_count": len(bundle_findings),
@@ -210,31 +145,37 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
             "bundle_source": (
                 REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177
             ),
-            # All three inputs passed their own contracts to reach this
-            # path, so every child surface is explicitly valid here.
-            "projection_evidence_valid": True,
-            "audit_evidence_valid": True,
-            "consistency_evidence_valid": True,
+            # Each flag is true exactly when that child passed its own
+            # contract and its surface above is its genuine evidence.
+            "projection_evidence_valid": projection_valid is not None,
+            "audit_evidence_valid": audit_valid is not None,
+            "consistency_evidence_valid": consistency_valid is not None,
         }
+
+        # Invalid or incomplete evidence never produces READY or BLOCKED:
+        # the bundle stays UNAVAILABLE, with the valid children's genuine
+        # evidence still visible on their own surfaces.
+        if projection_valid is None or audit_valid is None or consistency_valid is None:
+            return service._project(result)
 
         # READY conditions: ALL must hold; any failure → UNAVAILABLE.
         ready = (
             not bundle_findings
             and session_id != ""
-            and projection174.readiness_status == "READY"
-            and projection174.attestation_status == "CERTIFIED"
-            and projection174.attestation_audit_status == "CONSISTENT"
-            and projection174.consistency_status == "CONSISTENT"
-            and projection174.finding_count == 0
-            and projection174.findings == []
-            and audit175.readiness_audit_status == "CONSISTENT"
-            and audit175.published_readiness_status == "READY"
-            and audit175.expected_readiness_status == "READY"
-            and audit175.finding_count == 0
-            and audit175.findings == []
-            and consistency176.consistency_status == "CONSISTENT"
-            and consistency176.finding_count == 0
-            and consistency176.findings == []
+            and projection_valid.readiness_status == "READY"
+            and projection_valid.attestation_status == "CERTIFIED"
+            and projection_valid.attestation_audit_status == "CONSISTENT"
+            and projection_valid.consistency_status == "CONSISTENT"
+            and projection_valid.finding_count == 0
+            and projection_valid.findings == []
+            and audit_valid.readiness_audit_status == "CONSISTENT"
+            and audit_valid.published_readiness_status == "READY"
+            and audit_valid.expected_readiness_status == "READY"
+            and audit_valid.finding_count == 0
+            and audit_valid.findings == []
+            and consistency_valid.consistency_status == "CONSISTENT"
+            and consistency_valid.finding_count == 0
+            and consistency_valid.findings == []
         )
 
         # BLOCKED conditions: the blocking evidence the bundle itself
@@ -252,7 +193,107 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
             result["bundle_status"] = "READY"
 
         # Step E — Validate through schema, raise on contract error
-        return ReasoningRunStage7ReleaseReadinessEvidenceBundleService._project(result)
+        return service._project(result)
+
+    @staticmethod
+    def _validated_child(value: Any, model_type: type[_ChildT]) -> _ChildT | None:
+        """Return a freshly revalidated child, or ``None`` if it is invalid.
+
+        Enforces the strict model type, then revalidates the dumped state so
+        post-construction mutation is detected. The caller's object is never
+        mutated or repaired.
+        """
+        if not isinstance(value, model_type):
+            return None
+        try:
+            return model_type.model_validate(value.model_dump())
+        except (AttributeError, TypeError, ValidationError):
+            return None
+
+    @staticmethod
+    def _projection_surface(
+        projection: ReasoningRunStage7ReleaseReadinessProjectionRead | None,
+    ) -> dict[str, Any]:
+        """Task 174 surface: genuine evidence, or the canonical placeholder."""
+        if projection is None:
+            return {
+                "readiness_status": "UNAVAILABLE",
+                "attestation_status": "UNAVAILABLE",
+                "attestation_audit_status": "UNAVAILABLE",
+                "consistency_status": "UNAVAILABLE",
+                "finding_count": 0,
+                "findings": [],
+                "projection_source": (
+                    REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
+                ),
+            }
+        return {
+            "readiness_status": projection.readiness_status,
+            "attestation_status": projection.attestation_status,
+            "attestation_audit_status": projection.attestation_audit_status,
+            "consistency_status": projection.consistency_status,
+            "finding_count": projection.finding_count,
+            "findings": list(projection.findings),
+            "projection_source": projection.projection_source,
+        }
+
+    @staticmethod
+    def _audit_surface(
+        audit: ReasoningRunStage7ReleaseReadinessAuditRead | None,
+    ) -> dict[str, Any]:
+        """Task 175 surface: genuine evidence, or the canonical placeholder."""
+        if audit is None:
+            return {
+                "readiness_audit_status": "UNAVAILABLE",
+                "audit_available": False,
+                "audit_consistent": False,
+                "published_readiness_status": "UNAVAILABLE",
+                "expected_readiness_status": "UNAVAILABLE",
+                "audit_finding_count": 0,
+                "audit_findings": [],
+                "audit_source": (
+                    REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175
+                ),
+            }
+        return {
+            "readiness_audit_status": audit.readiness_audit_status,
+            "audit_available": audit.available,
+            "audit_consistent": audit.consistent,
+            "published_readiness_status": audit.published_readiness_status,
+            "expected_readiness_status": audit.expected_readiness_status,
+            "audit_finding_count": audit.finding_count,
+            "audit_findings": list(audit.findings),
+            "audit_source": audit.audit_source,
+        }
+
+    @staticmethod
+    def _consistency_surface(
+        consistency: ReasoningRunStage7ReleaseReadinessAuditConsistencyRead | None,
+    ) -> dict[str, Any]:
+        """Task 176 surface: genuine evidence, or the canonical placeholder.
+
+        An invalid child has no verdict and therefore no findings: the empty
+        list is the honest placeholder, never a fabricated Task 176 finding.
+        """
+        if consistency is None:
+            return {
+                "audit_consistency_status": "UNAVAILABLE",
+                "consistency_available": False,
+                "consistency_consistent": False,
+                "consistency_finding_count": 0,
+                "consistency_findings": [],
+                "consistency_source": (
+                    REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
+                ),
+            }
+        return {
+            "audit_consistency_status": consistency.consistency_status,
+            "consistency_available": consistency.available,
+            "consistency_consistent": consistency.consistent,
+            "consistency_finding_count": consistency.finding_count,
+            "consistency_findings": list(consistency.findings),
+            "consistency_source": consistency.consistency_source,
+        }
 
     @staticmethod
     def _project(result: dict[str, Any]) -> dict[str, Any]:

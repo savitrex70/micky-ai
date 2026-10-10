@@ -213,6 +213,14 @@ def _inconsistent_chain(ready):
     }
 
 
+# Keyword argument of ``assemble`` -> its per-input evidence-validity flag.
+_POSITION_FLAGS = {
+    "projection174": "projection_evidence_valid",
+    "audit175": "audit_evidence_valid",
+    "consistency176": "consistency_evidence_valid",
+}
+
+
 # ---------------------------------------------------------------------------
 # Aggregate tests
 # ---------------------------------------------------------------------------
@@ -391,14 +399,15 @@ def test_wrong_type_consistency_bundles_unavailable() -> None:
 
 
 def test_invalid_fallback_never_fabricates_child_findings() -> None:
-    """The invalid-input fallback reports exactly one Task 177 finding.
+    """A single invalid input reports exactly one Task 177 finding.
 
     No Task 174, 175, or 176 finding may be fabricated to signal the
     Task 177 assembly error: every child findings surface stays empty,
     the bundle is never READY, and the result validates against the
-    revised contract. Each input position is exercised separately.
+    revised contract. Only the invalid child is marked invalid. Each
+    input position is exercised separately.
     """
-    for position in ("projection174", "audit175", "consistency176"):
+    for position, flag in _POSITION_FLAGS.items():
         chain = _ready_chain()
         kwargs = {
             "projection174": chain["projection"],
@@ -417,11 +426,9 @@ def test_invalid_fallback_never_fabricates_child_findings() -> None:
         assert bundle["audit_findings"] == []
         assert bundle["consistency_findings"] == []
         assert bundle["consistency_finding_count"] == 0
-        # Every child surface is explicitly marked unavailable: the
-        # placeholder fields must never be mistaken for genuine output.
-        assert bundle["projection_evidence_valid"] is False
-        assert bundle["audit_evidence_valid"] is False
-        assert bundle["consistency_evidence_valid"] is False
+        # Only the invalid child is marked invalid; the others stay valid.
+        for other_flag in _POSITION_FLAGS.values():
+            assert bundle[other_flag] is (other_flag != flag)
         ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(bundle)
 
 
@@ -552,11 +559,20 @@ def test_schema_accepts_empty_aggregate_findings() -> None:
 
 
 def test_schema_accepts_sorted_non_empty_aggregate_findings() -> None:
-    bundle = _ready_bundle_dict()
-    bundle["session_id"] = ""
-    bundle["bundle_status"] = "UNAVAILABLE"
-    bundle["bundle_findings"] = ["EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"]
-    bundle["bundle_finding_count"] = 2
+    # Two valid children from different sessions plus one invalid child
+    # genuinely produce both approved aggregate codes.
+    chain = _ready_chain()
+    other = _ready_chain()
+    bundle = _SERVICE.assemble(
+        projection174=chain["projection"],
+        audit175=other["audit"],
+        consistency176="not a model",
+    )
+    assert bundle["bundle_findings"] == [
+        "EVIDENCE_INPUT_INVALID",
+        "STAGE_7_SESSION_MISMATCH",
+    ]
+    assert bundle["bundle_finding_count"] == 2
     validated = _BUNDLE_READ.model_validate(bundle)
     assert validated.bundle_findings == [
         "EVIDENCE_INPUT_INVALID",
@@ -626,12 +642,16 @@ def test_schema_rejects_unsorted_bundle_findings() -> None:
         _BUNDLE_READ.model_validate(bundle)
 
 
-def test_schema_rejects_ready_with_aggregate_findings() -> None:
+@pytest.mark.parametrize("code", ["EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"])
+def test_schema_rejects_ready_with_aggregate_findings(code) -> None:
     """A READY bundle must be free of its own aggregate findings."""
     bundle = _ready_bundle_dict()
-    bundle["bundle_findings"] = ["EVIDENCE_INPUT_INVALID"]
+    bundle["bundle_findings"] = [code]
     bundle["bundle_finding_count"] = 1
-    with pytest.raises(ValidationError, match="READY bundle requires complete"):
+    with pytest.raises(
+        ValidationError,
+        match="EVIDENCE_INPUT_INVALID must be present|shared session_id",
+    ):
         _BUNDLE_READ.model_validate(bundle)
 
 
@@ -664,7 +684,11 @@ def test_approved_bundle_finding_code_set_is_exact() -> None:
 
 @pytest.mark.parametrize("code", ["EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"])
 def test_schema_accepts_each_approved_bundle_finding_code(code) -> None:
-    bundle = _unavailable_bundle_dict_with([code])
+    if code == "EVIDENCE_INPUT_INVALID":
+        # This code is honest only alongside an invalid evidence flag.
+        bundle = _invalid_bundle_dict()
+    else:
+        bundle = _unavailable_bundle_dict_with([code])
     assert _BUNDLE_READ.model_validate(bundle).bundle_findings == [code]
 
 
@@ -718,13 +742,8 @@ def test_approved_codes_are_exactly_the_codes_the_service_can_emit() -> None:
 
 
 def _invalid_bundle_dict() -> dict:
-    """A fallback-shaped bundle dict with all child evidence marked invalid."""
-    chain = _ready_chain()
-    return _SERVICE.assemble(
-        projection174=None,
-        audit175=chain["audit"],
-        consistency176=chain["consistency"],
-    )
+    """A bundle dict with all three child evidence surfaces marked invalid."""
+    return _SERVICE.assemble(projection174=None, audit175=None, consistency176=None)
 
 
 def test_schema_accepts_invalid_flags_with_exact_placeholder() -> None:
@@ -1052,9 +1071,9 @@ def test_malformed_input_is_unavailable_never_ready(position, bad) -> None:
     kwargs[position] = bad
     bundle = _SERVICE.assemble(**kwargs)
     assert bundle["bundle_status"] == "UNAVAILABLE"
-    assert bundle["readiness_status"] == "UNAVAILABLE"
     assert bundle["session_id"] == ""
     assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle[_POSITION_FLAGS[position]] is False
     assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
 
 
@@ -1175,3 +1194,415 @@ def test_service_module_references_no_child_services() -> None:
 
     service_names = {name for name in vars(mod) if name.endswith("Service")}
     assert service_names == {"ReasoningRunStage7ReleaseReadinessEvidenceBundleService"}
+
+
+# ---------------------------------------------------------------------------
+# Task 177 final provenance correction: per-input evidence validity
+# ---------------------------------------------------------------------------
+
+_POSITIONS = list(_POSITION_FLAGS)
+_CHAIN_KEYS = {
+    "projection174": "projection",
+    "audit175": "audit",
+    "consistency176": "consistency",
+}
+
+
+def _projection_surface(child) -> dict:
+    return {
+        "readiness_status": child.readiness_status,
+        "attestation_status": child.attestation_status,
+        "attestation_audit_status": child.attestation_audit_status,
+        "consistency_status": child.consistency_status,
+        "finding_count": child.finding_count,
+        "findings": list(child.findings),
+        "projection_source": child.projection_source,
+    }
+
+
+def _audit_surface(child) -> dict:
+    return {
+        "readiness_audit_status": child.readiness_audit_status,
+        "audit_available": child.available,
+        "audit_consistent": child.consistent,
+        "published_readiness_status": child.published_readiness_status,
+        "expected_readiness_status": child.expected_readiness_status,
+        "audit_finding_count": child.finding_count,
+        "audit_findings": list(child.findings),
+        "audit_source": child.audit_source,
+    }
+
+
+def _consistency_surface(child) -> dict:
+    return {
+        "audit_consistency_status": child.consistency_status,
+        "consistency_available": child.available,
+        "consistency_consistent": child.consistent,
+        "consistency_finding_count": child.finding_count,
+        "consistency_findings": list(child.findings),
+        "consistency_source": child.consistency_source,
+    }
+
+
+_SURFACE_BUILDERS = {
+    "projection174": _projection_surface,
+    "audit175": _audit_surface,
+    "consistency176": _consistency_surface,
+}
+
+_PLACEHOLDERS = {
+    "projection174": {
+        "readiness_status": "UNAVAILABLE",
+        "attestation_status": "UNAVAILABLE",
+        "attestation_audit_status": "UNAVAILABLE",
+        "consistency_status": "UNAVAILABLE",
+        "finding_count": 0,
+        "findings": [],
+        "projection_source": (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174
+        ),
+    },
+    "audit175": {
+        "readiness_audit_status": "UNAVAILABLE",
+        "audit_available": False,
+        "audit_consistent": False,
+        "published_readiness_status": "UNAVAILABLE",
+        "expected_readiness_status": "UNAVAILABLE",
+        "audit_finding_count": 0,
+        "audit_findings": [],
+        "audit_source": REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+    },
+    "consistency176": {
+        "audit_consistency_status": "UNAVAILABLE",
+        "consistency_available": False,
+        "consistency_consistent": False,
+        "consistency_finding_count": 0,
+        "consistency_findings": [],
+        "consistency_source": (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
+        ),
+    },
+}
+
+
+def _break_wrong_type(model):
+    return "not a model"
+
+
+def _break_by_mutation(model):
+    """Mutate a constructed model so its state violates its own contract."""
+    model.finding_count = model.finding_count + 7
+    return model
+
+
+_BREAKERS = [
+    pytest.param(_break_wrong_type, id="wrong-type"),
+    pytest.param(_break_by_mutation, id="mutated-instance"),
+]
+
+
+def _genuine_chain():
+    """A chain whose every child carries distinctive, non-empty evidence."""
+    return _matrix_chain("BLOCKED", "INCONSISTENT", "INCONSISTENT")
+
+
+def _assemble_with_invalid(chain, invalid_positions, breaker):
+    kwargs = {
+        "projection174": chain["projection"],
+        "audit175": chain["audit"],
+        "consistency176": chain["consistency"],
+    }
+    for position in invalid_positions:
+        kwargs[position] = breaker(kwargs[position])
+    return _SERVICE.assemble(**kwargs), kwargs
+
+
+def _assert_surfaces(bundle, kwargs, invalid_positions) -> None:
+    """Each flag is truthful and each surface matches its flag exactly."""
+    for position, flag in _POSITION_FLAGS.items():
+        if position in invalid_positions:
+            assert bundle[flag] is False
+            expected = _PLACEHOLDERS[position]
+        else:
+            assert bundle[flag] is True
+            expected = _SURFACE_BUILDERS[position](kwargs[position])
+        actual = {key: bundle[key] for key in expected}
+        assert actual == expected, position
+
+
+@pytest.mark.parametrize("breaker", _BREAKERS)
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_single_invalid_input_preserves_the_other_children(position, breaker) -> None:
+    chain = _genuine_chain()
+    bundle, kwargs = _assemble_with_invalid(chain, [position], breaker)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["bundle_finding_count"] == len(bundle["bundle_findings"])
+    assert bundle["session_id"] == ""
+    _assert_surfaces(bundle, kwargs, [position])
+    # Genuine blocking evidence of the valid children stays visible, yet
+    # never upgrades or downgrades the bundle beyond UNAVAILABLE.
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+@pytest.mark.parametrize("breaker", _BREAKERS)
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_single_invalid_input_keeps_genuine_valid_evidence_verbatim(
+    position, breaker
+) -> None:
+    chain = _genuine_chain()
+    bundle, _ = _assemble_with_invalid(chain, [position], breaker)
+    if position != "projection174":
+        assert bundle["readiness_status"] == "BLOCKED"
+        assert bundle["findings"] == ["BLOCKING_EVIDENCE"]
+        assert bundle["finding_count"] == 1
+    if position != "audit175":
+        assert bundle["readiness_audit_status"] == "INCONSISTENT"
+        assert bundle["audit_findings"] == ["EXPECTED_STATUS_MISMATCH"]
+        assert bundle["audit_finding_count"] == 1
+    if position != "consistency176":
+        assert bundle["audit_consistency_status"] == "INCONSISTENT"
+        assert bundle["consistency_findings"] == ["AUDIT_DETACHED"]
+        assert bundle["consistency_finding_count"] == 1
+
+
+@pytest.mark.parametrize("breaker", _BREAKERS)
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_invalid_input_with_ready_children_is_never_ready(position, breaker) -> None:
+    chain = _ready_chain()
+    bundle, kwargs = _assemble_with_invalid(chain, [position], breaker)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["bundle_findings"] == ["EVIDENCE_INPUT_INVALID"]
+    assert bundle["session_id"] == ""
+    _assert_surfaces(bundle, kwargs, [position])
+
+
+@pytest.mark.parametrize("breaker", _BREAKERS)
+@pytest.mark.parametrize(
+    "invalid_positions",
+    [
+        ["projection174", "audit175"],
+        ["projection174", "consistency176"],
+        ["audit175", "consistency176"],
+        ["projection174", "audit175", "consistency176"],
+    ],
+    ids=["174+175", "174+176", "175+176", "all-three"],
+)
+def test_multiple_invalid_inputs_are_tracked_independently(
+    invalid_positions, breaker
+) -> None:
+    chain = _genuine_chain()
+    bundle, kwargs = _assemble_with_invalid(chain, invalid_positions, breaker)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["session_id"] == ""
+    _assert_surfaces(bundle, kwargs, invalid_positions)
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+def test_all_three_invalid_never_fabricates_any_child_finding() -> None:
+    bundle = _SERVICE.assemble(projection174=None, audit175=None, consistency176=None)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["bundle_findings"] == ["EVIDENCE_INPUT_INVALID"]
+    for position, flag in _POSITION_FLAGS.items():
+        assert bundle[flag] is False
+        assert {key: bundle[key] for key in _PLACEHOLDERS[position]} == (
+            _PLACEHOLDERS[position]
+        )
+    assert bundle["findings"] == []
+    assert bundle["audit_findings"] == []
+    assert bundle["consistency_findings"] == []
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+@pytest.mark.parametrize(("readiness", "audit", "cons"), _MATRIX, ids=_MATRIX_IDS)
+def test_status_matrix_with_one_invalid_input_is_always_unavailable(
+    readiness, audit, cons, position
+) -> None:
+    """Invalid evidence outranks every published READY or BLOCKED state."""
+    chain = _matrix_chain(readiness, audit, cons)
+    bundle, kwargs = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert "EVIDENCE_INPUT_INVALID" in bundle["bundle_findings"]
+    assert bundle["session_id"] == ""
+    _assert_surfaces(bundle, kwargs, [position])
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_invalid_input_with_disagreeing_valid_sessions_reports_mismatch(
+    position,
+) -> None:
+    chain = _ready_chain()
+    other = _ready_chain()
+    chain_keys = [key for pos, key in _CHAIN_KEYS.items() if pos != position]
+    # Give one of the two valid children a different session.
+    chain[chain_keys[0]] = other[chain_keys[0]]
+    bundle, _ = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["bundle_findings"] == [
+        "EVIDENCE_INPUT_INVALID",
+        "STAGE_7_SESSION_MISMATCH",
+    ]
+    assert bundle["session_id"] == ""
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_invalid_input_never_claims_a_shared_session(position) -> None:
+    chain = _ready_chain()
+    bundle, _ = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    assert chain["session_id"] != ""
+    assert bundle["session_id"] == ""
+    assert "STAGE_7_SESSION_MISMATCH" not in bundle["bundle_findings"]
+
+
+@pytest.mark.parametrize("breaker", _BREAKERS)
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_invalid_input_assembly_is_deterministic_and_never_repairs_inputs(
+    position, breaker
+) -> None:
+    chain = _genuine_chain()
+    bundle, kwargs = _assemble_with_invalid(chain, [position], breaker)
+    before = {
+        key: value.model_dump() if hasattr(value, "model_dump") else value
+        for key, value in kwargs.items()
+    }
+    again = _SERVICE.assemble(**kwargs)
+    after = {
+        key: value.model_dump() if hasattr(value, "model_dump") else value
+        for key, value in kwargs.items()
+    }
+    assert bundle == again
+    assert before == after
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_returned_bundle_does_not_alias_valid_child_findings(position) -> None:
+    chain = _genuine_chain()
+    bundle, kwargs = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    bundle["findings"].append("MUTATED")
+    bundle["audit_findings"].append("MUTATED")
+    bundle["consistency_findings"].append("MUTATED")
+    assert chain["projection"].findings == ["BLOCKING_EVIDENCE"]
+    assert chain["audit"].findings == ["EXPECTED_STATUS_MISMATCH"]
+    assert chain["consistency"].findings == ["AUDIT_DETACHED"]
+
+
+def _mixed_bundle(position: str) -> dict:
+    """A service-produced bundle with exactly one invalid child."""
+    chain = _genuine_chain()
+    bundle, _ = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    return bundle
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_accepts_mixed_validity_bundle(position) -> None:
+    bundle = _mixed_bundle(position)
+    assert _BUNDLE_READ.model_validate(bundle).model_dump() == bundle
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_non_placeholder_surface_under_false_flag(position) -> None:
+    bundle = _genuine_chain_bundle_with_flag_false(position)
+    with pytest.raises(ValidationError, match="must carry the canonical unavailable"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def _genuine_chain_bundle_with_flag_false(position: str) -> dict:
+    """A fully valid bundle whose flag for ``position`` is forged to False."""
+    chain = _genuine_chain()
+    bundle, _ = _bundle(chain)
+    bundle[_POSITION_FLAGS[position]] = False
+    # Keep the finding code and status consistent with a forged flag so the
+    # surface check is the rule under test.
+    bundle["bundle_status"] = "UNAVAILABLE"
+    bundle["bundle_findings"] = ["EVIDENCE_INPUT_INVALID"]
+    bundle["bundle_finding_count"] = 1
+    bundle["session_id"] = ""
+    return bundle
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_partially_forged_placeholder(position) -> None:
+    """Any deviation from the canonical placeholder is rejected."""
+    bundle = _mixed_bundle(position)
+    placeholder = _PLACEHOLDERS[position]
+    for key, value in placeholder.items():
+        if isinstance(value, bool):
+            forged = not value
+        elif isinstance(value, int):
+            forged = value + 1
+        elif isinstance(value, list):
+            forged = ["FORGED"]
+        elif value == "UNAVAILABLE":
+            forged = "BLOCKED"
+        else:
+            continue  # source constants have their own canonical-source rule
+        tampered = dict(bundle)
+        tampered[key] = forged
+        # Keep unrelated coherence rules satisfied where the field is a count.
+        if key.endswith("finding_count") or key == "finding_count":
+            list_key = (
+                key.replace("_count", "s") if key != "finding_count" else "findings"
+            )
+            tampered[list_key] = ["FORGED"] * forged
+        with pytest.raises(ValidationError):
+            _BUNDLE_READ.model_validate(tampered)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_true_flag_over_placeholder_surface(position) -> None:
+    # READY children keep the other surfaces non-blocking so the placeholder
+    # rule itself is the one exercised.
+    bundle, _ = _assemble_with_invalid(_ready_chain(), [position], _break_wrong_type)
+    bundle[_POSITION_FLAGS[position]] = True
+    bundle["bundle_findings"] = []
+    bundle["bundle_finding_count"] = 0
+    with pytest.raises(ValidationError, match="valid unavailable .* requires findings"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_forged_ready_over_mixed_validity(position) -> None:
+    bundle = _mixed_bundle(position)
+    bundle["bundle_status"] = "READY"
+    with pytest.raises(ValidationError, match="must be UNAVAILABLE"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_forged_ready_over_ready_children_with_invalid_flag(
+    position,
+) -> None:
+    """Even otherwise READY-looking evidence cannot hide an invalid child."""
+    chain = _ready_chain()
+    bundle, _ = _assemble_with_invalid(chain, [position], _break_wrong_type)
+    for status in ("READY", "BLOCKED"):
+        forged = dict(bundle)
+        forged["bundle_status"] = status
+        with pytest.raises(ValidationError):
+            _BUNDLE_READ.model_validate(forged)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_missing_invalid_code_under_false_flag(position) -> None:
+    bundle = _mixed_bundle(position)
+    bundle["bundle_findings"] = []
+    bundle["bundle_finding_count"] = 0
+    with pytest.raises(ValidationError, match="EVIDENCE_INPUT_INVALID must be present"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_invalid_code_when_every_flag_is_true() -> None:
+    bundle = _unavailable_bundle_dict_with(["EVIDENCE_INPUT_INVALID"])
+    with pytest.raises(ValidationError, match="EVIDENCE_INPUT_INVALID must be present"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+def test_schema_rejects_shared_session_under_false_flag(position) -> None:
+    bundle = _mixed_bundle(position)
+    bundle["session_id"] = str(uuid4())
+    with pytest.raises(ValidationError, match="must not claim a shared session_id"):
+        _BUNDLE_READ.model_validate(bundle)

@@ -49,7 +49,11 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
     whether each child surface was present and passed its own contract:
     a ``False`` flag requires that surface to carry the canonical
     unavailable placeholder, so placeholder fields can never be mistaken
-    for genuine child output.
+    for genuine child output. Each flag is independent: when one child is
+    invalid the other children keep their genuine, validated evidence and
+    their ``True`` flags. Any ``False`` flag forces ``UNAVAILABLE``, requires
+    ``EVIDENCE_INPUT_INVALID`` in ``bundle_findings``, and leaves
+    ``session_id`` empty because no shared session binding exists.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -90,10 +94,11 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
     bundle_findings: list[str]
     bundle_source: str  # Task 177 source constant
     # Task 177 evidence-validity assessment: whether each child surface
-    # was present and passed its own contract during assembly. False
-    # exactly when that child's evidence was unavailable and its surface
-    # carries the canonical unavailable placeholder below; a consumer
-    # must never mistake placeholder fields for genuine child output.
+    # was present and passed its own contract during assembly, tracked
+    # independently per child. False exactly when that child's evidence
+    # was unavailable and its surface carries the canonical unavailable
+    # placeholder; a consumer must never mistake placeholder fields for
+    # genuine child output.
     projection_evidence_valid: bool
     audit_evidence_valid: bool
     consistency_evidence_valid: bool
@@ -186,27 +191,55 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
             REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177
         ):
             raise ValueError("bundle_source must be the canonical Task 177 source")
-        # Precedence BLOCKED > READY > UNAVAILABLE, enforced in both
-        # directions so no status can be forged over its own evidence.
-        published_blocking = (
-            self.readiness_status == "BLOCKED"
-            or self.readiness_audit_status == "INCONSISTENT"
-            or self.audit_consistency_status == "INCONSISTENT"
+        # Evidence validity drives the aggregate. Any invalid child input
+        # forces an UNAVAILABLE bundle that carries EVIDENCE_INPUT_INVALID
+        # and claims no shared session; the finding code and the flags must
+        # agree in both directions so neither can be forged over the other.
+        any_invalid = not (
+            self.projection_evidence_valid
+            and self.audit_evidence_valid
+            and self.consistency_evidence_valid
         )
-        if self.bundle_status == "BLOCKED":
-            if not published_blocking:
-                raise ValueError("BLOCKED bundle requires a published blocking state")
-        elif published_blocking:
+        if any_invalid != ("EVIDENCE_INPUT_INVALID" in self.bundle_findings):
             raise ValueError(
-                "a published blocking state requires bundle_status BLOCKED"
+                "EVIDENCE_INPUT_INVALID must be present exactly when a child "
+                "evidence surface is marked invalid"
             )
-        elif self.bundle_status == "READY":
-            if not self._ready_conditions_hold():
-                raise ValueError("READY bundle requires complete READY evidence")
-        elif self._ready_conditions_hold():
-            raise ValueError(
-                "UNAVAILABLE bundle must not withhold fully supported READY evidence"
+        if any_invalid:
+            if self.bundle_status != "UNAVAILABLE":
+                raise ValueError(
+                    "a bundle with invalid child evidence must be UNAVAILABLE"
+                )
+            if self.session_id != "":
+                raise ValueError(
+                    "a bundle with invalid child evidence must not claim a "
+                    "shared session_id"
+                )
+        else:
+            # Precedence BLOCKED > READY > UNAVAILABLE, enforced in both
+            # directions so no status can be forged over its own evidence.
+            published_blocking = (
+                self.readiness_status == "BLOCKED"
+                or self.readiness_audit_status == "INCONSISTENT"
+                or self.audit_consistency_status == "INCONSISTENT"
             )
+            if self.bundle_status == "BLOCKED":
+                if not published_blocking:
+                    raise ValueError(
+                        "BLOCKED bundle requires a published blocking state"
+                    )
+            elif published_blocking:
+                raise ValueError(
+                    "a published blocking state requires bundle_status BLOCKED"
+                )
+            elif self.bundle_status == "READY":
+                if not self._ready_conditions_hold():
+                    raise ValueError("READY bundle requires complete READY evidence")
+            elif self._ready_conditions_hold():
+                raise ValueError(
+                    "UNAVAILABLE bundle must not withhold fully supported "
+                    "READY evidence"
+                )
         # Evidence-validity coherence: an unavailable child surface is
         # honest only as the canonical placeholder, and a valid child
         # surface in an UNAVAILABLE state must carry its own diagnostic
@@ -276,7 +309,10 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
         aggregate findings, to be finding-free.
         """
         return (
-            self.session_id != ""
+            self.projection_evidence_valid
+            and self.audit_evidence_valid
+            and self.consistency_evidence_valid
+            and self.session_id != ""
             and self.bundle_finding_count == 0
             and self.bundle_findings == []
             and self.readiness_status == "READY"
