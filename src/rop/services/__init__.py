@@ -509,6 +509,11 @@ from rop.services.reasoning_run_stage_7_release_readiness_audit import (
     ReasoningRunStage7ReleaseReadinessAuditContractError,
     ReasoningRunStage7ReleaseReadinessAuditService,
 )
+from rop.services.reasoning_run_stage_7_release_readiness_audit_consistency import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176,
+    ReasoningRunStage7ReleaseReadinessAuditConsistencyContractError,
+    ReasoningRunStage7ReleaseReadinessAuditConsistencyService,
+)
 from rop.services.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionContractError,
@@ -793,6 +798,9 @@ __all__ = [
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175",
     "ReasoningRunStage7ReleaseReadinessAuditContractError",
     "ReasoningRunStage7ReleaseReadinessAuditService",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176",
+    "ReasoningRunStage7ReleaseReadinessAuditConsistencyContractError",
+    "ReasoningRunStage7ReleaseReadinessAuditConsistencyService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
