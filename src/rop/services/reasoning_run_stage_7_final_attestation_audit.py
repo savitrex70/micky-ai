@@ -127,11 +127,9 @@ class ReasoningRunStage7FinalAttestationAuditService:
                     "attestation_audit_status": "UNAVAILABLE",
                     "available": False,
                     "consistent": False,
-                    "published_attestation_status": (
-                        readable_status
-                        if readable_status is not None
-                        else "UNAVAILABLE"
-                    ),
+                    # None when no valid published status can be established;
+                    # never conflated with a genuinely published UNAVAILABLE.
+                    "published_attestation_status": readable_status,
                     "expected_attestation_status": "UNAVAILABLE",
                     "finding_count": len(evidence_findings),
                     "findings": evidence_findings,
@@ -197,7 +195,8 @@ class ReasoningRunStage7FinalAttestationAuditService:
                 findings = sorted(set(findings))
                 audit_status: str = "INCONSISTENT"
             else:
-                published_status = "UNAVAILABLE"
+                # No valid published status: unknown, not a published claim.
+                published_status = None
                 findings = sorted(set(findings))
                 audit_status = "UNAVAILABLE"
             result: dict[str, Any] = {

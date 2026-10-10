@@ -529,7 +529,7 @@ def test_malformed_evidence_with_unreadable_attestation_invents_no_claim(
     assert result["attestation_audit_status"] == "UNAVAILABLE"
     assert result["available"] is False
     assert result["consistent"] is False
-    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] is None
     assert result["expected_attestation_status"] == "UNAVAILABLE"
     assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
     assert result["finding_count"] == 2
@@ -549,7 +549,7 @@ def test_malformed_evidence_with_wrong_attestation_type_is_unavailable(
     )
 
     assert result["attestation_audit_status"] == "UNAVAILABLE"
-    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] is None
     assert result["expected_attestation_status"] == "UNAVAILABLE"
     assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
 
@@ -569,7 +569,7 @@ def test_malformed_evidence_revalidates_mutated_attestation(ready_chain) -> None
     )
 
     assert result["attestation_audit_status"] == "UNAVAILABLE"
-    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] is None
     assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
 
 
@@ -664,6 +664,7 @@ def test_audit_malformed_attestation_dict_is_unavailable(ready_chain) -> None:
         attestation={"attestation_status": "GARBAGE"},
     )
     assert audit["attestation_audit_status"] == "UNAVAILABLE"
+    assert audit["published_attestation_status"] is None
     assert "ATTESTATION_INVALID" in audit["findings"]
 
 
@@ -785,3 +786,329 @@ def test_audit_has_no_provider_or_runtime_access() -> None:
         "subprocess",
     ):
         assert token not in source.lower(), token
+
+
+# ---------------------------------------------------------------------------
+# Unknown published status (None) vs. genuinely published UNAVAILABLE
+# ---------------------------------------------------------------------------
+
+
+def _unavailable_attestation_chain(ready_chain):
+    """Genuinely published UNAVAILABLE attestation with matching evidence."""
+    bad_audit = copy.deepcopy(ready_chain["audit"])
+    bad_audit.package_audit_status = "INCONSISTENT"
+    bad_audit.consistent = False
+    bad_audit.finding_count = 1
+    bad_audit.findings = ["AUDIT_DISAGREES"]
+    attestation = ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
+        ReasoningRunStage7FinalEvidenceAttestationService.attest(
+            package=ready_chain["package"],
+            audit=bad_audit,
+            consistency=ready_chain["consistency"],
+        )
+    )
+    assert attestation.attestation_status == "UNAVAILABLE"
+    return bad_audit, attestation
+
+
+def _unknown_status_result(**overrides):
+    fields = {
+        "session_id": "",
+        "attestation_audit_status": "UNAVAILABLE",
+        "available": False,
+        "consistent": False,
+        "published_attestation_status": None,
+        "expected_attestation_status": "UNAVAILABLE",
+        "finding_count": 1,
+        "findings": ["ATTESTATION_INVALID"],
+        "audit_source": AUDIT_SOURCE,
+    }
+    fields.update(overrides)
+    return fields
+
+
+def test_schema_accepts_unknown_published_status() -> None:
+    result = ReasoningRunStage7FinalAttestationAuditRead(**_unknown_status_result())
+    assert result.published_attestation_status is None
+
+
+def test_schema_requires_published_status_field() -> None:
+    """None is explicit: omitting the field is still a contract error."""
+    fields = _unknown_status_result()
+    del fields["published_attestation_status"]
+    with pytest.raises(ValidationError):
+        ReasoningRunStage7FinalAttestationAuditRead(**fields)
+
+
+def test_schema_unknown_published_status_requires_unavailable_audit() -> None:
+    with pytest.raises(ValidationError, match="requires an UNAVAILABLE audit"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            **_unknown_status_result(
+                attestation_audit_status="INCONSISTENT",
+                available=True,
+                findings=["ATTESTATION_INVALID", "ATTESTATION_STATUS_MISMATCH"],
+                finding_count=2,
+            )
+        )
+    with pytest.raises(ValidationError, match="requires an UNAVAILABLE audit"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            **_unknown_status_result(
+                attestation_audit_status="CONSISTENT",
+                available=True,
+                consistent=True,
+                findings=[],
+                finding_count=0,
+            )
+        )
+
+
+def test_schema_unknown_published_status_requires_attestation_invalid() -> None:
+    with pytest.raises(ValidationError, match="ATTESTATION_INVALID"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            **_unknown_status_result(
+                findings=["EVIDENCE_INPUT_INVALID"], finding_count=1
+            )
+        )
+
+
+def test_schema_unknown_published_status_keeps_other_contracts() -> None:
+    with pytest.raises(ValidationError, match="canonical Task 172 source"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            **_unknown_status_result(audit_source="FORGED_SOURCE")
+        )
+    with pytest.raises(ValidationError, match="finding_count must equal"):
+        ReasoningRunStage7FinalAttestationAuditRead(
+            **_unknown_status_result(finding_count=2)
+        )
+
+
+def test_schema_published_unavailable_is_distinct_from_unknown() -> None:
+    """A genuine published UNAVAILABLE is a different value from None."""
+    published = ReasoningRunStage7FinalAttestationAuditRead(
+        session_id=_session_id(),
+        attestation_audit_status="CONSISTENT",
+        available=True,
+        consistent=True,
+        published_attestation_status="UNAVAILABLE",
+        expected_attestation_status="UNAVAILABLE",
+        finding_count=0,
+        findings=[],
+        audit_source=AUDIT_SOURCE,
+    )
+    unknown = ReasoningRunStage7FinalAttestationAuditRead(**_unknown_status_result())
+    assert published.published_attestation_status == "UNAVAILABLE"
+    assert unknown.published_attestation_status is None
+    assert published.published_attestation_status is not None
+
+
+def test_genuine_published_unavailable_attestation_is_not_unknown(
+    ready_chain,
+) -> None:
+    bad_audit, attestation = _unavailable_attestation_chain(ready_chain)
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=bad_audit,
+        consistency=ready_chain["consistency"],
+        attestation=attestation,
+    )
+
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["attestation_audit_status"] == "CONSISTENT"
+    assert result["findings"] == []
+
+
+def test_genuine_published_unavailable_with_malformed_evidence_is_not_unknown(
+    ready_chain,
+) -> None:
+    """Published UNAVAILABLE stays UNAVAILABLE (not None) beside bad evidence."""
+    _, attestation = _unavailable_attestation_chain(ready_chain)
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=attestation,
+    )
+
+    _assert_unverifiable_but_published(result, published="UNAVAILABLE")
+
+
+def _without_status(attestation: dict) -> dict:
+    attestation = dict(attestation)
+    del attestation["attestation_status"]
+    return attestation
+
+
+@pytest.mark.parametrize(
+    "bad_status",
+    ["MISSING", None, "GARBAGE", "certified", "", 7, ["CERTIFIED"], {"s": 1}],
+)
+def test_missing_or_invalid_status_is_unknown_not_unavailable(
+    ready_chain, bad_status
+) -> None:
+    broken = ready_chain["attestation"].model_dump()
+    if bad_status == "MISSING":
+        broken = _without_status(broken)
+    else:
+        broken["attestation_status"] = bad_status
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert result["published_attestation_status"] is None
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["consistent"] is False
+    assert result["expected_attestation_status"] == "CERTIFIED"
+    assert "ATTESTATION_INVALID" in result["findings"]
+    assert "ATTESTATION_STATUS_MISMATCH" not in result["findings"]
+    ReasoningRunStage7FinalAttestationAuditRead.model_validate(result)
+
+
+@pytest.mark.parametrize("bad_status", ["MISSING", "GARBAGE", None])
+def test_missing_or_invalid_status_with_malformed_evidence_is_unknown(
+    ready_chain, bad_status
+) -> None:
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    broken = ready_chain["attestation"].model_dump()
+    if bad_status == "MISSING":
+        broken = _without_status(broken)
+    else:
+        broken["attestation_status"] = bad_status
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert result["published_attestation_status"] is None
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
+
+
+def test_invalid_attestation_with_readable_status_keeps_that_status(
+    ready_chain,
+) -> None:
+    """An otherwise-invalid attestation with a readable status is not unknown."""
+    broken = ready_chain["attestation"].model_dump()
+    broken["finding_count"] = "not-an-int"
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert result["published_attestation_status"] == "CERTIFIED"
+    assert result["expected_attestation_status"] == "CERTIFIED"
+    assert result["attestation_audit_status"] == "INCONSISTENT"
+    assert result["findings"] == ["ATTESTATION_INVALID"]
+    ReasoningRunStage7FinalAttestationAuditRead.model_validate(result)
+
+
+def test_invalid_attestation_with_readable_contradicting_status_is_inconsistent(
+    ready_chain,
+) -> None:
+    package = _blocked_package(copy.deepcopy(ready_chain["package"]))
+    broken = ready_chain["attestation"].model_dump()
+    broken["finding_count"] = "not-an-int"  # status CERTIFIED stays readable
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert result["published_attestation_status"] == "CERTIFIED"
+    assert result["expected_attestation_status"] == "BLOCKED"
+    assert result["attestation_audit_status"] == "INCONSISTENT"
+    assert result["findings"] == ["ATTESTATION_INVALID", "ATTESTATION_STATUS_MISMATCH"]
+
+
+@pytest.mark.parametrize("malformed", ["package", "audit", "consistency"])
+def test_malformed_evidence_with_valid_blocked_attestation_all_inputs(
+    ready_chain, malformed
+) -> None:
+    package, audit_inputs, consistency, attestation = _blocked_chain(ready_chain)
+    if malformed == "package":
+        package.package_source = "WRONG_SOURCE"
+    elif malformed == "audit":
+        audit_inputs.audit_source = "WRONG_SOURCE"
+    else:
+        consistency.consistency_source = "WRONG_SOURCE"
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=audit_inputs,
+        consistency=consistency,
+        attestation=attestation,
+    )
+
+    _assert_unverifiable_but_published(result, published="BLOCKED")
+
+
+def test_unknown_status_path_is_deterministic_and_does_not_mutate(
+    ready_chain,
+) -> None:
+    broken = ready_chain["attestation"].model_dump()
+    broken["attestation_status"] = "GARBAGE"
+    snapshot = copy.deepcopy(broken)
+    before = {
+        "package": ready_chain["package"].model_dump(),
+        "audit": ready_chain["audit"].model_dump(),
+        "consistency": ready_chain["consistency"].model_dump(),
+    }
+
+    first = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+    second = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert first == second
+    assert first["published_attestation_status"] is None
+    assert broken == snapshot
+    assert ready_chain["package"].model_dump() == before["package"]
+    assert ready_chain["audit"].model_dump() == before["audit"]
+    assert ready_chain["consistency"].model_dump() == before["consistency"]
+
+
+def test_post_construction_mutation_to_invalid_status_is_unknown(
+    ready_chain,
+) -> None:
+    """A model mutated after construction is revalidated, not trusted."""
+    mutated = copy.deepcopy(ready_chain["attestation"])
+    mutated.attestation_status = "NOT_A_STATUS"  # type: ignore[assignment]
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=ready_chain["package"],
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=mutated,
+    )
+
+    assert result["published_attestation_status"] is None
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert "ATTESTATION_INVALID" in result["findings"]
+    assert result["audit_source"] == AUDIT_SOURCE

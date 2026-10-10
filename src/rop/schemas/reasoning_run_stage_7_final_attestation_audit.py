@@ -30,8 +30,10 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
     malformed Task 171 input or for upstream evidence that cannot be read
     and therefore cannot independently verify the attestation.
     ``published_attestation_status`` is the status the Task 171 attestation
-    claims (``UNAVAILABLE`` only when it published that status or no valid
-    status is readable), and ``expected_attestation_status`` is the status
+    claims. It is ``None`` when no valid published status can be established
+    (a missing or invalid status), which is distinct from a genuinely
+    published ``UNAVAILABLE`` status; an unknown status is never presented as
+    a published claim. ``expected_attestation_status`` is the status
     independently derived from the published evidence surfaces.
     ``findings`` are deterministic, sorted, and deduplicated;
     ``finding_count`` always equals ``len(findings)``.
@@ -43,7 +45,7 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
     attestation_audit_status: Literal["CONSISTENT", "INCONSISTENT", "UNAVAILABLE"]
     available: bool
     consistent: bool
-    published_attestation_status: Literal["CERTIFIED", "BLOCKED", "UNAVAILABLE"]
+    published_attestation_status: Literal["CERTIFIED", "BLOCKED", "UNAVAILABLE"] | None
     expected_attestation_status: Literal["CERTIFIED", "BLOCKED", "UNAVAILABLE"]
     finding_count: int
     findings: list[str]
@@ -69,6 +71,18 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
             REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_172
         ):
             raise ValueError("audit_source must be the canonical Task 172 source")
+        if self.published_attestation_status is None:
+            # An unknown published status can never be verified or contradicted.
+            if self.attestation_audit_status != "UNAVAILABLE":
+                raise ValueError(
+                    "an unknown published attestation status requires an "
+                    "UNAVAILABLE audit"
+                )
+            if "ATTESTATION_INVALID" not in self.findings:
+                raise ValueError(
+                    "an unknown published attestation status requires the "
+                    "ATTESTATION_INVALID finding"
+                )
         if self.attestation_audit_status == "UNAVAILABLE":
             if not self.findings:
                 raise ValueError("UNAVAILABLE requires at least one diagnostic finding")
