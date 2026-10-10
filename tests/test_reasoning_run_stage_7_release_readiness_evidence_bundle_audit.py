@@ -403,3 +403,169 @@ def test_source_constant_is_correct() -> None:
         AUDIT_SOURCE
         == "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_TASK_178"
     )
+
+
+# ---------------------------------------------------------------------------
+# Session-binding correction: unavailable, unsupported and differing sessions
+# ---------------------------------------------------------------------------
+
+
+def _sessionless_chain():
+    """Valid Task 174-176 records that all carry an empty session identity.
+
+    Each record satisfies its own child contract independently: Tasks 175
+    and 176 require an empty session when UNAVAILABLE, and an UNAVAILABLE
+    Task 174 projection may carry one. The bundle comes from the real
+    Task 177 service.
+    """
+    projection = ReasoningRunStage7ReleaseReadinessProjectionRead(
+        session_id="",
+        readiness_status="UNAVAILABLE",
+        attestation_status="UNAVAILABLE",
+        attestation_audit_status="CONSISTENT",
+        consistency_status="CONSISTENT",
+        finding_count=1,
+        findings=["INSUFFICIENT_EVIDENCE"],
+        projection_source=REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
+    )
+    audit = ReasoningRunStage7ReleaseReadinessAuditRead(
+        session_id="",
+        readiness_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_readiness_status="UNAVAILABLE",
+        expected_readiness_status="UNAVAILABLE",
+        finding_count=1,
+        findings=["PROJECTION_UNAVAILABLE"],
+        audit_source=REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+    )
+    consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyRead(
+        session_id="",
+        consistency_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        finding_count=1,
+        findings=["AUDIT_UNAVAILABLE"],
+        consistency_source=(
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
+        ),
+    )
+    bundle = ReasoningRunStage7ReleaseReadinessEvidenceBundleService.assemble(
+        projection174=projection,
+        audit175=audit,
+        consistency176=consistency,
+    )
+    return {
+        "projection": projection,
+        "audit": audit,
+        "consistency": consistency,
+        "bundle": ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(
+            bundle
+        ),
+        "session_id": "",
+    }
+
+
+def test_sessionless_chain_fixture_is_genuinely_valid() -> None:
+    chain = _sessionless_chain()
+    assert chain["projection"].session_id == ""
+    assert chain["audit"].session_id == ""
+    assert chain["consistency"].session_id == ""
+    assert chain["bundle"].session_id == ""
+    assert chain["bundle"].bundle_status == "UNAVAILABLE"
+    assert chain["bundle"].bundle_findings == ["STAGE_7_SESSION_MISMATCH"]
+
+
+def test_audit_with_no_session_anywhere_is_unavailable_not_a_contract_error() -> None:
+    audit = _audit(_sessionless_chain())
+    assert audit["bundle_audit_status"] == "UNAVAILABLE"
+    assert audit["available"] is False
+    assert audit["consistent"] is False
+    assert audit["session_id"] == ""
+    assert audit["findings"] == ["SESSION_BINDING_UNAVAILABLE"]
+    assert audit["finding_count"] == 1
+    assert audit["published_bundle_status"] == "UNAVAILABLE"
+    assert audit["expected_bundle_status"] == "UNAVAILABLE"
+    assert audit["audit_source"] == AUDIT_SOURCE
+    assert (
+        ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead.model_validate(
+            audit
+        ).model_dump()
+        == audit
+    )
+
+
+def test_audit_with_no_session_is_deterministic_and_leaves_inputs_unchanged() -> None:
+    chain = _sessionless_chain()
+    keys = ("projection", "audit", "consistency", "bundle")
+    before = {key: chain[key].model_dump() for key in keys}
+    first = _audit(chain)
+    second = _audit(chain)
+    after = {key: chain[key].model_dump() for key in keys}
+    assert first == second
+    assert before == after
+
+
+def test_bundle_claiming_unsupported_session_is_not_consistent() -> None:
+    chain = _sessionless_chain()
+    claimed = chain["bundle"].model_dump()
+    claimed["session_id"] = str(uuid4())
+    # Drop the mismatch finding a sessionless bundle carries so the forged
+    # record stays schema-valid and the audit itself must catch the claim.
+    claimed["bundle_findings"] = []
+    claimed["bundle_finding_count"] = 0
+    forged = ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(
+        claimed
+    )
+    audit = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService.audit(
+        projection174=chain["projection"],
+        audit175=chain["audit"],
+        consistency176=chain["consistency"],
+        bundle=forged,
+    )
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "SESSION_BINDING_MISMATCH" in audit["findings"]
+    assert "SESSION_BINDING_UNAVAILABLE" not in audit["findings"]
+    assert audit["consistent"] is False
+
+
+def test_independent_contradiction_stays_inconsistent_without_a_session() -> None:
+    chain = _sessionless_chain()
+    bundle = copy.deepcopy(chain["bundle"])
+    bundle.readiness_audit_status = "CONSISTENT"
+    audit = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService.audit(
+        projection174=chain["projection"],
+        audit175=chain["audit"],
+        consistency176=chain["consistency"],
+        bundle=bundle,
+    )
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "AUDIT_STATUS_ECHO_MISMATCH" in audit["findings"]
+    assert "SESSION_BINDING_UNAVAILABLE" not in audit["findings"]
+
+
+@pytest.mark.parametrize("position", ["projection", "audit", "consistency"])
+def test_differing_upstream_sessions_are_detected(position) -> None:
+    chain = _chain("READY")
+    other = _chain("READY")
+    chain[position] = other[position]
+    bundle = ReasoningRunStage7ReleaseReadinessEvidenceBundleService.assemble(
+        projection174=chain["projection"],
+        audit175=chain["audit"],
+        consistency176=chain["consistency"],
+    )
+    assert bundle["bundle_findings"] == ["STAGE_7_SESSION_MISMATCH"]
+    chain["bundle"] = (
+        ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(bundle)
+    )
+    audit = _audit(chain)
+    assert audit["bundle_audit_status"] == "INCONSISTENT"
+    assert "SESSION_BINDING_MISMATCH" in audit["findings"]
+    assert audit["consistent"] is False
+
+
+def test_matching_non_empty_sessions_still_audit_consistent(ready_chain) -> None:
+    audit = _audit(ready_chain)
+    assert audit["bundle_audit_status"] == "CONSISTENT"
+    assert audit["session_id"] == ready_chain["session_id"] != ""
+    assert audit["findings"] == []

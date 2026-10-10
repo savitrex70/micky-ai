@@ -290,9 +290,15 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService:
                 )
             )
 
-        # Step C — Session binding. Only records that establish an identity
-        # can contradict the bundle; a blank identity from an unavailable or
-        # unbound result is insufficient evidence, not a mismatch.
+        # Step C — Session binding. Three outcomes are kept distinct:
+        # * proven: the upstream identities that exist agree with each other
+        #   and with the bundle's non-empty session;
+        # * contradicted: upstream identities disagree, or the bundle's
+        #   identity is unsupported by (or missing despite) the upstream
+        #   identities;
+        # * unavailable: no upstream record and not the bundle establishes
+        #   any identity. A blank identity from an unavailable or unbound
+        #   record is insufficient evidence, not a mismatch.
         identities = [
             sid
             for sid in (
@@ -302,13 +308,18 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService:
             )
             if sid != ""
         ]
-        binding_error = bool(
-            identities
-            and (
-                bundle_obj.session_id == ""
-                or set(identities) != {bundle_obj.session_id}
-            )
-        )
+        binding_unavailable = False
+        if identities:
+            binding_error = bundle_obj.session_id == "" or set(identities) != {
+                bundle_obj.session_id
+            }
+        elif bundle_obj.session_id != "":
+            # The upstream records establish no identity, yet the bundle
+            # claims one: an unsupported claim is a contradiction.
+            binding_error = True
+        else:
+            binding_error = False
+            binding_unavailable = True
         if binding_error:
             findings.append("SESSION_BINDING_MISMATCH")
 
@@ -355,6 +366,11 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService:
         findings = sorted(set(findings))
         if findings:
             bundle_audit_status = "INCONSISTENT"
+        elif binding_unavailable:
+            # Nothing contradicts the bundle, but no shared session identity
+            # can be proven, so the audit can never claim CONSISTENT.
+            findings = ["SESSION_BINDING_UNAVAILABLE"]
+            bundle_audit_status = "UNAVAILABLE"
         else:
             bundle_audit_status = "CONSISTENT"
 
