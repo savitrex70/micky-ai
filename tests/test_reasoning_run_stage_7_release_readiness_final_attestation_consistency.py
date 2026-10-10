@@ -125,6 +125,13 @@ def test_unknown_published_status_is_unavailable_not_mismatch() -> None:
     assert result["findings"] == ["ATTESTATION_INVALID"]
 
 
+def test_unreadable_published_status_is_unavailable() -> None:
+    result = _verify({"attestation_status": []}, _audit())
+    assert result["attestation_consistency_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] is None
+    assert result["findings"] == ["ATTESTATION_INVALID"]
+
+
 def test_unavailable_audit_is_not_a_business_status_mismatch() -> None:
     result = _verify(_attestation("UNAVAILABLE"), _audit("UNAVAILABLE", "UNAVAILABLE"))
     assert result["attestation_consistency_status"] == "UNAVAILABLE"

@@ -69,11 +69,13 @@ class ReasoningRunStage7ReleaseReadinessFinalAttestationConsistencyService:
             else attestation
         )
         published_status = None
-        if (
-            isinstance(raw_attestation, dict)
-            and raw_attestation.get("attestation_status") in _ATTESTATION_STATUSES
-        ):
-            published_status = raw_attestation["attestation_status"]
+        raw_status = (
+            raw_attestation.get("attestation_status")
+            if isinstance(raw_attestation, dict)
+            else None
+        )
+        if isinstance(raw_status, str) and raw_status in _ATTESTATION_STATUSES:
+            published_status = raw_status
 
         attestation_read = None
         try:
