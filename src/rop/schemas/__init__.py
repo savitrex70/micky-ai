@@ -339,6 +339,10 @@ from rop.schemas.reasoning_run_stage_7_release_readiness_audit_consistency impor
     REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176,
     ReasoningRunStage7ReleaseReadinessAuditConsistencyRead,
 )
+from rop.schemas.reasoning_run_stage_7_release_readiness_evidence_bundle import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177,
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleRead,
+)
 from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionRead,
@@ -506,6 +510,8 @@ __all__ = [
     "ReasoningRunStage7ReleaseReadinessAuditRead",
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176",
     "ReasoningRunStage7ReleaseReadinessAuditConsistencyRead",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177",
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleRead",
     "ReasoningRunStage7VerticalSliceAuditRead",
     "ReasoningRunStage7VerticalSliceRead",
     "ReasoningRunInspectionRead",
