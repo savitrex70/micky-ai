@@ -228,6 +228,18 @@ def test_ready_chain_bundles_ready() -> None:
     assert bundle["consistency_finding_count"] == 0
     assert bundle["bundle_finding_count"] == 0
     assert bundle["bundle_findings"] == []
+    assert bundle["projection_evidence_valid"] is True
+    assert bundle["audit_evidence_valid"] is True
+    assert bundle["consistency_evidence_valid"] is True
+
+
+def test_evidence_validity_flags_follow_inputs() -> None:
+    """Genuine non-READY bundles still mark validated child evidence valid."""
+    bundle, _ = _bundle(_blocked_chain())
+    assert bundle["bundle_status"] == "BLOCKED"
+    assert bundle["projection_evidence_valid"] is True
+    assert bundle["audit_evidence_valid"] is True
+    assert bundle["consistency_evidence_valid"] is True
 
 
 def test_blocked_chain_bundles_blocked() -> None:
@@ -405,6 +417,11 @@ def test_invalid_fallback_never_fabricates_child_findings() -> None:
         assert bundle["audit_findings"] == []
         assert bundle["consistency_findings"] == []
         assert bundle["consistency_finding_count"] == 0
+        # Every child surface is explicitly marked unavailable: the
+        # placeholder fields must never be mistaken for genuine output.
+        assert bundle["projection_evidence_valid"] is False
+        assert bundle["audit_evidence_valid"] is False
+        assert bundle["consistency_evidence_valid"] is False
         ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(bundle)
 
 
@@ -698,6 +715,82 @@ def test_approved_codes_are_exactly_the_codes_the_service_can_emit() -> None:
     )
     emitted.update(invalid["bundle_findings"])
     assert emitted == _APPROVED_CODES
+
+
+def _invalid_bundle_dict() -> dict:
+    """A fallback-shaped bundle dict with all child evidence marked invalid."""
+    chain = _ready_chain()
+    return _SERVICE.assemble(
+        projection174=None,
+        audit175=chain["audit"],
+        consistency176=chain["consistency"],
+    )
+
+
+def test_schema_accepts_invalid_flags_with_exact_placeholder() -> None:
+    """All-invalid flags validate exactly with the canonical placeholder."""
+    bundle = _invalid_bundle_dict()
+    assert bundle["projection_evidence_valid"] is False
+    assert bundle["audit_evidence_valid"] is False
+    assert bundle["consistency_evidence_valid"] is False
+    validated = _BUNDLE_READ.model_validate(bundle)
+    assert validated.model_dump() == bundle
+
+
+def test_schema_rejects_invalid_flag_with_genuine_surface() -> None:
+    """A False flag cannot be paired with a genuine child surface."""
+    bundle = _invalid_bundle_dict()
+    bundle["readiness_status"] = "READY"
+    with pytest.raises(ValidationError, match="invalid projection surface must carry"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_invalid_audit_flag_with_genuine_surface() -> None:
+    """A False audit flag cannot be paired with genuine audit output."""
+    bundle = _invalid_bundle_dict()
+    bundle["audit_findings"] = ["SOME_FINDING"]
+    bundle["audit_finding_count"] = 1
+    with pytest.raises(ValidationError, match="invalid audit surface must carry"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_invalid_consistency_flag_with_genuine_surface() -> None:
+    """A False consistency flag cannot be paired with genuine output."""
+    bundle = _invalid_bundle_dict()
+    bundle["consistency_findings"] = ["SOME_FINDING"]
+    bundle["consistency_finding_count"] = 1
+    with pytest.raises(ValidationError, match="invalid consistency surface must carry"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_valid_flag_with_empty_unavailable_projection() -> None:
+    """A valid flag cannot mark an empty UNAVAILABLE projection surface."""
+    bundle = _invalid_bundle_dict()
+    bundle["projection_evidence_valid"] = True
+    with pytest.raises(
+        ValidationError, match="valid unavailable projection surface requires"
+    ):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_valid_flag_with_empty_unavailable_audit() -> None:
+    """A valid flag cannot mark an empty UNAVAILABLE audit surface."""
+    bundle = _invalid_bundle_dict()
+    bundle["audit_evidence_valid"] = True
+    with pytest.raises(
+        ValidationError, match="valid unavailable audit surface requires"
+    ):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_valid_flag_with_empty_unavailable_consistency() -> None:
+    """A valid flag cannot mark an empty UNAVAILABLE consistency surface."""
+    bundle = _invalid_bundle_dict()
+    bundle["consistency_evidence_valid"] = True
+    with pytest.raises(
+        ValidationError, match="valid unavailable consistency surface requires"
+    ):
+        _BUNDLE_READ.model_validate(bundle)
 
 
 # ---------------------------------------------------------------------------

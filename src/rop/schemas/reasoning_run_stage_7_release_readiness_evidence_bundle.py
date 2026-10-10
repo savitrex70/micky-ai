@@ -44,7 +44,12 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
     ``UNAVAILABLE`` for everything else. ``bundle_findings`` contains only
     Task 177 structural finding codes, never copies of child findings.
     ``session_id`` is the common session shared by the three inputs; it is
-    empty when no binding is established.
+    empty when no binding is established. ``projection_evidence_valid``,
+    ``audit_evidence_valid``, and ``consistency_evidence_valid`` state
+    whether each child surface was present and passed its own contract:
+    a ``False`` flag requires that surface to carry the canonical
+    unavailable placeholder, so placeholder fields can never be mistaken
+    for genuine child output.
     """
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
@@ -84,6 +89,14 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
     bundle_finding_count: int
     bundle_findings: list[str]
     bundle_source: str  # Task 177 source constant
+    # Task 177 evidence-validity assessment: whether each child surface
+    # was present and passed its own contract during assembly. False
+    # exactly when that child's evidence was unavailable and its surface
+    # carries the canonical unavailable placeholder below; a consumer
+    # must never mistake placeholder fields for genuine child output.
+    projection_evidence_valid: bool
+    audit_evidence_valid: bool
+    consistency_evidence_valid: bool
 
     @model_validator(mode="after")
     def _coherent_bundle(
@@ -193,6 +206,63 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
         elif self._ready_conditions_hold():
             raise ValueError(
                 "UNAVAILABLE bundle must not withhold fully supported READY evidence"
+            )
+        # Evidence-validity coherence: an unavailable child surface is
+        # honest only as the canonical placeholder, and a valid child
+        # surface in an UNAVAILABLE state must carry its own diagnostic
+        # findings, mirroring the child unavailable-state contracts.
+        if not self.projection_evidence_valid:
+            if not (
+                self.readiness_status == "UNAVAILABLE"
+                and self.attestation_status == "UNAVAILABLE"
+                and self.attestation_audit_status == "UNAVAILABLE"
+                and self.consistency_status == "UNAVAILABLE"
+                and self.finding_count == 0
+                and self.findings == []
+            ):
+                raise ValueError(
+                    "an invalid projection surface must carry the canonical "
+                    "unavailable placeholder"
+                )
+        elif self.readiness_status == "UNAVAILABLE" and self.finding_count == 0:
+            raise ValueError("a valid unavailable projection surface requires findings")
+        if not self.audit_evidence_valid:
+            if not (
+                self.readiness_audit_status == "UNAVAILABLE"
+                and self.audit_available is False
+                and self.audit_consistent is False
+                and self.published_readiness_status == "UNAVAILABLE"
+                and self.expected_readiness_status == "UNAVAILABLE"
+                and self.audit_finding_count == 0
+                and self.audit_findings == []
+            ):
+                raise ValueError(
+                    "an invalid audit surface must carry the canonical "
+                    "unavailable placeholder"
+                )
+        elif (
+            self.readiness_audit_status == "UNAVAILABLE"
+            and self.audit_finding_count == 0
+        ):
+            raise ValueError("a valid unavailable audit surface requires findings")
+        if not self.consistency_evidence_valid:
+            if not (
+                self.audit_consistency_status == "UNAVAILABLE"
+                and self.consistency_available is False
+                and self.consistency_consistent is False
+                and self.consistency_finding_count == 0
+                and self.consistency_findings == []
+            ):
+                raise ValueError(
+                    "an invalid consistency surface must carry the canonical "
+                    "unavailable placeholder"
+                )
+        elif (
+            self.audit_consistency_status == "UNAVAILABLE"
+            and self.consistency_finding_count == 0
+        ):
+            raise ValueError(
+                "a valid unavailable consistency surface requires findings"
             )
         return self
 

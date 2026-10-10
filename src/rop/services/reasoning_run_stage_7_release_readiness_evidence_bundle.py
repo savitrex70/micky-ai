@@ -152,6 +152,11 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
                     "bundle_source": (
                         REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177
                     ),
+                    # No child evidence could be validated, so every child
+                    # surface is explicitly marked unavailable.
+                    "projection_evidence_valid": False,
+                    "audit_evidence_valid": False,
+                    "consistency_evidence_valid": False,
                 }
             )
 
@@ -205,6 +210,11 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleService:
             "bundle_source": (
                 REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177
             ),
+            # All three inputs passed their own contracts to reach this
+            # path, so every child surface is explicitly valid here.
+            "projection_evidence_valid": True,
+            "audit_evidence_valid": True,
+            "consistency_evidence_valid": True,
         }
 
         # READY conditions: ALL must hold; any failure → UNAVAILABLE.
