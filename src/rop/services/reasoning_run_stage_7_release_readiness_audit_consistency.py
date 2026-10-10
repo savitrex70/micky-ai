@@ -54,13 +54,22 @@ class ReasoningRunStage7ReleaseReadinessAuditConsistencyService:
         """Verify exact binding between projection and audit.
 
         ``CONSISTENT`` when the audit is canonically bound to the exact
-        Task 174 projection represented. ``INCONSISTENT`` when the audit
-        is detached or contradicts the projection. ``UNAVAILABLE`` when
-        either input is missing or fails its own contract.
+        Task 174 projection represented. ``INCONSISTENT`` when available,
+        readable evidence proves a genuine contradiction. ``UNAVAILABLE``
+        when either input is missing or fails its own contract, or when
+        the binding cannot be established or consistency determined.
 
-        A valid Task 174 projection whose ``readiness_status`` is ``UNAVAILABLE``
-        can still have a ``CONSISTENT`` audit and consistency result if the
-        published evidence is validly bound and correctly represented.
+        A valid Task 174 projection whose ``readiness_status`` is
+        ``UNAVAILABLE`` can still have a ``CONSISTENT`` audit and
+        consistency result if the published evidence is validly bound
+        and correctly represented.
+
+        A valid Task 175 ``UNAVAILABLE`` audit carries an empty session
+        identity precisely because its session binding could not be
+        established. That empty identity is insufficiency, not a
+        mismatch: it never produces ``SESSION_MISMATCH`` on its own,
+        and its published/expected statuses carry no verifiable meaning
+        and are never compared as if they did.
 
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
@@ -113,35 +122,65 @@ class ReasoningRunStage7ReleaseReadinessAuditConsistencyService:
         ):
             findings.append("AUDIT_SOURCE_INVALID")
 
-        # Step A — Session identity must match
-        if projection.session_id != audit.session_id:
-            findings.append("SESSION_MISMATCH")
+        # A valid UNAVAILABLE audit proves nothing further: it could not
+        # establish a session binding, so its empty session identity is
+        # insufficiency rather than mismatch, and its published/expected
+        # statuses carry no verifiable meaning to compare.
+        audit_unavailable = audit.readiness_audit_status == "UNAVAILABLE"
 
-        # Step B — Published readiness status must match audit's published status
-        if projection.readiness_status != audit.published_readiness_status:
-            findings.append("PUBLISHED_STATUS_MISMATCH")
+        if audit_unavailable:
+            findings.append("AUDIT_UNAVAILABLE")
+        else:
+            # Step A — Session identity must match. Both identities are
+            # established here: a CONSISTENT audit always names a session,
+            # and any difference against the projection is a genuine
+            # binding failure.
+            if projection.session_id != audit.session_id:
+                findings.append("SESSION_MISMATCH")
 
-        # Step C — Expected readiness status must match audit's expected status
-        if projection.readiness_status != audit.expected_readiness_status:
-            findings.append("EXPECTED_STATUS_MISMATCH")
+            # Step B — Published readiness status must match audit's published status
+            if projection.readiness_status != audit.published_readiness_status:
+                findings.append("PUBLISHED_STATUS_MISMATCH")
 
-        # Step D — The audit must report a successful binding for every
-        # projection status; an inconsistent audit cannot prove consistency.
-        if audit.readiness_audit_status != "CONSISTENT":
-            findings.append("AUDIT_STATUS_MISMATCH")
-        if audit.findings:
-            findings.append("AUDIT_HAS_FINDINGS")
+            # Step C — Expected readiness status must match audit's expected status
+            if projection.readiness_status != audit.expected_readiness_status:
+                findings.append("EXPECTED_STATUS_MISMATCH")
 
-        # Step E — Populate result dict
+            # Step D — The audit must report a successful binding for every
+            # projection status; an inconsistent audit cannot prove consistency.
+            if audit.readiness_audit_status != "CONSISTENT":
+                findings.append("AUDIT_STATUS_MISMATCH")
+            if audit.findings:
+                findings.append("AUDIT_HAS_FINDINGS")
+
+        # Step E — Explicit decision policy. INCONSISTENT requires a
+        # demonstrated contradiction from the checks above; anything else
+        # left unresolved is insufficiency (UNAVAILABLE), never a silent
+        # pass and never an invented contradiction.
+        contradiction = any(
+            finding in findings
+            for finding in (
+                "SESSION_MISMATCH",
+                "PUBLISHED_STATUS_MISMATCH",
+                "EXPECTED_STATUS_MISMATCH",
+                "AUDIT_STATUS_MISMATCH",
+                "PROJECTION_SOURCE_INVALID",
+                "AUDIT_SOURCE_INVALID",
+            )
+        )
         findings = sorted(set(findings))
-        consistency_status = "UNAVAILABLE"
-        if findings:
+        if contradiction:
             consistency_status = "INCONSISTENT"
+            session_id = projection.session_id
+        elif findings:
+            consistency_status = "UNAVAILABLE"
+            session_id = ""
         else:
             consistency_status = "CONSISTENT"
+            session_id = projection.session_id
 
         result: dict[str, Any] = {
-            "session_id": projection.session_id,
+            "session_id": session_id,
             "consistency_status": consistency_status,
             "available": consistency_status != "UNAVAILABLE",
             "consistent": consistency_status == "CONSISTENT",

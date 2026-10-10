@@ -299,7 +299,7 @@ def test_valid_inconsistent_audit_is_inconsistent(ready_projection_and_audit):
 
 
 def test_unavailable_audit_is_unavailable(ready_projection_and_audit):
-    """UNAVAILABLE audit is UNAVAILABLE."""
+    """UNAVAILABLE audit is UNAVAILABLE, not escalated to INCONSISTENT."""
     ready_projection_and_audit["audit"].readiness_audit_status = "UNAVAILABLE"
     ready_projection_and_audit["audit"].available = False
     ready_projection_and_audit["audit"].consistent = False
@@ -309,8 +309,11 @@ def test_unavailable_audit_is_unavailable(ready_projection_and_audit):
     consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
         **ready_projection_and_audit
     )
-    assert consistency["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_STATUS_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["available"] is False
+    assert consistency["consistent"] is False
+    assert consistency["session_id"] == ""
+    assert consistency["findings"] == ["AUDIT_UNAVAILABLE"]
 
 
 # ---------------------------------------------------------------------------
@@ -450,15 +453,85 @@ def test_unavailable_audit_session_not_converted_to_mismatch(
     ready_projection_and_audit["audit"].session_id = ""
     ready_projection_and_audit["audit"].findings = ["PROJECTION_INVALID"]
     ready_projection_and_audit["audit"].finding_count = 1
-    # When audit session is empty but projection session is non-empty,
-    # this is detected as a session mismatch by the consistency check
-    # since the inputs are not properly bound
+    # An empty audit session from a valid UNAVAILABLE audit reflects an
+    # inability to establish binding, not a proven identity mismatch.
     consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
         **ready_projection_and_audit
     )
-    # Empty audit session with non-empty projection is a binding mismatch.
-    assert "SESSION_MISMATCH" in consistency["findings"]
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert "SESSION_MISMATCH" not in consistency["findings"]
+    assert "AUDIT_STATUS_MISMATCH" not in consistency["findings"]
+    assert "PUBLISHED_STATUS_MISMATCH" not in consistency["findings"]
+    assert "EXPECTED_STATUS_MISMATCH" not in consistency["findings"]
+
+
+def test_unavailable_audit_with_blocked_projection_is_unavailable(
+    ready_projection_and_audit,
+):
+    """BLOCKED projection plus UNAVAILABLE audit is UNAVAILABLE, not INCONSISTENT."""
+    ready_projection_and_audit["projection"].readiness_status = "BLOCKED"
+    ready_projection_and_audit["projection"].finding_count = 1
+    ready_projection_and_audit["projection"].findings = ["BLOCKING_EVIDENCE"]
+    ready_projection_and_audit["audit"].readiness_audit_status = "UNAVAILABLE"
+    ready_projection_and_audit["audit"].available = False
+    ready_projection_and_audit["audit"].consistent = False
+    ready_projection_and_audit["audit"].session_id = ""
+    ready_projection_and_audit["audit"].findings = ["PROJECTION_INVALID"]
+    ready_projection_and_audit["audit"].finding_count = 1
+    # No contradiction is proven: the audit could not verify anything.
+    consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
+        **ready_projection_and_audit
+    )
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["session_id"] == ""
+    assert "SESSION_MISMATCH" not in consistency["findings"]
+    assert "AUDIT_STATUS_MISMATCH" not in consistency["findings"]
+
+
+def test_inconsistent_audit_with_unavailable_projection_is_inconsistent(
+    unavailable_projection_and_audit,
+):
+    """Genuine INCONSISTENT audit stays INCONSISTENT on an UNAVAILABLE projection."""
+    projection = unavailable_projection_and_audit["projection"]
+    inconsistent_audit = ReasoningRunStage7ReleaseReadinessAuditRead(
+        session_id=projection.session_id,
+        readiness_audit_status="INCONSISTENT",
+        available=True,
+        consistent=False,
+        published_readiness_status="UNAVAILABLE",
+        expected_readiness_status="UNAVAILABLE",
+        finding_count=1,
+        findings=["READINESS_STATUS_MISMATCH"],
+        audit_source=REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+    )
+    consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
+        projection=projection,
+        audit=inconsistent_audit,
+    )
+    assert consistency["consistency_status"] == "INCONSISTENT"
     assert "AUDIT_STATUS_MISMATCH" in consistency["findings"]
+
+
+def test_both_sessions_empty_with_unavailable_audit_is_unavailable(
+    ready_projection_and_audit,
+):
+    """Empty sessions on both sides with no contradiction is UNAVAILABLE."""
+    ready_projection_and_audit["projection"].session_id = ""
+    ready_projection_and_audit["projection"].readiness_status = "UNAVAILABLE"
+    ready_projection_and_audit["projection"].finding_count = 1
+    ready_projection_and_audit["projection"].findings = ["INSUFFICIENT_EVIDENCE"]
+    ready_projection_and_audit["audit"].readiness_audit_status = "UNAVAILABLE"
+    ready_projection_and_audit["audit"].available = False
+    ready_projection_and_audit["audit"].consistent = False
+    ready_projection_and_audit["audit"].session_id = ""
+    ready_projection_and_audit["audit"].findings = ["PROJECTION_INVALID"]
+    ready_projection_and_audit["audit"].finding_count = 1
+    consistency = ReasoningRunStage7ReleaseReadinessAuditConsistencyService.verify(
+        **ready_projection_and_audit
+    )
+    assert consistency["consistency_status"] == "UNAVAILABLE"
+    assert consistency["session_id"] == ""
+    assert "SESSION_MISMATCH" not in consistency["findings"]
 
 
 # ---------------------------------------------------------------------------
