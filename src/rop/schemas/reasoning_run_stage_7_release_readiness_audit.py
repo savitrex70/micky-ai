@@ -27,7 +27,8 @@ class ReasoningRunStage7ReleaseReadinessAuditRead(BaseModel):
     when the independently derived expected state matches the published Task
     174 projection, ``INCONSISTENT`` when the published evidence contradicts
     the independently derived result, and ``UNAVAILABLE`` for missing or
-    malformed Task 174 input. ``published_readiness_status`` is the status
+    malformed Task 174 input or when unavailable upstream evidence leaves the
+    session binding unprovable. ``published_readiness_status`` is the status
     the Task 174 projection claims, and ``expected_readiness_status`` is the
     status independently derived from the published evidence surfaces.
     ``findings`` are deterministic, sorted, and deduplicated;

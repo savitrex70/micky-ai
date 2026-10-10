@@ -11,6 +11,7 @@ database.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import ValidationError
@@ -37,15 +38,42 @@ from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
 )
 
 
-def _revalidate_or_recover_semantic_conflict(model_type: Any, value: Any) -> Any:
-    """Revalidate fields while retaining readable semantic contradictions."""
+def _revalidate_or_recover_semantic_conflict(
+    model_type: Any,
+    value: Any,
+    *,
+    strict_when: Callable[[dict[str, Any]], bool] | None = None,
+) -> Any:
+    """Revalidate fields while retaining readable semantic contradictions.
+
+    A model-level validation error is recovered (via ``model_construct``)
+    only so a readable contradiction can still be reported. ``strict_when``
+    marks payloads that carry nothing readable enough to contradict
+    anything: for those, every validation error is re-raised so malformed or
+    impossible model states are rejected instead of being accepted as
+    evidence.
+    """
     payload = value.model_dump()
     try:
         return model_type.model_validate(payload)
     except ValidationError as exc:
+        if strict_when is not None and strict_when(payload):
+            raise
         if all(not error["loc"] for error in exc.errors()):
             return model_type.model_construct(**payload)
         raise
+
+
+def _audit_status_is_unknown(payload: dict[str, Any]) -> bool:
+    """Task 172 audit with no established published status (``None``).
+
+    Task 172 permits ``published_attestation_status=None`` only for an
+    ``UNAVAILABLE`` audit carrying the ``ATTESTATION_INVALID`` finding, with
+    every other Task 172 field coherent. Such an audit contradicts nothing,
+    so it is never recovered as a semantic conflict: it must satisfy the
+    Task 172 contract exactly, including after post-construction mutation.
+    """
+    return payload.get("published_attestation_status") is None
 
 
 __all__ = [
@@ -82,8 +110,13 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
 
         ``CONSISTENT`` when the independently derived expected state matches
         the published Task 174 projection. ``INCONSISTENT`` when the
-        published evidence contradicts the independently derived result.
-        ``UNAVAILABLE`` for missing or malformed Task 174 input.
+        published evidence contradicts the independently derived result,
+        including a forged READY or BLOCKED projection. ``UNAVAILABLE`` for
+        missing or malformed Task 174 input, for malformed or impossible
+        upstream records, and when an upstream Task 172 audit or Task 173
+        consistency result is itself ``UNAVAILABLE`` and the session binding
+        therefore cannot be proven: insufficient evidence is not a
+        contradiction, and the projection is not claimed as verified.
 
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
@@ -103,7 +136,9 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
                 ReasoningRunStage7FinalEvidenceAttestationRead, attestation
             )
             audit = _revalidate_or_recover_semantic_conflict(
-                ReasoningRunStage7FinalAttestationAuditRead, audit
+                ReasoningRunStage7FinalAttestationAuditRead,
+                audit,
+                strict_when=_audit_status_is_unknown,
             )
             consistency = _revalidate_or_recover_semantic_conflict(
                 ReasoningRunStage7FinalAttestationConsistencyRead, consistency
@@ -300,11 +335,20 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
             }
             return ReasoningRunStage7ReleaseReadinessAuditService._project(result)
 
-        # Step C — Validate session binding
+        # Step C — Validate session binding. An UNAVAILABLE Task 172 audit or
+        # Task 173 consistency result establishes no session identity (Task
+        # 173 deliberately reports a blank one), so its absence is
+        # insufficient evidence, not a detached or contradictory session.
+        # Only records that are available can contradict the projection.
+        audit_unavailable = audit.attestation_audit_status == "UNAVAILABLE"
+        consistency_unavailable = consistency.consistency_status == "UNAVAILABLE"
         if (
             projection_obj.session_id != attestation.session_id
-            or projection_obj.session_id != audit.session_id
-            or projection_obj.session_id != consistency.session_id
+            or (not audit_unavailable and projection_obj.session_id != audit.session_id)
+            or (
+                not consistency_unavailable
+                and projection_obj.session_id != consistency.session_id
+            )
         ):
             findings.append("SESSION_BINDING_MISMATCH")
 
@@ -330,16 +374,31 @@ class ReasoningRunStage7ReleaseReadinessAuditService:
             findings.append("FINDINGS_MISMATCH")
             findings.append("PROJECTION_INVALID")
 
-        # Step E — Populate result dict
+        # Step E — Populate result dict. Demonstrated contradictions (including
+        # a forged READY or BLOCKED projection) always win and stay
+        # INCONSISTENT, even when other evidence is unavailable. Without any
+        # contradiction, an unavailable upstream record means the binding
+        # cannot be proven, so the projection is not claimed as verified.
         findings = sorted(set(findings))
-        readiness_audit_status = "UNAVAILABLE"
         if findings:
             readiness_audit_status = "INCONSISTENT"
+        elif audit_unavailable or consistency_unavailable:
+            readiness_audit_status = "UNAVAILABLE"
+            if audit_unavailable:
+                findings.append("AUDIT_UNAVAILABLE")
+            if consistency_unavailable:
+                findings.append("CONSISTENCY_UNAVAILABLE")
+            findings.append("SESSION_BINDING_UNPROVABLE")
+            findings = sorted(set(findings))
         else:
             readiness_audit_status = "CONSISTENT"
 
         result: dict[str, Any] = {
-            "session_id": projection_obj.session_id,
+            "session_id": (
+                projection_obj.session_id
+                if readiness_audit_status != "UNAVAILABLE"
+                else ""
+            ),
             "readiness_audit_status": readiness_audit_status,
             "available": readiness_audit_status != "UNAVAILABLE",
             "consistent": readiness_audit_status == "CONSISTENT",
