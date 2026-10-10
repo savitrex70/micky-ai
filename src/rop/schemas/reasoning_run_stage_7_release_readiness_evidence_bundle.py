@@ -24,6 +24,14 @@ REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177 = (
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_TASK_177"
 )
 
+# The complete set of structural finding codes Task 177 itself may publish in
+# ``bundle_findings``: the session binding across the three inputs failed, or
+# an input was missing or failed its own contract. Child findings (Tasks 174,
+# 175, 176) are never copied into the aggregate.
+REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_FINDING_CODES_TASK_177 = (
+    frozenset({"EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"})
+)
+
 
 class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
     """Strict read model for one release-readiness evidence bundle.
@@ -111,6 +119,14 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleRead(BaseModel):
             raise ValueError("bundle_findings must not contain duplicates")
         if self.bundle_findings != sorted(self.bundle_findings):
             raise ValueError("bundle_findings must be sorted")
+        unapproved = set(self.bundle_findings) - (
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_FINDING_CODES_TASK_177
+        )
+        if unapproved:
+            raise ValueError(
+                "bundle_findings contains unapproved Task 177 finding codes: "
+                f"{sorted(unapproved)}"
+            )
         if "STAGE_7_SESSION_MISMATCH" in self.bundle_findings and self.session_id != "":
             raise ValueError(
                 "a session mismatch finding must not claim a shared session_id"

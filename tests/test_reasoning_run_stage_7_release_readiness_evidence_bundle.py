@@ -19,6 +19,7 @@ from rop.schemas.reasoning_run_stage_7_release_readiness_audit_consistency impor
     ReasoningRunStage7ReleaseReadinessAuditConsistencyRead,
 )
 from rop.schemas.reasoning_run_stage_7_release_readiness_evidence_bundle import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_FINDING_CODES_TASK_177,
     REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177,
     ReasoningRunStage7ReleaseReadinessEvidenceBundleRead,
 )
@@ -475,6 +476,9 @@ def test_source_constant_is_correct() -> None:
 
 _SERVICE = ReasoningRunStage7ReleaseReadinessEvidenceBundleService
 _BUNDLE_READ = ReasoningRunStage7ReleaseReadinessEvidenceBundleRead
+_APPROVED_CODES = (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_FINDING_CODES_TASK_177
+)
 
 
 def _ready_bundle_dict() -> dict:
@@ -583,6 +587,77 @@ def test_schema_rejects_session_mismatch_finding_claiming_a_session() -> None:
         assert bundle["session_id"] != ""
         with pytest.raises(ValidationError, match="shared session_id"):
             _BUNDLE_READ.model_validate(bundle)
+
+
+def _unavailable_bundle_dict_with(findings: list[str]) -> dict:
+    """A session-less UNAVAILABLE bundle carrying the given aggregate findings."""
+    bundle = _ready_bundle_dict()
+    bundle["session_id"] = ""
+    bundle["bundle_status"] = "UNAVAILABLE"
+    bundle["bundle_findings"] = findings
+    bundle["bundle_finding_count"] = len(findings)
+    return bundle
+
+
+def test_approved_bundle_finding_code_set_is_exact() -> None:
+    assert _APPROVED_CODES == frozenset(
+        {"EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"}
+    )
+
+
+@pytest.mark.parametrize("code", ["EVIDENCE_INPUT_INVALID", "STAGE_7_SESSION_MISMATCH"])
+def test_schema_accepts_each_approved_bundle_finding_code(code) -> None:
+    bundle = _unavailable_bundle_dict_with([code])
+    assert _BUNDLE_READ.model_validate(bundle).bundle_findings == [code]
+
+
+def test_schema_rejects_unknown_bundle_finding_code() -> None:
+    bundle = _unavailable_bundle_dict_with(["TOTALLY_UNKNOWN_CODE"])
+    with pytest.raises(ValidationError, match="unapproved Task 177 finding codes"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_schema_rejects_unknown_code_alongside_approved_code() -> None:
+    bundle = _unavailable_bundle_dict_with(
+        ["STAGE_7_SESSION_MISMATCH", "ZZZ_UNKNOWN_CODE"]
+    )
+    with pytest.raises(ValidationError, match="ZZZ_UNKNOWN_CODE"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+@pytest.mark.parametrize(
+    "child_code",
+    [
+        "BLOCKING_EVIDENCE",  # Task 174 projection finding
+        "INSUFFICIENT_EVIDENCE",  # Task 174 projection finding
+        "EXPECTED_STATUS_MISMATCH",  # Task 175 audit finding
+        "PROJECTION_UNAVAILABLE",  # Task 175 audit finding
+        "AUDIT_DETACHED",  # Task 176 consistency finding
+        "AUDIT_UNAVAILABLE",  # Task 176 consistency finding
+    ],
+)
+def test_schema_rejects_copied_upstream_finding_in_bundle_findings(
+    child_code,
+) -> None:
+    bundle = _unavailable_bundle_dict_with([child_code])
+    with pytest.raises(ValidationError, match="unapproved Task 177 finding codes"):
+        _BUNDLE_READ.model_validate(bundle)
+
+
+def test_approved_codes_are_exactly_the_codes_the_service_can_emit() -> None:
+    """Every emitted aggregate code is approved, and every approved code is used."""
+    emitted: set[str] = set()
+    for combo in _MATRIX:
+        bundle, _ = _bundle(_matrix_chain(*combo))
+        emitted.update(bundle["bundle_findings"])
+    chain = _ready_chain()
+    invalid = _SERVICE.assemble(
+        projection174=None,
+        audit175=chain["audit"],
+        consistency176=chain["consistency"],
+    )
+    emitted.update(invalid["bundle_findings"])
+    assert emitted == _APPROVED_CODES
 
 
 # ---------------------------------------------------------------------------
