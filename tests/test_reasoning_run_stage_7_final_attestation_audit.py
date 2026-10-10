@@ -389,6 +389,21 @@ def test_audit_detects_session_mismatch(ready_chain) -> None:
     assert "SESSION_BINDING_MISMATCH" in audit["findings"]
 
 
+def _assert_unverifiable_but_published(result: dict, *, published: str) -> None:
+    """Malformed upstream evidence: unverifiable, yet the published claim holds."""
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["consistent"] is False
+    assert result["published_attestation_status"] == published
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    assert result["finding_count"] == 1
+    assert result["session_id"] == ""
+    assert result["audit_source"] == AUDIT_SOURCE
+    # Result must remain a schema-valid Task 172 audit.
+    ReasoningRunStage7FinalAttestationAuditRead.model_validate(result)
+
+
 def test_audit_detects_wrong_package_source(ready_chain) -> None:
     package = copy.deepcopy(ready_chain["package"])
     package.package_source = "WRONG_SOURCE"
@@ -398,8 +413,7 @@ def test_audit_detects_wrong_package_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "UNAVAILABLE"
-    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    _assert_unverifiable_but_published(audit, published="CERTIFIED")
 
 
 def test_audit_detects_wrong_audit_source(ready_chain) -> None:
@@ -411,8 +425,7 @@ def test_audit_detects_wrong_audit_source(ready_chain) -> None:
         consistency=ready_chain["consistency"],
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "UNAVAILABLE"
-    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    _assert_unverifiable_but_published(audit, published="CERTIFIED")
 
 
 def test_audit_detects_wrong_consistency_source(ready_chain) -> None:
@@ -424,8 +437,222 @@ def test_audit_detects_wrong_consistency_source(ready_chain) -> None:
         consistency=consistency,
         attestation=ready_chain["attestation"],
     )
-    assert audit["attestation_audit_status"] == "UNAVAILABLE"
-    assert audit["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    _assert_unverifiable_but_published(audit, published="CERTIFIED")
+
+
+def _blocked_chain(ready_chain):
+    """Genuine BLOCKED attestation together with its matching evidence."""
+    package = _blocked_package(copy.deepcopy(ready_chain["package"]))
+    audit_inputs = copy.deepcopy(ready_chain["audit"])
+    audit_inputs.published_package_status = "BLOCKED"
+    audit_inputs.expected_package_status = "BLOCKED"
+    consistency = copy.deepcopy(ready_chain["consistency"])
+    attestation = ReasoningRunStage7FinalEvidenceAttestationRead.model_validate(
+        ReasoningRunStage7FinalEvidenceAttestationService.attest(
+            package=package, audit=audit_inputs, consistency=consistency
+        )
+    )
+    assert attestation.attestation_status == "BLOCKED"
+    return package, audit_inputs, consistency, attestation
+
+
+@pytest.mark.parametrize("malformed", ["audit", "consistency"])
+def test_malformed_audit_or_consistency_preserves_blocked_status(
+    ready_chain, malformed
+) -> None:
+    package, audit_inputs, consistency, attestation = _blocked_chain(ready_chain)
+    if malformed == "audit":
+        audit_inputs.audit_source = "WRONG_SOURCE"
+    else:
+        consistency.consistency_source = "WRONG_SOURCE"
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=audit_inputs,
+        consistency=consistency,
+        attestation=attestation,
+    )
+
+    _assert_unverifiable_but_published(result, published="BLOCKED")
+
+
+@pytest.mark.parametrize("malformed", ["package", "audit", "consistency"])
+def test_malformed_evidence_with_valid_certified_attestation(
+    ready_chain, malformed
+) -> None:
+    inputs = {
+        "package": copy.deepcopy(ready_chain["package"]),
+        "audit": copy.deepcopy(ready_chain["audit"]),
+        "consistency": copy.deepcopy(ready_chain["consistency"]),
+    }
+    if malformed == "package":
+        inputs["package"].session_id = []
+    elif malformed == "audit":
+        inputs["audit"].session_id = []
+    else:
+        inputs["consistency"].session_id = []
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        **inputs, attestation=ready_chain["attestation"]
+    )
+
+    _assert_unverifiable_but_published(result, published="CERTIFIED")
+
+
+def test_malformed_evidence_with_attestation_dict_preserves_status(
+    ready_chain,
+) -> None:
+    """A published attestation supplied as a plain dict is read the same way."""
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"].model_dump(),
+    )
+    _assert_unverifiable_but_published(result, published="CERTIFIED")
+
+
+def test_malformed_evidence_with_unreadable_attestation_invents_no_claim(
+    ready_chain,
+) -> None:
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation={"attestation_status": "GARBAGE"},
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["consistent"] is False
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
+    assert result["finding_count"] == 2
+
+
+@pytest.mark.parametrize("attestation", [None, "CERTIFIED", 7, []])
+def test_malformed_evidence_with_wrong_attestation_type_is_unavailable(
+    ready_chain, attestation
+) -> None:
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=attestation,  # type: ignore[arg-type]
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
+
+
+def test_malformed_evidence_revalidates_mutated_attestation(ready_chain) -> None:
+    """A mutated attestation is revalidated, not trusted, beside bad evidence."""
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    mutated = copy.deepcopy(ready_chain["attestation"])
+    mutated.attestation_status = "NOT_A_STATUS"  # type: ignore[assignment]
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=mutated,
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
+
+
+def test_malformed_evidence_with_readable_status_but_invalid_attestation(
+    ready_chain,
+) -> None:
+    """A readable status survives an otherwise invalid attestation and bad evidence."""
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    broken = ready_chain["attestation"].model_dump()
+    broken["finding_count"] = "not-an-int"
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=broken,
+    )
+
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["published_attestation_status"] == "CERTIFIED"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["ATTESTATION_INVALID", "EVIDENCE_INPUT_INVALID"]
+
+
+def test_malformed_evidence_path_is_deterministic_and_does_not_mutate(
+    ready_chain,
+) -> None:
+    package = copy.deepcopy(ready_chain["package"])
+    package.package_source = "WRONG_SOURCE"
+    before = {
+        "package": package.model_dump(),
+        "audit": ready_chain["audit"].model_dump(),
+        "consistency": ready_chain["consistency"].model_dump(),
+        "attestation": ready_chain["attestation"].model_dump(),
+    }
+
+    first = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+    second = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=ready_chain["audit"],
+        consistency=ready_chain["consistency"],
+        attestation=ready_chain["attestation"],
+    )
+
+    assert first == second
+    assert package.model_dump() == before["package"]
+    assert ready_chain["audit"].model_dump() == before["audit"]
+    assert ready_chain["consistency"].model_dump() == before["consistency"]
+    assert ready_chain["attestation"].model_dump() == before["attestation"]
+
+
+def test_malformed_evidence_never_claims_verified_consistency(ready_chain) -> None:
+    """Even when the published and expected statuses could coincide."""
+    package, audit_inputs, consistency, attestation = _blocked_chain(ready_chain)
+    audit_inputs.audit_source = "WRONG_SOURCE"
+    unavailable_attestation = attestation.model_dump()
+    unavailable_attestation.update(
+        {
+            "attestation_status": "UNAVAILABLE",
+            "certified": False,
+            "blocked": False,
+            "available": False,
+        }
+    )
+
+    result = ReasoningRunStage7FinalAttestationAuditService.audit(
+        package=package,
+        audit=audit_inputs,
+        consistency=consistency,
+        attestation=unavailable_attestation,
+    )
+
+    assert result["published_attestation_status"] == "UNAVAILABLE"
+    assert result["expected_attestation_status"] == "UNAVAILABLE"
+    assert result["attestation_audit_status"] == "UNAVAILABLE"
+    assert result["consistent"] is False
+    assert "EVIDENCE_INPUT_INVALID" in result["findings"]
 
 
 def test_audit_malformed_attestation_dict_is_unavailable(ready_chain) -> None:
@@ -450,11 +677,9 @@ def test_audit_revalidates_post_construction_evidence_mutation(ready_chain) -> N
         attestation=ready_chain["attestation"],
     )
 
-    assert result["attestation_audit_status"] == "UNAVAILABLE"
-    assert result["session_id"] == ""
-    assert result["published_attestation_status"] == "UNAVAILABLE"
-    assert result["expected_attestation_status"] == "UNAVAILABLE"
-    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    # The mutated evidence is unreadable, so nothing is independently
+    # verified, but the published CERTIFIED claim is preserved, not replaced.
+    _assert_unverifiable_but_published(result, published="CERTIFIED")
 
 
 def test_audit_rejects_wrong_evidence_types(ready_chain) -> None:
@@ -465,8 +690,7 @@ def test_audit_rejects_wrong_evidence_types(ready_chain) -> None:
         attestation=ready_chain["attestation"],
     )
 
-    assert result["attestation_audit_status"] == "UNAVAILABLE"
-    assert result["findings"] == ["EVIDENCE_INPUT_INVALID"]
+    _assert_unverifiable_but_published(result, published="CERTIFIED")
 
 
 def test_inconsistent_upstream_audit_does_not_claim_blocked(ready_chain) -> None:

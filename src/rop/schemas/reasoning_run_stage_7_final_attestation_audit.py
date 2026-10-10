@@ -27,9 +27,12 @@ class ReasoningRunStage7FinalAttestationAuditRead(BaseModel):
     when the independently derived expected state matches the published Task
     171 attestation, ``INCONSISTENT`` when the published evidence contradicts
     the independently derived result, and ``UNAVAILABLE`` for missing or
-    malformed Task 171 input. ``published_attestation_status`` is the status
-    the Task 171 attestation claims, and ``expected_attestation_status`` is
-    the status independently derived from the published evidence surfaces.
+    malformed Task 171 input or for upstream evidence that cannot be read
+    and therefore cannot independently verify the attestation.
+    ``published_attestation_status`` is the status the Task 171 attestation
+    claims (``UNAVAILABLE`` only when it published that status or no valid
+    status is readable), and ``expected_attestation_status`` is the status
+    independently derived from the published evidence surfaces.
     ``findings`` are deterministic, sorted, and deduplicated;
     ``finding_count`` always equals ``len(findings)``.
     """
