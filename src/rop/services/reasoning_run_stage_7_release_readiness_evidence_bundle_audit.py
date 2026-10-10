@@ -50,6 +50,11 @@ __all__ = [
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService",
 ]
 
+# Module-level alias: the canonical read-model name exceeds the 88-column
+# limit once prefixed by call-site indentation, so call sites reference this
+# short alias instead.
+_AUDIT_READ = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead
+
 
 def _revalidate_or_recover_semantic_conflict(
     model_type: Any,
@@ -376,11 +381,7 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService:
     def _project(result: dict[str, Any]) -> dict[str, Any]:
         """Validate the audit result through the strict contract."""
         try:
-            validated = (
-                ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead.model_validate(
-                    result
-                )
-            )
+            validated = _AUDIT_READ.model_validate(result)
         except ValidationError as exc:
             raise ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditContractError(
                 "RELEASE_READINESS_BUNDLE_AUDIT_RESULT_INVALID", str(exc)
