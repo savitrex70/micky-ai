@@ -519,6 +519,11 @@ from rop.services.reasoning_run_stage_7_release_readiness_evidence_bundle import
     ReasoningRunStage7ReleaseReadinessEvidenceBundleContractError,
     ReasoningRunStage7ReleaseReadinessEvidenceBundleService,
 )
+from rop.services.reasoning_run_stage_7_release_readiness_evidence_bundle_audit import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_178,
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditContractError,
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService,
+)
 from rop.services.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionContractError,
@@ -809,6 +814,9 @@ __all__ = [
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_SOURCE_TASK_177",
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleContractError",
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleService",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_178",
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditContractError",
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService",
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
