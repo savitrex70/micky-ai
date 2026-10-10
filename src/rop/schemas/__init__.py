@@ -347,6 +347,18 @@ from rop.schemas.reasoning_run_stage_7_release_readiness_evidence_bundle_audit i
     REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_178,
     ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead,
 )
+from rop.schemas.reasoning_run_stage_7_release_readiness_evidence_bundle_audit_consistency import (  # noqa: E501
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179,  # noqa: E501
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead,
+)
+from rop.schemas.reasoning_run_stage_7_release_readiness_final_attestation import (
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_SOURCE_TASK_180,
+    ReasoningRunStage7ReleaseReadinessFinalAttestationRead,
+)
+from rop.schemas.reasoning_run_stage_7_release_readiness_final_attestation_audit import (  # noqa: E501
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_181,
+    ReasoningRunStage7ReleaseReadinessFinalAttestationAuditRead,
+)
 from rop.schemas.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionRead,
@@ -518,6 +530,12 @@ __all__ = [
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleRead",
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_178",
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179",  # noqa: E501
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_SOURCE_TASK_180",
+    "ReasoningRunStage7ReleaseReadinessFinalAttestationRead",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_AUDIT_SOURCE_TASK_181",
+    "ReasoningRunStage7ReleaseReadinessFinalAttestationAuditRead",
     "ReasoningRunStage7VerticalSliceAuditRead",
     "ReasoningRunStage7VerticalSliceRead",
     "ReasoningRunInspectionRead",

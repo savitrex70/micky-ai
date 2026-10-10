@@ -524,6 +524,11 @@ from rop.services.reasoning_run_stage_7_release_readiness_evidence_bundle_audit 
     ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditContractError,
     ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService,
 )
+from rop.services.reasoning_run_stage_7_release_readiness_evidence_bundle_audit_consistency import (  # noqa: E501
+    REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179,  # noqa: E501
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyContractError,  # noqa: E501
+    ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService,  # noqa: E501
+)
 from rop.services.reasoning_run_stage_7_release_readiness_projection import (
     REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
     ReasoningRunStage7ReleaseReadinessProjectionContractError,
@@ -817,6 +822,9 @@ __all__ = [
     "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_SOURCE_TASK_178",
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditContractError",
     "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService",
+    "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179",  # noqa: E501
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyContractError",  # noqa: E501
+    "ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService",  # noqa: E501
     "REASONING_RUN_RECEIPT_PROVENANCE_AUDIT_SOURCE_TASK_139",
     "ReasoningRunReceiptProvenanceAuditContractError",
     "ReasoningRunReceiptProvenanceAuditService",
