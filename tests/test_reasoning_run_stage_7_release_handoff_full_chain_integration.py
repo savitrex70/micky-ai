@@ -125,6 +125,7 @@ from rop.services.reasoning_run_stage_7_diagnostics import (
 from rop.services.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchService,
 )
+from rop.services.reasoning_run_stage_7_entry import ReasoningRunStage7EntryService
 from rop.services.reasoning_run_stage_7_evidence_bundle import (
     ReasoningRunStage7EvidenceBundleService,
 )
@@ -143,7 +144,6 @@ from rop.services.reasoning_run_stage_7_evidence_package_audit import (
 from rop.services.reasoning_run_stage_7_evidence_package_audit_consistency import (
     ReasoningRunStage7EvidencePackageAuditConsistencyService,
 )
-from rop.services.reasoning_run_stage_7_entry import ReasoningRunStage7EntryService
 from rop.services.reasoning_run_stage_7_final_attestation_audit import (
     ReasoningRunStage7FinalAttestationAuditService,
 )
