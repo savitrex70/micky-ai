@@ -123,12 +123,21 @@ from validated upstream results. Stage 6 certification and the provider
 response are the genuine external boundaries replaced with test doubles; no
 real model provider or network inference is used.
 
-This test setup still creates its initial session and supporting domain
-records through test helpers and does not invoke the Task 153 entry service.
-It therefore does not establish that every Stage 7 service from Task 153
-through Task 188 has been exercised end to end. Task 200 is intended to extend
-the integration path to the earliest supported entry boundary; any broader
-coverage claim depends on that test being implemented and reviewed.
+Task 200 adds a dedicated whole-path integration test that invokes the
+real Task 153 entry service, then the actual Task 154–164 services, and
+reuses the Task 191 composition helper for the real Task 165–188 chain. It
+covers valid, blocked, unavailable, readable-contradiction, and detached-
+identity paths while inspecting the resulting service records. The Stage 6
+certification handoff and the explicit provider-response boundary are the
+only test doubles; the tests do not call a real model provider or perform
+network inference. Test fixtures use the existing in-memory SQLite setup for
+session and domain-record preparation.
+
+This gives integration coverage across the Task 153–188 service boundaries,
+but it is not a claim that every surrounding API lifecycle or external
+dependency is exercised in production conditions. The Stage 6 and provider
+boundaries remain substituted, and the final coverage still requires review
+and the project owner's full pytest gate before Stage 7 is treated as complete.
 
 To validate the integration coverage and repository from the project root,
 with the virtual environment from the local Python workflow above activated:

@@ -30,6 +30,7 @@ from rop.main import app
 from rop.schemas.reasoning_run_stage_7_admission import (
     ReasoningRunStage7AdmissionRead,
 )
+from rop.schemas.reasoning_run_stage_7_entry import ReasoningRunStage7EntryRead
 
 # Canonical schema aliases for validation between real boundaries.
 from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
@@ -109,6 +110,9 @@ from rop.services.llm_reasoning_provider import (
     LLMReasoningProviderResponse,
 )
 from rop.services.reasoning_context import ReasoningContextService
+from rop.services.reasoning_run_stage_6_certification import (
+    ReasoningRunStage6CertificationContractError,
+)
 from rop.services.reasoning_run_stage_7_admission import (
     ReasoningRunStage7AdmissionService,
 )
@@ -121,6 +125,7 @@ from rop.services.reasoning_run_stage_7_diagnostics import (
 from rop.services.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchService,
 )
+from rop.services.reasoning_run_stage_7_entry import ReasoningRunStage7EntryService
 from rop.services.reasoning_run_stage_7_evidence_bundle import (
     ReasoningRunStage7EvidenceBundleService,
 )
@@ -248,6 +253,19 @@ class _CertificationStub:
             "certified": certified,
             "release_ready": certified,
         }
+
+
+class _UnreadableCertification:
+    """Reports an unreadable Stage 6 boundary without fabricating a verdict."""
+
+    def __init__(self) -> None:
+        self.calls: list[UUID] = []
+
+    def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
+        self.calls.append(session_id)
+        raise ReasoningRunStage6CertificationContractError(
+            "GATE_UNREADABLE", "test-only Stage 6 boundary outage"
+        )
 
 
 class _FakeProvider:
@@ -1953,7 +1971,6 @@ def test_task_183_185_forged_sources_do_not_hide_explicit_blocking_evidence(
     assert "AUDIT_INCONSISTENT" in consistency188.findings
 
 
-
 # ---------------------------------------------------------------------------
 # Task 198: provider isolation and evidence privacy
 # ---------------------------------------------------------------------------
@@ -2044,3 +2061,266 @@ def test_task_198_malformed_evidence_diagnostics_do_not_echo_untrusted_values() 
     assert result["audited_bundle"] is None
     assert result["findings"] == sorted(set(result["findings"]))
     assert raw_value not in json.dumps(result, sort_keys=True)
+
+
+# ---------------------------------------------------------------------------
+# Task 200: whole Stage 7 integration from entry through handoff
+# ---------------------------------------------------------------------------
+
+
+def _task200_entry(session_id: str, certification_service) -> dict[str, object]:
+    """Invoke the real Task 153 entry boundary for the same session."""
+    with TestingSessionLocal() as db:
+        result = ReasoningRunStage7EntryService(
+            certification_service=certification_service
+        ).evaluate(db, UUID(session_id))
+    return ReasoningRunStage7EntryRead.model_validate(result).model_dump()
+
+
+def _task200_upstream(
+    session_id: str,
+    certification_service,
+    *,
+    provider_explanation: str = "",
+) -> dict[str, object]:
+    """Invoke the real Tasks 154-164 after the real Task 153 entry boundary.
+
+    Only Stage 6 certification and the explicit provider response are test
+    doubles. A blocked or unavailable request still passes through the real
+    request, request-audit, dispatch, proposal, proposal-audit, diagnostics,
+    aggregation, certification, and consistency services; the dispatch gate
+    must prevent provider contact when the request was not packaged.
+    """
+    session_uuid = UUID(session_id)
+    with TestingSessionLocal() as db:
+        admission = ReasoningRunStage7AdmissionService(
+            certification_service=certification_service
+        ).evaluate(db, session_uuid)
+        request = ReasoningRunStage7RequestService(
+            admission_service=ReasoningRunStage7AdmissionService(
+                certification_service=certification_service
+            )
+        ).build(db, session_uuid)
+        request_audit = ReasoningRunStage7RequestAuditService(
+            admission_service=ReasoningRunStage7AdmissionService(
+                certification_service=certification_service
+            )
+        ).audit(db, request)
+        context = ReasoningContextService().build_for_session(db, session_uuid)
+
+        provider_text = (
+            _valid_model_output(context, explanation=provider_explanation)
+            if admission["admission_status"] == "ADMITTED"
+            and request["request_status"] == "PACKAGED"
+            else "{}"
+        )
+        provider = _FakeProvider(provider_text)
+        dispatch = ReasoningRunStage7DispatchService(provider=provider).dispatch(
+            request=request,
+            request_audit=request_audit,
+        )
+        proposal = ReasoningRunStage7ProposalService().build(
+            dispatch_result=dispatch,
+            context=context,
+        )
+        proposal_audit = ReasoningRunStage7ProposalAuditService.audit(
+            proposal_result=proposal,
+            context=context,
+        )
+
+    diagnostics = _diagnose(request, request_audit, proposal, proposal_audit)
+    package162 = _pkg162(
+        admission,
+        request,
+        request_audit,
+        proposal,
+        proposal_audit,
+        diagnostics,
+    )
+    verdict163 = _certify(package162)
+    audit164 = _audit164(package162, verdict163)
+    return {
+        "session_id": session_id,
+        "admission": admission,
+        "request": request,
+        "request_audit": request_audit,
+        "dispatch": dispatch,
+        "proposal": proposal,
+        "proposal_audit": proposal_audit,
+        "diagnostics": diagnostics,
+        "pkg162": package162,
+        "slice163": verdict163,
+        "audit164": audit164,
+        "test_provider_calls": len(provider.calls),
+    }
+
+
+def _task200_run_full_path(
+    label: str,
+    certification_service,
+    *,
+    provider_explanation: str = "",
+) -> tuple[str, dict[str, object], dict[str, object], dict[str, object]]:
+    """Run Task 153, Tasks 154-164, then the established Tasks 165-188 helper."""
+    session_id = _seed_full_session(label)
+    entry = _task200_entry(session_id, certification_service)
+    upstream = _task200_upstream(
+        session_id,
+        certification_service,
+        provider_explanation=provider_explanation,
+    )
+    chain = _compose_full_chain(upstream)
+    return session_id, entry, upstream, chain
+
+
+def test_task_200_full_valid_path_runs_from_entry_through_consistent_handoff():
+    """The real Task 153-188 service sequence reaches a READY handoff."""
+    _, entry, upstream, chain = _task200_run_full_path(
+        "Task 200 whole-path READY",
+        _CertificationStub("CERTIFIED"),
+    )
+
+    assert entry["stage_7_status"] == "READY"
+    assert entry["finding_count"] == 0
+    assert upstream["admission"]["admission_status"] == "ADMITTED"
+    assert upstream["request"]["request_status"] == "PACKAGED"
+    assert upstream["dispatch"]["dispatch_status"] == "DISPATCHED"
+    assert upstream["proposal"]["proposal_status"] == "VALIDATED"
+    assert upstream["proposal_audit"]["proposal_audit_status"] == "CONSISTENT"
+    assert upstream["diagnostics"]["diagnostics_status"] == "HEALTHY"
+
+    for boundary, field in _BUSINESS_BOUNDARIES:
+        assert chain[boundary][field] == "READY", (boundary, field)
+    for boundary, field, _ in _VERIFICATION_BOUNDARIES:
+        assert chain[boundary][field] == "CONSISTENT", (boundary, field)
+    assert chain["package186"]["package_status"] == "READY"
+    assert chain["audit187"]["package_audit_status"] == "CONSISTENT"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_task_200_blocked_path_uses_real_services_and_stays_blocked():
+    """A genuine NO_MATERIAL admission cannot be promoted by downstream audits."""
+    session_id = _create_session("Task 200 empty deterministic chain")
+    certification = _CertificationStub("NO_MATERIAL")
+    entry = _task200_entry(session_id, certification)
+    upstream = _task200_upstream(session_id, certification)
+    chain = _compose_full_chain(upstream)
+
+    assert entry["stage_7_status"] == "READY"
+    assert upstream["admission"]["admission_status"] == "BLOCKED"
+    assert upstream["request"]["request_status"] == "BLOCKED"
+    assert upstream["dispatch"]["dispatch_status"] == "BLOCKED"
+    assert upstream["test_provider_calls"] == 0
+    assert upstream["pkg162"]["provider_name"] is None
+    assert upstream["pkg162"]["model_name"] is None
+    _assert_status_propagates(chain, "BLOCKED")
+    assert chain["package186"]["package_status"] == "BLOCKED"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_task_200_unreadable_certification_fails_closed_through_handoff():
+    """An unreadable Stage 6 result creates no attribution or READY claim."""
+    session_id = _seed_full_session("Task 200 unreadable certification")
+    certification = _UnreadableCertification()
+    entry = _task200_entry(session_id, certification)
+    upstream = _task200_upstream(session_id, certification)
+    chain = _compose_full_chain(upstream)
+
+    assert entry["stage_7_status"] == "UNAVAILABLE"
+    assert entry["boundary_available"] is True
+    assert upstream["admission"]["admission_status"] == "UNAVAILABLE"
+    assert upstream["admission"]["stage_6_certification_status"] == "UNAVAILABLE"
+    assert upstream["admission"]["admitted"] is False
+    assert upstream["request"]["request_status"] == "UNAVAILABLE"
+    assert upstream["test_provider_calls"] == 0
+    assert upstream["pkg162"]["request_fingerprint"] is None
+    assert upstream["pkg162"]["provider_name"] is None
+    assert upstream["pkg162"]["model_name"] is None
+    assert upstream["slice163"]["slice_status"] == "UNAVAILABLE"
+    assert chain["bundle165"]["provider_name"] is None
+    assert chain["bundle165"]["model_name"] is None
+    assert chain["package168"]["t162_provider_name"] is None
+    assert chain["package168"]["t162_model_name"] is None
+    assert chain["package168"]["t163_provider_name"] is None
+    assert chain["package168"]["t163_model_name"] is None
+    assert chain["session_id"] == session_id
+    _assert_status_propagates(chain, "UNAVAILABLE")
+    assert chain["package186"]["package_status"] == "UNAVAILABLE"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_task_200_readable_gate_contradiction_remains_inconsistent_through_188():
+    """A published contradiction is never laundered into an unavailable audit."""
+    _, entry, upstream, chain = _task200_run_full_path(
+        "Task 200 readable contradiction",
+        _CertificationStub("CERTIFIED"),
+    )
+    assert entry["stage_7_status"] == "READY"
+    assert chain["projection183"]["gate_status"] == "READY"
+
+    projection = _P183.model_validate(chain["projection183"])
+    projection.gate_status = "UNAVAILABLE"
+    result = _compose_gate_handoff_from_projection(chain, projection)
+
+    assert result["audit184"]["gate_audit_status"] == "INCONSISTENT"
+    assert "GATE_STATUS_MISMATCH" in result["audit184"]["findings"]
+    assert result["consistency185"]["gate_consistency_status"] == "INCONSISTENT"
+    assert "EXPECTED_STATUS_MISMATCH" in result["consistency185"]["findings"]
+    assert result["audit187"]["package_audit_status"] == "INCONSISTENT"
+    assert "T184_AUDIT_INCONSISTENT" in result["audit187"]["findings"]
+    assert "T185_CONSISTENCY_INCONSISTENT" in result["audit187"]["findings"]
+    assert result["consistency188"]["consistency_status"] == "INCONSISTENT"
+    assert "AUDIT_UNAVAILABLE" not in result["consistency188"]["findings"]
+
+
+def test_task_200_detached_gate_audit_identity_remains_untrusted_through_188():
+    """A detached published Task 184 audit is not repaired by Tasks 185-188."""
+    _, entry, upstream, chain = _task200_run_full_path(
+        "Task 200 detached gate audit",
+        _CertificationStub("CERTIFIED"),
+    )
+    assert entry["stage_7_status"] == "READY"
+    projection = _P183.model_validate(chain["projection183"])
+    audit184 = _A184.model_validate(chain["audit184"])
+    audit184.session_id = "detached-task-200-audit-session"
+
+    consistency185 = _C185.model_validate(
+        ReasoningRunStage7FinalReleaseGateAuditConsistencyService.verify(
+            projection=projection,
+            audit=audit184,
+        )
+    )
+    assert consistency185.gate_consistency_status == "INCONSISTENT"
+    assert "SESSION_MISMATCH" in consistency185.findings
+
+    package186 = _P186.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageService.assemble(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+        )
+    )
+    assert package186.package_status == "UNAVAILABLE"
+    assert package186.session_id == ""
+
+    audit187 = _A187.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+            package=package186,
+        )
+    )
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert "SESSION_BINDING_MISMATCH" in audit187.findings
+
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package186,
+            audit=audit187,
+        )
+    )
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert consistency188.session_id == ""
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
+    assert "AUDIT_UNAVAILABLE" not in consistency188.findings
