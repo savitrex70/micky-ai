@@ -1338,8 +1338,7 @@ def test_detached_task_184_audit_identity_stays_untrusted_through_task_188():
         _produce_upstream_ready("Task 194 detached downstream audit")
     )
     projection = _P183.model_validate(chain["projection183"])
-    gate = _compose_gate_handoff_from_projection(chain, projection)
-    audit184 = _A184.model_validate(gate["audit184"])
+    audit184 = _A184.model_validate(chain["audit184"])
     assert audit184.gate_audit_status == "CONSISTENT"
     audit184.session_id = "detached-gate-audit-194"
 
@@ -1397,11 +1396,10 @@ def test_task_167_fingerprint_snapshot_mismatch_cannot_produce_ready_package():
     )
 
     upstream = _produce_upstream_ready("Task 194 fingerprint snapshot mismatch")
+    chain = _compose_full_chain(upstream)
     original_fingerprint = upstream["pkg162"]["request_fingerprint"]
-    bundle = _B165.model_validate(_compose_full_chain(upstream)["bundle165"])
-    audit = _A166.model_validate(
-        _compose_full_chain(upstream)["audit166"]
-    )
+    bundle = _B165.model_validate(chain["bundle165"])
+    audit = _A166.model_validate(chain["audit166"])
     replacement = "b" * 64 if original_fingerprint != "b" * 64 else "c" * 64
     bundle.request_fingerprint = replacement
 
