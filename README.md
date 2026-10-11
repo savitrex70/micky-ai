@@ -144,8 +144,10 @@ session and domain-record preparation.
 This gives integration coverage across the Task 153–188 service boundaries,
 but it is not a claim that every surrounding API lifecycle or external
 dependency is exercised in production conditions. The Stage 6 and provider
-boundaries remain substituted, and the final coverage still requires review
-and the project owner's full pytest gate before Stage 7 is treated as complete.
+boundaries remain substituted. The project owner reported that the final
+local pytest, Ruff, and Black gates passed at the Task 200 checkpoint. Those
+software checks do not validate a future model for clinical use or substitute
+for any required clinical validation and qualified oversight.
 
 To validate the integration coverage and repository from the project root,
 with the virtual environment from the local Python workflow above activated:
