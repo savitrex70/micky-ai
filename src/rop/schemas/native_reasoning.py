@@ -72,6 +72,14 @@ class NativeReasoningErrorCode(StrEnum):
     CONTRACT_VIOLATION = "CONTRACT_VIOLATION"
 
 
+class NativeReasoningErrorMessage(StrEnum):
+    INVALID_REQUEST = "Request is invalid."
+    INPUT_UNAVAILABLE = "Required input is unavailable."
+    DEPENDENCY_UNAVAILABLE = "A required dependency is unavailable."
+    RESOURCE_LIMIT = "A configured resource limit was reached."
+    CONTRACT_VIOLATION = "The result did not satisfy its contract."
+
+
 class NativeReasoningRequest(BaseModel):
     """Shape contract only; callers validate identity and evidence binding."""
 
@@ -83,15 +91,6 @@ class NativeReasoningRequest(BaseModel):
     context_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     task: NativeReasoningTask
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
-    input_summary: StrictStr = Field(min_length=1, max_length=4000)
-
-    @field_validator("input_summary")
-    @classmethod
-    def _nonblank_summary(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("input_summary must not be blank")
-        return value
-
     @field_validator("evidence_ids")
     @classmethod
     def _unique_evidence_ids(cls, value: list[UUID]) -> list[UUID]:
@@ -233,12 +232,11 @@ class NativeReasoningError(BaseModel):
     contract_version: Literal["1"]
     request_id: UUID | None
     code: NativeReasoningErrorCode
-    message: StrictStr = Field(min_length=1, max_length=500)
+    message: NativeReasoningErrorMessage
     retryable: StrictBool
 
-    @field_validator("message")
-    @classmethod
-    def _nonblank_message(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("message must not be blank")
-        return value
+    @model_validator(mode="after")
+    def _message_matches_code(self) -> NativeReasoningError:
+        if self.message.name != self.code.name:
+            raise ValueError("error message must match its canonical error code")
+        return self
