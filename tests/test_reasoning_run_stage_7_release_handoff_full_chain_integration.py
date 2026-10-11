@@ -122,6 +122,7 @@ from rop.services.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchService,
 )
 from rop.services.reasoning_run_stage_7_evidence_bundle import (
+    ReasoningRunStage7EvidenceBundleContractError,
     ReasoningRunStage7EvidenceBundleService,
 )
 from rop.services.reasoning_run_stage_7_evidence_bundle_audit import (
@@ -1232,3 +1233,234 @@ def test_task_188_preserves_bound_inconsistent_handoff_audit():
     assert "EXPECTED_STATUS_CONTRADICTION" in consistency188.findings
     assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
     assert "AUDIT_UNAVAILABLE" not in consistency188.findings
+
+
+# ---------------------------------------------------------------------------
+# Task 194: session identity and fingerprint binding
+# ---------------------------------------------------------------------------
+
+
+def test_ready_chain_preserves_one_session_and_canonical_fingerprint_verbatim():
+    """Every session echo agrees and fingerprint copies remain byte-for-byte equal."""
+    upstream = _produce_upstream_ready("Task 194 identity and fingerprint")
+    chain = _compose_full_chain(upstream)
+    session_id = upstream["session_id"]
+    fingerprint = upstream["pkg162"]["request_fingerprint"]
+
+    assert session_id
+    assert isinstance(fingerprint, str)
+    assert len(fingerprint) == 64
+    assert all(character in "0123456789abcdef" for character in fingerprint)
+
+    for boundary in ("pkg162", "slice163", "audit164"):
+        assert upstream[boundary]["session_id"] == session_id
+
+    for boundary, record in chain.items():
+        if boundary != "session_id":
+            assert record["session_id"] == session_id, boundary
+
+    assert chain["bundle165"]["request_fingerprint"] == fingerprint
+    assert chain["audit166"]["audited_bundle"]["request_fingerprint"] == fingerprint
+    assert chain["package168"]["t162_request_fingerprint"] == fingerprint
+    assert (
+        chain["package168"]["t165_bundle_evidence"]["request_fingerprint"]
+        == fingerprint
+    )
+    assert (
+        chain["package168"]["t166_audited_bundle"]["request_fingerprint"]
+        == fingerprint
+    )
+
+
+def test_mismatched_upstream_session_is_not_recovered_by_later_boundaries():
+    """A detached Task 163 identity fails closed through the handoff chain."""
+    upstream = _produce_upstream_ready("Task 194 detached upstream session")
+    upstream["slice163"]["session_id"] = "detached-session-194"
+
+    chain = _compose_full_chain(upstream)
+
+    assert chain["bundle165"]["bundle_status"] == "UNAVAILABLE"
+    assert chain["bundle165"]["session_id"] == ""
+    assert chain["package168"]["package_status"] == "UNAVAILABLE"
+    assert chain["package168"]["session_id"] == ""
+
+    for boundary in (
+        "attestation171",
+        "projection174",
+        "attestation180",
+        "projection183",
+        "package186",
+        "consistency188",
+    ):
+        assert chain[boundary]["session_id"] == "", boundary
+    assert chain["package186"]["package_status"] != "READY"
+    assert "detached-session-194" not in {
+        record["session_id"]
+        for name, record in chain.items()
+        if name != "session_id"
+    }
+
+
+def test_empty_upstream_audit_identity_is_not_restored_downstream():
+    """A genuine UNAVAILABLE Task 164 audit carries no session identity."""
+    from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+        ReasoningRunStage7VerticalSliceAuditRead,
+    )
+
+    upstream = _produce_upstream_ready("Task 194 empty audit identity")
+    unavailable_audit = ReasoningRunStage7VerticalSliceAuditService.audit()
+    validated_audit = ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+        unavailable_audit
+    )
+    assert validated_audit.slice_audit_status == "UNAVAILABLE"
+    assert validated_audit.session_id == ""
+    upstream["audit164"] = validated_audit.model_dump()
+
+    chain = _compose_full_chain(upstream)
+
+    assert chain["bundle165"]["session_id"] == ""
+    assert chain["package168"]["session_id"] == ""
+    for boundary in (
+        "attestation171",
+        "projection174",
+        "attestation180",
+        "projection183",
+        "package186",
+        "consistency188",
+    ):
+        assert chain[boundary]["session_id"] == "", boundary
+    assert chain["package186"]["package_status"] != "READY"
+
+
+def test_detached_task_184_audit_identity_stays_untrusted_through_task_188():
+    """Later boundaries cannot repair a gate audit detached from its projection."""
+    chain = _compose_full_chain(
+        _produce_upstream_ready("Task 194 detached downstream audit")
+    )
+    projection = _P183.model_validate(chain["projection183"])
+    gate = _compose_gate_handoff_from_projection(chain, projection)
+    audit184 = _A184.model_validate(gate["audit184"])
+    assert audit184.gate_audit_status == "CONSISTENT"
+    audit184.session_id = "detached-gate-audit-194"
+
+    consistency185 = _C185.model_validate(
+        ReasoningRunStage7FinalReleaseGateAuditConsistencyService.verify(
+            projection=projection,
+            audit=audit184,
+        )
+    )
+    assert consistency185.gate_consistency_status == "INCONSISTENT"
+    assert "SESSION_MISMATCH" in consistency185.findings
+
+    package186 = _P186.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageService.assemble(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+        )
+    )
+    assert package186.package_status == "UNAVAILABLE"
+    assert package186.session_id == ""
+
+    audit187 = _A187.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+            package=package186,
+        )
+    )
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert "SESSION_BINDING_MISMATCH" in audit187.findings
+
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package186,
+            audit=audit187,
+        )
+    )
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert consistency188.session_id == ""
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
+
+
+def test_task_167_fingerprint_snapshot_mismatch_cannot_produce_ready_package():
+    """A different canonical fingerprint is detected, not recomputed or repaired."""
+    from rop.schemas.reasoning_run_stage_7_audit_package import (
+        ReasoningRunStage7AuditPackageRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice import (
+        ReasoningRunStage7VerticalSliceRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+        ReasoningRunStage7VerticalSliceAuditRead,
+    )
+
+    upstream = _produce_upstream_ready("Task 194 fingerprint snapshot mismatch")
+    original_fingerprint = upstream["pkg162"]["request_fingerprint"]
+    bundle = _B165.model_validate(_compose_full_chain(upstream)["bundle165"])
+    audit = _A166.model_validate(
+        _compose_full_chain(upstream)["audit166"]
+    )
+    replacement = "b" * 64 if original_fingerprint != "b" * 64 else "c" * 64
+    bundle.request_fingerprint = replacement
+
+    consistency167 = _C167.model_validate(
+        ReasoningRunStage7EvidenceBundleAuditConsistencyService.verify(
+            bundle=bundle,
+            audit=audit,
+        )
+    )
+    assert consistency167.consistency_status == "INCONSISTENT"
+    assert "BUNDLE_SNAPSHOT_MISMATCH" in consistency167.findings
+
+    package168 = _PKG168.model_validate(
+        ReasoningRunStage7EvidencePackageService.assemble(
+            pkg162=ReasoningRunStage7AuditPackageRead.model_validate(
+                upstream["pkg162"]
+            ),
+            slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
+                upstream["slice163"]
+            ),
+            audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+                upstream["audit164"]
+            ),
+            bundle165=bundle,
+            audit166=audit,
+            consistency167=consistency167,
+        )
+    )
+    assert package168.package_status == "UNAVAILABLE"
+    assert package168.t162_request_fingerprint == original_fingerprint
+    assert package168.t165_bundle_evidence.request_fingerprint == replacement
+    assert "T165_T162_EVIDENCE_MISMATCH" in package168.findings
+
+
+def test_malformed_request_fingerprint_cannot_publish_ready_task_165_bundle():
+    """Task 165 rejects malformed fingerprint shape instead of emitting READY."""
+    from rop.schemas.reasoning_run_stage_7_audit_package import (
+        ReasoningRunStage7AuditPackageRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice import (
+        ReasoningRunStage7VerticalSliceRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+        ReasoningRunStage7VerticalSliceAuditRead,
+    )
+
+    upstream = _produce_upstream_ready("Task 194 malformed fingerprint")
+    package162 = ReasoningRunStage7AuditPackageRead.model_validate(upstream["pkg162"])
+    package162.request_fingerprint = "not-a-canonical-fingerprint"
+
+    with pytest.raises(ReasoningRunStage7EvidenceBundleContractError) as exc_info:
+        ReasoningRunStage7EvidenceBundleService.assemble(
+            pkg162=package162,
+            slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
+                upstream["slice163"]
+            ),
+            audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+                upstream["audit164"]
+            ),
+        )
+    assert exc_info.value.invariant == "EVIDENCE_BUNDLE_RESULT_INVALID"
+
