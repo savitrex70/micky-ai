@@ -61,7 +61,9 @@ def _record(
     return NativeEvidenceRecord.model_validate(value)
 
 
-def _bundle(records: tuple[NativeEvidenceRecord, ...], **patch: object) -> NativeEvidenceBundle:
+def _bundle(
+    records: tuple[NativeEvidenceRecord, ...], **patch: object
+) -> NativeEvidenceBundle:
     value = {
         "contract_version": "1",
         "session_id": UUID(int=100),
@@ -118,7 +120,9 @@ def test_provenance_requires_nonblank_reference_and_canonical_hash() -> None:
     with pytest.raises(ValidationError):
         NativeEvidenceProvenance.model_validate(_provenance(source_reference=" "))
     with pytest.raises(ValidationError):
-        NativeEvidenceProvenance.model_validate(_provenance(source_fingerprint="not-a-hash"))
+        NativeEvidenceProvenance.model_validate(
+            _provenance(source_fingerprint="not-a-hash")
+        )
 
 
 def test_bundle_rejects_duplicate_or_noncanonical_evidence_ids() -> None:
@@ -171,7 +175,9 @@ def test_bundle_rejects_missing_self_and_cyclic_parent_references() -> None:
                     UUID(int=1),
                     kind=NativeEvidenceKind.DERIVED_INTERPRETATION,
                     derived_from_ids=(UUID(int=1),),
-                    provenance=_provenance(source_kind=NativeProvenanceKind.DERIVED_RECORD),
+                    provenance=_provenance(
+                        source_kind=NativeProvenanceKind.DERIVED_RECORD
+                    ),
                 ),
             )
         )
