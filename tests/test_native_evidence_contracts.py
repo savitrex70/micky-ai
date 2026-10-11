@@ -125,6 +125,26 @@ def test_provenance_requires_nonblank_reference_and_canonical_hash() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "reference",
+    [
+        r"C:\\Users\\private\\source.json",
+        "/home/private/source.json",
+        r"\\\\server\\share\\source.json",
+        "file:///private/source.json",
+        "https://user:password@example.test/source",
+        "source:private\nsource",
+    ],
+)
+def test_provenance_rejects_paths_credentials_and_control_characters(
+    reference: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        NativeEvidenceProvenance.model_validate(
+            _provenance(source_reference=reference)
+        )
+
+
 def test_bundle_rejects_duplicate_or_noncanonical_evidence_ids() -> None:
     record = _record(UUID(int=1))
     with pytest.raises(ValidationError):
