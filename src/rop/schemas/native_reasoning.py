@@ -6,7 +6,15 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 CONTRACT_VERSION = "1"
 MAX_EVIDENCE_REFERENCES = 256
@@ -67,7 +75,7 @@ class NativeReasoningErrorCode(StrEnum):
 class NativeReasoningRequest(BaseModel):
     """Shape contract only; callers validate identity and evidence binding."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"]
     request_id: UUID
@@ -75,7 +83,7 @@ class NativeReasoningRequest(BaseModel):
     context_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     task: NativeReasoningTask
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
-    input_summary: str = Field(min_length=1, max_length=4000)
+    input_summary: StrictStr = Field(min_length=1, max_length=4000)
 
     @field_validator("input_summary")
     @classmethod
@@ -98,7 +106,7 @@ class NativeReasoningSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     kind: NativeReasoningSuggestionKind
-    value: str = Field(min_length=1, max_length=1000)
+    value: StrictStr = Field(min_length=1, max_length=1000)
     reason_code: NativeReasonCode
     uncertainty: NativeReasoningUncertainty
     advisory_only: Literal[True]
@@ -121,12 +129,12 @@ class NativeReasoningResult(BaseModel):
     session_id: UUID
     context_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: NativeReasoningStatus
-    conclusion: str | None = Field(max_length=4000)
+    conclusion: StrictStr | None = Field(max_length=4000)
     reason_codes: list[NativeReasonCode] = Field(max_length=MAX_REASON_CODES)
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
-    missing_information: list[str] = Field(max_length=MAX_MISSING_INFORMATION_ITEMS)
+    missing_information: list[StrictStr] = Field(max_length=MAX_MISSING_INFORMATION_ITEMS)
     uncertainty: NativeReasoningUncertainty
-    abstention_reason: str | None = Field(max_length=1000)
+    abstention_reason: StrictStr | None = Field(max_length=1000)
     suggestions: list[NativeReasoningSuggestion] = Field(max_length=MAX_SUGGESTIONS)
 
     @field_validator("conclusion", "abstention_reason")
@@ -163,6 +171,8 @@ class NativeReasoningResult(BaseModel):
         if conclusive:
             if self.conclusion is None or not self.evidence_ids:
                 raise ValueError("conclusive results require conclusion and evidence")
+            if self.status == NativeReasoningStatus.CONTRADICTED and len(self.evidence_ids) < 2:
+                raise ValueError("CONTRADICTED requires at least two evidence references")
             if self.uncertainty == NativeReasoningUncertainty.UNASSESSED:
                 raise ValueError("conclusive results require assessed uncertainty")
         elif self.conclusion is not None:
@@ -209,8 +219,8 @@ class NativeReasoningError(BaseModel):
     contract_version: Literal["1"]
     request_id: UUID | None
     code: NativeReasoningErrorCode
-    message: str = Field(min_length=1, max_length=500)
-    retryable: bool
+    message: StrictStr = Field(min_length=1, max_length=500)
+    retryable: StrictBool
 
     @field_validator("message")
     @classmethod
