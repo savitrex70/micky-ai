@@ -17,7 +17,6 @@ from rop.schemas.native_evidence import (
     NativeEvidenceAvailability,
     NativeEvidenceBundle,
     NativeEvidenceKind,
-    NativeEvidenceProvenance,
     NativeEvidenceRecord,
     NativeEvidenceStance,
     NativeEvidenceUncertainty,
@@ -78,7 +77,6 @@ def _bundle(*records: NativeEvidenceRecord, **patch: object) -> NativeEvidenceBu
         "session_id": SESSION_ID,
         "context_fingerprint": FINGERPRINT,
         "records": tuple(sorted(records, key=lambda item: str(item.evidence_id))),
-        "contract_version": "1",
     }
     value.update(patch)
     return NativeEvidenceBundle.model_validate(value)
