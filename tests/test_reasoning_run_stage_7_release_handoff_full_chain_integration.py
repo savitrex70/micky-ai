@@ -2016,8 +2016,13 @@ def test_task_198_raw_request_and_provider_payloads_are_not_published() -> None:
     # Privacy filtering must not discard the canonical provider attribution.
     assert chain["bundle165"]["provider_name"] == upstream["slice163"]["provider_name"]
     assert chain["bundle165"]["model_name"] == upstream["slice163"]["model_name"]
-    assert chain["package168"]["t162_provider_name"] == upstream["pkg162"]["provider_name"]
-    assert chain["package168"]["t162_model_name"] == upstream["pkg162"]["model_name"]
+    assert (
+        chain["package168"]["t162_provider_name"]
+        == upstream["pkg162"]["provider_name"]
+    )
+    assert (
+        chain["package168"]["t162_model_name"] == upstream["pkg162"]["model_name"]
+    )
 
 
 def test_task_198_malformed_evidence_diagnostics_do_not_echo_untrusted_values() -> None:
