@@ -107,10 +107,34 @@ These projections and packages are evidence-only. They do not execute or
 authorize a release, invoke a provider, access a database, persist records,
 or transmit a handoff.
 
-To validate the chain and the repository from the project root, with the
-virtual environment from the local Python workflow above activated:
+#### Integration coverage and boundaries
+
+Task 189's `tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py`
+composes the real Task 174–188 services. Its Task 171–173 attestation, audit,
+and consistency inputs are constructed as validated boundary records; that
+test does not invoke those three upstream services itself.
+
+The Task 191 integration coverage in
+`tests/test_reasoning_run_stage_7_release_handoff_full_chain_integration.py`
+builds upstream evidence using the real Task 154–164 services, then invokes the
+real Task 165–188 services in dependency order. This includes executing the
+real Task 171 attestation, Task 172 audit, and Task 173 consistency services
+from validated upstream results. Stage 6 certification and the provider
+response are the genuine external boundaries replaced with test doubles; no
+real model provider or network inference is used.
+
+This test setup still creates its initial session and supporting domain
+records through test helpers and does not invoke the Task 153 entry service.
+It therefore does not establish that every Stage 7 service from Task 153
+through Task 188 has been exercised end to end. Task 200 is intended to extend
+the integration path to the earliest supported entry boundary; any broader
+coverage claim depends on that test being implemented and reviewed.
+
+To validate the integration coverage and repository from the project root,
+with the virtual environment from the local Python workflow above activated:
 
 ```powershell
+pytest tests/test_reasoning_run_stage_7_release_handoff_full_chain_integration.py -q
 pytest tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py -q
 pytest -q
 ruff check .
