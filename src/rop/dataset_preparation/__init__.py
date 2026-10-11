@@ -275,6 +275,13 @@ def _fingerprint_records(records: tuple[RawDatasetRecord, ...]) -> str:
     return digest.hexdigest()
 
 
+def records_fingerprint(records: tuple[RawDatasetRecord, ...]) -> str:
+    """Public record-set fingerprint; lets downstream artifacts (vocabulary,
+    models) bind to the exact authorized training split they were fit on.
+    """
+    return _fingerprint_records(records)
+
+
 __all__ = [
     "DatasetPreparationError",
     "NORMALIZATION_TRANSFORMATION_VERSION",
@@ -286,6 +293,7 @@ __all__ = [
     "exact_deduplicate",
     "fit_transformation_on_train_only",
     "normalize_content",
+    "records_fingerprint",
     "require_authorized_source",
     "validate_records",
 ]
