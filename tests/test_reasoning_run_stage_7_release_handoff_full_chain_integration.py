@@ -1846,3 +1846,102 @@ def test_task_183_185_source_forgery_fails_closed_through_task_188(
     assert consistency188.consistency_status == "INCONSISTENT"
     assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
     assert "AUDIT_INCONSISTENT" in consistency188.findings
+
+
+# ---------------------------------------------------------------------------
+# Task 197: blocked source-forgery precedence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    (
+        "boundary",
+        "source_field",
+        "package_source_field",
+        "valid_field",
+        "invalid_finding",
+    ),
+    [
+        (
+            "projection183",
+            "projection_source",
+            "t183_projection_source",
+            "t183_valid",
+            "T183_EVIDENCE_INVALID",
+        ),
+        (
+            "audit184",
+            "audit_source",
+            "t184_audit_source",
+            "t184_valid",
+            "T184_EVIDENCE_INVALID",
+        ),
+        (
+            "consistency185",
+            "consistency_source",
+            "t185_consistency_source",
+            "t185_valid",
+            "T185_EVIDENCE_INVALID",
+        ),
+    ],
+)
+def test_task_183_185_forged_sources_do_not_hide_explicit_blocking_evidence(
+    boundary: str,
+    source_field: str,
+    package_source_field: str,
+    valid_field: str,
+    invalid_finding: str,
+):
+    """A forged source cannot erase a BLOCKED gate or validate its handoff."""
+    chain = _compose_full_chain(_blocked_upstream())
+    projection = _P183.model_validate(chain["projection183"])
+    audit = _A184.model_validate(chain["audit184"])
+    consistency = _C185.model_validate(chain["consistency185"])
+
+    child_by_boundary = {
+        "projection183": projection,
+        "audit184": audit,
+        "consistency185": consistency,
+    }
+    forged_source = f"FORGED_{source_field.upper()}_TASK_197"
+    setattr(child_by_boundary[boundary], source_field, forged_source)
+
+    package = _P186.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageService.assemble(
+            projection=projection,
+            audit=audit,
+            consistency=consistency,
+        )
+    )
+    assert package.package_status == "BLOCKED"
+    assert package.t183_gate_status == "BLOCKED"
+    assert package.t184_published_gate_status == "BLOCKED"
+    assert package.t185_expected_gate_status == "BLOCKED"
+    assert getattr(package, package_source_field) == forged_source
+    assert getattr(package, valid_field) is False
+    assert "CHILD_SOURCE_MISMATCH" in package.findings
+    assert invalid_finding in package.findings
+    assert "EXPLICIT_BLOCKING_GATE_EVIDENCE" in package.findings
+
+    audit187 = _A187.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=audit,
+            consistency=consistency,
+            package=package,
+        )
+    )
+    assert audit187.published_package_status == "BLOCKED"
+    assert audit187.expected_package_status == "BLOCKED"
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert "CHILD_SOURCE_INVALID" in audit187.findings
+
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package,
+            audit=audit187,
+        )
+    )
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
+    assert "AUDIT_INCONSISTENT" in consistency188.findings
