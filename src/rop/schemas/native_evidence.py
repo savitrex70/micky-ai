@@ -23,6 +23,15 @@ MAX_STRUCTURED_EVIDENCE_RECORDS = 256
 MAX_DERIVATION_PARENTS = 64
 
 
+# HTTP(S) URL: non-empty authority without userinfo, no backslashes or whitespace.
+_HTTP_URL = re.compile(r"https?://[^/?#\\@\s]+(?:[/?#][^\\\s]*)?", re.IGNORECASE)
+# Opaque `scheme:identifier`: scheme of 2+ characters (so `C:` drive prefixes never
+# match) and an identifier with no path separators, whitespace or leading dot.
+_OPAQUE_IDENTIFIER = re.compile(
+    r"(?!(?:https?|file):)[A-Za-z][A-Za-z0-9+.-]+:[A-Za-z0-9][A-Za-z0-9._~:+=%@-]*"
+)
+
+
 class NativeEvidenceKind(StrEnum):
     OBSERVATION = "OBSERVATION"
     SOURCE_RECORD = "SOURCE_RECORD"
@@ -83,7 +92,16 @@ class NativeEvidenceProvenance(BaseModel):
             raise ValueError("source_reference must not expose a filesystem path")
         if re.search(r"://[^/@:]+:[^/@]+@", value):
             raise ValueError("source_reference must not contain URL credentials")
-        return value
+        # Policy: a reference is either a safe external HTTP(S) URL or an opaque
+        # `scheme:identifier` token. Anything else, including relative paths in
+        # POSIX or Windows form, is rejected rather than rewritten. Both slash
+        # conventions are inspected explicitly so results do not depend on the
+        # host operating system.
+        if _HTTP_URL.fullmatch(value) or _OPAQUE_IDENTIFIER.fullmatch(value):
+            return value
+        raise ValueError(
+            "source_reference must be an opaque identifier or a safe HTTP(S) URL"
+        )
 
 
 class NativeEvidenceRecord(BaseModel):

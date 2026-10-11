@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -133,16 +133,46 @@ def test_provenance_requires_nonblank_reference_and_canonical_hash() -> None:
         r"\\\\server\\share\\source.json",
         "file:///private/source.json",
         "https://user:password@example.test/source",
+        "https://user@example.test/source",
         "source:private\nsource",
+        # parent-directory traversal, both separators
+        "../private/source.json",
+        "../../secrets.txt",
+        r"..\private\source.json",
+        r"..\..\secrets.txt",
+        "source/../../secrets.txt",
+        "..",
+        # current-directory segments, both separators
+        "./private/source.json",
+        r".\private\source.json",
+        "./source.json",
+        # relative directory paths, both separators
+        "private/source.json",
+        r"private\source.json",
+        "private/sub/source.json",
+        r"private\sub\source.json",
+        # drive-relative and drive-absolute Windows forms
+        "C:private",
+        "C:/private/source.json",
+        r"C:\private\source.json",
+        # bare, ambiguous names and other unsupported shapes
+        "secrets.txt",
+        "document-900",
+        "~/private/source.json",
+        "ftp://example.test/source",
+        "https:/example.test/source",
+        "https://",
+        r"https://example.test\private",
+        "source: document-900",
+        "source:.hidden",
+        "file:private/source.json",
     ],
 )
 def test_provenance_rejects_paths_credentials_and_control_characters(
     reference: str,
 ) -> None:
     with pytest.raises(ValidationError):
-        NativeEvidenceProvenance.model_validate(
-            _provenance(source_reference=reference)
-        )
+        NativeEvidenceProvenance.model_validate(_provenance(source_reference=reference))
 
 
 def test_bundle_rejects_duplicate_or_noncanonical_evidence_ids() -> None:
@@ -241,3 +271,23 @@ def test_bundle_rejects_extra_fields_and_oversized_record_lists() -> None:
     records = tuple(_record(UUID(int=i)) for i in range(1, 258))
     with pytest.raises(ValidationError):
         _bundle(records)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "source:document-900",
+        "doc:abc_123.v2",
+        "urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        "db:records~42",
+        "https://example.test/source",
+        "http://example.test/path/to/source?id=1#part",
+        "HTTPS://Example.test:8443/source",
+        "https://example.test/a/../b",
+    ],
+)
+def test_provenance_accepts_opaque_identifiers_and_safe_urls(reference: str) -> None:
+    provenance = NativeEvidenceProvenance.model_validate(
+        _provenance(source_reference=reference)
+    )
+    assert provenance.source_reference == reference
