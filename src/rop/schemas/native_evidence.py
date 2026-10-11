@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from enum import StrEnum
 from typing import Literal
@@ -23,8 +24,51 @@ MAX_STRUCTURED_EVIDENCE_RECORDS = 256
 MAX_DERIVATION_PARENTS = 64
 
 
-# HTTP(S) URL: non-empty authority without userinfo, no backslashes or whitespace.
-_HTTP_URL = re.compile(r"https?://[^/?#\\@\s]+(?:[/?#][^\\\s]*)?", re.IGNORECASE)
+# HTTP(S) URL shape: authority without userinfo, backslashes or whitespace, then an
+# optional path/query/fragment. The authority is validated separately below.
+_HTTP_URL = re.compile(
+    r"https?://(?P<authority>[^/?#\\@\s]+)(?:[/?#][^\\\s]*)?", re.IGNORECASE
+)
+_BRACKETED_HOST = re.compile(r"\[(?P<ip>[0-9A-Fa-f:.]+)\](?::(?P<port>[^:]*))?")
+_DNS_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_DNS_NAME = re.compile(rf"{_DNS_LABEL}(?:\.{_DNS_LABEL})*")
+_MAX_HOST_LENGTH = 253
+
+
+def _valid_port(port: str) -> bool:
+    return port.isascii() and port.isdigit() and 1 <= int(port) <= 65535
+
+
+def _valid_authority(authority: str) -> bool:
+    """Syntactic host[:port] check; bracketed IPv6, IPv4 and DNS names only."""
+    bracketed = _BRACKETED_HOST.fullmatch(authority)
+    if bracketed:
+        try:
+            ipaddress.IPv6Address(bracketed["ip"])
+        except ValueError:
+            return False
+        port = bracketed["port"]
+        return port is None or _valid_port(port)
+    if authority.startswith("[") or "[" in authority or "]" in authority:
+        return False
+    host, separator, port = authority.partition(":")
+    if separator and not _valid_port(port):
+        return False
+    if len(host) > _MAX_HOST_LENGTH or not _DNS_NAME.fullmatch(host):
+        return False
+    if re.fullmatch(r"[0-9.]+", host):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return False
+    return True
+
+
+def _is_safe_http_url(value: str) -> bool:
+    match = _HTTP_URL.fullmatch(value)
+    return match is not None and _valid_authority(match["authority"])
+
+
 # Opaque `scheme:identifier`: scheme of 2+ characters (so `C:` drive prefixes never
 # match) and an identifier with no path separators, whitespace or leading dot.
 _OPAQUE_IDENTIFIER = re.compile(
@@ -97,7 +141,7 @@ class NativeEvidenceProvenance(BaseModel):
         # POSIX or Windows form, is rejected rather than rewritten. Both slash
         # conventions are inspected explicitly so results do not depend on the
         # host operating system.
-        if _HTTP_URL.fullmatch(value) or _OPAQUE_IDENTIFIER.fullmatch(value):
+        if _is_safe_http_url(value) or _OPAQUE_IDENTIFIER.fullmatch(value):
             return value
         raise ValueError(
             "source_reference must be an opaque identifier or a safe HTTP(S) URL"
