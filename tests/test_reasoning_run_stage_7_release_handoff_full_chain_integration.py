@@ -1698,10 +1698,7 @@ def test_ready_chain_preserves_provider_attribution_and_canonical_sources():
     assert chain["package186"]["t183_projection_source"] == (
         chain["projection183"]["projection_source"]
     )
-    assert (
-        chain["package186"]["t184_audit_source"]
-        == chain["audit184"]["audit_source"]
-    )
+    assert chain["package186"]["t184_audit_source"] == chain["audit184"]["audit_source"]
     assert chain["package186"]["t185_consistency_source"] == (
         chain["consistency185"]["consistency_source"]
     )
@@ -1752,4 +1749,3 @@ def test_noncanonical_task_162_source_is_preserved_and_fails_closed_end_to_end()
     assert "T162_SOURCE_MISMATCH" in package["findings"]
     assert chain["package186"]["package_status"] == "UNAVAILABLE"
     assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
-
