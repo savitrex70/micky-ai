@@ -1143,7 +1143,7 @@ def test_task_170_preserves_a_bound_audit_of_inconsistent_package_evidence():
 
 
 def test_unreadable_handoff_audit_remains_unavailable_without_invented_conflict():
-    """Unreadable audit inputs cannot prove a contradiction or a successful binding."""
+    """Unreadable audit evidence cannot prove a conflict or successful binding."""
     chain = _compose_full_chain(
         _produce_upstream_ready("Task 193 unreadable Task 187 evidence")
     )
@@ -1151,11 +1151,13 @@ def test_unreadable_handoff_audit_remains_unavailable_without_invented_conflict(
     consistency185 = _C185.model_validate(chain["consistency185"])
     package = _P186.model_validate(chain["package186"])
 
-    audit187_payload = ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
-        projection=projection,
-        audit=object(),
-        consistency=consistency185,
-        package=package,
+    audit187_payload = (
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=object(),
+            consistency=consistency185,
+            package=package,
+        )
     )
     audit187 = _A187.model_validate(audit187_payload)
     assert audit187.package_audit_status == "UNAVAILABLE"
