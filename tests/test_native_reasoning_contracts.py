@@ -100,6 +100,7 @@ def test_contradiction_is_not_unavailable_or_insufficient_evidence() -> None:
         _result(
             status=NativeReasoningStatus.CONTRADICTED,
             reason_codes=[NativeReasonCode.CONFLICTING_EVIDENCE],
+            evidence_ids=[UUID(int=1), UUID(int=2)],
         )
     )
     unavailable = NativeReasoningResult.model_validate(
