@@ -2064,7 +2064,6 @@ def test_task_198_malformed_evidence_diagnostics_do_not_echo_untrusted_values() 
     assert raw_value not in json.dumps(result, sort_keys=True)
 
 
-
 # ---------------------------------------------------------------------------
 # Task 200: whole Stage 7 integration from entry through handoff
 # ---------------------------------------------------------------------------
@@ -2239,6 +2238,13 @@ def test_task_200_unreadable_certification_fails_closed_through_handoff():
     assert upstream["pkg162"]["provider_name"] is None
     assert upstream["pkg162"]["model_name"] is None
     assert upstream["slice163"]["slice_status"] == "UNAVAILABLE"
+    assert chain["bundle165"]["provider_name"] is None
+    assert chain["bundle165"]["model_name"] is None
+    assert chain["package168"]["t162_provider_name"] is None
+    assert chain["package168"]["t162_model_name"] is None
+    assert chain["package168"]["t163_provider_name"] is None
+    assert chain["package168"]["t163_model_name"] is None
+    assert chain["session_id"] == session_id
     _assert_status_propagates(chain, "UNAVAILABLE")
     assert chain["package186"]["package_status"] == "UNAVAILABLE"
     assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
