@@ -114,6 +114,16 @@ class NativeReasoningErrorMessage(StrEnum):
     CONTRACT_VIOLATION = "The result did not satisfy its contract."
 
 
+# Canonical retryability policy; `retryable` must agree with the error code.
+RETRYABLE_BY_ERROR_CODE: dict[str, bool] = {
+    "INVALID_REQUEST": False,
+    "INPUT_UNAVAILABLE": False,
+    "DEPENDENCY_UNAVAILABLE": True,
+    "RESOURCE_LIMIT": True,
+    "CONTRACT_VIOLATION": False,
+}
+
+
 class NativeReasoningRequest(BaseModel):
     """Shape contract only; callers validate identity and evidence binding."""
 
@@ -285,4 +295,6 @@ class NativeReasoningError(BaseModel):
     def _message_matches_code(self) -> NativeReasoningError:
         if self.message.name != self.code.name:
             raise ValueError("error message must match its canonical error code")
+        if self.retryable is not RETRYABLE_BY_ERROR_CODE[self.code.value]:
+            raise ValueError("retryable must match the canonical policy for the code")
         return self

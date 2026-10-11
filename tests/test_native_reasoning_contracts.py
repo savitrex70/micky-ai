@@ -648,7 +648,7 @@ def test_error_messages_are_exactly_the_canonical_set() -> None:
 def test_error_code_and_message_pairs(
     code: NativeReasoningErrorCode, message: NativeReasoningErrorMessage
 ) -> None:
-    payload = _error(code=code, message=message)
+    payload = _error(code=code, message=message, retryable=_CODE_RETRYABLE[code])
     if code.name == message.name:
         NativeReasoningError.model_validate(payload)
     else:
@@ -851,3 +851,29 @@ def test_every_contract_rejects_wrongly_typed_fields(
     payload[field] = value
     with pytest.raises(ValidationError):
         model.model_validate(payload)
+
+
+@pytest.mark.parametrize("code", list(NativeReasoningErrorCode))
+def test_error_retryable_must_match_canonical_policy(
+    code: NativeReasoningErrorCode,
+) -> None:
+    message = NativeReasoningErrorMessage[code.name]
+    canonical = _CODE_RETRYABLE[code]
+    accepted = NativeReasoningError.model_validate(
+        _error(code=code, message=message, retryable=canonical)
+    )
+    assert accepted.retryable is canonical
+    with pytest.raises(ValidationError):
+        NativeReasoningError.model_validate(
+            _error(code=code, message=message, retryable=not canonical)
+        )
+
+
+def test_error_retryability_policy_is_exactly_the_documented_mapping() -> None:
+    assert _CODE_RETRYABLE == {
+        NativeReasoningErrorCode.INVALID_REQUEST: False,
+        NativeReasoningErrorCode.INPUT_UNAVAILABLE: False,
+        NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE: True,
+        NativeReasoningErrorCode.RESOURCE_LIMIT: True,
+        NativeReasoningErrorCode.CONTRACT_VIOLATION: False,
+    }
