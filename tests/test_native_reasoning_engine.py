@@ -1,4 +1,4 @@
-"""Task 204 deterministic composition tests; no model, provider, network, or database."""
+"""Task 204 composition tests; no model, provider, network, or database."""
 
 from __future__ import annotations
 
