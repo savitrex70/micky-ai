@@ -132,7 +132,9 @@ class NativeReasoningResult(BaseModel):
     conclusion: StrictStr | None = Field(max_length=4000)
     reason_codes: list[NativeReasonCode] = Field(max_length=MAX_REASON_CODES)
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
-    missing_information: list[StrictStr] = Field(max_length=MAX_MISSING_INFORMATION_ITEMS)
+    missing_information: list[StrictStr] = Field(
+        max_length=MAX_MISSING_INFORMATION_ITEMS
+    )
     uncertainty: NativeReasoningUncertainty
     abstention_reason: StrictStr | None = Field(max_length=1000)
     suggestions: list[NativeReasoningSuggestion] = Field(max_length=MAX_SUGGESTIONS)
@@ -148,7 +150,9 @@ class NativeReasoningResult(BaseModel):
     @classmethod
     def _canonical_missing_information(cls, value: list[str]) -> list[str]:
         if any(not item.strip() or len(item) > 500 for item in value):
-            raise ValueError("missing-information items must be nonblank and <= 500 chars")
+            raise ValueError(
+                "missing-information items must be nonblank and <= 500 chars"
+            )
         if len(set(value)) != len(value) or value != sorted(value):
             raise ValueError("missing_information must be sorted and unique")
         return value
@@ -171,8 +175,13 @@ class NativeReasoningResult(BaseModel):
         if conclusive:
             if self.conclusion is None or not self.evidence_ids:
                 raise ValueError("conclusive results require conclusion and evidence")
-            if self.status == NativeReasoningStatus.CONTRADICTED and len(self.evidence_ids) < 2:
-                raise ValueError("CONTRADICTED requires at least two evidence references")
+            if (
+                self.status == NativeReasoningStatus.CONTRADICTED
+                and len(self.evidence_ids) < 2
+            ):
+                raise ValueError(
+                    "CONTRADICTED requires at least two evidence references"
+                )
             if self.uncertainty == NativeReasoningUncertainty.UNASSESSED:
                 raise ValueError("conclusive results require assessed uncertainty")
         elif self.conclusion is not None:
@@ -189,7 +198,9 @@ class NativeReasoningResult(BaseModel):
                 NativeReasonCode.EVIDENCE_MISSING,
                 NativeReasonCode.INSUFFICIENT_SUPPORT,
             }.intersection(self.reason_codes):
-                raise ValueError("insufficient evidence requires an insufficiency reason")
+                raise ValueError(
+                    "insufficient evidence requires an insufficiency reason"
+                )
         elif self.missing_information and self.status not in (
             NativeReasoningStatus.UNAVAILABLE,
             NativeReasoningStatus.ABSTAINED,
@@ -205,7 +216,10 @@ class NativeReasoningResult(BaseModel):
         elif self.abstention_reason is not None:
             raise ValueError("abstention_reason is only valid for ABSTAINED")
 
-        if self.status in (NativeReasoningStatus.UNAVAILABLE, NativeReasoningStatus.UNKNOWN):
+        if self.status in (
+            NativeReasoningStatus.UNAVAILABLE,
+            NativeReasoningStatus.UNKNOWN,
+        ):
             if not self.reason_codes:
                 raise ValueError(f"{self.status.value} requires a reason code")
         return self
