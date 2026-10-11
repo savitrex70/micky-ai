@@ -300,12 +300,10 @@ class NativeReasoningEngine:
 
         # Disagreement is not automatically a contradiction. Task 205 defines
         # contradiction semantics; until then, composition fails conservatively.
-        reason_codes.discard(NativeReasonCode.CONFLICTING_EVIDENCE)
-        reason_codes.add(NativeReasonCode.INSUFFICIENT_SUPPORT)
         return self._result(
             request,
             status=NativeReasoningStatus.UNKNOWN,
-            reason_codes=tuple(reason_codes),
+            reason_codes=(NativeReasonCode.INSUFFICIENT_SUPPORT,),
             evidence_ids=evidence_ids,
             missing_information=missing_information,
             uncertainty=NativeReasoningUncertainty.HIGH,
