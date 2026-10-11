@@ -115,14 +115,19 @@ class NativeReasoningRule(Protocol):
         """Return a finding when applicable, otherwise None."""
 
 
-
-
 @dataclass(frozen=True)
 class NativeReasoningExecution:
     """Immutable result plus the stable identifiers of rules that contributed."""
 
     result: NativeReasoningResult
     applied_rule_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _BoundRule:
+    rule_id: str
+    tasks: frozenset[NativeReasoningTask]
+    implementation: NativeReasoningRule
 
 
 class NativeReasoningCompositionError(Exception):
@@ -140,6 +145,7 @@ class NativeReasoningEngine:
         if len(rules) > MAX_NATIVE_REASONING_RULES:
             raise ValueError("too many native reasoning rules")
 
+        bound_rules: list[_BoundRule] = []
         rule_ids: list[str] = []
         for rule in rules:
             rule_id = getattr(rule, "rule_id", None)
@@ -151,10 +157,11 @@ class NativeReasoningEngine:
             if any(not isinstance(task, NativeReasoningTask) for task in tasks):
                 raise ValueError("rule tasks must use NativeReasoningTask values")
             rule_ids.append(rule_id)
+            bound_rules.append(_BoundRule(rule_id, tasks, rule))
 
         if len(set(rule_ids)) != len(rule_ids):
             raise ValueError("rule_id values must be unique")
-        self._rules = tuple(sorted(rules, key=lambda rule: rule.rule_id))
+        self._rules = tuple(sorted(bound_rules, key=lambda rule: rule.rule_id))
 
     def evaluate(
         self,
@@ -190,11 +197,11 @@ class NativeReasoningEngine:
         )
         findings: list[NativeRuleFinding] = []
         applied_rule_ids: list[str] = []
-        for rule in self._rules:
-            if request.task not in rule.tasks:
+        for bound_rule in self._rules:
+            if request.task not in bound_rule.tasks:
                 continue
             try:
-                finding = rule.evaluate(request, evidence)
+                finding = bound_rule.implementation.evaluate(request, evidence)
             except ValidationError as exc:
                 raise self._error(
                     request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
@@ -220,7 +227,7 @@ class NativeReasoningEngine:
                     request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
                 ) from exc
             findings.append(finding)
-            applied_rule_ids.append(rule.rule_id)
+            applied_rule_ids.append(bound_rule.rule_id)
 
         if not findings:
             result = self._result(
