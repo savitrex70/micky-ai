@@ -59,6 +59,77 @@ def test_valid_request_and_result_are_accepted() -> None:
     assert result.status == NativeReasoningStatus.SUPPORTED
 
 
+def test_public_contract_field_sets_are_exact() -> None:
+    assert set(NativeReasoningRequest.model_fields) == {
+        "contract_version",
+        "request_id",
+        "session_id",
+        "context_fingerprint",
+        "task",
+        "evidence_ids",
+    }
+    assert set(NativeReasoningResult.model_fields) == {
+        "contract_version",
+        "request_id",
+        "session_id",
+        "context_fingerprint",
+        "status",
+        "conclusion",
+        "reason_codes",
+        "evidence_ids",
+        "missing_information",
+        "uncertainty",
+        "abstention_reason",
+        "suggestions",
+    }
+    assert set(NativeReasoningSuggestion.model_fields) == {
+        "kind",
+        "value",
+        "reason_code",
+        "uncertainty",
+        "advisory_only",
+    }
+    assert set(NativeReasoningError.model_fields) == {
+        "contract_version",
+        "request_id",
+        "code",
+        "message",
+        "retryable",
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "contract_version",
+        "request_id",
+        "session_id",
+        "context_fingerprint",
+        "task",
+        "evidence_ids",
+    ),
+)
+def test_every_request_field_is_required(field: str) -> None:
+    request = _request()
+    del request[field]
+    with pytest.raises(ValidationError):
+        NativeReasoningRequest.model_validate(request)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", "SUPPORTED_BY_MODEL"),
+        ("uncertainty", "CERTAIN"),
+    ],
+)
+def test_result_rejects_unknown_status_and_uncertainty(field: str, value: str) -> None:
+    result = _result()
+    result[field] = value
+    with pytest.raises(ValidationError):
+        NativeReasoningResult.model_validate(result)
+
+
 def test_request_rejects_missing_extra_and_wrongly_typed_fields() -> None:
     request = _request()
     del request["session_id"]
@@ -205,6 +276,19 @@ def test_suggestion_is_advisory_and_cannot_claim_trusted_evidence() -> None:
         )
     result = NativeReasoningResult.model_validate(_result(suggestions=[suggestion]))
     assert result.suggestions[0].advisory_only is True
+
+
+def test_error_code_and_message_must_match() -> None:
+    with pytest.raises(ValidationError):
+        NativeReasoningError.model_validate(
+            {
+                "contract_version": "1",
+                "request_id": uuid4(),
+                "code": NativeReasoningErrorCode.INVALID_REQUEST,
+                "message": NativeReasoningErrorMessage.DEPENDENCY_UNAVAILABLE,
+                "retryable": False,
+            }
+        )
 
 
 def test_error_contract_is_bounded_and_rejects_extra_fields() -> None:
