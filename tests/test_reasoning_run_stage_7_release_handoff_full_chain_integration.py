@@ -974,3 +974,262 @@ def test_unavailable_business_state_fails_closed_to_handoff():
     assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
     assert chain["consistency188"]["available"] is True
     assert chain["session_id"] == upstream["session_id"]
+
+
+# ---------------------------------------------------------------------------
+# Task 193: contradiction precedence through independent audit boundaries
+# ---------------------------------------------------------------------------
+
+
+def _audit_task_169_package(
+    upstream: dict[str, object],
+    chain: dict[str, object],
+    package: object,
+) -> dict[str, object]:
+    """Audit a published Task 168 package against the chain's real inputs."""
+    from rop.schemas.reasoning_run_stage_7_audit_package import (
+        ReasoningRunStage7AuditPackageRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice import (
+        ReasoningRunStage7VerticalSliceRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+        ReasoningRunStage7VerticalSliceAuditRead,
+    )
+
+    return ReasoningRunStage7EvidencePackageAuditService.audit(
+        package=package,
+        pkg162=ReasoningRunStage7AuditPackageRead.model_validate(upstream["pkg162"]),
+        slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
+            upstream["slice163"]
+        ),
+        audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+            upstream["audit164"]
+        ),
+        bundle165=_B165.model_validate(chain["bundle165"]),
+        audit166=_A166.model_validate(chain["audit166"]),
+        consistency167=_C167.model_validate(chain["consistency167"]),
+    )
+
+
+def _compose_gate_handoff_from_projection(
+    chain: dict[str, object],
+    projection: object,
+) -> dict[str, object]:
+    """Re-run real Tasks 184-188 against a supplied published Task 183 record."""
+    attestation = _A180.model_validate(chain["attestation180"])
+    audit181 = _A181.model_validate(chain["audit181"])
+    consistency182 = _C182.model_validate(chain["consistency182"])
+
+    audit184 = _A184.model_validate(
+        ReasoningRunStage7FinalReleaseGateAuditService.audit(
+            attestation=attestation,
+            audit=audit181,
+            consistency=consistency182,
+            projection=projection,
+        )
+    )
+    consistency185 = _C185.model_validate(
+        ReasoningRunStage7FinalReleaseGateAuditConsistencyService.verify(
+            projection=projection,
+            audit=audit184,
+        )
+    )
+    package186 = _P186.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageService.assemble(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+        )
+    )
+    audit187 = _A187.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+            package=package186,
+        )
+    )
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package186,
+            audit=audit187,
+        )
+    )
+    return {
+        "audit184": audit184,
+        "consistency185": consistency185,
+        "package186": package186,
+        "audit187": audit187,
+        "consistency188": consistency188,
+    }
+
+
+def test_unavailable_published_gate_status_does_not_hide_readable_contradiction():
+    """Task 184-188 retain proof that an UNAVAILABLE claim contradicts READY inputs."""
+    upstream = _produce_upstream_ready("Task 193 unavailable-status contradiction")
+    chain = _compose_full_chain(upstream)
+    projection = _P183.model_validate(chain["projection183"])
+    assert projection.gate_status == "READY"
+
+    # Simulate a post-publication status corruption. All independently
+    # produced Task 180-182 evidence remains genuine and bound to this session.
+    projection.gate_status = "UNAVAILABLE"
+    result = _compose_gate_handoff_from_projection(chain, projection)
+
+    audit184 = result["audit184"]
+    assert audit184.gate_audit_status == "INCONSISTENT"
+    assert audit184.published_gate_status == "UNAVAILABLE"
+    assert audit184.expected_gate_status == "READY"
+    assert "GATE_STATUS_MISMATCH" in audit184.findings
+
+    consistency185 = result["consistency185"]
+    assert consistency185.gate_consistency_status == "INCONSISTENT"
+    assert "EXPECTED_STATUS_CONTRADICTION" in consistency185.findings
+
+    # The aggregate cannot erase the contradiction just because the published
+    # gate status says UNAVAILABLE.
+    audit187 = result["audit187"]
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert "T184_AUDIT_INCONSISTENT" in audit187.findings
+    assert "T185_CONSISTENCY_INCONSISTENT" in audit187.findings
+
+    consistency188 = result["consistency188"]
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
+    assert "AUDIT_INCONSISTENT" in consistency188.findings
+
+
+def test_task_169_detects_published_package_status_vs_independent_expectation():
+    """A forged Task 168 status is INCONSISTENT, not an unavailable audit."""
+    upstream = _produce_upstream_ready("Task 193 Task 168 status mismatch")
+    chain = _compose_full_chain(upstream)
+    package = _PKG168.model_validate(chain["package168"])
+    package.package_status = "BLOCKED"
+
+    audit = _A169.model_validate(_audit_task_169_package(upstream, chain, package))
+    assert audit.package_audit_status == "INCONSISTENT"
+    assert audit.published_package_status == "BLOCKED"
+    assert audit.expected_package_status == "READY"
+    assert "PACKAGE_STATUS_MISMATCH" in audit.findings
+
+
+def test_task_170_preserves_a_bound_audit_of_inconsistent_package_evidence():
+    """A same-session audit can correctly report package-content inconsistency."""
+    upstream = _produce_upstream_ready("Task 193 Task 170 bound audit")
+    chain = _compose_full_chain(upstream)
+    package = _PKG168.model_validate(chain["package168"])
+
+    # Corrupt one published copy of upstream provenance without changing the
+    # independently produced Task 162 source value.
+    package.t162_audit_source = "FORGED_TASK_162_SOURCE"
+    audit = _A169.model_validate(_audit_task_169_package(upstream, chain, package))
+
+    assert audit.package_audit_status == "INCONSISTENT"
+    assert audit.session_id == package.session_id
+    assert audit.published_package_status == "READY"
+    assert audit.expected_package_status == "READY"
+    assert "T162_AUDIT_SOURCE_MISMATCH" in audit.findings
+
+    consistency = _C170.model_validate(
+        ReasoningRunStage7EvidencePackageAuditConsistencyService.verify(
+            package=package,
+            audit=audit,
+        )
+    )
+    assert consistency.consistency_status == "INCONSISTENT"
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency.findings
+    assert "AUDIT_UNAVAILABLE" not in consistency.findings
+
+
+def test_unreadable_handoff_audit_remains_unavailable_without_invented_conflict():
+    """Unreadable audit inputs cannot prove a contradiction or a successful binding."""
+    chain = _compose_full_chain(
+        _produce_upstream_ready("Task 193 unreadable Task 187 evidence")
+    )
+    projection = _P183.model_validate(chain["projection183"])
+    consistency185 = _C185.model_validate(chain["consistency185"])
+    package = _P186.model_validate(chain["package186"])
+
+    audit187_payload = ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+        projection=projection,
+        audit=object(),
+        consistency=consistency185,
+        package=package,
+    )
+    audit187 = _A187.model_validate(audit187_payload)
+    assert audit187.package_audit_status == "UNAVAILABLE"
+    assert "EVIDENCE_INPUT_INVALID" in audit187.findings
+
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package,
+            audit=audit187,
+        )
+    )
+    assert consistency188.consistency_status == "UNAVAILABLE"
+    assert consistency188.findings == ["AUDIT_UNAVAILABLE"]
+
+
+def test_valid_handoff_audit_attached_to_another_package_is_inconsistent():
+    """A valid audit cannot be reused to certify a different session's package."""
+    first = _compose_full_chain(
+        _produce_upstream_ready("Task 193 original audited package")
+    )
+    second = _compose_full_chain(
+        _produce_upstream_ready("Task 193 detached package")
+    )
+    audit = _A187.model_validate(first["audit187"])
+    different_package = _P186.model_validate(second["package186"])
+    assert audit.package_audit_status == "CONSISTENT"
+    assert audit.session_id != different_package.session_id
+
+    consistency = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=different_package,
+            audit=audit,
+        )
+    )
+    assert consistency.consistency_status == "INCONSISTENT"
+    assert "SESSION_MISMATCH" in consistency.findings
+    assert "AUDIT_UNAVAILABLE" not in consistency.findings
+
+
+def test_task_188_preserves_bound_inconsistent_handoff_audit():
+    """A readable, same-package status contradiction stays INCONSISTENT downstream."""
+    chain = _compose_full_chain(
+        _produce_upstream_ready("Task 193 Task 188 inconsistent audit")
+    )
+    projection = _P183.model_validate(chain["projection183"])
+    audit184 = _A184.model_validate(chain["audit184"])
+    consistency185 = _C185.model_validate(chain["consistency185"])
+    package = _P186.model_validate(chain["package186"])
+    assert package.package_status == "READY"
+
+    # The audit receives the exact package and child evidence; only the
+    # published package status is corrupted after construction.
+    package.package_status = "BLOCKED"
+    audit187 = _A187.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService.audit(
+            projection=projection,
+            audit=audit184,
+            consistency=consistency185,
+            package=package,
+        )
+    )
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert audit187.session_id == package.session_id
+    assert audit187.published_package_status == "BLOCKED"
+    assert audit187.expected_package_status == "READY"
+
+    consistency188 = _C188.model_validate(
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService.verify(
+            package=package,
+            audit=audit187,
+        )
+    )
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert "EXPECTED_STATUS_CONTRADICTION" in consistency188.findings
+    assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
+    assert "AUDIT_UNAVAILABLE" not in consistency188.findings
+
