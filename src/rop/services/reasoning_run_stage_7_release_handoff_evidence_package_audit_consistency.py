@@ -163,12 +163,13 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
         # returned:
         # * a known ``published_package_status`` is the audit's record of the
         #   package it read, so a difference from this package is detached
-        #   evidence; an unknown (``None``) published status means no package
-        #   was readable to the audit, so nothing about it is compared;
-        # * alongside a known published status, ``expected_package_status``
-        #   (derived from upstream evidence) must also match this package,
-        #   unless the audit reports that upstream evidence unreadable
-        #   (EVIDENCE_INPUT_INVALID), where it is only a placeholder.
+        #   evidence; an unknown (``None``) published status establishes
+        #   nothing by itself;
+        # * ``expected_package_status`` (derived from upstream evidence) is
+        #   compared independently of the published status, unless the audit
+        #   reports that upstream evidence unreadable (EVIDENCE_INPUT_INVALID),
+        #   where it is only a placeholder. It is never presumed a placeholder
+        #   merely because the published status is unknown.
         # A blank session identity never counts as a contradiction.
         audit_unavailable = (
             audit_contract_valid
@@ -179,12 +180,11 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
         )
         if audit_unavailable:
             published_status = audit_payload["published_package_status"]
-            readable_contradiction = published_status is not None and (
-                package_status != published_status
-                or (
-                    not expected_is_placeholder
-                    and package_status != audit_payload["expected_package_status"]
-                )
+            readable_contradiction = (
+                published_status is not None and package_status != published_status
+            ) or (
+                not expected_is_placeholder
+                and package_status != audit_payload["expected_package_status"]
             )
             if not readable_contradiction:
                 return _unavailable(["AUDIT_UNAVAILABLE"])
@@ -209,7 +209,10 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
         ):
             findings.add("AUDIT_SOURCE_MISMATCH")
 
-        if package_status != audit_payload["published_package_status"]:
+        if (
+            audit_payload["published_package_status"] is not None
+            and package_status != audit_payload["published_package_status"]
+        ):
             findings.add("PUBLISHED_STATUS_MISMATCH")
         if (
             not expected_is_placeholder

@@ -404,16 +404,50 @@ def _assert_inconsistent(result):
 
 
 @pytest.mark.parametrize("package_status", ["READY", "BLOCKED", "UNAVAILABLE"])
-@pytest.mark.parametrize("expected", ["READY", "BLOCKED", "UNAVAILABLE"])
-def test_unavailable_audit_with_unknown_published_status_stays_unavailable(
-    package_status, expected
+def test_unknown_published_with_expected_matching_package_stays_unavailable(
+    package_status,
 ):
     package, _ = _pair(package_status)
-    audit = _unavailable_audit(None, expected, ["PACKAGE_INVALID"])
+    audit = _unavailable_audit(None, package_status, ["PACKAGE_INVALID"])
     result = _result(package, audit)
     assert result["consistency_status"] == "UNAVAILABLE"
     assert result["available"] is False
     assert result["session_id"] == ""
+    assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+
+
+@pytest.mark.parametrize(
+    ("package_status", "expected"),
+    [
+        ("READY", "BLOCKED"),
+        ("READY", "UNAVAILABLE"),
+        ("BLOCKED", "READY"),
+        ("UNAVAILABLE", "READY"),
+    ],
+)
+def test_unknown_published_with_reliable_expected_contradiction_is_inconsistent(
+    package_status, expected
+):
+    """An unknown published status does not hide a reliable expected status."""
+    package, _ = _pair(package_status)
+    audit = _unavailable_audit(None, expected, ["PACKAGE_INVALID"])
+    result = _result(package, audit)
+    _assert_inconsistent(result)
+    assert result["session_id"] == ""
+    assert "EXPECTED_STATUS_CONTRADICTION" in result["findings"]
+    assert "PUBLISHED_STATUS_MISMATCH" not in result["findings"]
+    assert "SESSION_MISMATCH" not in result["findings"]
+
+
+@pytest.mark.parametrize("expected", ["READY", "BLOCKED", "UNAVAILABLE"])
+def test_unknown_published_with_placeholder_expected_stays_unavailable(expected):
+    """EVIDENCE_INPUT_INVALID makes expected an explicit placeholder."""
+    package, _ = _pair("READY")
+    audit = _unavailable_audit(
+        None, expected, ["EVIDENCE_INPUT_INVALID", "PACKAGE_INVALID"]
+    )
+    result = _result(package, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
     assert result["findings"] == ["AUDIT_UNAVAILABLE"]
 
 
