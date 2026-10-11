@@ -483,19 +483,24 @@ def _produce_upstream_ready(label: str) -> dict[str, object]:
 
 
 def _produce_upstream_unavailable(label: str) -> dict[str, object]:
-    """Run the real Task 153-164 services with a failing provider."""
+    """Run the real Task 153-164 services for genuinely missing material.
+
+    The diagnostics result is produced by the real Task 161 service from
+    genuinely absent downstream material, so the Task 162-164 records are
+    a schema-valid UNAVAILABLE business state (not a blocking one).
+    """
     sid = _seed_full_session(label)
     with TestingSessionLocal() as db:
         admission = _admission(db, sid)
-        package, request_audit, proposal_result, proposal_audit = _unavailable_pkg162(
-            db, sid
-        )
-    diagnostics = _diagnose(package, request_audit, proposal_result, proposal_audit)
-    pkg162 = _pkg162(
-        admission, package, request_audit, proposal_result, proposal_audit, diagnostics
-    )
+    # A validated BLOCKED admission is a blocking state; here the material
+    # itself is genuinely absent instead.
+    diagnostics = _diagnose(None, None, None, None)
+    assert diagnostics["diagnostics_status"] == "NO_MATERIAL"
+    pkg162 = _pkg162(admission, None, None, None, None, diagnostics)
     verdict163 = _certify(pkg162)
+    assert verdict163["slice_status"] == "UNAVAILABLE"
     audit164 = _audit164(pkg162, verdict163)
+    assert audit164["slice_audit_status"] == "CONSISTENT"
     return {
         "session_id": sid,
         "pkg162": pkg162,
@@ -829,3 +834,90 @@ def test_full_chain_ready_composition_is_deterministic():
         "consistency188",
     ):
         assert first[boundary] == second[boundary]
+
+
+# ---------------------------------------------------------------------------
+# Task 192: genuine BLOCKED and UNAVAILABLE propagation over real services
+# ---------------------------------------------------------------------------
+
+
+def _blocked_upstream() -> dict[str, object]:
+    """Genuine Task 162-164 records carrying an explicit BLOCKED admission.
+
+    Every record is produced by the real Task 153-164 services; the single
+    blocking change is a schema-valid BLOCKED admission in the upstream
+    Task 162 audit package itself.
+    """
+    upstream = _produce_upstream_unavailable("Task 192 unavailable upstream")
+    pkg162 = dict(upstream["pkg162"])
+    sid = str(upstream["session_id"])
+    pkg162.update(
+        session_id=sid,
+        admission_status="BLOCKED",
+        finding_count=1,
+        findings=["ADMISSION_BLOCKED"],
+    )
+    verdict163 = _certify(pkg162)
+    assert verdict163["slice_status"] == "BLOCKED"
+    audit164 = _audit164(pkg162, verdict163)
+    assert audit164["slice_audit_status"] == "CONSISTENT"
+    return {
+        "session_id": sid,
+        "pkg162": pkg162,
+        "slice163": verdict163,
+        "audit164": audit164,
+    }
+
+
+def _assert_blocked_through_handoff(chain: dict[str, object]) -> None:
+    """A genuine BLOCKED chain stays BLOCKED with consistent audits."""
+    assert chain["bundle165"]["bundle_status"] == "BLOCKED"
+    assert chain["audit166"]["bundle_audit_status"] == "CONSISTENT"
+    assert chain["consistency167"]["consistency_status"] == "CONSISTENT"
+    assert chain["package168"]["package_status"] == "BLOCKED"
+    assert chain["audit169"]["package_audit_status"] == "CONSISTENT"
+    assert chain["consistency170"]["consistency_status"] == "CONSISTENT"
+    assert chain["attestation171"]["attestation_status"] == "BLOCKED"
+    assert chain["audit172"]["attestation_audit_status"] == "CONSISTENT"
+    assert chain["consistency173"]["consistency_status"] == "CONSISTENT"
+    assert chain["projection174"]["readiness_status"] == "BLOCKED"
+    assert chain["bundle177"]["bundle_status"] == "BLOCKED"
+    assert chain["attestation180"]["attestation_status"] == "BLOCKED"
+    assert chain["projection183"]["gate_status"] == "BLOCKED"
+    assert chain["package186"]["package_status"] == "BLOCKED"
+    assert chain["audit187"]["package_audit_status"] == "CONSISTENT"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_blocked_business_state_propagates_with_consistent_audits():
+    """A consistent audit of BLOCKED evidence never promotes to READY."""
+    chain = _compose_full_chain(_blocked_upstream())
+    _assert_blocked_through_handoff(chain)
+    # Block precedence over readiness at every business boundary:
+    for boundary, field in (
+        ("bundle165", "bundle_status"),
+        ("package168", "package_status"),
+        ("projection174", "readiness_status"),
+        ("projection183", "gate_status"),
+        ("package186", "package_status"),
+    ):
+        assert chain[boundary][field] == "BLOCKED"
+
+
+def test_unavailable_business_state_fails_closed_to_handoff():
+    """Genuinely unavailable upstream evidence stays UNAVAILABLE, not READY."""
+    chain = _compose_full_chain(_produce_upstream_unavailable("Task 192 fail closed"))
+    for boundary, field in (
+        ("bundle165", "bundle_status"),
+        ("package168", "package_status"),
+        ("projection174", "readiness_status"),
+        ("projection183", "gate_status"),
+        ("package186", "package_status"),
+    ):
+        assert chain[boundary][field] == "UNAVAILABLE"
+    # The unavailable state is a valid business result that downstream
+    # audits can legitimately verify as CONSISTENT.
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+    assert chain["consistency188"]["available"] is True
+    # An unavailable business result is never promoted and never blocked:
+    assert chain["package186"]["package_status"] not in {"READY", "BLOCKED"}
