@@ -255,21 +255,14 @@ class _CertificationStub:
         }
 
 
-class _UnreadableAfterFirstCertification:
-    """One successful Stage 6 handoff followed by an unreadable boundary."""
+class _UnreadableCertification:
+    """Reports an unreadable Stage 6 boundary without fabricating a verdict."""
 
     def __init__(self) -> None:
         self.calls: list[UUID] = []
 
     def certify(self, db: Session, session_id: UUID) -> dict[str, object]:
         self.calls.append(session_id)
-        if len(self.calls) == 1:
-            return {
-                "requested_session_id": str(session_id),
-                "certification_status": "CERTIFIED",
-                "certified": True,
-                "release_ready": True,
-            }
         raise ReasoningRunStage6CertificationContractError(
             "GATE_UNREADABLE", "test-only Stage 6 boundary outage"
         )
@@ -2230,12 +2223,13 @@ def test_task_200_blocked_path_uses_real_services_and_stays_blocked():
 def test_task_200_unreadable_certification_fails_closed_through_handoff():
     """An unreadable Stage 6 result creates no attribution or READY claim."""
     session_id = _seed_full_session("Task 200 unreadable certification")
-    certification = _UnreadableAfterFirstCertification()
+    certification = _UnreadableCertification()
     entry = _task200_entry(session_id, certification)
     upstream = _task200_upstream(session_id, certification)
     chain = _compose_full_chain(upstream)
 
-    assert entry["stage_7_status"] == "READY"
+    assert entry["stage_7_status"] == "UNAVAILABLE"
+    assert entry["boundary_available"] is True
     assert upstream["admission"]["admission_status"] == "UNAVAILABLE"
     assert upstream["admission"]["stage_6_certification_status"] == "UNAVAILABLE"
     assert upstream["admission"]["admitted"] is False
