@@ -73,6 +73,18 @@ from rop.schemas.llm_reasoning_audit import (
 from rop.schemas.llm_request_serialization import (
     LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104,
 )
+from rop.schemas.native_reasoning import (
+    NativeReasonCode,
+    NativeReasoningError,
+    NativeReasoningErrorCode,
+    NativeReasoningRequest,
+    NativeReasoningResult,
+    NativeReasoningStatus,
+    NativeReasoningSuggestion,
+    NativeReasoningSuggestionKind,
+    NativeReasoningTask,
+    NativeReasoningUncertainty,
+)
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import (
     ObservationCreate,
@@ -550,4 +562,14 @@ __all__ = [
     "ReasoningStepCreate",
     "ReasoningStepRead",
     "TemplateMatchRead",
+    "NativeReasonCode",
+    "NativeReasoningError",
+    "NativeReasoningErrorCode",
+    "NativeReasoningRequest",
+    "NativeReasoningResult",
+    "NativeReasoningStatus",
+    "NativeReasoningSuggestion",
+    "NativeReasoningSuggestionKind",
+    "NativeReasoningTask",
+    "NativeReasoningUncertainty",
 ]
