@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -114,6 +115,16 @@ class NativeReasoningRule(Protocol):
         """Return a finding when applicable, otherwise None."""
 
 
+
+
+@dataclass(frozen=True)
+class NativeReasoningExecution:
+    """Immutable result plus the stable identifiers of rules that contributed."""
+
+    result: NativeReasoningResult
+    applied_rule_ids: tuple[str, ...]
+
+
 class NativeReasoningCompositionError(Exception):
     """Carries a safe, canonical error contract without raw exception text."""
 
@@ -151,6 +162,14 @@ class NativeReasoningEngine:
         evidence_bundle: NativeEvidenceBundle,
     ) -> NativeReasoningResult:
         """Evaluate request-bound evidence and return a validated result."""
+        return self.evaluate_with_trace(request, evidence_bundle).result
+
+    def evaluate_with_trace(
+        self,
+        request: NativeReasoningRequest,
+        evidence_bundle: NativeEvidenceBundle,
+    ) -> NativeReasoningExecution:
+        """Return a result with deterministic rule identifiers, without shared state."""
         try:
             validate_native_evidence_binding(request, evidence_bundle)
         except ValueError as exc:
@@ -170,6 +189,7 @@ class NativeReasoningEngine:
             )
         )
         findings: list[NativeRuleFinding] = []
+        applied_rule_ids: list[str] = []
         for rule in self._rules:
             if request.task not in rule.tasks:
                 continue
@@ -200,9 +220,10 @@ class NativeReasoningEngine:
                     request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
                 ) from exc
             findings.append(finding)
+            applied_rule_ids.append(rule.rule_id)
 
         if not findings:
-            return self._result(
+            result = self._result(
                 request,
                 status=NativeReasoningStatus.UNKNOWN,
                 reason_codes=(NativeReasonCode.NO_APPLICABLE_RULE,),
@@ -210,8 +231,13 @@ class NativeReasoningEngine:
                 missing_information=(),
                 uncertainty=NativeReasoningUncertainty.UNASSESSED,
             )
+        else:
+            result = self._compose(request, findings)
 
-        return self._compose(request, findings)
+        return NativeReasoningExecution(
+            result=result,
+            applied_rule_ids=tuple(applied_rule_ids),
+        )
 
     def _compose(
         self,
