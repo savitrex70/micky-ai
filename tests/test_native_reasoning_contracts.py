@@ -11,6 +11,7 @@ from rop.schemas.native_reasoning import (
     NativeReasonCode,
     NativeReasoningError,
     NativeReasoningErrorCode,
+    NativeReasoningErrorMessage,
     NativeReasoningRequest,
     NativeReasoningResult,
     NativeReasoningStatus,
@@ -29,7 +30,6 @@ def _request() -> dict:
         "context_fingerprint": "a" * 64,
         "task": NativeReasoningTask.EVALUATE_EVIDENCE,
         "evidence_ids": [UUID(int=1), UUID(int=2)],
-        "input_summary": "Evaluate the supplied evidence.",
     }
 
 
@@ -80,8 +80,6 @@ def test_request_rejects_missing_extra_and_wrongly_typed_fields() -> None:
         ("task", "not-a-task"),
         ("context_fingerprint", "A" * 64),
         ("context_fingerprint", "short"),
-        ("input_summary", "  "),
-        ("input_summary", "x" * 4001),
         ("evidence_ids", ["not-a-uuid"]),
         ("evidence_ids", [UUID(int=1), UUID(int=1)]),
         ("evidence_ids", [UUID(int=i) for i in range(257)]),
@@ -215,7 +213,7 @@ def test_error_contract_is_bounded_and_rejects_extra_fields() -> None:
             "contract_version": "1",
             "request_id": uuid4(),
             "code": NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE,
-            "message": "Required dependency is unavailable.",
+            "message": NativeReasoningErrorMessage.DEPENDENCY_UNAVAILABLE,
             "retryable": True,
         }
     )
@@ -226,7 +224,7 @@ def test_error_contract_is_bounded_and_rejects_extra_fields() -> None:
                 "contract_version": "1",
                 "request_id": None,
                 "code": "INTERNAL",
-                "message": "  ",
+                "message": NativeReasoningErrorMessage.INVALID_REQUEST,
                 "retryable": "yes",
                 "raw_exception": "sensitive",
             }
