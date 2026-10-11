@@ -101,7 +101,7 @@ class NativeReasoningEngine:
         request: NativeReasoningRequest,
         evidence_bundle: NativeEvidenceBundle,
     ) -> NativeReasoningResult:
-        """Evaluate only request-bound evidence and return a contract-validated result."""
+        """Evaluate request-bound evidence and return a validated result."""
         try:
             validate_native_evidence_binding(request, evidence_bundle)
         except ValueError as exc:
