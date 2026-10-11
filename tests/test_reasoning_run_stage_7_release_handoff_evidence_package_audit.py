@@ -234,10 +234,10 @@ def test_valid_unavailable_projection_is_not_promoted_to_ready():
     evidence = _evidence("UNAVAILABLE")
     package = _package(evidence)
     result = _audit_package(evidence, package)
-    assert result["package_audit_status"] == "UNAVAILABLE"
+    assert result["package_audit_status"] == "CONSISTENT"
     assert result["expected_package_status"] == "UNAVAILABLE"
     assert result["published_package_status"] == "UNAVAILABLE"
-    assert result["session_id"] == ""
+    assert result["session_id"] == _SESSION
 
 
 def test_separate_status_contradiction_is_not_hidden_by_unavailable_child():

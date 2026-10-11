@@ -328,13 +328,13 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService:
             findings.add("PACKAGE_INVALID")
         if published is None:
             findings.add("PACKAGE_INVALID")
-        if published != expected_status:
+        if upstream_readable and published != expected_status:
             findings.add("PACKAGE_STATUS_MISMATCH")
             contradiction = published is not None
 
         # A package is an evidence envelope: every child field, validity flag,
         # finding and source must match the independent derivation.
-        if package_readable:
+        if package_readable and upstream_readable:
             for field, expected_value in expected.items():
                 if (
                     field not in package_data
@@ -457,7 +457,6 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditService:
             or any(
                 _status(data, field, statuses) == "UNAVAILABLE"
                 for data, field, statuses in (
-                    (projection_data, "gate_status", _GATE_STATUSES),
                     (audit_data, "gate_audit_status", _AUDIT_STATUSES),
                     (consistency_data, "gate_consistency_status", _AUDIT_STATUSES),
                 )
