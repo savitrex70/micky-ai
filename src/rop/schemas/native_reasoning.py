@@ -57,6 +57,40 @@ class NativeReasonCode(StrEnum):
     NO_APPLICABLE_RULE = "NO_APPLICABLE_RULE"
 
 
+# Status-to-reason-code matrix. Every reason code on a result must be allowed for
+# its status, and at least one code from the required set must be present. The
+# sets are disjoint where statuses must stay distinguishable: contradiction
+# (CONFLICTING_EVIDENCE) vs missing evidence (EVIDENCE_MISSING /
+# INSUFFICIENT_SUPPORT) vs unavailable evidence (EVIDENCE_UNREADABLE /
+# EVIDENCE_NOT_BOUND).
+ALLOWED_REASON_CODES_BY_STATUS: dict[str, frozenset[NativeReasonCode]] = {
+    "SUPPORTED": frozenset({NativeReasonCode.RULE_MATCH}),
+    "CONTRADICTED": frozenset({NativeReasonCode.CONFLICTING_EVIDENCE}),
+    "INSUFFICIENT_EVIDENCE": frozenset(
+        {NativeReasonCode.EVIDENCE_MISSING, NativeReasonCode.INSUFFICIENT_SUPPORT}
+    ),
+    "UNAVAILABLE": frozenset(
+        {NativeReasonCode.EVIDENCE_UNREADABLE, NativeReasonCode.EVIDENCE_NOT_BOUND}
+    ),
+    "ABSTAINED": frozenset(
+        {NativeReasonCode.EXPLICIT_ABSTENTION, NativeReasonCode.NO_APPLICABLE_RULE}
+    ),
+    "UNKNOWN": frozenset({NativeReasonCode.NO_APPLICABLE_RULE}),
+}
+REQUIRED_REASON_CODES_BY_STATUS: dict[str, frozenset[NativeReasonCode]] = {
+    "SUPPORTED": frozenset({NativeReasonCode.RULE_MATCH}),
+    "CONTRADICTED": frozenset({NativeReasonCode.CONFLICTING_EVIDENCE}),
+    "INSUFFICIENT_EVIDENCE": frozenset(
+        {NativeReasonCode.EVIDENCE_MISSING, NativeReasonCode.INSUFFICIENT_SUPPORT}
+    ),
+    "UNAVAILABLE": frozenset(
+        {NativeReasonCode.EVIDENCE_UNREADABLE, NativeReasonCode.EVIDENCE_NOT_BOUND}
+    ),
+    "ABSTAINED": frozenset({NativeReasonCode.EXPLICIT_ABSTENTION}),
+    "UNKNOWN": frozenset({NativeReasonCode.NO_APPLICABLE_RULE}),
+}
+
+
 class NativeReasoningSuggestionKind(StrEnum):
     CANDIDATE_LABEL = "CANDIDATE_LABEL"
     MISSING_INFORMATION = "MISSING_INFORMATION"
@@ -80,6 +114,16 @@ class NativeReasoningErrorMessage(StrEnum):
     CONTRACT_VIOLATION = "The result did not satisfy its contract."
 
 
+# Canonical retryability policy; `retryable` must agree with the error code.
+RETRYABLE_BY_ERROR_CODE: dict[str, bool] = {
+    "INVALID_REQUEST": False,
+    "INPUT_UNAVAILABLE": False,
+    "DEPENDENCY_UNAVAILABLE": True,
+    "RESOURCE_LIMIT": True,
+    "CONTRACT_VIOLATION": False,
+}
+
+
 class NativeReasoningRequest(BaseModel):
     """Shape contract only; callers validate identity and evidence binding."""
 
@@ -91,6 +135,7 @@ class NativeReasoningRequest(BaseModel):
     context_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     task: NativeReasoningTask
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
+
     @field_validator("evidence_ids")
     @classmethod
     def _unique_evidence_ids(cls, value: list[UUID]) -> list[UUID]:
@@ -167,6 +212,17 @@ class NativeReasoningResult(BaseModel):
         if self.evidence_ids != sorted(self.evidence_ids, key=str):
             raise ValueError("evidence_ids must be sorted by canonical UUID")
 
+        reason_codes = set(self.reason_codes)
+        allowed = ALLOWED_REASON_CODES_BY_STATUS[self.status.value]
+        if not reason_codes.issubset(allowed):
+            raise ValueError(
+                f"reason_codes are incompatible with status {self.status.value}"
+            )
+        if not reason_codes.intersection(
+            REQUIRED_REASON_CODES_BY_STATUS[self.status.value]
+        ):
+            raise ValueError(f"{self.status.value} requires a supporting reason code")
+
         conclusive = self.status in (
             NativeReasoningStatus.SUPPORTED,
             NativeReasoningStatus.CONTRADICTED,
@@ -239,4 +295,6 @@ class NativeReasoningError(BaseModel):
     def _message_matches_code(self) -> NativeReasoningError:
         if self.message.name != self.code.name:
             raise ValueError("error message must match its canonical error code")
+        if self.retryable is not RETRYABLE_BY_ERROR_CODE[self.code.value]:
+            raise ValueError("retryable must match the canonical policy for the code")
         return self
