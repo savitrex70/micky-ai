@@ -71,9 +71,8 @@ from rop.schemas.reasoning_run_stage_7_request import ReasoningRunStage7RequestR
 from rop.schemas.reasoning_run_stage_7_request_audit import (
     ReasoningRunStage7RequestAuditRead,
 )
-
-REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162 = (
-    "REASONING_RUN_STAGE_7_AUDIT_PACKAGE_TASK_162"
+from rop.schemas.reasoning_run_stage_7_upstream_sources import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
 )
 
 # One entry per approved child contract, in argument order: the schema is

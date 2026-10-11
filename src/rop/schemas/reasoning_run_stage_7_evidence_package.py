@@ -27,6 +27,11 @@ from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit import (
 from rop.schemas.reasoning_run_stage_7_evidence_bundle_audit_consistency import (
     REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_167,
 )
+from rop.schemas.reasoning_run_stage_7_upstream_sources import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
+)
 
 # The Task 168 source constant lives here, next to the contract that enforces
 # it, so the schema never has to import the service that imports the schema.
@@ -37,18 +42,14 @@ REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_SOURCE_TASK_168 = (
 
 
 def _canonical_upstream_sources() -> dict[str, str]:
-    """Load upstream source constants without a schema/service import cycle."""
+    """Load upstream source constants without importing any service.
+
+    The Task 162/163/164 constants come from the dependency-free
+    upstream-sources schema module; the Task 165 constant is imported on
+    first use from its schema module, as before.
+    """
     from rop.schemas.reasoning_run_stage_7_evidence_bundle import (
         REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_SOURCE_TASK_165,
-    )
-    from rop.services.reasoning_run_stage_7_audit_package import (
-        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
-    )
-    from rop.services.reasoning_run_stage_7_vertical_slice import (
-        REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
-    )
-    from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
-        REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
     )
 
     return {
