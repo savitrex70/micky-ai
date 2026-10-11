@@ -156,7 +156,7 @@ def test_rule_for_another_task_is_not_invoked() -> None:
     assert result.status == NativeReasoningStatus.UNKNOWN
 
 
-def test_different_supported_conclusions_fail_closed_without_inventing_conflict() -> None:
+def test_different_conclusions_fail_closed_without_inventing_conflict() -> None:
     engine = NativeReasoningEngine(
         (
             FixedRule("rule-a", _finding(conclusion="Conclusion A")),
