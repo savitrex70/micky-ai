@@ -55,6 +55,73 @@ uvicorn rop.main:app --reload
 
 The API is available at `http://localhost:8000`. The health check is `GET /health`, and the OpenAPI UI is at `/docs`.
 
+### Stage 7 release-readiness evidence chain
+
+Tasks 174–188 form an externally composed, read-only evidence chain. Callers
+invoke each service in order and pass its validated result to the next
+boundary; an individual service does not orchestrate predecessor or successor
+services.
+
+| Task | Boundary | Responsibility |
+| --- | --- | --- |
+| 174 | `release_readiness_projection` | Projects readiness from the Task 171 attestation, Task 172 audit, and Task 173 consistency result. |
+| 175 | `release_readiness_audit` | Independently derives and audits the Task 174 projection from Tasks 171–173. |
+| 176 | `release_readiness_audit_consistency` | Checks the binding between the Task 174 projection and Task 175 audit. |
+| 177 | `release_readiness_evidence_bundle` | Preserves the Task 174–176 records in one validated evidence bundle. |
+| 178 | `release_readiness_evidence_bundle_audit` | Independently audits the Task 177 bundle against Tasks 174–176. |
+| 179 | `release_readiness_evidence_bundle_audit_consistency` | Checks the binding between the Task 177 bundle and Task 178 audit. |
+| 180 | `release_readiness_final_attestation` | Attests to the Task 177–179 evidence; `CERTIFIED` is distinct from a readiness projection. |
+| 181 | `release_readiness_final_attestation_audit` | Independently audits the Task 180 attestation against Tasks 177–179. |
+| 182 | `release_readiness_final_attestation_consistency` | Checks the binding between the Task 180 attestation and Task 181 audit. |
+| 183 | `final_release_gate_projection` | Projects a final gate status from the Task 180–182 records. |
+| 184 | `final_release_gate_audit` | Independently audits the Task 183 projection against Tasks 180–182. |
+| 185 | `final_release_gate_audit_consistency` | Checks the binding between the Task 183 projection and Task 184 audit. |
+| 186 | `release_handoff_evidence_package` | Packages the Task 183–185 gate evidence as a handoff snapshot. |
+| 187 | `release_handoff_evidence_package_audit` | Independently derives the expected package state from Tasks 183–185 and audits Task 186. |
+| 188 | `release_handoff_evidence_package_audit_consistency` | Checks the binding between the Task 186 package and Task 187 audit. |
+
+The boundary names above are the shared filename stems under both
+`src/rop/schemas/` and `src/rop/services/`; each schema module defines a strict
+read model, and each service module exposes its corresponding service class.
+The `REASONING_RUN_STAGE_7_*_SOURCE_TASK_<n>` constants in those schemas
+identify canonical provenance for the relevant task.
+
+Readiness projections and evidence packages use `READY`, `BLOCKED`, and
+`UNAVAILABLE`. `READY` requires a complete, valid, finding-free chain with
+matching canonical sources, statuses, and session bindings. `BLOCKED` means
+readable evidence proves a blocking condition. `UNAVAILABLE` means the
+business result cannot be established; it is not a positive or blocking
+claim. Audits and consistency checks use `CONSISTENT`, `INCONSISTENT`, and
+`UNAVAILABLE`: `CONSISTENT` can verify a valid business result whose status is
+`UNAVAILABLE`, while an `UNAVAILABLE` audit or consistency check means that
+the evidence binding could not be verified. A demonstrable contradiction
+remains `INCONSISTENT` even if another record is unavailable.
+
+Strict schemas and independent checks preserve canonical source values,
+status echoes, and session identity where it is established. Finding lists
+are sorted and unique, and their counts must match. Missing, malformed, or
+unknown evidence is not silently promoted to `READY` or fabricated into a
+contradiction.
+
+These projections and packages are evidence-only. They do not execute or
+authorize a release, invoke a provider, access a database, persist records,
+or transmit a handoff.
+
+To validate the chain and the repository from the project root:
+
+```powershell
+uv run pytest tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py -q
+uv run pytest -q
+uv run ruff check .
+uv run black --check .
+```
+
+For a safe task-by-task Git review, inspect one commit at a time with
+`git show --stat --oneline <commit>` and `git show --format=fuller <commit>`,
+then run the focused tests for that change. Confirm the commit's files and
+parent before moving to the next task; do not combine task commits or rewrite
+already-pushed history.
+
 ### API endpoints
 
 The API's persistence endpoints:
