@@ -23,6 +23,8 @@ from rop.schemas.native_evidence import (
     validate_native_evidence_binding,
 )
 from rop.schemas.native_reasoning import (
+    MAX_MISSING_INFORMATION_ITEMS,
+    RETRYABLE_BY_ERROR_CODE,
     NativeReasonCode,
     NativeReasoningError,
     NativeReasoningErrorCode,
@@ -36,6 +38,11 @@ from rop.schemas.native_reasoning import (
 
 MAX_NATIVE_REASONING_RULES = 128
 _RULE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+# Stable, bounded, static text; never derived from rule output or exceptions.
+_RULE_DISAGREEMENT_MISSING_INFORMATION = (
+    "Applicable rule outputs disagree; the disagreement cannot be classified "
+    "under the current reasoning contract."
+)
 _UNCERTAINTY_ORDER = {
     NativeReasoningUncertainty.NONE: 0,
     NativeReasoningUncertainty.LOW: 1,
@@ -87,9 +94,7 @@ class NativeRuleFinding(BaseModel):
 
     @field_validator("missing_information")
     @classmethod
-    def _canonical_missing_information(
-        cls, value: tuple[str, ...]
-    ) -> tuple[str, ...]:
+    def _canonical_missing_information(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if any(not item.strip() or len(item) > 500 for item in value):
             raise ValueError(
                 "missing-information items must be nonblank and <= 500 chars"
@@ -177,12 +182,18 @@ class NativeReasoningEngine:
         evidence_bundle: NativeEvidenceBundle,
     ) -> NativeReasoningExecution:
         """Return a result with deterministic rule identifiers, without shared state."""
+        # Errors are raised outside every `except` block so the original
+        # exception is neither chained (__cause__) nor implicitly attached
+        # (__context__); its text can never surface in a formatted traceback.
+        binding_failed = False
         try:
             validate_native_evidence_binding(request, evidence_bundle)
-        except ValueError as exc:
+        except ValueError:
+            binding_failed = True
+        if binding_failed:
             raise self._error(
                 request.request_id, NativeReasoningErrorCode.INPUT_UNAVAILABLE
-            ) from exc
+            )
 
         requested_ids = set(request.evidence_ids)
         evidence = tuple(
@@ -200,16 +211,16 @@ class NativeReasoningEngine:
         for bound_rule in self._rules:
             if request.task not in bound_rule.tasks:
                 continue
+            failure: NativeReasoningErrorCode | None = None
+            finding = None
             try:
                 finding = bound_rule.implementation.evaluate(request, evidence)
-            except ValidationError as exc:
-                raise self._error(
-                    request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
-                ) from exc
-            except Exception as exc:
-                raise self._error(
-                    request.request_id, NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE
-                ) from exc
+            except ValidationError:
+                failure = NativeReasoningErrorCode.CONTRACT_VIOLATION
+            except Exception:
+                failure = NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE
+            if failure is not None:
+                raise self._error(request.request_id, failure)
             if finding is None:
                 continue
             if not isinstance(finding, NativeRuleFinding):
@@ -220,12 +231,15 @@ class NativeReasoningEngine:
                 raise self._error(
                     request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
                 )
+            finding_invalid = False
             try:
                 self._result_from_finding(request, finding)
-            except (ValidationError, ValueError) as exc:
+            except (ValidationError, ValueError):
+                finding_invalid = True
+            if finding_invalid:
                 raise self._error(
                     request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
-                ) from exc
+                )
             findings.append(finding)
             applied_rule_ids.append(bound_rule.rule_id)
 
@@ -239,7 +253,16 @@ class NativeReasoningEngine:
                 uncertainty=NativeReasoningUncertainty.UNASSESSED,
             )
         else:
-            result = self._compose(request, findings)
+            composed: NativeReasoningResult | None = None
+            try:
+                composed = self._compose(request, findings)
+            except (ValidationError, ValueError):
+                composed = None
+            if composed is None:
+                raise self._error(
+                    request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
+                )
+            result = composed
 
         return NativeReasoningExecution(
             result=result,
@@ -255,11 +278,7 @@ class NativeReasoningEngine:
         conclusions = {finding.conclusion for finding in findings}
         missing_information = tuple(
             sorted(
-                {
-                    item
-                    for finding in findings
-                    for item in finding.missing_information
-                }
+                {item for finding in findings for item in finding.missing_information}
             )
         )
         evidence_ids = tuple(
@@ -268,9 +287,7 @@ class NativeReasoningEngine:
                 key=str,
             )
         )
-        reason_codes = {
-            code for finding in findings for code in finding.reason_codes
-        }
+        reason_codes = {code for finding in findings for code in finding.reason_codes}
         uncertainties = [finding.uncertainty for finding in findings]
         uncertainty = max(uncertainties, key=_UNCERTAINTY_ORDER.__getitem__)
 
@@ -299,13 +316,21 @@ class NativeReasoningEngine:
             )
 
         # Disagreement is not automatically a contradiction. Task 205 defines
-        # contradiction semantics; until then, composition fails conservatively.
+        # contradiction semantics; until then, composition fails conservatively
+        # with a result that satisfies the Task 202 status/reason-code matrix.
+        retained = sorted(
+            {
+                item
+                for item in missing_information
+                if item != _RULE_DISAGREEMENT_MISSING_INFORMATION
+            }
+        )[: MAX_MISSING_INFORMATION_ITEMS - 1]
         return self._result(
             request,
-            status=NativeReasoningStatus.UNKNOWN,
+            status=NativeReasoningStatus.INSUFFICIENT_EVIDENCE,
             reason_codes=(NativeReasonCode.INSUFFICIENT_SUPPORT,),
             evidence_ids=evidence_ids,
-            missing_information=missing_information,
+            missing_information=(*retained, _RULE_DISAGREEMENT_MISSING_INFORMATION),
             uncertainty=NativeReasoningUncertainty.HIGH,
         )
 
@@ -365,6 +390,6 @@ class NativeReasoningEngine:
                 request_id=request_id,
                 code=code,
                 message=NativeReasoningErrorMessage[code.name],
-                retryable=False,
+                retryable=RETRYABLE_BY_ERROR_CODE[code.value],
             )
         )

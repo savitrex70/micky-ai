@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -24,8 +25,11 @@ from rop.schemas.native_evidence import (
 )
 from rop.schemas.native_reasoning import (
     NativeReasonCode,
+    NativeReasoningError,
     NativeReasoningErrorCode,
+    NativeReasoningErrorMessage,
     NativeReasoningRequest,
+    NativeReasoningResult,
     NativeReasoningStatus,
     NativeReasoningTask,
     NativeReasoningUncertainty,
@@ -33,6 +37,19 @@ from rop.schemas.native_reasoning import (
 
 SESSION_ID = UUID(int=100)
 FINGERPRINT = "a" * 64
+DISAGREEMENT_TEXT = (
+    "Applicable rule outputs disagree; the disagreement cannot be classified "
+    "under the current reasoning contract."
+)
+SENSITIVE_MARKER = "SENSITIVE_INTERNAL_PAYLOAD_204"
+# Independent statement of the Task 202 retryability policy.
+EXPECTED_RETRYABLE = {
+    NativeReasoningErrorCode.INVALID_REQUEST: False,
+    NativeReasoningErrorCode.INPUT_UNAVAILABLE: False,
+    NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE: True,
+    NativeReasoningErrorCode.RESOURCE_LIMIT: True,
+    NativeReasoningErrorCode.CONTRACT_VIOLATION: False,
+}
 
 
 def _record(evidence_id: UUID) -> NativeEvidenceRecord:
@@ -152,9 +169,7 @@ def test_rule_for_another_task_is_not_invoked() -> None:
         def evaluate(self, request, evidence):
             raise AssertionError("task-inapplicable rule was invoked")
 
-    result = NativeReasoningEngine((NeverRunRule(),)).evaluate(
-        _request(), _bundle()
-    )
+    result = NativeReasoningEngine((NeverRunRule(),)).evaluate(_request(), _bundle())
     assert result.status == NativeReasoningStatus.UNKNOWN
 
 
@@ -165,11 +180,108 @@ def test_different_conclusions_fail_closed_without_inventing_conflict() -> None:
             FixedRule("rule-b", _finding(conclusion="Conclusion B")),
         )
     )
-    result = engine.evaluate(_request(), _bundle(_record(UUID(int=1))))
-    assert result.status == NativeReasoningStatus.UNKNOWN
+    result = engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
+    assert result.status == NativeReasoningStatus.INSUFFICIENT_EVIDENCE
+    assert result.status != NativeReasoningStatus.CONTRADICTED
+    assert result.reason_codes == [NativeReasonCode.INSUFFICIENT_SUPPORT]
     assert NativeReasonCode.CONFLICTING_EVIDENCE not in result.reason_codes
-    assert NativeReasonCode.INSUFFICIENT_SUPPORT in result.reason_codes
     assert result.conclusion is None
+    assert result.abstention_reason is None
+    assert result.uncertainty == NativeReasoningUncertainty.HIGH
+    assert result.missing_information == [DISAGREEMENT_TEXT]
+    assert result.evidence_ids == [UUID(int=1)]
+    # The fallback must satisfy the public Task 202 contract on re-validation.
+    assert NativeReasoningResult.model_validate(result.model_dump()) == result
+
+
+def _insufficient(*items: str) -> NativeRuleFinding:
+    return _finding(
+        status=NativeReasoningStatus.INSUFFICIENT_EVIDENCE,
+        conclusion=None,
+        reason_codes=(NativeReasonCode.EVIDENCE_MISSING,),
+        evidence_ids=(),
+        missing_information=tuple(sorted(items)),
+        uncertainty=NativeReasoningUncertainty.UNASSESSED,
+    )
+
+
+def _abstained(reason: str, *items: str) -> NativeRuleFinding:
+    return _finding(
+        status=NativeReasoningStatus.ABSTAINED,
+        conclusion=None,
+        reason_codes=(NativeReasonCode.EXPLICIT_ABSTENTION,),
+        evidence_ids=(),
+        missing_information=tuple(sorted(items)),
+        uncertainty=NativeReasoningUncertainty.UNASSESSED,
+        abstention_reason=reason,
+    )
+
+
+@pytest.mark.parametrize(
+    "findings",
+    [
+        # differing statuses
+        (_finding(), _insufficient("source provenance")),
+        (_finding(), _abstained("Out of scope.")),
+        (_insufficient("a"), _abstained("Out of scope.")),
+        # incompatible abstention reasons
+        (_abstained("Reason one."), _abstained("Reason two.")),
+        # differing conclusions
+        (_finding(conclusion="A"), _finding(conclusion="B")),
+    ],
+)
+def test_every_disagreement_returns_a_valid_conservative_result(
+    findings: tuple[NativeRuleFinding, ...],
+) -> None:
+    rules = tuple(FixedRule(f"rule-{i}", f) for i, f in enumerate(findings))
+    engine = NativeReasoningEngine(rules)
+    result = engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
+    assert NativeReasoningResult.model_validate(result.model_dump()) == result
+    assert result.status == NativeReasoningStatus.INSUFFICIENT_EVIDENCE
+    assert result.reason_codes == [NativeReasonCode.INSUFFICIENT_SUPPORT]
+    assert result.conclusion is None
+    assert result.abstention_reason is None
+    assert result.uncertainty == NativeReasoningUncertainty.HIGH
+    assert DISAGREEMENT_TEXT in result.missing_information
+    assert result.missing_information == sorted(set(result.missing_information))
+    assert result.evidence_ids == sorted(set(result.evidence_ids), key=str)
+
+
+def test_disagreement_retains_rule_missing_information_in_canonical_order() -> None:
+    engine = NativeReasoningEngine(
+        (
+            FixedRule("rule-a", _insufficient("zeta input", "alpha input")),
+            FixedRule("rule-b", _abstained("Out of scope.", "beta input")),
+        )
+    )
+    result = engine.evaluate(_request(), _bundle())
+    assert result.missing_information == sorted(
+        ["alpha input", "beta input", "zeta input", DISAGREEMENT_TEXT]
+    )
+
+
+def test_disagreement_fallback_stays_valid_when_missing_information_overflows() -> None:
+    first = _insufficient(*(f"first-{i:03d}" for i in range(40)))
+    second = _abstained("Out of scope.", *(f"second-{i:03d}" for i in range(40)))
+    engine = NativeReasoningEngine(
+        (FixedRule("rule-a", first), FixedRule("rule-b", second))
+    )
+    result = engine.evaluate(_request(), _bundle())
+    assert len(result.missing_information) == 64
+    assert DISAGREEMENT_TEXT in result.missing_information
+
+
+def test_disagreement_fallback_keeps_unique_canonical_evidence_ids() -> None:
+    first = _finding(conclusion="A", evidence_ids=(UUID(int=2), UUID(int=3)))
+    second = _finding(conclusion="B", evidence_ids=(UUID(int=1), UUID(int=2)))
+    engine = NativeReasoningEngine(
+        (FixedRule("rule-a", first), FixedRule("rule-b", second))
+    )
+    records = [_record(UUID(int=i)) for i in (1, 2, 3)]
+    result = engine.evaluate(
+        _request(*(record.evidence_id for record in records)), _bundle(*records)
+    )
+    assert result.evidence_ids == [UUID(int=1), UUID(int=2), UUID(int=3)]
 
 
 def test_rule_cannot_return_evidence_outside_the_request() -> None:
@@ -182,6 +294,7 @@ def test_rule_cannot_return_evidence_outside_the_request() -> None:
             _bundle(_record(UUID(int=1)), _record(UUID(int=2))),
         )
     assert caught.value.error.code == NativeReasoningErrorCode.CONTRACT_VIOLATION
+    assert caught.value.error.retryable is False
     assert "Observation" not in str(caught.value)
 
 
@@ -195,6 +308,7 @@ def test_rule_result_must_satisfy_public_result_contract() -> None:
     with pytest.raises(NativeReasoningCompositionError) as caught:
         engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
     assert caught.value.error.code == NativeReasoningErrorCode.CONTRACT_VIOLATION
+    assert caught.value.error.retryable is False
 
 
 def test_binding_failure_returns_safe_typed_error() -> None:
@@ -205,6 +319,7 @@ def test_binding_failure_returns_safe_typed_error() -> None:
             _bundle(_record(UUID(int=1))),
         )
     assert caught.value.error.code == NativeReasoningErrorCode.INPUT_UNAVAILABLE
+    assert caught.value.error.retryable is False
     assert caught.value.error.request_id == UUID(int=700)
 
 
@@ -217,19 +332,16 @@ def test_rule_failure_does_not_expose_raw_exception_text() -> None:
             raise RuntimeError("sensitive provider payload")
 
     with pytest.raises(NativeReasoningCompositionError) as caught:
-        NativeReasoningEngine((BrokenRule(),)).evaluate(
-            _request(), _bundle()
-        )
+        NativeReasoningEngine((BrokenRule(),)).evaluate(_request(), _bundle())
     assert caught.value.error.code == NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE
+    assert caught.value.error.retryable is True
     assert "sensitive provider payload" not in str(caught.value)
 
 
 def test_rule_configuration_rejects_duplicate_and_invalid_identifiers() -> None:
     finding = _finding()
     with pytest.raises(ValueError, match="unique"):
-        NativeReasoningEngine(
-            (FixedRule("same", finding), FixedRule("same", finding))
-        )
+        NativeReasoningEngine((FixedRule("same", finding), FixedRule("same", finding)))
     with pytest.raises(ValueError, match="canonical"):
         NativeReasoningEngine((FixedRule("Not Canonical", finding),))
 
@@ -248,3 +360,105 @@ def test_finding_schema_rejects_unknown_fields() -> None:
                 "provider": "external",
             }
         )
+
+
+def test_malformed_rule_output_is_a_non_retryable_contract_violation() -> None:
+    class MalformedRule:
+        rule_id = "malformed-rule"
+        tasks = frozenset({NativeReasoningTask.EVALUATE_EVIDENCE})
+
+        def evaluate(self, request, evidence):
+            return {"status": "SUPPORTED"}
+
+    with pytest.raises(NativeReasoningCompositionError) as caught:
+        NativeReasoningEngine((MalformedRule(),)).evaluate(_request(), _bundle())
+    assert caught.value.error.code == NativeReasoningErrorCode.CONTRACT_VIOLATION
+    assert caught.value.error.retryable is False
+
+
+@pytest.mark.parametrize("code", list(NativeReasoningErrorCode))
+def test_engine_errors_follow_the_canonical_retryability_policy(
+    code: NativeReasoningErrorCode,
+) -> None:
+    error = NativeReasoningEngine._error(UUID(int=700), code).error
+    assert error.retryable is EXPECTED_RETRYABLE[code]
+    assert error.message == NativeReasoningErrorMessage[code.name]
+    assert NativeReasoningError.model_validate(error.model_dump()) == error
+
+
+# --- sensitive exception text must not leak through any reporting path ---
+
+
+def _raising_rule(exc: Exception):
+    class RaisingRule:
+        rule_id = "raising-rule"
+        tasks = frozenset({NativeReasoningTask.EVALUATE_EVIDENCE})
+
+        def evaluate(self, request, evidence):
+            raise exc
+
+    return RaisingRule()
+
+
+def _validation_error_with_marker() -> ValidationError:
+    try:
+        NativeRuleFinding.model_validate({"status": SENSITIVE_MARKER})
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected a validation error")
+
+
+def _marker_conclusion_rule():
+    bad = _finding(
+        status=NativeReasoningStatus.CONTRADICTED,
+        conclusion=SENSITIVE_MARKER,
+        reason_codes=(NativeReasonCode.RULE_MATCH,),
+    )
+    return FixedRule("marker-conclusion", bad)
+
+
+def _assert_no_marker(caught: pytest.ExceptionInfo) -> None:
+    exc = caught.value
+    assert SENSITIVE_MARKER not in str(exc)
+    assert SENSITIVE_MARKER not in repr(exc)
+    assert SENSITIVE_MARKER not in repr(exc.error)
+    assert SENSITIVE_MARKER not in exc.error.model_dump_json()
+    # The reporting boundary: a fully formatted traceback, including any chain.
+    rendered = "".join(traceback.format_exception(exc))
+    assert SENSITIVE_MARKER not in rendered
+    # No original exception is chained or implicitly attached.
+    assert exc.__cause__ is None
+    assert exc.__context__ is None
+
+
+def test_rule_exception_text_does_not_reach_the_reporting_boundary() -> None:
+    rule = _raising_rule(RuntimeError(SENSITIVE_MARKER))
+    with pytest.raises(NativeReasoningCompositionError) as caught:
+        NativeReasoningEngine((rule,)).evaluate(_request(), _bundle())
+    assert caught.value.error.code == NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE
+    _assert_no_marker(caught)
+
+
+def test_rule_validation_error_text_does_not_reach_the_reporting_boundary() -> None:
+    rule = _raising_rule(_validation_error_with_marker())
+    with pytest.raises(NativeReasoningCompositionError) as caught:
+        NativeReasoningEngine((rule,)).evaluate(_request(), _bundle())
+    assert caught.value.error.code == NativeReasoningErrorCode.CONTRACT_VIOLATION
+    _assert_no_marker(caught)
+
+
+def test_invalid_finding_text_does_not_reach_the_reporting_boundary() -> None:
+    engine = NativeReasoningEngine((_marker_conclusion_rule(),))
+    with pytest.raises(NativeReasoningCompositionError) as caught:
+        engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
+    assert caught.value.error.code == NativeReasoningErrorCode.CONTRACT_VIOLATION
+    _assert_no_marker(caught)
+
+
+def test_binding_failure_does_not_chain_the_original_exception() -> None:
+    with pytest.raises(NativeReasoningCompositionError) as caught:
+        NativeReasoningEngine(()).evaluate(
+            _request(UUID(int=2)), _bundle(_record(UUID(int=1)))
+        )
+    assert caught.value.error.code == NativeReasoningErrorCode.INPUT_UNAVAILABLE
+    _assert_no_marker(caught)
