@@ -126,7 +126,9 @@ def test_rules_are_injected_sorted_and_do_not_change_input_evidence() -> None:
             FixedRule("a-rule", _finding(evidence_ids=(UUID(int=1),))),
         )
     )
-    result = engine.evaluate(request, bundle)
+    execution = engine.evaluate_with_trace(request, bundle)
+    result = execution.result
+    assert execution.applied_rule_ids == ("a-rule", "z-rule")
     assert result.status == NativeReasoningStatus.SUPPORTED
     assert result.conclusion == "The rule conclusion."
     assert result.evidence_ids == [UUID(int=1), UUID(int=2)]
