@@ -122,7 +122,6 @@ from rop.services.reasoning_run_stage_7_dispatch import (
     ReasoningRunStage7DispatchService,
 )
 from rop.services.reasoning_run_stage_7_evidence_bundle import (
-    ReasoningRunStage7EvidenceBundleContractError,
     ReasoningRunStage7EvidenceBundleService,
 )
 from rop.services.reasoning_run_stage_7_evidence_bundle_audit import (
@@ -1435,7 +1434,7 @@ def test_task_167_fingerprint_snapshot_mismatch_cannot_produce_ready_package():
 
 
 def test_malformed_request_fingerprint_cannot_publish_ready_task_165_bundle():
-    """Task 165 rejects malformed fingerprint shape instead of emitting READY."""
+    """Task 165 withholds a malformed fingerprint and fails closed."""
     from rop.schemas.reasoning_run_stage_7_audit_package import (
         ReasoningRunStage7AuditPackageRead,
     )
@@ -1450,15 +1449,16 @@ def test_malformed_request_fingerprint_cannot_publish_ready_task_165_bundle():
     package162 = ReasoningRunStage7AuditPackageRead.model_validate(upstream["pkg162"])
     package162.request_fingerprint = "not-a-canonical-fingerprint"
 
-    with pytest.raises(ReasoningRunStage7EvidenceBundleContractError) as exc_info:
-        ReasoningRunStage7EvidenceBundleService.assemble(
-            pkg162=package162,
-            slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
-                upstream["slice163"]
-            ),
-            audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
-                upstream["audit164"]
-            ),
-        )
-    assert exc_info.value.invariant == "EVIDENCE_BUNDLE_RESULT_INVALID"
+    bundle = ReasoningRunStage7EvidenceBundleService.assemble(
+        pkg162=package162,
+        slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
+            upstream["slice163"]
+        ),
+        audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+            upstream["audit164"]
+        ),
+    )
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["request_fingerprint"] is None
+    assert "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED" in bundle["bundle_findings"]
 
