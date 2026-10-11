@@ -123,7 +123,9 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
         Missing, mistyped, or malformed evidence and missing session binding
         produce ``UNAVAILABLE``. Readable contradictions produce
         ``INCONSISTENT``. A valid UNAVAILABLE package may still be consistently
-        audited; a valid UNAVAILABLE audit cannot establish a comparison.
+        audited; a valid UNAVAILABLE audit cannot establish a comparison
+        unless its readable status evidence contradicts the package, which
+        is still reported as ``INCONSISTENT``.
         """
         package_payload = _snapshot(
             package, ReasoningRunStage7ReleaseHandoffEvidencePackageRead
@@ -153,13 +155,39 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
             audit_payload, ReasoningRunStage7ReleaseHandoffEvidencePackageAuditRead
         )
 
-        # A structurally sound unavailable audit verified nothing. Do not
-        # confuse it with a successful audit of an UNAVAILABLE package.
-        if (
+        package_status = package_payload["package_status"]
+
+        # A structurally sound unavailable audit verified nothing, so on its
+        # own it is never CONSISTENT. It can still carry readable status
+        # evidence, and that evidence is compared before UNAVAILABLE is
+        # returned:
+        # * a known ``published_package_status`` is the audit's record of the
+        #   package it read, so a difference from this package is detached
+        #   evidence; an unknown (``None``) published status means no package
+        #   was readable to the audit, so nothing about it is compared;
+        # * alongside a known published status, ``expected_package_status``
+        #   (derived from upstream evidence) must also match this package,
+        #   unless the audit reports that upstream evidence unreadable
+        #   (EVIDENCE_INPUT_INVALID), where it is only a placeholder.
+        # A blank session identity never counts as a contradiction.
+        audit_unavailable = (
             audit_contract_valid
             and audit_payload["package_audit_status"] == "UNAVAILABLE"
-        ):
-            return _unavailable(["AUDIT_UNAVAILABLE"])
+        )
+        expected_is_placeholder = (
+            audit_unavailable and "EVIDENCE_INPUT_INVALID" in audit_payload["findings"]
+        )
+        if audit_unavailable:
+            published_status = audit_payload["published_package_status"]
+            readable_contradiction = published_status is not None and (
+                package_status != published_status
+                or (
+                    not expected_is_placeholder
+                    and package_status != audit_payload["expected_package_status"]
+                )
+            )
+            if not readable_contradiction:
+                return _unavailable(["AUDIT_UNAVAILABLE"])
 
         package_session_id = package_payload["session_id"]
         audit_session_id = audit_payload["session_id"]
@@ -181,10 +209,12 @@ class ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyService:
         ):
             findings.add("AUDIT_SOURCE_MISMATCH")
 
-        package_status = package_payload["package_status"]
         if package_status != audit_payload["published_package_status"]:
             findings.add("PUBLISHED_STATUS_MISMATCH")
-        if package_status != audit_payload["expected_package_status"]:
+        if (
+            not expected_is_placeholder
+            and package_status != audit_payload["expected_package_status"]
+        ):
             findings.add("EXPECTED_STATUS_CONTRADICTION")
         if audit_payload["package_audit_status"] != "CONSISTENT":
             findings.add("AUDIT_STATUS_NOT_CONSISTENT")

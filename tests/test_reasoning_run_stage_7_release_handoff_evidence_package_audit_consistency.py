@@ -362,3 +362,131 @@ def test_service_is_independent_of_task_186_and_187_services_and_io():
         )
         for module in imported_modules
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 188 correction: a valid UNAVAILABLE audit must not hide readable
+# status contradictions
+# ---------------------------------------------------------------------------
+
+_AUDIT_SOURCE_187 = (
+    REASONING_RUN_STAGE_7_RELEASE_HANDOFF_EVIDENCE_PACKAGE_AUDIT_SOURCE_TASK_187
+)
+
+
+def _unavailable_audit(published, expected, findings):
+    """Contract-valid UNAVAILABLE Task 187 audit with a blank session."""
+    return ReasoningRunStage7ReleaseHandoffEvidencePackageAuditRead(
+        session_id="",
+        package_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_package_status=published,
+        expected_package_status=expected,
+        finding_count=len(findings),
+        findings=sorted(findings),
+        audit_source=_AUDIT_SOURCE_187,
+    )
+
+
+def _assert_inconsistent(result):
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["available"] is True
+    assert result["consistent"] is False
+    assert result["findings"] == sorted(set(result["findings"]))
+    assert result["finding_count"] == len(result["findings"])
+    assert (
+        ReasoningRunStage7ReleaseHandoffEvidencePackageAuditConsistencyRead.model_validate(
+            result
+        ).model_dump()
+        == result
+    )
+
+
+@pytest.mark.parametrize("package_status", ["READY", "BLOCKED", "UNAVAILABLE"])
+@pytest.mark.parametrize("expected", ["READY", "BLOCKED", "UNAVAILABLE"])
+def test_unavailable_audit_with_unknown_published_status_stays_unavailable(
+    package_status, expected
+):
+    package, _ = _pair(package_status)
+    audit = _unavailable_audit(None, expected, ["PACKAGE_INVALID"])
+    result = _result(package, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["session_id"] == ""
+    assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+
+
+@pytest.mark.parametrize("package_status", ["READY", "BLOCKED", "UNAVAILABLE"])
+def test_unavailable_audit_matching_package_stays_unavailable(package_status):
+    package, _ = _pair(package_status)
+    audit = _unavailable_audit(
+        package_status, package_status, ["T184_AUDIT_UNAVAILABLE"]
+    )
+    result = _result(package, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+
+
+@pytest.mark.parametrize(
+    ("package_status", "published"),
+    [("READY", "BLOCKED"), ("READY", "UNAVAILABLE"), ("BLOCKED", "READY")],
+)
+def test_unavailable_audit_published_status_conflicting_with_package_is_inconsistent(
+    package_status, published
+):
+    package, _ = _pair(package_status)
+    audit = _unavailable_audit(published, published, ["T184_AUDIT_UNAVAILABLE"])
+    result = _result(package, audit)
+    _assert_inconsistent(result)
+    assert "PUBLISHED_STATUS_MISMATCH" in result["findings"]
+    assert "SESSION_MISMATCH" not in result["findings"]
+
+
+def test_unavailable_audit_with_differing_published_and_expected_is_inconsistent():
+    """Blank session identity does not suppress a readable status contradiction."""
+    package, _ = _pair("READY")
+    audit = _unavailable_audit("READY", "BLOCKED", ["T184_AUDIT_UNAVAILABLE"])
+    assert audit.session_id == ""
+    result = _result(package, audit)
+    _assert_inconsistent(result)
+    assert "EXPECTED_STATUS_CONTRADICTION" in result["findings"]
+    assert "PUBLISHED_STATUS_MISMATCH" not in result["findings"]
+    assert "SESSION_MISMATCH" not in result["findings"]
+    assert result["session_id"] == ""
+
+
+def test_unavailable_audit_with_unreadable_upstream_expected_is_a_placeholder():
+    """EVIDENCE_INPUT_INVALID makes expected a placeholder, not a contradiction."""
+    package, _ = _pair("READY")
+    audit = _unavailable_audit("READY", "UNAVAILABLE", ["EVIDENCE_INPUT_INVALID"])
+    result = _result(package, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+
+
+def test_published_conflict_is_reported_without_placeholder_expected_noise():
+    package, _ = _pair("READY")
+    audit = _unavailable_audit("BLOCKED", "UNAVAILABLE", ["EVIDENCE_INPUT_INVALID"])
+    result = _result(package, audit)
+    _assert_inconsistent(result)
+    assert "PUBLISHED_STATUS_MISMATCH" in result["findings"]
+    assert "EXPECTED_STATUS_CONTRADICTION" not in result["findings"]
+
+
+def test_unavailable_audit_contradiction_is_deterministic_and_immutable():
+    package, _ = _pair("READY")
+    audit = _unavailable_audit("READY", "BLOCKED", ["T184_AUDIT_UNAVAILABLE"])
+    before = (package.model_dump(), audit.model_dump())
+    first = _result(package, audit)
+    second = _result(package, audit)
+    assert first == second
+    assert before == (package.model_dump(), audit.model_dump())
+
+
+@pytest.mark.parametrize("status", ["READY", "BLOCKED", "UNAVAILABLE"])
+def test_successful_audits_of_valid_packages_remain_consistent(status):
+    package, audit = _pair(status)
+    result = _result(package, audit)
+    assert result["consistency_status"] == "CONSISTENT"
+    assert result["findings"] == []
