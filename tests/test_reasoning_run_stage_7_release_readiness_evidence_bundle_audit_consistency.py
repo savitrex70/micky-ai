@@ -625,3 +625,228 @@ def test_source_constant_is_correct() -> None:
         "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE"
         "_AUDIT_CONSISTENCY_TASK_179"
     )
+
+
+# ---------------------------------------------------------------------------
+# Binding-unavailable audits: genuine claims about the audited bundle
+# ---------------------------------------------------------------------------
+
+
+def _unavailable_upstream(session_id: str = ""):
+    """Schema-valid Task 174-176 records whose shared binding is unprovable.
+
+    The projection may carry a session; Tasks 175 and 176 are the genuine
+    UNAVAILABLE variants, which must carry an empty session.
+    """
+    projection = ReasoningRunStage7ReleaseReadinessProjectionRead(
+        session_id=session_id,
+        readiness_status="UNAVAILABLE",
+        attestation_status="UNAVAILABLE",
+        attestation_audit_status="CONSISTENT",
+        consistency_status="CONSISTENT",
+        finding_count=1,
+        findings=["INSUFFICIENT_EVIDENCE"],
+        projection_source=REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_SOURCE_TASK_174,
+    )
+    audit175 = ReasoningRunStage7ReleaseReadinessAuditRead(
+        session_id="",
+        readiness_audit_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        published_readiness_status="UNAVAILABLE",
+        expected_readiness_status="UNAVAILABLE",
+        finding_count=1,
+        findings=["PROJECTION_UNAVAILABLE"],
+        audit_source=REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_SOURCE_TASK_175,
+    )
+    consistency176 = ReasoningRunStage7ReleaseReadinessAuditConsistencyRead(
+        session_id="",
+        consistency_status="UNAVAILABLE",
+        available=False,
+        consistent=False,
+        finding_count=1,
+        findings=["AUDIT_UNAVAILABLE"],
+        consistency_source=(
+            REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_SOURCE_TASK_176
+        ),
+    )
+    return projection, audit175, consistency176
+
+
+def _binding_unavailable_pair(session_id: str):
+    """A real Task 178 UNAVAILABLE(SESSION_BINDING_UNAVAILABLE) audit + bundle.
+
+    ``session_id == ""``: every record is sessionless and the real Task 177
+    bundle is published. Otherwise the projection carries the session and the
+    bundle claims it (without a mismatch finding), so the audit reads a
+    valid bundle whose shared binding upstream cannot prove.
+    """
+    projection, audit175, consistency176 = _unavailable_upstream(session_id)
+    published = ReasoningRunStage7ReleaseReadinessEvidenceBundleService.assemble(
+        projection174=projection, audit175=audit175, consistency176=consistency176
+    )
+    claimed = dict(published)
+    if session_id:
+        claimed["session_id"] = session_id
+        claimed["bundle_findings"] = []
+        claimed["bundle_finding_count"] = 0
+    bundle = ReasoningRunStage7ReleaseReadinessEvidenceBundleRead.model_validate(
+        claimed
+    )
+    audit = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead.model_validate(
+        ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService.audit(
+            projection174=projection,
+            audit175=audit175,
+            consistency176=consistency176,
+            bundle=bundle,
+        )
+    )
+    return bundle, audit
+
+
+@pytest.mark.parametrize("session_id", ["", "s"], ids=["sessionless", "partial"])
+def test_binding_unavailable_audit_fixture_is_genuine(session_id) -> None:
+    bundle, audit = _binding_unavailable_pair(session_id)
+    assert audit.bundle_audit_status == "UNAVAILABLE"
+    assert audit.findings == ["SESSION_BINDING_UNAVAILABLE"]
+    assert audit.session_id == ""
+    assert audit.published_bundle_status == bundle.bundle_status == "UNAVAILABLE"
+    assert audit.expected_bundle_status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("session_id", ["", "s"], ids=["sessionless", "partial"])
+def test_binding_unavailable_audit_over_its_own_bundle_is_unavailable(
+    session_id,
+) -> None:
+    bundle, audit = _binding_unavailable_pair(session_id)
+    result = _verify(bundle, audit)
+    assert result["consistency_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["consistent"] is False
+    assert result["session_id"] == ""
+    assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+    assert result["finding_count"] == 1
+
+
+@pytest.mark.parametrize("status", ["READY", "BLOCKED"])
+def test_binding_unavailable_audit_over_different_status_bundle_is_inconsistent(
+    status,
+) -> None:
+    """The audit read an UNAVAILABLE bundle; a READY/BLOCKED one is detached."""
+    _, audit = _binding_unavailable_pair("")
+    other = _chain(status)
+    result = _verify(other["bundle"], audit)
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["available"] is True
+    assert result["consistent"] is False
+    assert result["session_id"] == other["bundle"].session_id
+    assert result["findings"] == [
+        "EXPECTED_STATUS_MISMATCH",
+        "PUBLISHED_STATUS_MISMATCH",
+    ]
+    assert result["finding_count"] == 2
+    assert (
+        ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead.model_validate(
+            result
+        ).model_dump()
+        == result
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "expected_finding"),
+    [
+        ("published_bundle_status", "PUBLISHED_STATUS_MISMATCH"),
+        ("expected_bundle_status", "EXPECTED_STATUS_MISMATCH"),
+    ],
+)
+def test_binding_unavailable_audit_single_status_difference_is_reported(
+    field, expected_finding
+) -> None:
+    bundle, audit = _binding_unavailable_pair("")
+    audit = audit.model_copy(update={field: "READY"})
+    result = _verify(bundle, audit)
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["findings"] == [expected_finding]
+    assert result["finding_count"] == 1
+
+
+def test_unavailable_audit_with_other_findings_keeps_placeholder_statuses() -> None:
+    """Only the binding-unavailable verdict makes its status fields a claim."""
+    bundle = _chain("READY")["bundle"]
+    for findings in (
+        ["EVIDENCE_INPUT_INVALID"],
+        ["BUNDLE_INVALID"],
+        ["BUNDLE_INVALID", "SESSION_BINDING_UNAVAILABLE"],
+    ):
+        audit = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead(
+            session_id="",
+            bundle_audit_status="UNAVAILABLE",
+            available=False,
+            consistent=False,
+            published_bundle_status="UNAVAILABLE",
+            expected_bundle_status="UNAVAILABLE",
+            finding_count=len(findings),
+            findings=findings,
+            audit_source=AUDIT_SOURCE,
+        )
+        result = _verify(bundle, audit)
+        assert result["consistency_status"] == "UNAVAILABLE"
+        assert result["findings"] == ["AUDIT_UNAVAILABLE"]
+
+
+def test_binding_unavailable_verdict_is_deterministic_and_immutable() -> None:
+    bundle, audit = _binding_unavailable_pair("s")
+    other = _chain("READY")["bundle"]
+    before = (bundle.model_dump(), audit.model_dump(), other.model_dump())
+    first = (_verify(bundle, audit), _verify(other, audit))
+    second = (_verify(bundle, audit), _verify(other, audit))
+    assert first == second
+    assert before == (bundle.model_dump(), audit.model_dump(), other.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Field-level boundary and public exports
+# ---------------------------------------------------------------------------
+
+
+def test_matching_session_and_status_with_audit_findings_is_not_consistent(
+    ready_chain,
+) -> None:
+    """Matching identity and statuses never outweigh an audit that failed."""
+    audit = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead(
+        session_id=ready_chain["bundle"].session_id,
+        bundle_audit_status="INCONSISTENT",
+        available=True,
+        consistent=False,
+        published_bundle_status=ready_chain["bundle"].bundle_status,
+        expected_bundle_status=ready_chain["bundle"].bundle_status,
+        finding_count=1,
+        findings=["SOME_AUDIT_FINDING"],
+        audit_source=AUDIT_SOURCE,
+    )
+    result = _verify(ready_chain["bundle"], audit)
+    assert result["consistency_status"] == "INCONSISTENT"
+    assert result["findings"] == ["AUDIT_HAS_FINDINGS", "AUDIT_STATUS_MISMATCH"]
+
+
+def test_public_exports_and_task_180_imports_are_available() -> None:
+    import rop.schemas as schemas
+    import rop.services as services
+    from rop.services import (
+        reasoning_run_stage_7_release_readiness_final_attestation as task_180,
+    )
+
+    assert (
+        schemas.ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead
+        is ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead
+    )
+    assert (
+        schemas.REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179
+        == CONSISTENCY_SOURCE
+    )
+    assert (
+        services.ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService
+        is ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService
+    )
+    assert hasattr(task_180, "_CONSISTENCY_READ")

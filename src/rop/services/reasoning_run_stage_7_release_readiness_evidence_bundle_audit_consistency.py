@@ -38,6 +38,10 @@ _BUNDLE_READ = ReasoningRunStage7ReleaseReadinessEvidenceBundleRead
 _AUDIT_READ = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditRead
 _CONSISTENCY_READ = ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyRead
 
+# The only finding with which Task 178 reports UNAVAILABLE after reading a
+# valid published bundle (its status fields are then a genuine claim).
+_SESSION_BINDING_UNAVAILABLE = "SESSION_BINDING_UNAVAILABLE"
+
 
 class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyContractError(
     Exception
@@ -76,6 +80,12 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService:
         178 audit verdict of ``UNAVAILABLE`` yields ``UNAVAILABLE`` unless
         separate readable evidence proves a contradiction.
 
+        The comparison boundary is exactly what the Task 178 audit
+        represents about the bundle: its session identity, the published
+        bundle status, the independently expected bundle status, and its own
+        verdict and findings. Other Task 177 fields are not represented by
+        Task 178, so they are neither compared nor claimed as audited.
+
         No child service is invoked, no fingerprint is recomputed, and no
         database is written.
         """
@@ -108,7 +118,35 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditConsistencyService:
         # A Task 178 audit verdict of UNAVAILABLE proves nothing about the
         # binding: the audit itself declares it unprovable. Its blank
         # session identity is a contract-valid artifact, never a mismatch.
+        # The one exception is an audit that reached UNAVAILABLE only
+        # because the shared session binding was unprovable
+        # (SESSION_BINDING_UNAVAILABLE and nothing else). Task 178 emits
+        # that verdict only after reading the published bundle, so its
+        # status fields are a genuine claim about that bundle and a
+        # difference from the bundle presented here is a readable
+        # detachment, not missing evidence. Every other UNAVAILABLE audit
+        # carries placeholder statuses and stays UNAVAILABLE.
         if audit.bundle_audit_status == "UNAVAILABLE":
+            detached: list[str] = []
+            if audit.findings == [_SESSION_BINDING_UNAVAILABLE]:
+                if bundle.bundle_status != audit.published_bundle_status:
+                    detached.append("PUBLISHED_STATUS_MISMATCH")
+                if bundle.bundle_status != audit.expected_bundle_status:
+                    detached.append("EXPECTED_STATUS_MISMATCH")
+            if detached:
+                return service._project(
+                    {
+                        "session_id": bundle.session_id,
+                        "consistency_status": "INCONSISTENT",
+                        "available": True,
+                        "consistent": False,
+                        "finding_count": len(detached),
+                        "findings": sorted(detached),
+                        "consistency_source": (
+                            REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_SOURCE_TASK_179
+                        ),
+                    }
+                )
             return service._project(
                 {
                     "session_id": "",
