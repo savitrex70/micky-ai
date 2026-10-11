@@ -7,7 +7,14 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 from rop.schemas.native_evidence import (
     NativeEvidenceBundle,
@@ -43,12 +50,52 @@ class NativeRuleFinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     status: NativeReasoningStatus
-    conclusion: str | None
-    reason_codes: tuple[NativeReasonCode, ...]
-    evidence_ids: tuple[UUID, ...]
-    missing_information: tuple[str, ...]
+    conclusion: StrictStr | None
+    reason_codes: tuple[NativeReasonCode, ...] = Field(max_length=64)
+    evidence_ids: tuple[UUID, ...] = Field(max_length=256)
+    missing_information: tuple[StrictStr, ...] = Field(max_length=64)
     uncertainty: NativeReasoningUncertainty
-    abstention_reason: str | None
+    abstention_reason: StrictStr | None
+
+    @field_validator("conclusion", "abstention_reason")
+    @classmethod
+    def _nonblank_optional_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("optional text must not be blank when present")
+        return value
+
+    @field_validator("reason_codes")
+    @classmethod
+    def _canonical_reason_codes(
+        cls, value: tuple[NativeReasonCode, ...]
+    ) -> tuple[NativeReasonCode, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("rule reason codes must not contain duplicates")
+        if value != tuple(sorted(value, key=lambda item: item.value)):
+            raise ValueError("rule reason codes must be canonically sorted")
+        return value
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _canonical_evidence_ids(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("rule evidence references must not contain duplicates")
+        if value != tuple(sorted(value, key=str)):
+            raise ValueError("rule evidence references must be canonically sorted")
+        return value
+
+    @field_validator("missing_information")
+    @classmethod
+    def _canonical_missing_information(
+        cls, value: tuple[str, ...]
+    ) -> tuple[str, ...]:
+        if any(not item.strip() or len(item) > 500 for item in value):
+            raise ValueError("missing-information items must be nonblank and <= 500 chars")
+        if len(set(value)) != len(value):
+            raise ValueError("missing-information items must not contain duplicates")
+        if value != tuple(sorted(value)):
+            raise ValueError("missing-information items must be canonically sorted")
+        return value
 
 
 class NativeReasoningRule(Protocol):
