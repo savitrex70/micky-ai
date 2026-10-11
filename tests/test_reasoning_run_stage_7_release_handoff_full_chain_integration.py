@@ -1266,37 +1266,66 @@ def test_ready_chain_preserves_one_session_and_canonical_fingerprint_verbatim():
         == fingerprint
     )
     assert (
-        chain["package168"]["t166_audited_bundle"]["request_fingerprint"]
-        == fingerprint
+        chain["package168"]["t166_audited_bundle"]["request_fingerprint"] == fingerprint
     )
 
 
+def _bundle165_from_upstream(upstream: dict[str, object]) -> dict[str, object]:
+    """Run the real Task 165 service over the supplied Task 162-164 records."""
+    from rop.schemas.reasoning_run_stage_7_audit_package import (
+        ReasoningRunStage7AuditPackageRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice import (
+        ReasoningRunStage7VerticalSliceRead,
+    )
+    from rop.schemas.reasoning_run_stage_7_vertical_slice_audit import (
+        ReasoningRunStage7VerticalSliceAuditRead,
+    )
+
+    return ReasoningRunStage7EvidenceBundleService.assemble(
+        pkg162=ReasoningRunStage7AuditPackageRead.model_validate(upstream["pkg162"]),
+        slice163=ReasoningRunStage7VerticalSliceRead.model_validate(
+            upstream["slice163"]
+        ),
+        audit164=ReasoningRunStage7VerticalSliceAuditRead.model_validate(
+            upstream["audit164"]
+        ),
+    )
+
+
+def _assert_identity_failure_halts_chain(upstream: dict[str, object]) -> None:
+    """An untrusted upstream identity can never reach a published handoff.
+
+    Task 165 publishes UNAVAILABLE with no session identity, and the real
+    Task 175 audit contract then refuses to certify a record without an
+    identity, so the composition halts before any READY handoff exists.
+    """
+    from rop.services.reasoning_run_stage_7_release_readiness_audit import (
+        ReasoningRunStage7ReleaseReadinessAuditContractError,
+    )
+
+    bundle165 = _B165.model_validate(_bundle165_from_upstream(upstream))
+    assert bundle165.bundle_status == "UNAVAILABLE"
+    assert bundle165.session_id == ""
+
+    with pytest.raises(
+        ReasoningRunStage7ReleaseReadinessAuditContractError,
+        match="CONSISTENT requires a session identity",
+    ) as excinfo:
+        _compose_full_chain(upstream)
+    assert excinfo.value.invariant == "RELEASE_READINESS_AUDIT_RESULT_INVALID"
+
+
 def test_mismatched_upstream_session_is_not_recovered_by_later_boundaries():
-    """A detached Task 163 identity fails closed through the handoff chain."""
+    """A detached Task 163 identity fails closed and never reaches a handoff."""
     upstream = _produce_upstream_ready("Task 194 detached upstream session")
     upstream["slice163"]["session_id"] = "detached-session-194"
 
-    chain = _compose_full_chain(upstream)
+    _assert_identity_failure_halts_chain(upstream)
 
-    assert chain["bundle165"]["bundle_status"] == "UNAVAILABLE"
-    assert chain["bundle165"]["session_id"] == ""
-    assert chain["package168"]["package_status"] == "UNAVAILABLE"
-    assert chain["package168"]["session_id"] == ""
-
-    for boundary in (
-        "attestation171",
-        "projection174",
-        "attestation180",
-        "projection183",
-        "package186",
-        "consistency188",
-    ):
-        assert chain[boundary]["session_id"] == "", boundary
-    assert chain["package186"]["package_status"] != "READY"
+    bundle165 = _bundle165_from_upstream(upstream)
     assert "detached-session-194" not in {
-        record["session_id"]
-        for name, record in chain.items()
-        if name != "session_id"
+        value for value in bundle165.values() if isinstance(value, str)
     }
 
 
@@ -1315,20 +1344,7 @@ def test_empty_upstream_audit_identity_is_not_restored_downstream():
     assert validated_audit.session_id == ""
     upstream["audit164"] = validated_audit.model_dump()
 
-    chain = _compose_full_chain(upstream)
-
-    assert chain["bundle165"]["session_id"] == ""
-    assert chain["package168"]["session_id"] == ""
-    for boundary in (
-        "attestation171",
-        "projection174",
-        "attestation180",
-        "projection183",
-        "package186",
-        "consistency188",
-    ):
-        assert chain[boundary]["session_id"] == "", boundary
-    assert chain["package186"]["package_status"] != "READY"
+    _assert_identity_failure_halts_chain(upstream)
 
 
 def test_detached_task_184_audit_identity_stays_untrusted_through_task_188():
@@ -1461,4 +1477,3 @@ def test_malformed_request_fingerprint_cannot_publish_ready_task_165_bundle():
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert bundle["request_fingerprint"] is None
     assert "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED" in bundle["bundle_findings"]
-
