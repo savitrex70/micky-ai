@@ -81,7 +81,7 @@ class NativeEvidenceProvenance(BaseModel):
             or value.lower().startswith("file:")
         ):
             raise ValueError("source_reference must not expose a filesystem path")
-        if re.search(r"://[^/\\s:@]+:[^/\\s@]+@", value):
+        if re.search(r"://[^/@:]+:[^/@]+@", value):
             raise ValueError("source_reference must not contain URL credentials")
         return value
 
