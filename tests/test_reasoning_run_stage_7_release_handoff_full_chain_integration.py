@@ -1477,3 +1477,168 @@ def test_malformed_request_fingerprint_cannot_publish_ready_task_165_bundle():
     assert bundle["bundle_status"] == "UNAVAILABLE"
     assert bundle["request_fingerprint"] is None
     assert "REQUEST_FINGERPRINT_MISSING_OR_MALFORMED" in bundle["bundle_findings"]
+
+
+# ---------------------------------------------------------------------------
+# Task 195: provider attribution and provenance binding
+# ---------------------------------------------------------------------------
+
+
+def test_ready_chain_preserves_provider_attribution_and_canonical_sources():
+    """Provider identity and source provenance remain bound through Task 188."""
+    upstream = _produce_upstream_ready("Task 195 provenance and attribution")
+    chain = _compose_full_chain(upstream)
+    provider = upstream["pkg162"]["provider_name"]
+    model = upstream["pkg162"]["model_name"]
+
+    assert provider
+    assert model
+    assert upstream["slice163"]["provider_name"] == provider
+    assert upstream["slice163"]["model_name"] == model
+    assert chain["bundle165"]["provider_name"] == provider
+    assert chain["bundle165"]["model_name"] == model
+    assert chain["audit166"]["audited_bundle"]["provider_name"] == provider
+    assert chain["audit166"]["audited_bundle"]["model_name"] == model
+
+    package168 = chain["package168"]
+    assert package168["t162_provider_name"] == provider
+    assert package168["t162_model_name"] == model
+    assert package168["t163_provider_name"] == provider
+    assert package168["t163_model_name"] == model
+    assert package168["t165_bundle_evidence"]["provider_name"] == provider
+    assert package168["t165_bundle_evidence"]["model_name"] == model
+    assert package168["t166_audited_bundle"]["provider_name"] == provider
+    assert package168["t166_audited_bundle"]["model_name"] == model
+
+    canonical_sources = (
+        ("Task 162", upstream["pkg162"], "audit_source",
+         "REASONING_RUN_STAGE_7_AUDIT_PACKAGE_TASK_162"),
+        ("Task 163", upstream["slice163"], "certification_source",
+         "REASONING_RUN_STAGE_7_VERTICAL_SLICE_TASK_163"),
+        ("Task 164", upstream["audit164"], "audit_source",
+         "REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_TASK_164"),
+        ("Task 165", chain["bundle165"], "bundle_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_TASK_165"),
+        ("Task 166", chain["audit166"], "audit_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_TASK_166"),
+        ("Task 167", chain["consistency167"], "consistency_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_TASK_167"),
+        ("Task 168", package168, "package_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_TASK_168"),
+        ("Task 169", chain["audit169"], "audit_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_TASK_169"),
+        ("Task 170", chain["consistency170"], "consistency_source",
+         "REASONING_RUN_STAGE_7_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_TASK_170"),
+        ("Task 171", chain["attestation171"], "attestation_source",
+         "REASONING_RUN_STAGE_7_FINAL_EVIDENCE_ATTESTATION_TASK_171"),
+        ("Task 172", chain["audit172"], "audit_source",
+         "REASONING_RUN_STAGE_7_FINAL_ATTESTATION_AUDIT_TASK_172"),
+        ("Task 173", chain["consistency173"], "consistency_source",
+         "REASONING_RUN_STAGE_7_FINAL_ATTESTATION_CONSISTENCY_TASK_173"),
+        ("Task 174", chain["projection174"], "projection_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_PROJECTION_TASK_174"),
+        ("Task 175", chain["audit175"], "audit_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_TASK_175"),
+        ("Task 176", chain["consistency176"], "consistency_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_AUDIT_CONSISTENCY_TASK_176"),
+        ("Task 177", chain["bundle177"], "bundle_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_TASK_177"),
+        ("Task 178", chain["audit178"], "audit_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_TASK_178"),
+        ("Task 179", chain["consistency179"], "consistency_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_EVIDENCE_BUNDLE_AUDIT_CONSISTENCY_TASK_179"),
+        ("Task 180", chain["attestation180"], "attestation_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_TASK_180"),
+        ("Task 181", chain["audit181"], "audit_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_AUDIT_TASK_181"),
+        ("Task 182", chain["consistency182"], "consistency_source",
+         "REASONING_RUN_STAGE_7_RELEASE_READINESS_FINAL_ATTESTATION_CONSISTENCY_TASK_182"),
+        ("Task 183", chain["projection183"], "projection_source",
+         "REASONING_RUN_STAGE_7_FINAL_RELEASE_GATE_PROJECTION_TASK_183"),
+        ("Task 184", chain["audit184"], "audit_source",
+         "REASONING_RUN_STAGE_7_FINAL_RELEASE_GATE_AUDIT_TASK_184"),
+        ("Task 185", chain["consistency185"], "consistency_source",
+         "REASONING_RUN_STAGE_7_FINAL_RELEASE_GATE_AUDIT_CONSISTENCY_TASK_185"),
+        ("Task 186", chain["package186"], "package_source",
+         "REASONING_RUN_STAGE_7_RELEASE_HANDOFF_EVIDENCE_PACKAGE_TASK_186"),
+        ("Task 187", chain["audit187"], "audit_source",
+         "REASONING_RUN_STAGE_7_RELEASE_HANDOFF_EVIDENCE_PACKAGE_AUDIT_TASK_187"),
+        ("Task 188", chain["consistency188"], "consistency_source",
+         "REASONING_RUN_STAGE_7_RELEASE_HANDOFF_EVIDENCE_PACKAGE_AUDIT_CONSISTENCY_TASK_188"),
+    )
+    for label, record, field, expected in canonical_sources:
+        assert record[field] == expected, (label, field)
+
+    # The aggregate is a verbatim evidence envelope for every child source.
+    for field, expected in (
+        ("t162_audit_source", upstream["pkg162"]["audit_source"]),
+        ("t163_certification_source", upstream["slice163"]["certification_source"]),
+        ("t164_audit_source", upstream["audit164"]["audit_source"]),
+        ("t165_bundle_source", chain["bundle165"]["bundle_source"]),
+        ("t166_audit_source", chain["audit166"]["audit_source"]),
+        ("t167_consistency_source", chain["consistency167"]["consistency_source"]),
+    ):
+        assert package168[field] == expected, field
+    assert (
+        package168["t165_bundle_evidence"]["bundle_source"]
+        == chain["bundle165"]["bundle_source"]
+    )
+    assert (
+        package168["t166_audited_bundle"]["bundle_source"]
+        == chain["bundle165"]["bundle_source"]
+    )
+    assert chain["package186"]["t183_projection_source"] == (
+        chain["projection183"]["projection_source"]
+    )
+    assert chain["package186"]["t184_audit_source"] == chain["audit184"]["audit_source"]
+    assert chain["package186"]["t185_consistency_source"] == (
+        chain["consistency185"]["consistency_source"]
+    )
+
+
+def test_task_168_fails_closed_on_task_162_163_provider_model_mismatch():
+    """Different child attributions remain visible and cannot produce READY."""
+    upstream = _produce_upstream_ready("Task 195 conflicting provider attribution")
+    expected_provider = upstream["pkg162"]["provider_name"]
+    expected_model = upstream["pkg162"]["model_name"]
+    upstream["slice163"]["provider_name"] = "substituted-provider-195"
+    upstream["slice163"]["model_name"] = "substituted-model-195"
+
+    chain = _compose_full_chain(upstream)
+    package = chain["package168"]
+
+    assert package["t162_provider_name"] == expected_provider
+    assert package["t162_model_name"] == expected_model
+    assert package["t163_provider_name"] == "substituted-provider-195"
+    assert package["t163_model_name"] == "substituted-model-195"
+    assert package["package_status"] == "UNAVAILABLE"
+    assert "T162_T163_ATTRIBUTION_MISMATCH" in package["findings"]
+    assert chain["audit169"]["package_audit_status"] == "CONSISTENT"
+    assert chain["consistency170"]["consistency_status"] == "CONSISTENT"
+
+    # The discrepancy remains in the evidence and the handoff cannot promote it.
+    assert chain["package186"]["package_status"] == "UNAVAILABLE"
+    assert chain["audit187"]["package_audit_status"] == "CONSISTENT"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_noncanonical_task_162_source_is_preserved_and_fails_closed_end_to_end():
+    """The real chain reports a forged child source without silently repairing it."""
+    upstream = _produce_upstream_ready("Task 195 forged Task 162 source")
+    forged_source = "FORGED_TASK_162_SOURCE_195"
+    upstream["pkg162"]["audit_source"] = forged_source
+
+    chain = _compose_full_chain(upstream)
+    bundle = chain["bundle165"]
+    package = chain["package168"]
+
+    assert bundle["bundle_status"] == "UNAVAILABLE"
+    assert bundle["t162_audit_source"] == forged_source
+    assert "T162_AUDIT_SOURCE_NOT_CANONICAL" in bundle["bundle_findings"]
+
+    assert package["package_status"] == "UNAVAILABLE"
+    assert package["t162_audit_source"] == forged_source
+    assert "T162_SOURCE_MISMATCH" in package["findings"]
+    assert chain["package186"]["package_status"] == "UNAVAILABLE"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
