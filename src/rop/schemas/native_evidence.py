@@ -6,7 +6,14 @@ from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from rop.schemas.native_reasoning import NativeReasoningRequest
 
@@ -112,7 +119,9 @@ class NativeEvidenceRecord(BaseModel):
         elif self.derived_from_ids:
             raise ValueError("only derived interpretations may declare parent evidence")
         elif self.provenance.source_kind == NativeProvenanceKind.DERIVED_RECORD:
-            raise ValueError("DERIVED_RECORD provenance requires a derived interpretation")
+            raise ValueError(
+                "DERIVED_RECORD provenance requires a derived interpretation"
+            )
         return self
 
 
@@ -187,7 +196,7 @@ class NativeEvidenceBundle(BaseModel):
 def validate_native_evidence_binding(
     request: NativeReasoningRequest, bundle: NativeEvidenceBundle
 ) -> None:
-    """Fail closed unless request identity and every requested evidence reference bind."""
+    """Fail closed unless request identity and requested evidence references bind."""
 
     if request.session_id != bundle.session_id:
         raise ValueError("request session_id does not match evidence bundle")
