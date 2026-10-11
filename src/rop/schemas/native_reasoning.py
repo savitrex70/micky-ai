@@ -80,7 +80,7 @@ class NativeReasoningRequest(BaseModel):
     contract_version: Literal["1"]
     request_id: UUID
     session_id: UUID
-    context_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     task: NativeReasoningTask
     evidence_ids: list[UUID] = Field(max_length=MAX_EVIDENCE_REFERENCES)
     input_summary: StrictStr = Field(min_length=1, max_length=4000)
@@ -127,7 +127,7 @@ class NativeReasoningResult(BaseModel):
     contract_version: Literal["1"]
     request_id: UUID
     session_id: UUID
-    context_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     status: NativeReasoningStatus
     conclusion: StrictStr | None = Field(max_length=4000)
     reason_codes: list[NativeReasonCode] = Field(max_length=MAX_REASON_CODES)
