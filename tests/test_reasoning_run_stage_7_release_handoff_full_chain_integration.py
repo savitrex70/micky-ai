@@ -21,7 +21,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -385,10 +385,14 @@ def _valid_model_output(context: dict, explanation: str = "") -> str:
     return json.dumps({"candidate_assessments": assessments})
 
 
-def _healthy_pkg162(db: Session, sid: str) -> tuple[dict, dict, dict, dict]:
+def _healthy_pkg162(
+    db: Session, sid: str, *, provider_explanation: str = ""
+) -> tuple[dict, dict, dict, dict]:
     """Produce the real Task 162 audit package plus Request/Proposal audits."""
     context = _context(db, sid)
-    provider = _FakeProvider(_valid_model_output(context))
+    provider = _FakeProvider(
+        _valid_model_output(context, explanation=provider_explanation)
+    )
     package = _build_package(db, sid)
     request_audit = _audit_request(db, package)
     assert request_audit["request_audit_status"] == "CONSISTENT"
@@ -442,13 +446,15 @@ def _audit164(package, verdict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _produce_upstream_ready(label: str) -> dict[str, object]:
+def _produce_upstream_ready(
+    label: str, *, provider_explanation: str = ""
+) -> dict[str, object]:
     """Run the real Task 154-164 services for a READY session."""
     sid = _seed_full_session(label)
     with TestingSessionLocal() as db:
         admission = _admission(db, sid)
         package, request_audit, proposal_result, proposal_audit = _healthy_pkg162(
-            db, sid
+            db, sid, provider_explanation=provider_explanation
         )
     diagnostics = _diagnose(package, request_audit, proposal_result, proposal_audit)
     pkg162 = _pkg162(
@@ -1945,3 +1951,91 @@ def test_task_183_185_forged_sources_do_not_hide_explicit_blocking_evidence(
     assert consistency188.consistency_status == "INCONSISTENT"
     assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
     assert "AUDIT_INCONSISTENT" in consistency188.findings
+
+
+
+# ---------------------------------------------------------------------------
+# Task 198: provider isolation and evidence privacy
+# ---------------------------------------------------------------------------
+
+
+def test_task_198_downstream_chain_is_provider_and_database_write_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tasks 165-188 consume published evidence without provider or DB access."""
+    upstream = _produce_upstream_ready("Task 198 provider isolation")
+
+    def reject_provider_dispatch(*args: object, **kwargs: object) -> None:
+        pytest.fail("downstream evidence chain must not invoke provider dispatch")
+
+    monkeypatch.setattr(
+        ReasoningRunStage7DispatchService, "dispatch", reject_provider_dispatch
+    )
+
+    statements: list[str] = []
+
+    def record_statement(
+        connection: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_statement)
+    try:
+        chain = _compose_full_chain(upstream)
+    finally:
+        event.remove(engine, "before_cursor_execute", record_statement)
+
+    assert statements == []
+    assert chain["bundle165"]["bundle_status"] == "READY"
+    assert chain["package186"]["package_status"] == "READY"
+    assert chain["consistency188"]["consistency_status"] == "CONSISTENT"
+
+
+def test_task_198_raw_request_and_provider_payloads_are_not_published() -> None:
+    """Raw request/provider material stays out of all published evidence records."""
+    raw_request_sentinel = "RAW_REQUEST_PAYLOAD_SENTINEL_TASK198"
+    raw_provider_sentinel = "RAW_PROVIDER_RESPONSE_SENTINEL_TASK198"
+    upstream = _produce_upstream_ready(
+        raw_request_sentinel,
+        provider_explanation=raw_provider_sentinel,
+    )
+
+    # The provider and request boundary ran through the real upstream services;
+    # only validated Task 162-164 published records enter the downstream chain.
+    chain = _compose_full_chain(upstream)
+    published_json = json.dumps(chain, sort_keys=True)
+
+    assert raw_request_sentinel not in published_json
+    assert raw_provider_sentinel not in published_json
+
+    # Privacy filtering must not discard the canonical provider attribution.
+    assert chain["bundle165"]["provider_name"] == upstream["slice163"]["provider_name"]
+    assert chain["bundle165"]["model_name"] == upstream["slice163"]["model_name"]
+    assert chain["package168"]["t162_provider_name"] == upstream["pkg162"]["provider_name"]
+    assert chain["package168"]["t162_model_name"] == upstream["pkg162"]["model_name"]
+
+
+def test_task_198_malformed_evidence_diagnostics_do_not_echo_untrusted_values() -> None:
+    """Malformed evidence fails closed with structural findings, never raw input."""
+    raw_value = "RAW_PROVIDER_RESPONSE_OBJECT_SENTINEL_TASK198"
+    result = ReasoningRunStage7EvidenceBundleAuditService.audit(
+        bundle={
+            "session_id": raw_value,
+            "raw_provider_response": raw_value,
+        }
+    )
+
+    assert result["bundle_audit_status"] == "UNAVAILABLE"
+    assert result["available"] is False
+    assert result["consistent"] is False
+    assert result["session_id"] == ""
+    assert result["published_bundle_status"] is None
+    assert result["expected_bundle_status"] is None
+    assert result["audited_bundle"] is None
+    assert result["findings"] == sorted(set(result["findings"]))
+    assert raw_value not in json.dumps(result, sort_keys=True)
