@@ -90,7 +90,9 @@ class NativeRuleFinding(BaseModel):
         cls, value: tuple[str, ...]
     ) -> tuple[str, ...]:
         if any(not item.strip() or len(item) > 500 for item in value):
-            raise ValueError("missing-information items must be nonblank and <= 500 chars")
+            raise ValueError(
+                "missing-information items must be nonblank and <= 500 chars"
+            )
         if len(set(value)) != len(value):
             raise ValueError("missing-information items must not contain duplicates")
         if value != tuple(sorted(value)):
@@ -173,6 +175,10 @@ class NativeReasoningEngine:
                 continue
             try:
                 finding = rule.evaluate(request, evidence)
+            except ValidationError as exc:
+                raise self._error(
+                    request.request_id, NativeReasoningErrorCode.CONTRACT_VIOLATION
+                ) from exc
             except Exception as exc:
                 raise self._error(
                     request.request_id, NativeReasoningErrorCode.DEPENDENCY_UNAVAILABLE
