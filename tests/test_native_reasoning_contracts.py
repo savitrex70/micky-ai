@@ -55,7 +55,8 @@ def _result(**patch: object) -> dict:
 
 def test_valid_request_and_result_are_accepted() -> None:
     assert NativeReasoningRequest.model_validate(_request()).contract_version == "1"
-    assert NativeReasoningResult.model_validate(_result()).status == NativeReasoningStatus.SUPPORTED
+    result = NativeReasoningResult.model_validate(_result())
+    assert result.status == NativeReasoningStatus.SUPPORTED
 
 
 def test_request_rejects_missing_extra_and_wrongly_typed_fields() -> None:
@@ -95,7 +96,9 @@ def test_request_rejects_invalid_values(field: str, value: object) -> None:
 
 def test_contradiction_is_not_unavailable_or_insufficient_evidence() -> None:
     with pytest.raises(ValidationError):
-        NativeReasoningResult.model_validate(_result(status=NativeReasoningStatus.CONTRADICTED))
+        NativeReasoningResult.model_validate(
+            _result(status=NativeReasoningStatus.CONTRADICTED)
+        )
     contradicted = NativeReasoningResult.model_validate(
         _result(
             status=NativeReasoningStatus.CONTRADICTED,
@@ -154,7 +157,12 @@ def test_abstention_requires_explicit_reason_and_reason_code() -> None:
 def test_deterministic_lists_must_be_sorted_and_unique() -> None:
     with pytest.raises(ValidationError):
         NativeReasoningResult.model_validate(
-            _result(reason_codes=[NativeReasonCode.RULE_MATCH, NativeReasonCode.NO_APPLICABLE_RULE])
+            _result(
+                reason_codes=[
+                    NativeReasonCode.RULE_MATCH,
+                    NativeReasonCode.NO_APPLICABLE_RULE,
+                ]
+            )
         )
     with pytest.raises(ValidationError):
         NativeReasoningResult.model_validate(
