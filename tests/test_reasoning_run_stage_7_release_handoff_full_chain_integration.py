@@ -1971,7 +1971,6 @@ def test_task_183_185_forged_sources_do_not_hide_explicit_blocking_evidence(
     assert "AUDIT_INCONSISTENT" in consistency188.findings
 
 
-
 # ---------------------------------------------------------------------------
 # Task 198: provider isolation and evidence privacy
 # ---------------------------------------------------------------------------
