@@ -334,3 +334,25 @@ def test_provenance_accepts_opaque_identifiers_and_safe_urls(reference: str) -> 
         _provenance(source_reference=reference)
     )
     assert provenance.source_reference == reference
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x1f", "\x7f", "\x80", "\x81", "\x9f"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "https://example.test/a{c}b",
+        "https://example.test/path?q=a{c}b",
+        "https://example.test/path#frag{c}ment",
+        "https://example.test{c}/source",
+        "https://example.test/source{c}",
+        "{c}https://example.test/source",
+        "source:doc{c}ument-900",
+    ],
+)
+def test_provenance_rejects_unicode_control_characters_anywhere(
+    control: str, template: str
+) -> None:
+    with pytest.raises(ValidationError):
+        NativeEvidenceProvenance.model_validate(
+            _provenance(source_reference=template.format(c=control))
+        )

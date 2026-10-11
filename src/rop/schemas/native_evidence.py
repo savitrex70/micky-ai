@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -126,7 +127,7 @@ class NativeEvidenceProvenance(BaseModel):
     def _nonblank_source_reference(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("source_reference must not be blank")
-        if any(ord(character) < 32 for character in value):
+        if any(unicodedata.category(character) == "Cc" for character in value):
             raise ValueError("source_reference must not contain control characters")
         if (
             value.startswith(("/", "\\\\"))
