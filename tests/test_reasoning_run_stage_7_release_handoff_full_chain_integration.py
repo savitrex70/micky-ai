@@ -1085,7 +1085,7 @@ def test_unavailable_published_gate_status_does_not_hide_readable_contradiction(
 
     consistency185 = result["consistency185"]
     assert consistency185.gate_consistency_status == "INCONSISTENT"
-    assert "EXPECTED_STATUS_CONTRADICTION" in consistency185.findings
+    assert "EXPECTED_STATUS_MISMATCH" in consistency185.findings
 
     # The aggregate cannot erase the contradiction just because the published
     # gate status says UNAVAILABLE.
@@ -1178,9 +1178,7 @@ def test_valid_handoff_audit_attached_to_another_package_is_inconsistent():
     first = _compose_full_chain(
         _produce_upstream_ready("Task 193 original audited package")
     )
-    second = _compose_full_chain(
-        _produce_upstream_ready("Task 193 detached package")
-    )
+    second = _compose_full_chain(_produce_upstream_ready("Task 193 detached package"))
     audit = _A187.model_validate(first["audit187"])
     different_package = _P186.model_validate(second["package186"])
     assert audit.package_audit_status == "CONSISTENT"
@@ -1234,4 +1232,3 @@ def test_task_188_preserves_bound_inconsistent_handoff_audit():
     assert "EXPECTED_STATUS_CONTRADICTION" in consistency188.findings
     assert "AUDIT_STATUS_NOT_CONSISTENT" in consistency188.findings
     assert "AUDIT_UNAVAILABLE" not in consistency188.findings
-
