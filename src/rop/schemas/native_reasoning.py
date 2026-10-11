@@ -103,7 +103,7 @@ class NativeReasoningRequest(BaseModel):
 class NativeReasoningSuggestion(BaseModel):
     """Explicitly advisory; this record is not evidence or a conclusion."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     kind: NativeReasoningSuggestionKind
     value: StrictStr = Field(min_length=1, max_length=1000)
@@ -122,7 +122,7 @@ class NativeReasoningSuggestion(BaseModel):
 class NativeReasoningResult(BaseModel):
     """Deterministic result envelope; references are not verified by this schema."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"]
     request_id: UUID
@@ -228,7 +228,7 @@ class NativeReasoningResult(BaseModel):
 class NativeReasoningError(BaseModel):
     """Safe error envelope; raw exception text and arbitrary payloads are excluded."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"]
     request_id: UUID | None
