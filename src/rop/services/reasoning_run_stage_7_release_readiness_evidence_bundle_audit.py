@@ -291,28 +291,31 @@ class ReasoningRunStage7ReleaseReadinessEvidenceBundleAuditService:
             )
 
         # Step C — Session binding. Three outcomes are kept distinct:
-        # * proven: the upstream identities that exist agree with each other
-        #   and with the bundle's non-empty session;
-        # * contradicted: upstream identities disagree, or the bundle's
-        #   identity is unsupported by (or missing despite) the upstream
-        #   identities;
-        # * unavailable: no upstream record and not the bundle establishes
-        #   any identity. A blank identity from an unavailable or unbound
-        #   record is insufficient evidence, not a mismatch.
-        identities = [
-            sid
-            for sid in (
-                projection174.session_id,
-                audit175.session_id,
-                consistency176.session_id,
-            )
-            if sid != ""
-        ]
+        # * proven: ALL THREE upstream session ids are non-empty, identical
+        #   and equal to the bundle's non-empty session id;
+        # * contradicted: the non-empty upstream identities disagree, the
+        #   bundle's identity conflicts with them, the bundle omits its
+        #   identity although upstream records establish one, or the bundle
+        #   claims an identity that no upstream record supports;
+        # * unavailable: nothing contradicts the bundle, but fewer than three
+        #   upstream records establish the shared identity (including none at
+        #   all with an empty bundle session). A blank identity from an
+        #   unavailable or unbound record is insufficient evidence, never a
+        #   proof and never by itself a mismatch.
+        upstream_sessions = (
+            projection174.session_id,
+            audit175.session_id,
+            consistency176.session_id,
+        )
+        identities = {sid for sid in upstream_sessions if sid != ""}
         binding_unavailable = False
         if identities:
-            binding_error = bundle_obj.session_id == "" or set(identities) != {
-                bundle_obj.session_id
-            }
+            # Disagreeing identities, a conflicting bundle identity, or a
+            # bundle that omits an identity upstream establishes.
+            binding_error = identities != {bundle_obj.session_id}
+            if not binding_error and "" in upstream_sessions:
+                # Agreeing and echoed, but not established by all three.
+                binding_unavailable = True
         elif bundle_obj.session_id != "":
             # The upstream records establish no identity, yet the bundle
             # claims one: an unsupported claim is a contradiction.
