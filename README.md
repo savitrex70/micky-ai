@@ -107,13 +107,14 @@ These projections and packages are evidence-only. They do not execute or
 authorize a release, invoke a provider, access a database, persist records,
 or transmit a handoff.
 
-To validate the chain and the repository from the project root:
+To validate the chain and the repository from the project root, with the
+virtual environment from the local Python workflow above activated:
 
 ```powershell
-uv run pytest tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py -q
-uv run pytest -q
-uv run ruff check .
-uv run black --check .
+pytest tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py -q
+pytest -q
+ruff check .
+black --check .
 ```
 
 For a safe task-by-task Git review, inspect one commit at a time with
