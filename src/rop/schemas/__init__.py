@@ -86,6 +86,17 @@ from rop.schemas.native_reasoning import (
     NativeReasoningTask,
     NativeReasoningUncertainty,
 )
+from rop.schemas.native_evidence import (
+    NativeEvidenceAvailability,
+    NativeEvidenceBundle,
+    NativeEvidenceKind,
+    NativeEvidenceProvenance,
+    NativeEvidenceRecord,
+    NativeEvidenceStance,
+    NativeEvidenceUncertainty,
+    NativeProvenanceKind,
+    validate_native_evidence_binding,
+)
 from rop.schemas.missing_information import MissingInformationRead
 from rop.schemas.observation import (
     ObservationCreate,
@@ -425,6 +436,15 @@ __all__ = [
     "HypothesisRead",
     "HypothesisScoreRead",
     "HypothesisUpdate",
+    "NativeEvidenceAvailability",
+    "NativeEvidenceBundle",
+    "NativeEvidenceKind",
+    "NativeEvidenceProvenance",
+    "NativeEvidenceRecord",
+    "NativeEvidenceStance",
+    "NativeEvidenceUncertainty",
+    "NativeProvenanceKind",
+    "validate_native_evidence_binding",
     "MissingInformationRead",
     "ObservationCreate",
     "ObservationExtractionRequest",
