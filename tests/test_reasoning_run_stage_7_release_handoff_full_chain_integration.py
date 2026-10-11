@@ -1,4 +1,8 @@
-"""Task 191: full Stage 7 integration over the real Task 153-188 services.
+"""Task 191: full Stage 7 integration over the real Task 154-188 services.
+
+Coverage starts at the Task 154 admission boundary and runs through Task 188.
+The Task 153 entry boundary (``ReasoningRunStage7EntryService``) is not
+invoked here and is not claimed as covered.
 
 The genuine material is produced once, up front, with the real Stage 7
 services and a test-only fake provider; every downstream boundary is
@@ -203,10 +207,6 @@ from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
     ReasoningRunStage7VerticalSliceAuditService,
 )
 
-# The Task 168/169 outputs are validated through these concrete models inside
-# the composition below; keep concise local aliases for readability.
-_PACKAGE_READ_SAFE = _PKG168
-
 # ---------------------------------------------------------------------------
 # In-memory DB and test client setup (mirrors upstream Stage 7 test projects)
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ def _seed_full_session(user_input: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Real Stage 7 material production (Tasks 153-164)
+# Real Stage 7 material production (Tasks 154-164)
 # ---------------------------------------------------------------------------
 
 
@@ -459,7 +459,7 @@ def _audit164(package, verdict) -> dict:
 
 
 def _produce_upstream_ready(label: str) -> dict[str, object]:
-    """Run the real Task 153-164 services for a READY session."""
+    """Run the real Task 154-164 services for a READY session."""
     sid = _seed_full_session(label)
     with TestingSessionLocal() as db:
         admission = _admission(db, sid)
@@ -483,7 +483,7 @@ def _produce_upstream_ready(label: str) -> dict[str, object]:
 
 
 def _produce_upstream_unavailable(label: str) -> dict[str, object]:
-    """Run the real Task 153-164 services for genuinely missing material.
+    """Run the real Task 154-164 services for genuinely missing material.
 
     The diagnostics result is produced by the real Task 161 service from
     genuinely absent downstream material, so the Task 162-164 records are
@@ -523,7 +523,7 @@ def _compose_full_chain(upstream: dict[str, object]) -> dict[str, object]:
     """Run the real Task 165-188 services in dependency order.
 
     ``upstream`` carries the real Task 162/163/164 dictionaries produced by
-    the actual Task 153-164 services. Every later boundary is a real service
+    the actual Task 154-164 services. Every later boundary is a real service
     call over the real outputs of the previous one.
     """
     from rop.schemas.reasoning_run_stage_7_audit_package import (
@@ -737,7 +737,7 @@ def _upstream_block(status: str):
 
 
 def test_full_chain_ready_path_reaches_consistent_handoff():
-    """The real Task 153-188 services reach a consistent READY handoff."""
+    """The real Task 154-188 services reach a consistent READY handoff."""
     chain = _compose_full_chain(_upstream_block("READY"))
 
     # Task 165-167 boundaries on the real bundle.
@@ -844,7 +844,7 @@ def test_full_chain_ready_composition_is_deterministic():
 def _blocked_upstream() -> dict[str, object]:
     """Genuine Task 162-164 records carrying an explicit BLOCKED admission.
 
-    Every record is produced by the real Task 153-164 services; the single
+    Every record is produced by the real Task 154-164 services; the single
     blocking change is a schema-valid BLOCKED admission in the upstream
     Task 162 audit package itself.
     """
