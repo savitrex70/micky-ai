@@ -23,6 +23,7 @@ from rop.schemas.native_evidence import (
     validate_native_evidence_binding,
 )
 from rop.schemas.native_reasoning import (
+    ALLOWED_REASON_CODES_BY_STATUS,
     MAX_MISSING_INFORMATION_ITEMS,
     RETRYABLE_BY_ERROR_CODE,
     NativeReasonCode,
@@ -34,7 +35,21 @@ from rop.schemas.native_reasoning import (
     NativeReasoningStatus,
     NativeReasoningTask,
     NativeReasoningUncertainty,
+    assert_conclusive_reason_codes,
 )
+
+# Task 205 deterministic status precedence for composing rule findings.
+# Contradictions outrank insufficiency; explicit abstention only survives as
+# the sole semantics. Disagreements that survive the matrix degrade to
+# INSUFFICIENT_EVIDENCE + INSUFFICIENT_SUPPORT (see _compose).
+TASK_205_STATUS_PRIORITY: dict[NativeReasoningStatus, int] = {
+    NativeReasoningStatus.SUPPORTED: 0,
+    NativeReasoningStatus.CONTRADICTED: 1,
+    NativeReasoningStatus.ABSTAINED: 2,
+    NativeReasoningStatus.INSUFFICIENT_EVIDENCE: 3,
+    NativeReasoningStatus.UNAVAILABLE: 4,
+    NativeReasoningStatus.UNKNOWN: 5,
+}
 
 MAX_NATIVE_REASONING_RULES = 128
 _RULE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -315,9 +330,95 @@ class NativeReasoningEngine:
                 abstention_reason=abstention_reason,
             )
 
-        # Disagreement is not automatically a contradiction. Task 205 defines
-        # contradiction semantics; until then, composition fails conservatively
-        # with a result that satisfies the Task 202 status/reason-code matrix.
+        # Task 205 deterministic status precedence for a genuine disagreement.
+        # A readable contradiction is never demoted to INSUFFICIENT_EVIDENCE
+        # merely because another finding was insufficient; both statuses keep
+        # their reason codes so the result stays distinguishable.
+        top_priority = min(
+            TASK_205_STATUS_PRIORITY[finding.status] for finding in findings
+        )
+        top_candidates = [
+            finding
+            for finding in findings
+            if TASK_205_STATUS_PRIORITY[finding.status] == top_priority
+        ]
+
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            # Task 205: the winning status publishes only reason codes the
+            # Task 202 matrix allows; loser evidence stays visible in
+            # evidence_ids/missing_information but must not pollute the codes.
+            winner_codes = (
+                set(winner.reason_codes)
+                & ALLOWED_REASON_CODES_BY_STATUS[winner.status.value]
+            )
+            if winner.status == NativeReasoningStatus.CONTRADICTED:
+                winner_codes.add(NativeReasonCode.CONFLICTING_EVIDENCE)
+                assert_conclusive_reason_codes(
+                    winner.status,
+                    winner_codes,
+                    ALLOWED_REASON_CODES_BY_STATUS[winner.status.value],
+                )
+            elif winner.status == NativeReasoningStatus.SUPPORTED:
+                winner_codes.add(NativeReasonCode.RULE_MATCH)
+                assert_conclusive_reason_codes(
+                    winner.status,
+                    winner_codes,
+                    ALLOWED_REASON_CODES_BY_STATUS[winner.status.value],
+                )
+            elif winner.status == NativeReasoningStatus.ABSTAINED:
+                winner_codes.add(NativeReasonCode.EXPLICIT_ABSTENTION)
+                assert_conclusive_reason_codes(
+                    winner.status,
+                    winner_codes,
+                    ALLOWED_REASON_CODES_BY_STATUS[winner.status.value],
+                )
+            # Task 202 forbids missing_information on SUPPORTED/CONTRADICTED:
+            # loser insufficiencies stay visible through evidence_ids/ finding
+            # trace, not through a status-incompatible field.
+            if winner.status in (
+                NativeReasoningStatus.SUPPORTED,
+                NativeReasoningStatus.CONTRADICTED,
+            ):
+                composed_missing_information: tuple[str, ...] = ()
+            elif len(missing_information) > MAX_MISSING_INFORMATION_ITEMS:
+                composed_missing_information = missing_information[
+                    :MAX_MISSING_INFORMATION_ITEMS
+                ]
+            else:
+                composed_missing_information = missing_information
+            # Uncertainty: conclusive winners must quote an assessed level,
+            # so UNASSESSED from non-conclusive losers is ignored for them.
+            if winner.status in (
+                NativeReasoningStatus.SUPPORTED,
+                NativeReasoningStatus.CONTRADICTED,
+            ):
+                composed_uncertainty = max(
+                    (
+                        finding.uncertainty
+                        for finding in top_candidates
+                        if finding.uncertainty != NativeReasoningUncertainty.UNASSESSED
+                    ),
+                    key=_UNCERTAINTY_ORDER.__getitem__,
+                    default=NativeReasoningUncertainty.HIGH,
+                )
+            else:
+                composed_uncertainty = uncertainty
+            return self._result(
+                request,
+                status=winner.status,
+                conclusion=winner.conclusion,
+                abstention_reason=winner.abstention_reason,
+                reason_codes=tuple(winner_codes),
+                evidence_ids=evidence_ids,
+                missing_information=composed_missing_information,
+                uncertainty=composed_uncertainty,
+            )
+
+        # Disagreement within the same precedence tier is not automatically a
+        # contradiction. Task 205 keeps rule-disagreement conservative: the
+        # composition fails closed with INSUFFICIENT_EVIDENCE and flags the
+        # disagreement rather than inventing a contradiction or a false READY.
         retained = sorted(
             {
                 item

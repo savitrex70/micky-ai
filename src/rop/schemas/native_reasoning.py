@@ -21,6 +21,10 @@ MAX_EVIDENCE_REFERENCES = 256
 MAX_REASON_CODES = 64
 MAX_SUGGESTIONS = 32
 MAX_MISSING_INFORMATION_ITEMS = 64
+# Task 205 reserved identifier standing for the reasoning evaluation itself.
+# The NIL UUID never names legitimate supplied evidence, so status validators
+# can tell "evidence about the task" apart from "the task request".
+TASK_205_EVALUATION_INPUT_ID = UUID(int=0)
 
 
 class NativeReasoningTask(StrEnum):
@@ -203,6 +207,10 @@ class NativeReasoningResult(BaseModel):
 
     @model_validator(mode="after")
     def _coherent_result(self) -> NativeReasoningResult:
+        if TASK_205_EVALUATION_INPUT_ID in self.evidence_ids:
+            raise ValueError(
+                "evidence_ids must not reference the Task 205 evaluation input marker"
+            )
         if len(set(self.reason_codes)) != len(self.reason_codes):
             raise ValueError("reason_codes must not contain duplicates")
         if self.reason_codes != sorted(self.reason_codes, key=lambda item: item.value):
@@ -278,6 +286,45 @@ class NativeReasoningResult(BaseModel):
             if not self.reason_codes:
                 raise ValueError(f"{self.status.value} requires a reason code")
         return self
+
+
+class NativeUnavailableInput(BaseModel):
+    """Task 205 record of one unreadable or unbound required input.
+
+    ``UNAVAILABLE`` status reasons must cite exactly this kind of diagnosis:
+    an input existed but could not be read or was not session-bound. A
+    missing fact is ``INSUFFICIENT_EVIDENCE`` + ``EVIDENCE_MISSING`` and
+    must never be recorded here.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    evidence_id: UUID
+    reason_code: Literal[
+        NativeReasonCode.EVIDENCE_UNREADABLE,
+        NativeReasonCode.EVIDENCE_NOT_BOUND,
+    ]
+
+    @field_validator("evidence_id")
+    @classmethod
+    def _identity_is_not_input(cls, value: UUID) -> UUID:
+        if value == TASK_205_EVALUATION_INPUT_ID:
+            raise ValueError(
+                "evidence_id must reference supplied evidence, not task identity"
+            )
+        return value
+
+
+def assert_conclusive_reason_codes(
+    status: NativeReasoningStatus,
+    reason_codes: set[NativeReasonCode],
+    required: frozenset[NativeReasonCode],
+) -> None:
+    """Task 205 invariant: conclusive semantics need support, not just labels."""
+
+    _ = status  # kept for callers' readability; value is enforced by matrix
+    if not reason_codes.intersection(required):
+        raise ValueError(f"{status.value} requires a supporting reason code")
 
 
 class NativeReasoningError(BaseModel):
