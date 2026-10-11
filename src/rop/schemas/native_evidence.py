@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 import re
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
@@ -75,7 +75,11 @@ class NativeEvidenceProvenance(BaseModel):
             raise ValueError("source_reference must not be blank")
         if any(ord(character) < 32 for character in value):
             raise ValueError("source_reference must not contain control characters")
-        if re.match(r"^(?:[A-Za-z]:[\\\\/]|/|\\\\\\\\|file:)", value, re.IGNORECASE):
+        if (
+            value.startswith(("/", "\\\\"))
+            or re.match(r"^[A-Za-z]:[\\/]", value)
+            or value.lower().startswith("file:")
+        ):
             raise ValueError("source_reference must not expose a filesystem path")
         if re.search(r"://[^/\\s:@]+:[^/\\s@]+@", value):
             raise ValueError("source_reference must not contain URL credentials")
