@@ -20,12 +20,12 @@ from pydantic import (
 from rop.schemas.native_evidence import (
     NativeEvidenceBundle,
     NativeEvidenceRecord,
-    validate_native_evidence_binding,
 )
 from rop.schemas.native_reasoning import (
     ALLOWED_REASON_CODES_BY_STATUS,
     MAX_MISSING_INFORMATION_ITEMS,
     RETRYABLE_BY_ERROR_CODE,
+    TASK_205_EVALUATION_INPUT_ID,
     NativeReasonCode,
     NativeReasoningError,
     NativeReasoningErrorCode,
@@ -35,16 +35,21 @@ from rop.schemas.native_reasoning import (
     NativeReasoningStatus,
     NativeReasoningTask,
     NativeReasoningUncertainty,
+    NativeUnavailableInput,
     assert_conclusive_reason_codes,
 )
 
 # Task 205 deterministic status precedence for composing rule findings.
-# Contradictions outrank insufficiency; explicit abstention only survives as
-# the sole semantics. Disagreements that survive the matrix degrade to
-# INSUFFICIENT_EVIDENCE + INSUFFICIENT_SUPPORT (see _compose).
+# A readable contradiction outranks support, so a rule reporting SUPPORTED can
+# never silently discard a competing rule's CONTRADICTED finding, whatever the
+# rule execution order. Contradictions also outrank insufficiency; explicit
+# abstention only survives as the sole semantics. Other disagreements that
+# survive the matrix degrade to INSUFFICIENT_EVIDENCE + INSUFFICIENT_SUPPORT
+# (see _compose). Several top-tier contradictions with incompatible
+# conclusions stay CONTRADICTED with a static, engine-owned conclusion.
 TASK_205_STATUS_PRIORITY: dict[NativeReasoningStatus, int] = {
-    NativeReasoningStatus.SUPPORTED: 0,
-    NativeReasoningStatus.CONTRADICTED: 1,
+    NativeReasoningStatus.CONTRADICTED: 0,
+    NativeReasoningStatus.SUPPORTED: 1,
     NativeReasoningStatus.ABSTAINED: 2,
     NativeReasoningStatus.INSUFFICIENT_EVIDENCE: 3,
     NativeReasoningStatus.UNAVAILABLE: 4,
@@ -57,6 +62,11 @@ _RULE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _RULE_DISAGREEMENT_MISSING_INFORMATION = (
     "Applicable rule outputs disagree; the disagreement cannot be classified "
     "under the current reasoning contract."
+)
+# Stable, bounded, static text; asserts no clinical conclusion of its own.
+_CONFLICTING_CONTRADICTIONS_CONCLUSION = (
+    "Multiple rules report contradictions with incompatible conclusions; "
+    "no single conclusion is asserted."
 )
 _UNCERTAINTY_ORDER = {
     NativeReasoningUncertainty.NONE: 0,
@@ -187,27 +197,52 @@ class NativeReasoningEngine:
         self,
         request: NativeReasoningRequest,
         evidence_bundle: NativeEvidenceBundle,
+        unavailable_inputs: Sequence[NativeUnavailableInput] = (),
     ) -> NativeReasoningResult:
         """Evaluate request-bound evidence and return a validated result."""
-        return self.evaluate_with_trace(request, evidence_bundle).result
+        return self.evaluate_with_trace(
+            request, evidence_bundle, unavailable_inputs
+        ).result
 
     def evaluate_with_trace(
         self,
         request: NativeReasoningRequest,
         evidence_bundle: NativeEvidenceBundle,
+        unavailable_inputs: Sequence[NativeUnavailableInput] = (),
     ) -> NativeReasoningExecution:
-        """Return a result with deterministic rule identifiers, without shared state."""
+        """Return a result with deterministic rule identifiers, without shared state.
+
+        Every requested evidence ID is accounted for exactly once: it is either
+        bound to a record in ``evidence_bundle`` or explicitly declared in
+        ``unavailable_inputs`` (unreadable or not session-bound). A requested ID
+        with neither is rejected, never silently treated as missing evidence.
+        Any declared unavailable input yields ``UNAVAILABLE`` citing exactly
+        those inputs without running rules. A missing *fact* is a rule's
+        ``INSUFFICIENT_EVIDENCE`` finding and is never labelled ``UNAVAILABLE``.
+        """
         # Errors are raised outside every `except` block so the original
         # exception is neither chained (__cause__) nor implicitly attached
         # (__context__); its text can never surface in a formatted traceback.
+        declarations = self._validated_declarations(request, unavailable_inputs)
+        if declarations is None:
+            raise self._error(
+                request.request_id, NativeReasoningErrorCode.INVALID_REQUEST
+            )
+
         binding_failed = False
         try:
-            validate_native_evidence_binding(request, evidence_bundle)
+            self._bind_inputs(request, evidence_bundle, declarations)
         except ValueError:
             binding_failed = True
         if binding_failed:
             raise self._error(
                 request.request_id, NativeReasoningErrorCode.INPUT_UNAVAILABLE
+            )
+
+        if declarations:
+            return NativeReasoningExecution(
+                result=self._unavailable_result(request, declarations),
+                applied_rule_ids=(),
             )
 
         requested_ids = set(request.evidence_ids)
@@ -284,6 +319,79 @@ class NativeReasoningEngine:
             applied_rule_ids=tuple(applied_rule_ids),
         )
 
+    @staticmethod
+    def _validated_declarations(
+        request: NativeReasoningRequest,
+        unavailable_inputs: Sequence[NativeUnavailableInput],
+    ) -> dict[UUID, NativeUnavailableInput] | None:
+        """Return declarations keyed by ID, or None when they are not valid."""
+        requested_ids = set(request.evidence_ids)
+        if TASK_205_EVALUATION_INPUT_ID in requested_ids:
+            return None
+        declarations: dict[UUID, NativeUnavailableInput] = {}
+        for declaration in unavailable_inputs:
+            if not isinstance(declaration, NativeUnavailableInput):
+                return None
+            evidence_id = declaration.evidence_id
+            if evidence_id == TASK_205_EVALUATION_INPUT_ID:
+                return None
+            if declaration.reason_code not in (
+                NativeReasonCode.EVIDENCE_UNREADABLE,
+                NativeReasonCode.EVIDENCE_NOT_BOUND,
+            ):
+                return None
+            # Duplicate records and IDs the request never asked for cannot be
+            # accounted for exactly once.
+            if evidence_id in declarations or evidence_id not in requested_ids:
+                return None
+            declarations[evidence_id] = declaration
+        return declarations
+
+    @staticmethod
+    def _bind_inputs(
+        request: NativeReasoningRequest,
+        evidence_bundle: NativeEvidenceBundle,
+        declarations: dict[UUID, NativeUnavailableInput],
+    ) -> None:
+        """Account for each requested ID exactly once or raise ValueError."""
+        if request.session_id != evidence_bundle.session_id:
+            raise ValueError("request session_id does not match evidence bundle")
+        if request.context_fingerprint != evidence_bundle.context_fingerprint:
+            raise ValueError("request context_fingerprint does not match bundle")
+        bundled_ids = {record.evidence_id for record in evidence_bundle.records}
+        for evidence_id in request.evidence_ids:
+            is_bundled = evidence_id in bundled_ids
+            is_declared = evidence_id in declarations
+            if is_bundled == is_declared:
+                # Bundled and declared unavailable conflict; neither means an
+                # arbitrary ID without a valid declaration.
+                raise ValueError("requested input is not accounted for exactly once")
+
+    @staticmethod
+    def _unavailable_result_codes(
+        declarations: dict[UUID, NativeUnavailableInput],
+    ) -> tuple[NativeReasonCode, ...]:
+        return tuple(
+            sorted(
+                {declaration.reason_code for declaration in declarations.values()},
+                key=lambda code: code.value,
+            )
+        )
+
+    def _unavailable_result(
+        self,
+        request: NativeReasoningRequest,
+        declarations: dict[UUID, NativeUnavailableInput],
+    ) -> NativeReasoningResult:
+        return self._result(
+            request,
+            status=NativeReasoningStatus.UNAVAILABLE,
+            reason_codes=self._unavailable_result_codes(declarations),
+            evidence_ids=tuple(declarations),
+            missing_information=(),
+            uncertainty=NativeReasoningUncertainty.UNASSESSED,
+        )
+
     def _compose(
         self,
         request: NativeReasoningRequest,
@@ -342,6 +450,38 @@ class NativeReasoningEngine:
             for finding in findings
             if TASK_205_STATUS_PRIORITY[finding.status] == top_priority
         ]
+
+        if (
+            len(top_candidates) > 1
+            and top_candidates[0].status == NativeReasoningStatus.CONTRADICTED
+        ):
+            # Several rules contradict. Identical conclusions compose to that
+            # conclusion; incompatible ones must not pick a winner or be
+            # downgraded, so the result stays CONTRADICTED with a static
+            # conclusion, the union of cited evidence and conflict reason.
+            top_conclusions = {finding.conclusion for finding in top_candidates}
+            if len(top_conclusions) == 1:
+                contradiction_conclusion = top_candidates[0].conclusion
+            else:
+                contradiction_conclusion = _CONFLICTING_CONTRADICTIONS_CONCLUSION
+            assessed = [
+                finding.uncertainty
+                for finding in top_candidates
+                if finding.uncertainty != NativeReasoningUncertainty.UNASSESSED
+            ]
+            return self._result(
+                request,
+                status=NativeReasoningStatus.CONTRADICTED,
+                conclusion=contradiction_conclusion,
+                reason_codes=(NativeReasonCode.CONFLICTING_EVIDENCE,),
+                evidence_ids=evidence_ids,
+                missing_information=(),
+                uncertainty=max(
+                    assessed,
+                    key=_UNCERTAINTY_ORDER.__getitem__,
+                    default=NativeReasoningUncertainty.HIGH,
+                ),
+            )
 
         if len(top_candidates) == 1:
             winner = top_candidates[0]
