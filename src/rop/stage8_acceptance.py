@@ -109,6 +109,8 @@ def run_stage8_acceptance_gate(
         raise Stage8AcceptanceError("BENCHMARK_BINDING_MISMATCH", "benchmark belongs to a different model or vocabulary")
 
     test_entries = split_manifest.examples_for(EvaluationSplit.TEST)
+    if not test_entries:
+        raise Stage8AcceptanceError("EMPTY_TEST_SPLIT", "final acceptance requires a nonempty held-out TEST split")
     test_ids = {entry.example_id for entry in test_entries}
     if set(texts_by_example_id) != test_ids:
         raise Stage8AcceptanceError("TEST_TEXT_SET_MISMATCH", "text inputs must cover exactly the held-out TEST examples")
@@ -150,8 +152,6 @@ def run_stage8_acceptance_gate(
         limitations.append("Synthetic, unauthorized, or purpose-limited data cannot satisfy Stage 8 acceptance.")
     if not benchmark.within_declared_budgets:
         blockers.append("RESOURCE_BUDGET_FAILED")
-    if not test_entries:
-        blockers.append("EMPTY_TEST_SPLIT")
 
     evaluation = compare_systems(
         run_configuration=run_configuration,
