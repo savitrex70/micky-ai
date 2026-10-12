@@ -13,7 +13,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator, model_validator
 
-from rop.dataset_preparation import records_fingerprint
 from rop.evaluation import compare_systems
 from rop.native_artifacts import NativeModelArtifact
 from rop.native_benchmark import NativeBenchmarkReport
@@ -101,7 +100,7 @@ def run_stage8_acceptance_gate(
         raise Stage8AcceptanceError("TASK_POLICY_MISMATCH", "evaluation task and suggestion policy do not match")
     if artifact.model_config_payload.model_version != policy.expected_model_version or artifact.vocabulary_hash != policy.expected_vocabulary_hash:
         raise Stage8AcceptanceError("MODEL_POLICY_MISMATCH", "artifact identity does not match the suggestion policy")
-    if inference._artifact.artifact_hash != artifact.artifact_hash:
+    if inference.artifact.artifact_hash != artifact.artifact_hash:
         raise Stage8AcceptanceError("INFERENCE_ARTIFACT_MISMATCH", "inference adapter is not using the supplied artifact")
     train_fingerprint = dict(dataset_manifest.split_fingerprints).get("train")
     if train_fingerprint is None or artifact.dataset_fingerprint != train_fingerprint or artifact.training_report.dataset_fingerprint != train_fingerprint:
