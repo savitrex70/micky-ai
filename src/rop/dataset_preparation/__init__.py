@@ -6,6 +6,16 @@ Authorization is never guessed: unknown or revoked sources are rejected
 with stable reason codes. Raw content stays outside the pipeline; only
 fingerprints and safe identifiers are handled here. No model, network,
 or persistence.
+
+Fingerprint scheme (``FINGERPRINT_SCHEME_VERSION``): record-set fingerprints
+bind the full effective record (ID, group key, content fingerprint, labels
+and privacy-safety status) through a domain-separated, length-prefixed
+encoding. Every dataset and per-split fingerprint produced by an earlier
+scheme (which hashed only ``record_id`` and ``content_fingerprint``) differs
+from the new values. Downstream Task 208-215 branches that bind manifests,
+vocabularies, training reports, artifacts or acceptance reports to these
+fingerprints must be refreshed against this scheme and their identity-binding
+tests rerun before approval.
 """
 
 from __future__ import annotations
@@ -13,6 +23,8 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+
+from pydantic import ValidationError
 
 from rop.schemas.dataset_manifest import (
     AuthorizationStatus,
@@ -28,6 +40,8 @@ from rop.schemas.dataset_manifest import (
 # in every manifest so an auditor can pin the exact normalization.
 NORMALIZATION_TRANSFORMATION_VERSION = "native-normalization-v1"
 SPLIT_STRATEGY = "group-hash-v1"
+# Identifies the record-set fingerprint encoding; part of the hashed domain.
+FINGERPRINT_SCHEME_VERSION = "records-fingerprint-v2"
 _HASH_SPACE = 16**16
 MAX_RECORDS = 1_000_000
 
@@ -131,10 +145,22 @@ def exact_deduplicate(
 
     Exact duplicates only; near-duplicate judgement requires human
     review and is deliberately not guessed by this pipeline.
+
+    Conflict policy (fail closed): identical normalized content carrying
+    different labels is an unresolved annotation disagreement, so the
+    pipeline raises ``DUPLICATE_CONTENT_LABEL_CONFLICT`` instead of silently
+    keeping one annotation. Duplicates with identical labels collapse to the
+    record with the lexically first ``record_id``, even when their group keys
+    differ; the content then appears exactly once, so no leakage results.
     """
     by_fingerprint: dict[str, RawDatasetRecord] = {}
     for record in sorted(records, key=lambda item: item.record_id):
-        by_fingerprint.setdefault(record.content_fingerprint, record)
+        kept = by_fingerprint.setdefault(record.content_fingerprint, record)
+        if kept.labels != record.labels:
+            raise DatasetPreparationError(
+                DatasetRejectionCode.DUPLICATE_CONTENT_LABEL_CONFLICT,
+                "identical content carries conflicting labels",
+            )
     return tuple(sorted(by_fingerprint.values(), key=lambda item: item.record_id))
 
 
@@ -202,8 +228,16 @@ def build_manifest(
     authorization_evidence_reference: str,
     training_blocked_reason: str | None = None,
 ) -> DatasetManifest:
-    """Assemble the versioned, privacy-safe manifest for one snapshot."""
+    """Assemble the versioned, privacy-safe manifest for one snapshot.
+
+    The effective split data is validated before anything is published, so a
+    manually constructed ``PreparedSplits`` cannot yield a manifest that
+    claims leakage safety it does not have. The source's authorization state
+    is carried into the manifest unchanged; ``UNKNOWN`` or ``REVOKED`` never
+    reads as training approval and requires a ``training_blocked_reason``.
+    """
     all_records = splits.all_records()
+    _validate_split_integrity(splits, label_space)
     label_distribution = {
         label: sum(1 for record in all_records if label in record.labels)
         for label in sorted(label_space)
@@ -211,20 +245,11 @@ def build_manifest(
     train_groups = {record.group_key for record in splits.train}
     validation_groups = {record.group_key for record in splits.validation}
     test_groups = {record.group_key for record in splits.test}
-    if (
-        train_groups & validation_groups
-        or train_groups & test_groups
-        or (validation_groups & test_groups)
-    ):
-        raise DatasetPreparationError(
-            DatasetRejectionCode.GROUP_CROSS_SPLIT,
-            "leakage detected: one group appears in more than one split",
-        )
 
     split_fingerprints = tuple(
         sorted(
             (
-                (name, _fingerprint_records(records))
+                (name, records_fingerprint(records))
                 for name, records in (
                     ("train", splits.train),
                     ("test", splits.test),
@@ -233,7 +258,7 @@ def build_manifest(
             )
         )
     )
-    dataset_fingerprint = _fingerprint_records(all_records)
+    dataset_fingerprint = records_fingerprint(all_records)
 
     return DatasetManifest.model_validate(
         {
@@ -267,16 +292,132 @@ def build_manifest(
     )
 
 
-def _fingerprint_records(records: tuple[RawDatasetRecord, ...]) -> str:
+def _validate_split_integrity(
+    splits: PreparedSplits, label_space: tuple[str, ...]
+) -> None:
+    """Fail closed on any violation of the leakage-safe split contract.
+
+    Messages carry stable reason codes only; no identifier, group key or
+    content ever appears in them.
+    """
+    if len(set(label_space)) != len(label_space):
+        raise DatasetPreparationError(
+            DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
+            "the label space must not repeat a label",
+        )
+    named = (
+        ("train", splits.train),
+        ("validation", splits.validation),
+        ("test", splits.test),
+    )
+    seen_ids: set[str] = set()
+    split_of_fingerprint: dict[str, str] = {}
+    labels_of_fingerprint: dict[str, tuple[str, ...]] = {}
+    split_of_group: dict[str, str] = {}
+    for split_name, records in named:
+        for record in records:
+            if not isinstance(record, RawDatasetRecord):
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
+                    "a split contains a malformed record",
+                )
+            try:
+                RawDatasetRecord.model_validate(record.model_dump())
+                malformed = False
+            except ValidationError:
+                malformed = True
+            if malformed:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
+                    "a split contains a malformed record",
+                )
+            if not record.privacy_safe:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.PRIVACY_UNSAFE,
+                    "records must be declared privacy-safe before preparation",
+                )
+            if any(label not in label_space for label in record.labels):
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.LABEL_OUT_OF_SPACE,
+                    "a record declares a label outside the declared label space",
+                )
+            owner = split_of_group.setdefault(record.group_key, split_name)
+            if owner != split_name:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.GROUP_CROSS_SPLIT,
+                    "leakage detected: one group appears in more than one split",
+                )
+
+            if record.record_id in seen_ids:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
+                    "record identifiers must be unique across all splits",
+                )
+            seen_ids.add(record.record_id)
+            fingerprint_owner = split_of_fingerprint.setdefault(
+                record.content_fingerprint, split_name
+            )
+            if fingerprint_owner != split_name:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.CONTENT_CROSS_SPLIT,
+                    "leakage detected: identical content appears in more than "
+                    "one split",
+                )
+            known_labels = labels_of_fingerprint.setdefault(
+                record.content_fingerprint, record.labels
+            )
+            if known_labels != record.labels:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.DUPLICATE_CONTENT_LABEL_CONFLICT,
+                    "identical content carries conflicting labels",
+                )
+
+
+def _length_prefixed(value: str) -> bytes:
+    raw = value.encode("utf-8")
+    return len(raw).to_bytes(8, "big") + raw
+
+
+def _encode_record(record: RawDatasetRecord) -> bytes:
+    """Unambiguous encoding of the full effective record.
+
+    Every variable-length field is length-prefixed and the label list is
+    count-prefixed, so no two distinct records share an encoding.
+    """
+    return b"".join(
+        (
+            _length_prefixed(record.record_id),
+            _length_prefixed(record.group_key),
+            _length_prefixed(record.content_fingerprint),
+            len(record.labels).to_bytes(8, "big"),
+            *(_length_prefixed(label) for label in record.labels),
+            b"\x01" if record.privacy_safe else b"\x00",
+        )
+    )
+
+
+def records_fingerprint(records: tuple[RawDatasetRecord, ...]) -> str:
+    """Deterministic fingerprint of the full effective record set.
+
+    Domain-separated by ``FINGERPRINT_SCHEME_VERSION`` and independent of
+    input order. It binds each record's ID, group key, content fingerprint,
+    labels and privacy-safety status, so changing any of them changes the
+    result. It exposes none of them: only the digest is returned.
+    """
     digest = hashlib.sha256()
-    for record in sorted(records, key=lambda item: item.record_id):
-        digest.update(record.record_id.encode("utf-8"))
-        digest.update(record.content_fingerprint.encode("utf-8"))
+    digest.update(_length_prefixed(FINGERPRINT_SCHEME_VERSION))
+    ordered = sorted(records, key=lambda item: item.record_id)
+    digest.update(len(ordered).to_bytes(8, "big"))
+    for record in ordered:
+        encoded = _encode_record(record)
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
     return digest.hexdigest()
 
 
 __all__ = [
     "DatasetPreparationError",
+    "FINGERPRINT_SCHEME_VERSION",
     "NORMALIZATION_TRANSFORMATION_VERSION",
     "PreparedSplits",
     "SPLIT_STRATEGY",
@@ -286,6 +427,7 @@ __all__ = [
     "exact_deduplicate",
     "fit_transformation_on_train_only",
     "normalize_content",
+    "records_fingerprint",
     "require_authorized_source",
     "validate_records",
 ]
