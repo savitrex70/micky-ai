@@ -165,6 +165,11 @@ class NativeLocalInference:
         self._config = config
         self._model = _model_from_verified_parameters(artifact)
 
+    @property
+    def artifact_hash(self) -> str:
+        """Hash of the verified artifact this adapter was built from."""
+        return self._artifact.artifact_hash
+
     def predict_text(self, text: str) -> NativeInferenceResponse:
         """Tokenize and score locally; raw text is not retained or echoed."""
         if not isinstance(text, str):
