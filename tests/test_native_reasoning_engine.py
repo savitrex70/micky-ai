@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from rop.native_reasoning_engine import (
+    TASK_205_STATUS_PRIORITY,
     NativeReasoningCompositionError,
     NativeReasoningEngine,
     NativeRuleFinding,
@@ -217,6 +218,17 @@ def _abstained(reason: str, *items: str) -> NativeRuleFinding:
     )
 
 
+def _contradicted_via_two_evidence() -> NativeRuleFinding:
+    """Task 202 requires a conclusion on conclusive statuses; give a bounded one."""
+    return _finding(
+        status=NativeReasoningStatus.CONTRADICTED,
+        conclusion="Two usable sources disagree on the same point.",
+        reason_codes=(NativeReasonCode.CONFLICTING_EVIDENCE,),
+        evidence_ids=(UUID(int=1), UUID(int=2)),
+        uncertainty=NativeReasoningUncertainty.LOW,
+    )
+
+
 @pytest.mark.parametrize(
     "findings",
     [
@@ -224,30 +236,65 @@ def _abstained(reason: str, *items: str) -> NativeRuleFinding:
         (_finding(), _insufficient("source provenance")),
         (_finding(), _abstained("Out of scope.")),
         (_insufficient("a"), _abstained("Out of scope.")),
-        # incompatible abstention reasons
-        (_abstained("Reason one."), _abstained("Reason two.")),
-        # differing conclusions
-        (_finding(conclusion="A"), _finding(conclusion="B")),
     ],
 )
-def test_every_disagreement_returns_a_valid_conservative_result(
+def test_valid_solo_tier_winner_composes_to_the_winning_status(
     findings: tuple[NativeRuleFinding, ...],
 ) -> None:
+    # Task 205 precedence: the top-tier status wins a disagreement rather than
+    # everything degrading to INSUFFICIENT_EVIDENCE. Each scenario has exactly
+    # one finding in the winning tier.
     rules = tuple(FixedRule(f"rule-{i}", f) for i, f in enumerate(findings))
     engine = NativeReasoningEngine(rules)
     result = engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
     assert NativeReasoningResult.model_validate(result.model_dump()) == result
+    expected = min(findings, key=lambda f: TASK_205_STATUS_PRIORITY[f.status])
+    assert result.status == expected.status
+    assert result.conclusion == expected.conclusion
+    assert result.abstention_reason == expected.abstention_reason
+    if result.status is not NativeReasoningStatus.INSUFFICIENT_EVIDENCE:
+        if expected.status is not NativeReasoningStatus.SUPPORTED:
+            assert result.conclusion == expected.conclusion
+    assert result.evidence_ids == sorted(set(result.evidence_ids), key=str)
+    assert result.missing_information == sorted(set(result.missing_information))
+
+
+def test_tier_disagreement_still_fails_closed_conservatively() -> None:
+    # Same-tier disagreements (two SUPPORTED conclusions) stay conservative.
+    engine = NativeReasoningEngine(
+        (
+            FixedRule("rule-a", _finding(conclusion="A")),
+            FixedRule("rule-b", _finding(conclusion="B")),
+        )
+    )
+    result = engine.evaluate(_request(UUID(int=1)), _bundle(_record(UUID(int=1))))
     assert result.status == NativeReasoningStatus.INSUFFICIENT_EVIDENCE
     assert result.reason_codes == [NativeReasonCode.INSUFFICIENT_SUPPORT]
     assert result.conclusion is None
     assert result.abstention_reason is None
-    assert result.uncertainty == NativeReasoningUncertainty.HIGH
     assert DISAGREEMENT_TEXT in result.missing_information
-    assert result.missing_information == sorted(set(result.missing_information))
-    assert result.evidence_ids == sorted(set(result.evidence_ids), key=str)
+
+
+def test_contradiction_is_not_demoted_by_a_simultaneous_insufficient_finding() -> None:
+    engine = NativeReasoningEngine(
+        (
+            FixedRule("rule-a", _contradicted_via_two_evidence()),
+            FixedRule("rule-b", _insufficient("second source")),
+        )
+    )
+    records = [_record(UUID(int=i)) for i in (1, 2)]
+    result = engine.evaluate(
+        _request(*(r.evidence_id for r in records)), _bundle(*records)
+    )
+    assert result.status == NativeReasoningStatus.CONTRADICTED
+    assert NativeReasonCode.CONFLICTING_EVIDENCE in result.reason_codes
+    assert NativeReasonCode.INSUFFICIENT_SUPPORT not in result.reason_codes
+    assert result.status != NativeReasoningStatus.INSUFFICIENT_EVIDENCE
 
 
 def test_disagreement_retains_rule_missing_information_in_canonical_order() -> None:
+    # Both findings share the winning INSUFFICIENT_EVIDENCE tier, so the
+    # conservative fallback runs and carries every rule-supplied item.
     engine = NativeReasoningEngine(
         (
             FixedRule("rule-a", _insufficient("zeta input", "alpha input")),
@@ -255,20 +302,29 @@ def test_disagreement_retains_rule_missing_information_in_canonical_order() -> N
         )
     )
     result = engine.evaluate(_request(), _bundle())
+    # Task 205 precedence: ABSTAINED (an explicit, richer diagnosis) outranks
+    # INSUFFICIENT_EVIDENCE when a solo ABSTAINED finding exists in the tier.
+    assert result.status == NativeReasoningStatus.ABSTAINED
+    assert result.abstention_reason == "Out of scope."
     assert result.missing_information == sorted(
-        ["alpha input", "beta input", "zeta input", DISAGREEMENT_TEXT]
+        ["alpha input", "beta input", "zeta input"]
     )
 
 
 def test_disagreement_fallback_stays_valid_when_missing_information_overflows() -> None:
+    # The conservative fallback must stay under the Task 202 cap of 64 items;
+    # rule-supplied entries beyond the cap are deterministically truncated.
     first = _insufficient(*(f"first-{i:03d}" for i in range(40)))
     second = _abstained("Out of scope.", *(f"second-{i:03d}" for i in range(40)))
     engine = NativeReasoningEngine(
         (FixedRule("rule-a", first), FixedRule("rule-b", second))
     )
     result = engine.evaluate(_request(), _bundle())
+    # Solo ABSTAINED winner: rule items are deterministically truncated to
+    # the Task 202 cap, never padded or inflated with disagreement text.
+    assert result.status == NativeReasoningStatus.ABSTAINED
     assert len(result.missing_information) == 64
-    assert DISAGREEMENT_TEXT in result.missing_information
+    assert DISAGREEMENT_TEXT not in result.missing_information
 
 
 def test_disagreement_fallback_keeps_unique_canonical_evidence_ids() -> None:
@@ -462,3 +518,130 @@ def test_binding_failure_does_not_chain_the_original_exception() -> None:
         )
     assert caught.value.error.code == NativeReasoningErrorCode.INPUT_UNAVAILABLE
     _assert_no_marker(caught)
+
+
+# --- Task 205 correction: contradiction precedence -------------------------
+
+
+def _supported_finding(*evidence_ids: UUID) -> NativeRuleFinding:
+    return _finding(
+        conclusion="Supported conclusion.",
+        evidence_ids=evidence_ids or (UUID(int=1),),
+    )
+
+
+def _contradiction_finding(conclusion: str, *evidence_ids: UUID) -> NativeRuleFinding:
+    return _finding(
+        status=NativeReasoningStatus.CONTRADICTED,
+        conclusion=conclusion,
+        reason_codes=(NativeReasonCode.CONFLICTING_EVIDENCE,),
+        evidence_ids=evidence_ids or (UUID(int=1), UUID(int=2)),
+        uncertainty=NativeReasoningUncertainty.LOW,
+    )
+
+
+def _two_records() -> tuple[list[NativeEvidenceRecord], NativeEvidenceBundle]:
+    records = [_record(UUID(int=i)) for i in (1, 2)]
+    return records, _bundle(*records)
+
+
+def test_contradiction_outranks_support_in_the_priority_table() -> None:
+    assert (
+        TASK_205_STATUS_PRIORITY[NativeReasoningStatus.CONTRADICTED]
+        < TASK_205_STATUS_PRIORITY[NativeReasoningStatus.SUPPORTED]
+    )
+
+
+@pytest.mark.parametrize("contradiction_first", [True, False])
+def test_supported_finding_never_discards_a_competing_contradiction(
+    contradiction_first: bool,
+) -> None:
+    contradiction = FixedRule(
+        "a-rule" if contradiction_first else "b-rule",
+        _contradiction_finding("The sources disagree."),
+    )
+    support = FixedRule(
+        "b-rule" if contradiction_first else "a-rule", _supported_finding()
+    )
+    records, bundle = _two_records()
+    engine = NativeReasoningEngine((contradiction, support))
+    result = engine.evaluate(_request(*(r.evidence_id for r in records)), bundle)
+    assert result.status == NativeReasoningStatus.CONTRADICTED
+    assert result.status != NativeReasoningStatus.SUPPORTED
+    assert result.reason_codes == [NativeReasonCode.CONFLICTING_EVIDENCE]
+    assert NativeReasonCode.RULE_MATCH not in result.reason_codes
+    assert result.conclusion == "The sources disagree."
+    assert NativeReasoningResult.model_validate(result.model_dump()) == result
+
+
+def test_both_rule_orders_compose_to_the_identical_result() -> None:
+    records, bundle = _two_records()
+    request = _request(*(r.evidence_id for r in records))
+    forward = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _contradiction_finding("The sources disagree.")),
+            FixedRule("b-rule", _supported_finding()),
+        )
+    ).evaluate(request, bundle)
+    reverse = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _supported_finding()),
+            FixedRule("b-rule", _contradiction_finding("The sources disagree.")),
+        )
+    ).evaluate(request, bundle)
+    assert forward == reverse
+
+
+def test_incompatible_top_tier_contradictions_stay_contradicted_and_explained() -> None:
+    records, bundle = _two_records()
+    engine = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _contradiction_finding("Conclusion A")),
+            FixedRule("b-rule", _contradiction_finding("Conclusion B")),
+            FixedRule("c-rule", _supported_finding()),
+        )
+    )
+    result = engine.evaluate(_request(*(r.evidence_id for r in records)), bundle)
+    assert result.status == NativeReasoningStatus.CONTRADICTED
+    assert result.reason_codes == [NativeReasonCode.CONFLICTING_EVIDENCE]
+    assert result.conclusion not in ("Conclusion A", "Conclusion B")
+    assert result.conclusion == (
+        "Multiple rules report contradictions with incompatible conclusions; "
+        "no single conclusion is asserted."
+    )
+    assert result.evidence_ids == [UUID(int=1), UUID(int=2)]
+    assert result.missing_information == []
+    assert result.uncertainty != NativeReasoningUncertainty.UNASSESSED
+    assert NativeReasoningResult.model_validate(result.model_dump()) == result
+
+
+def test_incompatible_contradictions_are_order_independent() -> None:
+    records, bundle = _two_records()
+    request = _request(*(r.evidence_id for r in records))
+    one = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _contradiction_finding("Conclusion A")),
+            FixedRule("b-rule", _contradiction_finding("Conclusion B")),
+        )
+    ).evaluate(request, bundle)
+    other = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _contradiction_finding("Conclusion B")),
+            FixedRule("b-rule", _contradiction_finding("Conclusion A")),
+        )
+    ).evaluate(request, bundle)
+    assert one == other
+
+
+def test_matching_top_tier_contradictions_keep_their_shared_conclusion() -> None:
+    records, bundle = _two_records()
+    engine = NativeReasoningEngine(
+        (
+            FixedRule("a-rule", _contradiction_finding("Shared conclusion.")),
+            FixedRule("b-rule", _contradiction_finding("Shared conclusion.")),
+            FixedRule("c-rule", _supported_finding()),
+        )
+    )
+    result = engine.evaluate(_request(*(r.evidence_id for r in records)), bundle)
+    assert result.status == NativeReasoningStatus.CONTRADICTED
+    assert result.conclusion == "Shared conclusion."
