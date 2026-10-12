@@ -29,6 +29,14 @@ from rop.schemas.native_model import NativeModelConfig
 _INIT_BOUND_DIVISOR = 2.0
 
 
+def _sigmoid_probability(logit: float) -> float:
+    """Numerically stable sigmoid for finite logits of any magnitude."""
+    if logit >= 0.0:
+        return 1.0 / (1.0 + math.exp(-min(logit, 60.0)))
+    exponent = math.exp(max(logit, -60.0))
+    return exponent / (1.0 + exponent)
+
+
 class NativeModelError(Exception):
     """Typed model failure; carries only canonical, non-sensitive text."""
 
@@ -133,7 +141,7 @@ class NativeModel:
             + self.parameters.head_bias[label]
             for label, row in enumerate(self.parameters.head_weight)
         )
-        return tuple(1.0 / (1.0 + math.exp(-logit)) for logit in logits)
+        return tuple(_sigmoid_probability(logit) for logit in logits)
 
     @staticmethod
     def reproducible(
