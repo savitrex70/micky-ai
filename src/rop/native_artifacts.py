@@ -15,7 +15,15 @@ import tempfile
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictStr,
+    ValidationError,
+    model_validator,
+)
 
 from rop.native_model import NativeModelParameters
 from rop.native_training import NativeTrainingReport
@@ -198,7 +206,13 @@ def load_native_artifact(
         target = Path(path)
         if target.stat().st_size > MAX_ARTIFACT_BYTES:
             raise NativeArtifactError("ARTIFACT_TOO_LARGE", "artifact exceeds the supported size")
-        raw = target.read_bytes()
+        with target.open("rb") as stream:
+            raw = stream.read(MAX_ARTIFACT_BYTES + 1)
+        if len(raw) > MAX_ARTIFACT_BYTES:
+            raise NativeArtifactError(
+                "ARTIFACT_TOO_LARGE",
+                "artifact exceeds the supported size",
+            )
         payload = json.loads(raw.decode("utf-8"))
         artifact = NativeModelArtifact.model_validate(payload)
     except NativeArtifactError:
