@@ -93,6 +93,16 @@ class NativeLocalInference:
         self._model = NativeModel(artifact.model_config_payload)
         self._model.parameters = artifact.parameters.to_parameters()
 
+    @property
+    def artifact(self) -> NativeModelArtifact:
+        """The immutable, integrity-checked artifact bound to this adapter."""
+        return self._artifact
+
+    @property
+    def vocabulary(self) -> Vocabulary:
+        """The immutable vocabulary bound to this adapter."""
+        return self._vocabulary
+
     def predict_text(self, text: str) -> NativeInferenceResponse:
         """Tokenize and score locally; raw text is not retained or echoed."""
         if not isinstance(text, str):
