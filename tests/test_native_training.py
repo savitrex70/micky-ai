@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from rop.dataset_preparation import PreparedSplits, assign_group_safe_splits, build_manifest, content_fingerprint
+from rop.dataset_preparation import (
+    PreparedSplits,
+    build_manifest,
+    content_fingerprint,
+)
 from rop.native_model import NativeModel
 from rop.native_training import NativeTrainingConfig, NativeTrainingError, NativeTrainingExample, train_native_model
 from rop.schemas.dataset_manifest import AuthorizationStatus, DatasetSourceDescriptor, PermittedPurpose, RawDatasetRecord
