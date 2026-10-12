@@ -82,9 +82,10 @@ def run_native_benchmark(
         raise NativeBenchmarkError("CASE_COUNT_INVALID", "benchmark requires a bounded nonempty case set")
     if any(not isinstance(value, str) for value in texts):
         raise NativeBenchmarkError("CASE_TYPE_INVALID", "all benchmark cases must be text strings")
-    if inference._artifact.model_config_payload.model_version != policy.expected_model_version:
+    identity_response = inference.predict_text(texts[0])
+    if identity_response.model_version != policy.expected_model_version:
         raise NativeBenchmarkError("MODEL_POLICY_MISMATCH", "benchmark policy does not match the local model")
-    if inference._vocabulary.vocabulary_hash != policy.expected_vocabulary_hash:
+    if identity_response.vocabulary_hash != policy.expected_vocabulary_hash:
         raise NativeBenchmarkError("VOCABULARY_POLICY_MISMATCH", "benchmark policy does not match the local vocabulary")
 
     for index in range(config.warmup_iterations):
@@ -115,8 +116,8 @@ def run_native_benchmark(
     maximum_ms = max(elapsed_ms)
     within_budget = maximum_ms <= config.latency_budget_ms and peak_memory <= config.peak_memory_budget_bytes
     return NativeBenchmarkReport(
-        model_version=inference._artifact.model_config_payload.model_version,
-        vocabulary_hash=inference._vocabulary.vocabulary_hash,
+        model_version=identity_response.model_version,
+        vocabulary_hash=identity_response.vocabulary_hash,
         case_count=len(texts),
         warmup_iterations=config.warmup_iterations,
         measured_iterations=config.measured_iterations,
