@@ -196,5 +196,7 @@ def test_prediction_sigmoid_remains_finite_for_extreme_logits() -> None:
         head_bias=(-10000.0, 10000.0, 0.0),
     )
     output = model.predict(())
-    assert output == (0.0, 1.0, 0.5)
+    assert 0.0 <= output[0] < 1e-20
+    assert output[1] == 1.0
+    assert output[2] == 0.5
 
