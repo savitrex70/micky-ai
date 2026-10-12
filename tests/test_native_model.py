@@ -185,3 +185,16 @@ def test_model_serves_only_the_bounded_task_and_has_no_clinical_fields() -> None
     assert attributes == {"config", "parameters"}
     output = model.predict((1, 2))
     assert all(isinstance(value, float) for value in output)
+
+
+def test_prediction_sigmoid_remains_finite_for_extreme_logits() -> None:
+    model = NativeModel(_config())
+    config = _config()
+    model.parameters = NativeModelParameters(
+        embedding=tuple((0.0,) * config.embedding_dim for _ in range(config.vocab_size)),
+        head_weight=tuple((0.0,) * config.embedding_dim for _ in range(config.num_labels)),
+        head_bias=(-10000.0, 10000.0, 0.0),
+    )
+    output = model.predict(())
+    assert output == (0.0, 1.0, 0.5)
+
