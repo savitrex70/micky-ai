@@ -11,9 +11,18 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
-from rop.native_inference import NativeInferenceResponse, NativeLabelScore
+from rop.native_inference import NativeInferenceResponse
 
 MAX_LABELS = 32
 
@@ -37,7 +46,7 @@ class SuggestionValidationPolicy(BaseModel):
     expected_vocabulary_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     allowed_labels: tuple[StrictStr, ...] = Field(min_length=2, max_length=MAX_LABELS)
     minimum_probability: StrictFloat = Field(ge=0.0, le=1.0)
-    maximum_suggestions: int = Field(ge=1, le=MAX_LABELS)
+    maximum_suggestions: StrictInt = Field(ge=1, le=MAX_LABELS)
 
     @field_validator("allowed_labels")
     @classmethod
