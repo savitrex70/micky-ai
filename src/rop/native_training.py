@@ -17,7 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, Stric
 
 from rop.dataset_preparation import PreparedSplits, records_fingerprint
 from rop.native_model import NativeModelParameters
-from rop.schemas.dataset_manifest import AuthorizationStatus, DatasetManifest, PermittedPurpose
+from rop.schemas.dataset_manifest import (
+    AuthorizationStatus,
+    DatasetManifest,
+    PermittedPurpose,
+)
 from rop.schemas.native_model import NativeModelConfig
 from rop.tokenization import Vocabulary
 
@@ -52,8 +56,17 @@ class NativeTrainingExample(BaseModel):
     label_ids: tuple[StrictInt, ...] = Field(max_length=32)
 
     @classmethod
-    def canonical(cls, record_id: str, token_ids: tuple[int, ...], label_ids: tuple[int, ...]) -> NativeTrainingExample:
-        return cls(record_id=record_id, token_ids=token_ids, label_ids=tuple(sorted(set(label_ids))))
+    def canonical(
+        cls,
+        record_id: str,
+        token_ids: tuple[int, ...],
+        label_ids: tuple[int, ...],
+    ) -> NativeTrainingExample:
+        return cls(
+            record_id=record_id,
+            token_ids=token_ids,
+            label_ids=tuple(sorted(set(label_ids))),
+        )
 
 
 @dataclass(frozen=True)
@@ -88,7 +101,8 @@ def _parameter_hash(parameters: NativeModelParameters) -> str:
         "head_weight": parameters.head_weight,
         "head_bias": parameters.head_bias,
     }
-    return hashlib.sha256(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+    serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _sigmoid(value: float) -> float:
@@ -98,14 +112,31 @@ def _sigmoid(value: float) -> float:
     return exp_value / (1.0 + exp_value)
 
 
-def _loss(parameters: NativeModelParameters, examples: tuple[NativeTrainingExample, ...], config: NativeModelConfig) -> float:
+def _loss(
+    parameters: NativeModelParameters,
+    examples: tuple[NativeTrainingExample, ...],
+    config: NativeModelConfig,
+) -> float:
     total = 0.0
     for example in examples:
         ids = example.token_ids[: config.max_sequence_length]
-        pooled = [sum(parameters.embedding[token][axis] for token in ids) / len(ids) for axis in range(config.embedding_dim)] if ids else [0.0] * config.embedding_dim
+        pooled = (
+            [
+                sum(parameters.embedding[token][axis] for token in ids) / len(ids)
+                for axis in range(config.embedding_dim)
+            ]
+            if ids
+            else [0.0] * config.embedding_dim
+        )
         targets = set(example.label_ids)
         for label, weights in enumerate(parameters.head_weight):
-            logit = sum(weight * value for weight, value in zip(weights, pooled, strict=True)) + parameters.head_bias[label]
+            logit = (
+                sum(
+                    weight * value
+                    for weight, value in zip(weights, pooled, strict=True)
+                )
+                + parameters.head_bias[label]
+            )
             probability = min(max(_sigmoid(logit), 1e-12), 1.0 - 1e-12)
             target = 1.0 if label in targets else 0.0
             total -= target * math.log(probability) + (1.0 - target) * math.log(1.0 - probability)
@@ -123,26 +154,77 @@ def train_native_model(
     vocabulary: Vocabulary,
 ) -> NativeTrainingResult:
     """Train deterministically on exactly the authorized training split."""
-    if manifest.source.authorization is not AuthorizationStatus.AUTHORIZED or PermittedPurpose.TRAINING not in manifest.source.permitted_purposes or manifest.training_blocked_reason is not None:
-        raise NativeTrainingError("TRAINING_NOT_AUTHORIZED", "the dataset manifest does not authorize training")
+    if (
+        manifest.source.authorization is not AuthorizationStatus.AUTHORIZED
+        or PermittedPurpose.TRAINING not in manifest.source.permitted_purposes
+        or manifest.training_blocked_reason is not None
+    ):
+        raise NativeTrainingError(
+            "TRAINING_NOT_AUTHORIZED",
+            "the dataset manifest does not authorize training",
+        )
     fingerprint = records_fingerprint(splits.train)
-    if dict(manifest.split_fingerprints).get("train") != fingerprint or vocabulary.training_fingerprint != fingerprint:
-        raise NativeTrainingError("TRAINING_FINGERPRINT_MISMATCH", "the manifest, vocabulary, and training split are not bound")
+    if (
+        dict(manifest.split_fingerprints).get("train") != fingerprint
+        or vocabulary.training_fingerprint != fingerprint
+    ):
+        raise NativeTrainingError(
+            "TRAINING_FINGERPRINT_MISMATCH",
+            "the manifest, vocabulary, and training split are not bound",
+        )
     expected_ids = tuple(sorted(record.record_id for record in splits.train))
     supplied_ids = tuple(sorted(example.record_id for example in examples))
     if not expected_ids or expected_ids != supplied_ids:
         raise NativeTrainingError("TRAINING_SPLIT_MISMATCH", "examples must cover exactly the declared training split")
     if len(examples) > training_config.max_examples:
         raise NativeTrainingError("TRAINING_BOUND_EXCEEDED", "the training example count exceeds the configured bound")
-    if len(initial_parameters.embedding) != model_config.vocab_size or len(initial_parameters.head_weight) != model_config.num_labels or len(initial_parameters.head_bias) != model_config.num_labels:
-        raise NativeTrainingError("PARAMETER_SHAPE_MISMATCH", "initial parameter dimensions do not match the model configuration")
+    if (
+        len(initial_parameters.embedding) != model_config.vocab_size
+        or any(
+            len(row) != model_config.embedding_dim
+            for row in initial_parameters.embedding
+        )
+        or len(initial_parameters.head_weight) != model_config.num_labels
+        or any(
+            len(row) != model_config.embedding_dim
+            for row in initial_parameters.head_weight
+        )
+        or len(initial_parameters.head_bias) != model_config.num_labels
+    ):
+        raise NativeTrainingError(
+            "PARAMETER_SHAPE_MISMATCH",
+            "initial parameter dimensions do not match the model configuration",
+        )
+    parameter_values = [
+        value
+        for row in initial_parameters.embedding
+        for value in row
+    ] + [
+        value
+        for row in initial_parameters.head_weight
+        for value in row
+    ] + list(initial_parameters.head_bias)
+    if not all(math.isfinite(value) for value in parameter_values):
+        raise NativeTrainingError(
+            "NON_FINITE_INITIAL_PARAMETER",
+            "initial parameters must be finite",
+        )
     for example in examples:
         if any(token < 0 or token >= model_config.vocab_size for token in example.token_ids):
-            raise NativeTrainingError("TOKEN_ID_OUT_OF_RANGE", "a training token is outside the configured vocabulary")
+            raise NativeTrainingError(
+                "TOKEN_ID_OUT_OF_RANGE",
+                "a training token is outside the configured vocabulary",
+            )
         if any(label < 0 or label >= model_config.num_labels for label in example.label_ids):
-            raise NativeTrainingError("LABEL_ID_OUT_OF_RANGE", "a training label is outside the configured label space")
+            raise NativeTrainingError(
+                "LABEL_ID_OUT_OF_RANGE",
+                "a training label is outside the configured label space",
+            )
     if len(vocabulary.tokens) != model_config.vocab_size:
-        raise NativeTrainingError("VOCABULARY_SHAPE_MISMATCH", "the vocabulary size does not match the model configuration")
+        raise NativeTrainingError(
+            "VOCABULARY_SHAPE_MISMATCH",
+            "the vocabulary size does not match the model configuration",
+        )
 
     embedding = [list(row) for row in initial_parameters.embedding]
     weights = [list(row) for row in initial_parameters.head_weight]
@@ -151,30 +233,66 @@ def train_native_model(
     for _ in range(training_config.epochs):
         for example in examples:
             token_ids = example.token_ids[: model_config.max_sequence_length]
-            pooled = [sum(embedding[token][axis] for token in token_ids) / len(token_ids) for axis in range(model_config.embedding_dim)] if token_ids else [0.0] * model_config.embedding_dim
+            pooled = (
+                [
+                    sum(embedding[token][axis] for token in token_ids)
+                    / len(token_ids)
+                    for axis in range(model_config.embedding_dim)
+                ]
+                if token_ids
+                else [0.0] * model_config.embedding_dim
+            )
             targets = set(example.label_ids)
             grad_pooled = [0.0] * model_config.embedding_dim
             for label in range(model_config.num_labels):
                 logit = sum(weights[label][axis] * pooled[axis] for axis in range(model_config.embedding_dim)) + bias[label]
                 delta = _sigmoid(logit) - (1.0 if label in targets else 0.0)
                 delta = max(-training_config.gradient_clip, min(training_config.gradient_clip, delta))
+                previous_weights = tuple(weights[label])
                 for axis in range(model_config.embedding_dim):
+                    grad_pooled[axis] += delta * previous_weights[axis]
                     grad = delta * pooled[axis]
-                    weights[label][axis] -= training_config.learning_rate * max(-training_config.gradient_clip, min(training_config.gradient_clip, grad))
-                    grad_pooled[axis] += delta * weights[label][axis]
+                    clipped_grad = max(
+                        -training_config.gradient_clip,
+                        min(training_config.gradient_clip, grad),
+                    )
+                    weights[label][axis] -= (
+                        training_config.learning_rate * clipped_grad
+                    )
                 bias[label] -= training_config.learning_rate * delta
             if token_ids:
                 for token in token_ids:
                     for axis in range(model_config.embedding_dim):
                         grad = grad_pooled[axis] / len(token_ids)
-                        embedding[token][axis] -= training_config.learning_rate * max(-training_config.gradient_clip, min(training_config.gradient_clip, grad))
+                        clipped_grad = max(
+                            -training_config.gradient_clip,
+                            min(training_config.gradient_clip, grad),
+                        )
+                        embedding[token][axis] -= (
+                            training_config.learning_rate * clipped_grad
+                        )
     parameters = NativeModelParameters(
         embedding=tuple(tuple(row) for row in embedding),
         head_weight=tuple(tuple(row) for row in weights),
         head_bias=tuple(bias),
     )
-    if not all(math.isfinite(value) for row in parameters.embedding for value in row) or not all(math.isfinite(value) for row in parameters.head_weight for value in row) or not all(math.isfinite(value) for value in parameters.head_bias):
-        raise NativeTrainingError("NON_FINITE_TRAINED_PARAMETER", "training produced a non-finite parameter")
+    if (
+        not all(
+            math.isfinite(value)
+            for row in parameters.embedding
+            for value in row
+        )
+        or not all(
+            math.isfinite(value)
+            for row in parameters.head_weight
+            for value in row
+        )
+        or not all(math.isfinite(value) for value in parameters.head_bias)
+    ):
+        raise NativeTrainingError(
+            "NON_FINITE_TRAINED_PARAMETER",
+            "training produced a non-finite parameter",
+        )
     final_loss = _loss(parameters, examples, model_config)
     report = NativeTrainingReport(
         model_version=model_config.model_version,
