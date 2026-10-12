@@ -23,6 +23,8 @@ MAX_EXAMPLES = 100000
 MAX_REASON_LENGTH = 500
 MIN_SPLIT_COUNT = 1
 MAX_SPLIT_COUNT = 10000
+# Latency thresholds are milliseconds; every other metric is a proportion.
+MAX_LATENCY_THRESHOLD_MS = 3_600_000.0
 
 # Zero-tolerance safety metric: an admitted invalid/detached evidence
 # reference is an unconditional failure of any candidate or baseline run.
@@ -119,13 +121,24 @@ class EvaluationMetricThreshold(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     metric: EvaluationMetricKind
-    minimum: StrictFloat | None = Field(ge=0.0, le=1.0)
-    maximum: StrictFloat | None = Field(ge=0.0, le=1.0)
+    minimum: StrictFloat | None = Field(ge=0.0)
+    maximum: StrictFloat | None = Field(ge=0.0)
 
     @model_validator(mode="after")
     def _declared_bound(self) -> EvaluationMetricThreshold:
         if self.minimum is None and self.maximum is None:
             raise ValueError("a threshold must declare a minimum or maximum bound")
+        # Metric-appropriate range: milliseconds for latency, [0, 1] otherwise.
+        upper = (
+            MAX_LATENCY_THRESHOLD_MS
+            if self.metric == EvaluationMetricKind.LATENCY_MS
+            else 1.0
+        )
+        for bound in (self.minimum, self.maximum):
+            if bound is not None and not bound <= upper:
+                raise ValueError(
+                    "threshold bounds must stay within the metric's valid range"
+                )
         if (
             self.minimum is not None
             and self.maximum is not None

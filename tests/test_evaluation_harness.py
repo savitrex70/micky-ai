@@ -7,15 +7,19 @@ from pydantic import ValidationError
 
 from rop.evaluation import (
     _metric_value,
+    _threshold_violated,
     assign_splits_deterministically,
     compare_systems,
     evaluate_predictions,
 )
 from rop.schemas.evaluation_harness import (
+    MAX_LATENCY_THRESHOLD_MS,
     CandidatePrediction,
     EvaluationHarnessError,
+    EvaluationManifestEntry,
     EvaluationMetricConfiguration,
     EvaluationMetricKind,
+    EvaluationMetricThreshold,
     EvaluationRunConfiguration,
     EvaluationSplit,
     EvaluationSplitManifest,
@@ -71,7 +75,7 @@ def _task() -> EvaluationTaskDefinition:
 
 
 def _split_manifest(
-    entries: list[tuple[str, str, list[str]]]
+    entries: list[tuple[str, str, list[str]]],
 ) -> EvaluationSplitManifest:
     return EvaluationSplitManifest.model_validate(
         {
@@ -162,7 +166,7 @@ def test_split_assignment_uses_every_partition() -> None:
         train_ratio=0.5,
         validation_ratio=0.25,
     )
-    splits = {entry["split"] for entry in entries}
+    splits = {entry.split for entry in entries}
     assert splits == {
         EvaluationSplit.TRAIN,
         EvaluationSplit.VALIDATION,
@@ -479,3 +483,585 @@ def test_metric_value_helper_maps_every_metric_kind() -> None:
         _metric_value(EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE, outcome)
         == 0.0
     )
+
+
+# --- Task 206 correction: shared helpers ------------------------------------
+
+
+def _custom_run_configuration(
+    manifest: EvaluationSplitManifest,
+    thresholds: list[dict],
+    minimum_examples_per_class: int = 0,
+    evaluated_splits: tuple[EvaluationSplit, ...] = (EvaluationSplit.TEST,),
+) -> EvaluationRunConfiguration:
+    metric_configuration = _metric_configuration()
+    metric_configuration["thresholds"] = sorted(
+        thresholds, key=lambda threshold: threshold["metric"].value
+    )
+    metric_configuration["minimum_examples_per_class"] = minimum_examples_per_class
+    return EvaluationRunConfiguration.model_validate(
+        {
+            "contract_version": "1",
+            "run_id": "run-1",
+            "task": _task().model_dump(mode="json"),
+            "metric_configuration": metric_configuration,
+            "split_manifest": manifest.model_dump(mode="json"),
+            "evaluated_splits": evaluated_splits,
+        }
+    )
+
+
+def _safety_threshold() -> dict:
+    return {
+        "metric": EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE,
+        "minimum": 0.0,
+        "maximum": 0.0,
+    }
+
+
+def _perfect() -> tuple[CandidatePrediction, ...]:
+    return (
+        _prediction("example-1", ["ANION_GAP_HIGH"]),
+        _prediction("example-2", ["POTASSIUM_HIGH"]),
+        _prediction("example-3", ["ANION_GAP_HIGH"]),
+        _prediction("example-4", ["POTASSIUM_HIGH"]),
+    )
+
+
+def _empty_baseline() -> tuple[CandidatePrediction, ...]:
+    return tuple(_prediction(f"example-{i}", []) for i in range(1, 5))
+
+
+def _confusion(outcome) -> dict[tuple[str, str], int]:
+    return {(row, col): count for row, col, count in outcome.confusion_matrix}
+
+
+# --- A. confusion-matrix accounting -----------------------------------------
+
+
+def test_example_without_expected_labels_records_its_own_false_positive() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", []),
+            ("example-2", "TEST", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    # The no-expected-label example is first in sorted order, so no predicted
+    # label can be left over from an earlier example.
+    outcome = evaluate_predictions(
+        manifest=manifest,
+        predictions=(
+            _prediction("example-1", ["ANION_GAP_HIGH"]),
+            _prediction("example-2", ["POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert _confusion(outcome) == {
+        ("<none>", "ANION_GAP_HIGH"): 1,
+        ("POTASSIUM_HIGH", "POTASSIUM_HIGH"): 1,
+    }
+    reports = {report.label: report for report in outcome.per_class}
+    assert reports["ANION_GAP_HIGH"].false_positives == 1
+
+
+def test_false_positive_only_cell_uses_the_current_examples_prediction() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["POTASSIUM_HIGH"]),
+            ("example-2", "TEST", []),
+            ("example-3", "TEST", []),
+        ]
+    )
+    outcome = evaluate_predictions(
+        manifest=manifest,
+        predictions=(
+            _prediction("example-1", ["POTASSIUM_HIGH"]),
+            _prediction("example-2", ["ANION_GAP_HIGH"]),
+            _prediction("example-3", ["ANION_GAP_HIGH", "POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert _confusion(outcome) == {
+        ("POTASSIUM_HIGH", "POTASSIUM_HIGH"): 1,
+        ("<none>", "ANION_GAP_HIGH"): 2,
+        ("<none>", "POTASSIUM_HIGH"): 1,
+    }
+
+
+def test_mixed_true_and_false_positives_fill_the_expected_cells() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-2", "TEST", ["POTASSIUM_HIGH"]),
+            ("example-3", "TEST", []),
+        ]
+    )
+    outcome = evaluate_predictions(
+        manifest=manifest,
+        predictions=(
+            _prediction("example-1", ["ANION_GAP_HIGH", "POTASSIUM_HIGH"]),
+            _prediction("example-2", []),
+            _prediction("example-3", ["POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert _confusion(outcome) == {
+        ("ANION_GAP_HIGH", "ANION_GAP_HIGH"): 1,
+        ("ANION_GAP_HIGH", "POTASSIUM_HIGH"): 1,
+        ("POTASSIUM_HIGH", "<NONE>"): 1,
+        ("<none>", "POTASSIUM_HIGH"): 1,
+    }
+    reports = {report.label: report for report in outcome.per_class}
+    assert reports["ANION_GAP_HIGH"].true_positives == 1
+    assert reports["POTASSIUM_HIGH"].false_positives == 2
+    assert reports["POTASSIUM_HIGH"].false_negatives == 1
+
+
+def test_abstained_examples_fill_the_abstain_column_only() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-2", "TEST", []),
+            ("example-3", "TEST", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    outcome = evaluate_predictions(
+        manifest=manifest,
+        predictions=(
+            _prediction("example-1", [], abstained=True),
+            _prediction("example-2", [], abstained=True),
+            _prediction("example-3", ["POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert _confusion(outcome) == {
+        ("ANION_GAP_HIGH", "<ABSTAIN>"): 1,
+        ("POTASSIUM_HIGH", "POTASSIUM_HIGH"): 1,
+    }
+    assert outcome.abstention_rate == pytest.approx(2 / 3)
+
+
+# --- B. every declared threshold is effective --------------------------------
+
+
+def _outcome_with(**patch: float | None):
+    base = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=_perfect(),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    return base.model_copy(update=patch)
+
+
+PROPORTION_METRICS = [
+    EvaluationMetricKind.MACRO_F1,
+    EvaluationMetricKind.PER_CLASS_PRECISION,
+    EvaluationMetricKind.PER_CLASS_RECALL,
+    EvaluationMetricKind.BALANCED_ACCURACY,
+    EvaluationMetricKind.COVERAGE,
+    EvaluationMetricKind.ABSTENTION_RATE,
+]
+
+
+@pytest.mark.parametrize("metric", PROPORTION_METRICS)
+def test_proportion_metric_minimum_and_maximum_both_affect_the_result(
+    metric: EvaluationMetricKind,
+) -> None:
+    value = _metric_value(metric, _outcome_with())
+    assert value in (0.0, 1.0)
+    above = value + 0.25
+    below = value - 0.25
+    # A minimum above the observed value fails; one at the value passes.
+    assert _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=min(above, 1.0), maximum=None),
+        value,
+    ) is (value < 1.0)
+    assert not _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=value, maximum=None), value
+    )
+    # A maximum below the observed value fails; one at the value passes.
+    assert _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=None, maximum=max(below, 0.0)),
+        value,
+    ) is (value > 0.0)
+    assert not _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=None, maximum=value), value
+    )
+
+
+@pytest.mark.parametrize("metric", PROPORTION_METRICS)
+def test_a_declared_maximum_below_a_perfect_value_rejects_a_candidate(
+    metric: EvaluationMetricKind,
+) -> None:
+    # A perfect candidate has value 1.0 (0.0 for abstention); an impossible
+    # opposite-direction bound must flip acceptance for every metric.
+    manifest = _manifest()
+    impossible = (
+        {"metric": metric, "minimum": None, "maximum": 0.9}
+        if metric != EvaluationMetricKind.ABSTENTION_RATE
+        else {"metric": metric, "minimum": 0.1, "maximum": None}
+    )
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            manifest, [impossible, _safety_threshold()]
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.candidate_improves_macro_f1 is True
+    assert report.safety_failure is False
+    assert report.accepted is False
+
+
+def test_unbounded_directions_do_not_block_an_otherwise_perfect_candidate() -> None:
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            _manifest(),
+            [
+                {"metric": metric, "minimum": 0.0, "maximum": 1.0}
+                for metric in PROPORTION_METRICS
+            ]
+            + [_safety_threshold()],
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.accepted is True
+
+
+def test_latency_minimum_and_maximum_are_both_enforced_in_milliseconds() -> None:
+    metric = EvaluationMetricKind.LATENCY_MS
+    outcome = _outcome_with(latency_ms_max=250.0)
+    value = _metric_value(metric, outcome)
+    assert value == 250.0
+    # Millisecond bounds far above 1.0 are valid for latency.
+    assert not _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=100.0, maximum=500.0), value
+    )
+    assert _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=None, maximum=200.0), value
+    )
+    assert _threshold_violated(
+        EvaluationMetricThreshold(metric=metric, minimum=300.0, maximum=None), value
+    )
+
+
+@pytest.mark.parametrize(
+    ("bound", "expect_accepted"),
+    [
+        ({"minimum": None, "maximum": 0.5}, False),
+        ({"minimum": None, "maximum": 5.0}, True),
+        ({"minimum": 2.0, "maximum": None}, False),
+        ({"minimum": 0.5, "maximum": None}, True),
+    ],
+)
+def test_latency_bounds_decide_acceptance_end_to_end(
+    bound: dict, expect_accepted: bool
+) -> None:
+    # Every candidate prediction reports 1.0 ms.
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            _manifest(),
+            [{"metric": EvaluationMetricKind.LATENCY_MS, **bound}, _safety_threshold()],
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.accepted is expect_accepted
+
+
+def test_declared_latency_bound_without_a_measurement_fails_closed() -> None:
+    candidate = tuple(
+        _prediction(f"example-{i}", label, latency_ms=None)
+        for i, label in zip(
+            range(1, 5),
+            (
+                ["ANION_GAP_HIGH"],
+                ["POTASSIUM_HIGH"],
+                ["ANION_GAP_HIGH"],
+                ["POTASSIUM_HIGH"],
+            ),
+            strict=True,
+        )
+    )
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            _manifest(),
+            [
+                {
+                    "metric": EvaluationMetricKind.LATENCY_MS,
+                    "minimum": None,
+                    "maximum": 1000.0,
+                },
+                _safety_threshold(),
+            ],
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=candidate,
+    )
+    assert report.accepted is False
+
+
+def test_threshold_ranges_are_metric_appropriate() -> None:
+    latency = EvaluationMetricKind.LATENCY_MS
+    EvaluationMetricThreshold(metric=latency, minimum=None, maximum=1500.0)
+    EvaluationMetricThreshold(
+        metric=latency, minimum=None, maximum=MAX_LATENCY_THRESHOLD_MS
+    )
+    with pytest.raises(ValidationError, match="valid range"):
+        EvaluationMetricThreshold(
+            metric=latency, minimum=None, maximum=MAX_LATENCY_THRESHOLD_MS + 1.0
+        )
+    with pytest.raises(ValidationError):
+        EvaluationMetricThreshold(metric=latency, minimum=-1.0, maximum=None)
+    for metric in PROPORTION_METRICS:
+        with pytest.raises(ValidationError, match="valid range"):
+            EvaluationMetricThreshold(metric=metric, minimum=None, maximum=1.5)
+        with pytest.raises(ValidationError, match="valid range"):
+            EvaluationMetricThreshold(metric=metric, minimum=1.5, maximum=None)
+
+
+def test_measured_zero_latency_is_not_mistaken_for_missing() -> None:
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=tuple(
+            _prediction(f"example-{i}", [], latency_ms=0.0) for i in range(1, 5)
+        ),
+        labels=LABELS,
+        system_id="baseline",
+    )
+    assert outcome.latency_ms_max == 0.0
+
+
+# --- C. class-count requirement and ground-truth labels ----------------------
+
+
+def test_minimum_examples_per_class_is_enforced_before_evaluation() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-2", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-3", "TEST", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    configuration = _custom_run_configuration(
+        manifest,
+        [_safety_threshold()],
+        minimum_examples_per_class=2,
+    )
+    with pytest.raises(EvaluationHarnessError, match="CLASS_COUNT_INSUFFICIENT"):
+        compare_systems(
+            run_configuration=configuration,
+            baseline_predictions=(),
+            candidate_predictions=(),
+        )
+
+
+def test_class_count_error_is_safe_and_names_no_identifiers() -> None:
+    manifest = _split_manifest(
+        [("secret-example-id", "TEST", ["ANION_GAP_HIGH"])],
+    )
+    configuration = _custom_run_configuration(
+        manifest, [_safety_threshold()], minimum_examples_per_class=2
+    )
+    with pytest.raises(EvaluationHarnessError) as raised:
+        compare_systems(
+            run_configuration=configuration,
+            baseline_predictions=(),
+            candidate_predictions=(),
+        )
+    assert "secret-example-id" not in str(raised.value)
+    assert "ANION_GAP_HIGH" not in str(raised.value)
+
+
+def test_class_count_applies_only_to_the_declared_evaluated_split() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-2", "TEST", ["POTASSIUM_HIGH"]),
+            ("example-3", "TRAIN", ["ANION_GAP_HIGH"]),
+            ("example-4", "TRAIN", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    # TRAIN+TEST together would satisfy 2 per class; TEST alone does not.
+    configuration = _custom_run_configuration(
+        manifest, [_safety_threshold()], minimum_examples_per_class=2
+    )
+    with pytest.raises(EvaluationHarnessError, match="CLASS_COUNT_INSUFFICIENT"):
+        compare_systems(
+            run_configuration=configuration,
+            baseline_predictions=(),
+            candidate_predictions=(),
+        )
+
+
+def test_minimum_examples_per_class_exactly_met_is_accepted_for_evaluation() -> None:
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            _manifest(), [_safety_threshold()], minimum_examples_per_class=2
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.accepted is True
+
+
+def test_ground_truth_outside_the_task_labels_is_rejected_not_trimmed() -> None:
+    manifest = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH", "UNDECLARED_LABEL"]),
+            ("example-2", "TEST", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    with pytest.raises(EvaluationHarnessError, match="GROUND_TRUTH_LABEL_UNKNOWN"):
+        evaluate_predictions(
+            manifest=manifest,
+            predictions=(),
+            labels=LABELS,
+            system_id="baseline",
+        )
+    with pytest.raises(EvaluationHarnessError, match="GROUND_TRUTH_LABEL_UNKNOWN"):
+        compare_systems(
+            run_configuration=_custom_run_configuration(
+                manifest, [_safety_threshold()]
+            ),
+            baseline_predictions=(),
+            candidate_predictions=(),
+        )
+
+
+def test_empty_evaluated_split_fails_with_a_stable_error() -> None:
+    configuration = _custom_run_configuration(
+        _manifest(),
+        [_safety_threshold()],
+        evaluated_splits=(EvaluationSplit.VALIDATION,),
+    )
+    with pytest.raises(EvaluationHarnessError, match="EVALUATED_SPLIT_EMPTY"):
+        compare_systems(
+            run_configuration=configuration,
+            baseline_predictions=(),
+            candidate_predictions=(),
+        )
+
+
+# --- D. zero-tolerance safety gate for both systems --------------------------
+
+
+def test_invalid_reference_in_the_baseline_blocks_acceptance() -> None:
+    baseline = (
+        _prediction("example-1", [], invalid=True),
+        _prediction("example-2", []),
+        _prediction("example-3", []),
+        _prediction("example-4", []),
+    )
+    report = compare_systems(
+        run_configuration=_run_configuration(_manifest()),
+        baseline_predictions=baseline,
+        candidate_predictions=_perfect(),
+    )
+    assert report.baseline.invalid_evidence_reference_rate == 0.25
+    assert report.candidate.invalid_evidence_reference_rate == 0.0
+    assert report.candidate_improves_macro_f1 is True
+    assert report.safety_failure is True
+    assert report.accepted is False
+
+
+def test_abstained_invalid_prediction_still_increments_the_safety_counter() -> None:
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=(
+            _prediction("example-1", [], abstained=True, invalid=True),
+            _prediction("example-2", ["POTASSIUM_HIGH"]),
+            _prediction("example-3", ["ANION_GAP_HIGH"]),
+            _prediction("example-4", ["POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert outcome.invalid_evidence_reference_rate == 0.25
+    assert outcome.abstention_rate == 0.25
+
+
+def test_abstained_invalid_candidate_cannot_be_accepted() -> None:
+    candidate = (
+        _prediction("example-1", [], abstained=True, invalid=True),
+        _prediction("example-2", ["POTASSIUM_HIGH"]),
+        _prediction("example-3", ["ANION_GAP_HIGH"]),
+        _prediction("example-4", ["POTASSIUM_HIGH"]),
+    )
+    report = compare_systems(
+        run_configuration=_run_configuration(_manifest()),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=candidate,
+    )
+    assert report.safety_failure is True
+    assert report.accepted is False
+
+
+def test_clean_runs_for_both_systems_report_no_safety_failure() -> None:
+    report = compare_systems(
+        run_configuration=_run_configuration(_manifest()),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.safety_failure is False
+    assert report.accepted is True
+
+
+# --- E. split helper ----------------------------------------------------------
+
+
+def test_split_helper_returns_validated_canonical_entries() -> None:
+    ids = tuple(f"example-{i}" for i in range(30))
+    entries = assign_splits_deterministically(
+        example_ids=ids, train_ratio=0.5, validation_ratio=0.25
+    )
+    assert isinstance(entries, tuple)
+    assert all(isinstance(entry, EvaluationManifestEntry) for entry in entries)
+    assert {entry.example_id for entry in entries} == set(ids)
+    assert all(entry.expected_labels == () for entry in entries)
+    keys = [(entry.split.value, entry.example_id) for entry in entries]
+    assert keys == sorted(keys)
+    # The result is directly usable once the caller supplies identity+labels.
+    EvaluationSplitManifest.model_validate(
+        {
+            "contract_version": "1",
+            "dataset_id": DATASET_ID,
+            "dataset_snapshot_hash": "c" * 64,
+            "task_id": TASK_ID,
+            "entries": entries,
+        }
+    )
+
+
+def test_split_helper_is_stable_under_input_reordering() -> None:
+    ids = tuple(f"example-{i}" for i in range(40))
+    forward = assign_splits_deterministically(
+        example_ids=ids, train_ratio=0.6, validation_ratio=0.2
+    )
+    reverse = assign_splits_deterministically(
+        example_ids=tuple(reversed(ids)), train_ratio=0.6, validation_ratio=0.2
+    )
+    assert forward == reverse
+
+
+def test_split_helper_rejects_duplicate_example_ids_without_echoing_them() -> None:
+    with pytest.raises(EvaluationHarnessError, match="DUPLICATE_EXAMPLE_ID") as raised:
+        assign_splits_deterministically(
+            example_ids=("patient-secret-1", "patient-secret-1"),
+            train_ratio=0.6,
+            validation_ratio=0.2,
+        )
+    assert "patient-secret-1" not in str(raised.value)
+
+
+def test_split_helper_rejects_invalid_identifiers_with_a_stable_error() -> None:
+    with pytest.raises(EvaluationHarnessError, match="EXAMPLE_ID_INVALID"):
+        assign_splits_deterministically(
+            example_ids=("example-1", "   "), train_ratio=0.6, validation_ratio=0.2
+        )

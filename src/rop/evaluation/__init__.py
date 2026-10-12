@@ -12,13 +12,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from rop.schemas.evaluation_harness import (
     EVALUATION_CONTRACT_VERSION,
     ZERO_TOLERANCE_METRIC,
     CandidatePrediction,
     EvaluationComparisonReport,
     EvaluationHarnessError,
+    EvaluationManifestEntry,
     EvaluationMetricKind,
+    EvaluationMetricThreshold,
     EvaluationRunConfiguration,
     EvaluationSplit,
     EvaluationSplitManifest,
@@ -39,13 +43,19 @@ def assign_splits_deterministically(
     example_ids: tuple[str, ...],
     train_ratio: float,
     validation_ratio: float,
-) -> EvaluationSplitManifest:
+) -> tuple[EvaluationManifestEntry, ...]:
     """Bind example IDs to splits with a stable hash, never an RNG.
 
+    Returns validated ``EvaluationManifestEntry`` objects (not a complete
+    ``EvaluationSplitManifest``), ordered canonically by ``(split,
+    example_id)`` so they can be placed in a manifest directly. Each entry
+    carries empty ``expected_labels``; the caller must supply ground truth
+    (for example via ``entry.model_copy(update={"expected_labels": ...})``)
+    and the dataset identity and snapshot hash this function does not know.
+
     The assignment is a pure function of the example identifier, so any
-    later re-run reproduces the exact same partition. The caller must
-    still record the resulting snapshot hash; this function does not
-    invent dataset content.
+    later re-run reproduces the exact same partition. Duplicate example
+    IDs are rejected because they would silently collapse into one example.
     """
     import hashlib
 
@@ -57,8 +67,13 @@ def assign_splits_deterministically(
         raise EvaluationHarnessError(
             "SPLIT_RATIO_INVALID", "train+validation must stay below 1"
         )
+    if len(set(example_ids)) != len(example_ids):
+        raise EvaluationHarnessError(
+            "DUPLICATE_EXAMPLE_ID", "example identifiers must be unique"
+        )
 
-    entries: list = []
+    entries: list[EvaluationManifestEntry] = []
+    entry_invalid = False
     for example_id in example_ids:
         digest = hashlib.sha256(example_id.encode("utf-8")).hexdigest()
         # First 16 hex digits mod 10^16 / 10^16 in [0,1)
@@ -69,14 +84,22 @@ def assign_splits_deterministically(
             split = EvaluationSplit.VALIDATION
         else:
             split = EvaluationSplit.TEST
-        entries.append(
-            {
-                "example_id": example_id,
-                "split": split,
-                "expected_labels": tuple(),  # filled by the caller
-            }
+        try:
+            entries.append(
+                EvaluationManifestEntry(
+                    example_id=example_id, split=split, expected_labels=()
+                )
+            )
+        except ValidationError:
+            entry_invalid = True
+            break
+    if entry_invalid:
+        # Raised outside the handler so the original text (which could echo
+        # the identifier) is neither chained nor surfaced.
+        raise EvaluationHarnessError(
+            "EXAMPLE_ID_INVALID", "an example identifier is not a valid identifier"
         )
-    return entries
+    return tuple(sorted(entries, key=lambda e: (e.split.value, e.example_id)))
 
 
 def _label_counters(
@@ -89,6 +112,35 @@ def _label_counters(
         false_positives=int(label not in expected and label in predicted),
         false_negatives=int(label in expected and label not in predicted),
     )
+
+
+def _validate_ground_truth(
+    manifest: EvaluationSplitManifest, labels: tuple[str, ...]
+) -> None:
+    """Reject ground truth outside the declared label space; never trim it."""
+    label_space = frozenset(labels)
+    for entry in manifest.entries:
+        if not frozenset(entry.expected_labels) <= label_space:
+            raise EvaluationHarnessError(
+                "GROUND_TRUTH_LABEL_UNKNOWN",
+                "ground truth uses labels outside the declared task labels",
+            )
+
+
+def _validate_class_counts(
+    manifest: EvaluationSplitManifest,
+    labels: tuple[str, ...],
+    minimum_examples_per_class: int,
+) -> None:
+    """Enforce the predeclared per-class minimum on the evaluated split."""
+    for label in labels:
+        count = sum(1 for entry in manifest.entries if label in entry.expected_labels)
+        if count < minimum_examples_per_class:
+            raise EvaluationHarnessError(
+                "CLASS_COUNT_INSUFFICIENT",
+                "the evaluated split does not meet the predeclared minimum "
+                "examples per class",
+            )
 
 
 def evaluate_predictions(
@@ -119,45 +171,39 @@ def evaluate_predictions(
         )
 
     expected_label_set = frozenset(labels)
+    _validate_ground_truth(manifest, labels)
     tp_fp_fn: dict[str, _Counters] = {}
     confusion_counts: Counter[tuple[str, str]] = Counter()
     example_count = 0
     abstentions = 0
     invalid_references = 0
-    latency_max = 0.0
+    latency_max: float | None = None
+
+    def add_counts(label: str, counters: _Counters) -> None:
+        previous = tp_fp_fn.get(label, _Counters(0, 0, 0))
+        tp_fp_fn[label] = _Counters(
+            previous.true_positives + counters.true_positives,
+            previous.false_positives + counters.false_positives,
+            previous.false_negatives + counters.false_negatives,
+        )
+
+    def record_abstention(expected: tuple[str, ...]) -> None:
+        for expected_label in expected:
+            confusion_counts[(expected_label, "<ABSTAIN>")] += 1
+            add_counts(expected_label, _Counters(0, 0, 1))
 
     for example_id, entry in sorted(manifest_by_id.items()):
+        example_count += 1
         prediction = prediction_by_id.get(example_id)
         if prediction is None:
             # Missing predictions are abstentions, never silent passes.
             abstentions += 1
-            example_count += 1
-            for expected_label in entry.expected_labels:
-                confusion_counts[(expected_label, "<ABSTAIN>")] += 1
-                previous = tp_fp_fn.get(expected_label, _Counters(0, 0, 0))
-                tp_fp_fn[expected_label] = _Counters(
-                    previous.true_positives,
-                    previous.false_positives,
-                    previous.false_negatives + 1,
-                )
+            record_abstention(entry.expected_labels)
             continue
 
-        example_count += 1
-        if prediction.abstained:
-            abstentions += 1
-            for expected_label in entry.expected_labels:
-                confusion_counts[(expected_label, "<ABSTAIN>")] += 1
-                previous = tp_fp_fn.get(expected_label, _Counters(0, 0, 0))
-                tp_fp_fn[expected_label] = _Counters(
-                    previous.true_positives,
-                    previous.false_positives,
-                    previous.false_negatives + 1,
-                )
-            continue
-
-        if prediction.invalid:
-            invalid_references += 1
-        elif any(
+        # Safety first: an invalid reference is counted once per example
+        # before any abstention fast path can skip it.
+        if prediction.invalid or any(
             predicted_label not in expected_label_set
             for predicted_label in prediction.predicted_labels
         ):
@@ -165,27 +211,29 @@ def evaluate_predictions(
             # reference; counted once per example, never double counted.
             invalid_references += 1
 
-        predicted_set = frozenset(prediction.predicted_labels) & expected_label_set
-        expected_set = frozenset(entry.expected_labels) & expected_label_set
+        if prediction.abstained:
+            abstentions += 1
+            record_abstention(entry.expected_labels)
+            continue
 
-        for expected_label in sorted(expected_set | predicted_set):
-            counters = _label_counters(expected_set, predicted_set, expected_label)
-            previous = tp_fp_fn.get(expected_label, _Counters(0, 0, 0))
-            tp_fp_fn[expected_label] = _Counters(
-                previous.true_positives + counters.true_positives,
-                previous.false_positives + counters.false_positives,
-                previous.false_negatives + counters.false_negatives,
-            )
-            if counters.true_positives or counters.false_negatives:
-                # A real expected label defines the row of the matrix.
-                for predicted_label in sorted(predicted_set) or ("<NONE>",):
+        # Every cell below is derived from this example's own label sets.
+        predicted_set = frozenset(prediction.predicted_labels) & expected_label_set
+        expected_set = frozenset(entry.expected_labels)
+
+        for label in sorted(expected_set | predicted_set):
+            add_counts(label, _label_counters(expected_set, predicted_set, label))
+        for expected_label in sorted(expected_set):
+            if predicted_set:
+                for predicted_label in sorted(predicted_set):
                     confusion_counts[(expected_label, predicted_label)] += 1
-            elif counters.false_positives:
-                confusion_counts[("<none>", predicted_label)] = (
-                    confusion_counts.get(("<none>", predicted_label), 0) + 1
-                )
+            else:
+                confusion_counts[(expected_label, "<NONE>")] += 1
+        if not expected_set:
+            # False positives on an example with no expected labels.
+            for predicted_label in sorted(predicted_set):
+                confusion_counts[("<none>", predicted_label)] += 1
         if prediction.latency_ms is not None:
-            latency_max = max(latency_max, prediction.latency_ms)
+            latency_max = max(latency_max or 0.0, prediction.latency_ms)
 
     per_class = []
     f1_scores: list[float] = []
@@ -242,7 +290,7 @@ def evaluate_predictions(
                     for (expected, predicted), count in confusion_counts.items()
                 )
             ),
-            "latency_ms_max": latency_max if latency_max > 0 else None,
+            "latency_ms_max": latency_max,
         }
     )
 
@@ -276,6 +324,10 @@ def compare_systems(
         for split in run_configuration.evaluated_splits
         for entry in full_manifest.examples_for(split)
     )
+    if not evaluated_entries:
+        raise EvaluationHarnessError(
+            "EVALUATED_SPLIT_EMPTY", "the declared evaluated splits hold no examples"
+        )
     manifest = EvaluationSplitManifest.model_validate(
         {
             "contract_version": "1",
@@ -284,6 +336,14 @@ def compare_systems(
             "task_id": full_manifest.task_id,
             "entries": evaluated_entries,
         }
+    )
+
+    # Predeclared requirements fail closed before any outcome is computed.
+    _validate_ground_truth(manifest, labels)
+    _validate_class_counts(
+        manifest,
+        labels,
+        run_configuration.metric_configuration.minimum_examples_per_class,
     )
 
     baseline_outcome = evaluate_predictions(
@@ -305,22 +365,27 @@ def compare_systems(
     }
 
     # Zero-tolerance safety gate: evaluated first, regardless of quality.
-    safety_failure = candidate_outcome.invalid_evidence_reference_rate > 0.0
+    # An invalid reference in the baseline or the candidate run fails it.
+    safety_failure = (
+        baseline_outcome.invalid_evidence_reference_rate > 0.0
+        or candidate_outcome.invalid_evidence_reference_rate > 0.0
+    )
 
     metric_failures: list[str] = []
     for metric_kind, threshold in thresholds.items():
         if metric_kind == EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE:
             continue  # already enforced by the zero-tolerance gate
-        value = _metric_value(metric_kind, candidate_outcome)
-        if metric_kind in (
-            EvaluationMetricKind.LATENCY_MS,
-            EvaluationMetricKind.ABSTENTION_RATE,
+        if (
+            metric_kind == EvaluationMetricKind.LATENCY_MS
+            and candidate_outcome.latency_ms_max is None
         ):
-            if threshold.maximum is not None and value > threshold.maximum:
-                metric_failures.append(metric_kind.value)
-        else:
-            if threshold.minimum is not None and value < threshold.minimum:
-                metric_failures.append(metric_kind.value)
+            # A declared latency bound cannot be verified without a
+            # measurement, so it fails closed instead of passing silently.
+            metric_failures.append(metric_kind.value)
+            continue
+        value = _metric_value(metric_kind, candidate_outcome)
+        if _threshold_violated(threshold, value):
+            metric_failures.append(metric_kind.value)
 
     improves = candidate_outcome.macro_f1 > baseline_outcome.macro_f1
     safety_configuration = thresholds[
@@ -352,6 +417,13 @@ def compare_systems(
             "limitations": sorted(limitations),
         }
     )
+
+
+def _threshold_violated(threshold: EvaluationMetricThreshold, value: float) -> bool:
+    """Evaluate every declared bound; neither bound is ever skipped."""
+    if threshold.minimum is not None and value < threshold.minimum:
+        return True
+    return threshold.maximum is not None and value > threshold.maximum
 
 
 _METRIC_FIELDS: dict[EvaluationMetricKind, str] = {
