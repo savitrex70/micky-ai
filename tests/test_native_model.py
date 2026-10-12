@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import pytest
@@ -11,6 +12,7 @@ from rop.native_model import (
     NativeModel,
     NativeModelError,
     NativeModelParameters,
+    stable_sigmoid,
 )
 from rop.schemas.native_model import (
     MAX_EMBEDDING_DIM,
@@ -133,6 +135,82 @@ def test_out_of_range_token_ids_fail_closed() -> None:
     assert caught.value.code == "TOKEN_ID_OUT_OF_RANGE"
     with pytest.raises(NativeModelError):
         model.predict((-1,))
+
+
+def _with_bias(model: NativeModel, bias: float) -> NativeModel:
+    model.parameters = dataclasses.replace(
+        model.parameters, head_bias=tuple(bias for _ in model.parameters.head_bias)
+    )
+    return model
+
+
+@pytest.mark.parametrize("bias", [-1.0e6, -800.0, -745.0, -1.0e300])
+def test_large_negative_logits_do_not_overflow(bias: float) -> None:
+    output = _with_bias(NativeModel(_config()), bias).predict((1, 2, 3))
+    assert all(math.isfinite(value) for value in output)
+    assert all(0.0 <= value <= 1.0 for value in output)
+    assert all(value < 1e-6 for value in output)
+
+
+@pytest.mark.parametrize("bias", [1.0e6, 800.0, 1.0e300])
+def test_large_positive_logits_stay_bounded(bias: float) -> None:
+    output = _with_bias(NativeModel(_config()), bias).predict((1, 2, 3))
+    assert all(math.isfinite(value) for value in output)
+    assert all(0.0 <= value <= 1.0 for value in output)
+    assert all(value > 1.0 - 1e-6 for value in output)
+
+
+def test_stable_sigmoid_matches_reference_and_is_symmetric() -> None:
+    assert stable_sigmoid(0.0) == 0.5
+    for logit in (-30.0, -2.5, -0.1, 0.1, 2.5, 30.0):
+        assert stable_sigmoid(logit) == pytest.approx(1.0 / (1.0 + math.exp(-logit)))
+        assert stable_sigmoid(logit) + stable_sigmoid(-logit) == pytest.approx(1.0)
+    assert stable_sigmoid(-1.0e6) == 0.0
+    assert stable_sigmoid(1.0e6) == 1.0
+
+
+def test_logits_of_extreme_negative_probability_are_not_clipped_away() -> None:
+    # -700 is representable: the exact probability (~1e-304) must survive.
+    value = stable_sigmoid(-700.0)
+    assert 0.0 < value < 1e-300
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_boolean_token_ids_are_rejected(bad: bool) -> None:
+    model = NativeModel(_config())
+    with pytest.raises(NativeModelError) as caught:
+        model.predict((1, bad))  # type: ignore[arg-type]
+    assert caught.value.code == "TOKEN_ID_INVALID_TYPE"
+
+
+@pytest.mark.parametrize("bad", [1.0, "1", None, b"1", (1,)])
+def test_non_integer_token_ids_are_rejected(bad: object) -> None:
+    model = NativeModel(_config())
+    with pytest.raises(NativeModelError) as caught:
+        model.predict((1, bad))  # type: ignore[arg-type]
+    assert caught.value.code == "TOKEN_ID_INVALID_TYPE"
+
+
+def test_negative_token_ids_are_rejected() -> None:
+    with pytest.raises(NativeModelError) as caught:
+        NativeModel(_config()).predict((0, -1))
+    assert caught.value.code == "TOKEN_ID_OUT_OF_RANGE"
+
+
+def test_token_id_boundaries_are_accepted_and_beyond_is_rejected() -> None:
+    config = _config()
+    model = NativeModel(config)
+    assert len(model.predict((0, config.vocab_size - 1))) == config.num_labels
+    for bad in (config.vocab_size, config.vocab_size + 1):
+        with pytest.raises(NativeModelError) as caught:
+            model.predict((bad,))
+        assert caught.value.code == "TOKEN_ID_OUT_OF_RANGE"
+
+
+def test_invalid_ids_beyond_the_truncation_limit_are_still_rejected() -> None:
+    model = NativeModel(_config(max_sequence_length=2))
+    with pytest.raises(NativeModelError):
+        model.predict((0, 1, True))  # type: ignore[arg-type]
 
 
 # --- import and resource safety ------------------------------------------------

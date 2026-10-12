@@ -9,10 +9,20 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    field_validator,
+)
 
 from rop.native_artifacts import NativeModelArtifact
-from rop.native_model import NativeModel
+from rop.native_model import NativeModel, NativeModelParameters
+from rop.native_training import NativeTrainingError, canonical_label_mapping
 from rop.tokenization import Vocabulary, encode_text
 
 MAX_LABELS = 32
@@ -24,6 +34,43 @@ class NativeInferenceError(Exception):
     def __init__(self, code: str, detail: str) -> None:
         self.code = code
         super().__init__(f"[{code}] {detail}")
+
+
+def _model_from_verified_parameters(
+    artifact: NativeModelArtifact,
+) -> NativeModel:
+    """Build a model directly from verified artifact parameters.
+
+    No random initialization is performed and no second embedding table is
+    allocated. Shapes and finiteness are re-checked here as defense in depth
+    even though the artifact contract already enforces them.
+    """
+    config = artifact.model_config_payload
+    parameters: NativeModelParameters = artifact.parameters.to_parameters()
+    dimension = config.embedding_dim
+    if (
+        len(parameters.embedding) != config.vocab_size
+        or len(parameters.head_weight) != config.num_labels
+        or len(parameters.head_bias) != config.num_labels
+        or any(len(row) != dimension for row in parameters.embedding)
+        or any(len(row) != dimension for row in parameters.head_weight)
+    ):
+        raise NativeInferenceError(
+            "ARTIFACT_SHAPE_MISMATCH", "artifact parameters do not match the model"
+        )
+    values = (
+        [value for row in parameters.embedding for value in row]
+        + [value for row in parameters.head_weight for value in row]
+        + list(parameters.head_bias)
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise NativeInferenceError(
+            "ARTIFACT_PARAMETER_INVALID", "artifact parameters must be finite"
+        )
+    model = NativeModel.__new__(NativeModel)
+    model.config = config
+    model.parameters = parameters
+    return model
 
 
 class NativeInferenceConfig(BaseModel):
@@ -58,12 +105,18 @@ class NativeInferenceResponse(BaseModel):
 
     @field_validator("scores")
     @classmethod
-    def _canonical_scores(cls, value: tuple[NativeLabelScore, ...]) -> tuple[NativeLabelScore, ...]:
+    def _canonical_scores(
+        cls, value: tuple[NativeLabelScore, ...]
+    ) -> tuple[NativeLabelScore, ...]:
         labels = [score.label for score in value]
         if len(set(labels)) != len(labels):
             raise ValueError("scores must use unique labels")
-        if value != tuple(sorted(value, key=lambda item: (-item.probability, item.label))):
-            raise ValueError("scores must be sorted by probability descending and label ascending")
+        if value != tuple(
+            sorted(value, key=lambda item: (-item.probability, item.label))
+        ):
+            raise ValueError(
+                "scores must be sorted by probability descending and label ascending"
+            )
         return value
 
 
@@ -79,19 +132,38 @@ class NativeLocalInference:
         config: NativeInferenceConfig,
     ) -> None:
         if artifact.vocabulary_hash != vocabulary.vocabulary_hash:
-            raise NativeInferenceError("VOCABULARY_BINDING_MISMATCH", "artifact and vocabulary do not match")
+            raise NativeInferenceError(
+                "VOCABULARY_BINDING_MISMATCH", "artifact and vocabulary do not match"
+            )
         if artifact.model_config_payload.vocab_size != len(vocabulary.tokens):
-            raise NativeInferenceError("VOCABULARY_SHAPE_MISMATCH", "vocabulary size does not match the model")
+            raise NativeInferenceError(
+                "VOCABULARY_SHAPE_MISMATCH", "vocabulary size does not match the model"
+            )
         if len(labels) != artifact.model_config_payload.num_labels:
-            raise NativeInferenceError("LABEL_SPACE_MISMATCH", "label count does not match the model output")
-        if len(set(labels)) != len(labels) or any(not label.strip() for label in labels):
-            raise NativeInferenceError("LABEL_SPACE_INVALID", "labels must be unique and nonblank")
+            raise NativeInferenceError(
+                "LABEL_SPACE_MISMATCH", "label count does not match the model output"
+            )
+        if len(set(labels)) != len(labels) or any(
+            not isinstance(label, str) or not label.strip() for label in labels
+        ):
+            raise NativeInferenceError(
+                "LABEL_SPACE_INVALID", "labels must be unique and nonblank"
+            )
+        # Head output i is always the i-th label of the canonical (sorted)
+        # label space used by training; any other order would silently
+        # relabel probabilities, so it is rejected rather than remapped.
+        try:
+            canonical_label_mapping(tuple(labels))
+        except NativeTrainingError:
+            raise NativeInferenceError(
+                "LABEL_ORDER_NONCANONICAL",
+                "labels must follow the canonical training label order",
+            ) from None
         self._artifact = artifact
         self._vocabulary = vocabulary
         self._labels = labels
         self._config = config
-        self._model = NativeModel(artifact.model_config_payload)
-        self._model.parameters = artifact.parameters.to_parameters()
+        self._model = _model_from_verified_parameters(artifact)
 
     def predict_text(self, text: str) -> NativeInferenceResponse:
         """Tokenize and score locally; raw text is not retained or echoed."""
@@ -99,11 +171,26 @@ class NativeLocalInference:
             raise NativeInferenceError("INVALID_TEXT", "input text must be a string")
         try:
             token_ids = encode_text(text, self._vocabulary)
+            if not token_ids:
+                # Scores for no input would be the model's bias prior, not an
+                # evaluation of the input; fail closed instead.
+                raise NativeInferenceError(
+                    "EMPTY_INPUT", "input produced no tokens and cannot be scored"
+                )
             probabilities = self._model.predict(token_ids)
+        except NativeInferenceError:
+            raise
         except (ValueError, TypeError):
-            raise NativeInferenceError("INFERENCE_INPUT_INVALID", "input could not be processed") from None
-        if len(probabilities) != len(self._labels) or not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in probabilities):
-            raise NativeInferenceError("INFERENCE_OUTPUT_INVALID", "model output violates the bounded score contract")
+            raise NativeInferenceError(
+                "INFERENCE_INPUT_INVALID", "input could not be processed"
+            ) from None
+        if len(probabilities) != len(self._labels) or not all(
+            math.isfinite(value) and 0.0 <= value <= 1.0 for value in probabilities
+        ):
+            raise NativeInferenceError(
+                "INFERENCE_OUTPUT_INVALID",
+                "model output violates the bounded score contract",
+            )
         candidates = sorted(
             (
                 NativeLabelScore(label=label, probability=float(probability))

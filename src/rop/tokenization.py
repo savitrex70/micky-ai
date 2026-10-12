@@ -31,7 +31,11 @@ from pydantic import (
     model_validator,
 )
 
-from rop.dataset_preparation import PreparedSplits, records_fingerprint
+from rop.dataset_preparation import (
+    PreparedSplits,
+    content_fingerprint,
+    records_fingerprint,
+)
 from rop.schemas.dataset_manifest import (
     AuthorizationStatus,
     DatasetManifest,
@@ -59,6 +63,7 @@ class TokenizerErrorCode(StrEnum):
     UNAUTHORIZED_SOURCE = "UNAUTHORIZED_SOURCE"
     VOCABULARY_INPUT_OUTSIDE_TRAIN_SPLIT = "VOCABULARY_INPUT_OUTSIDE_TRAIN_SPLIT"
     MANIFEST_MISMATCH = "MANIFEST_MISMATCH"
+    TEXT_FINGERPRINT_MISMATCH = "TEXT_FINGERPRINT_MISMATCH"
     CORRUPT_VOCABULARY = "CORRUPT_VOCABULARY"
     INVALID_TEXT = "INVALID_TEXT"
 
@@ -193,6 +198,14 @@ def build_vocabulary(
     test records can never influence the vocabulary. The manifest must
     authorize training and its recorded train fingerprint must match
     the supplied splits.
+
+    Each supplied text is also bound to its record: the Task 207 canonical
+    normalized-content fingerprint of the text must equal the record's
+    declared ``content_fingerprint``. A text that differs in canonical
+    content (case, spacing and Unicode compatibility forms are normalized
+    away) is rejected before any token is counted, so the vocabulary can
+    only be fit on the exact authorized content. Errors carry codes only,
+    never raw text or record identifiers.
     """
     if (
         manifest.source.authorization is not AuthorizationStatus.AUTHORIZED
@@ -224,6 +237,23 @@ def build_vocabulary(
             TokenizerErrorCode.MANIFEST_MISMATCH,
             "the supplied training split does not match the manifest",
         )
+
+    # Bind every text to its authorized record before any token is counted.
+    fingerprint_by_id = {
+        record.record_id: record.content_fingerprint for record in splits.train
+    }
+    for record_id in sorted(training_texts):
+        text = training_texts[record_id]
+        if not isinstance(text, str):
+            raise TokenizerError(
+                TokenizerErrorCode.INVALID_TEXT,
+                "text must be a string",
+            )
+        if content_fingerprint(text) != fingerprint_by_id[record_id]:
+            raise TokenizerError(
+                TokenizerErrorCode.TEXT_FINGERPRINT_MISMATCH,
+                "a training text does not match its authorized record",
+            )
 
     counter: Counter[str] = Counter()
     for record_id in sorted(training_texts):
