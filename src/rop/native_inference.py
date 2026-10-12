@@ -9,7 +9,15 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictStr,
+    field_validator,
+)
 
 from rop.native_artifacts import NativeModelArtifact
 from rop.native_model import NativeModel
