@@ -18,7 +18,7 @@ LABELS = ("ANION_GAP_HIGH", "POTASSIUM_HIGH")
 
 def _setup(snapshot_patch: str | None = None):
     artifact, vocabulary = _artifact()
-    splits, dataset_manifest, _, _, _, _ = _splits_and_manifest()
+    _, dataset_manifest, _, _, _, _ = _splits_and_manifest()
     snapshot_hash = snapshot_patch or dataset_manifest.dataset_fingerprint
     split_manifest = EvaluationSplitManifest(
         contract_version="1",
