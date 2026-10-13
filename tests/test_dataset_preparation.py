@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from rop.dataset_preparation import (
     DatasetPreparationError,
@@ -16,7 +17,10 @@ from rop.dataset_preparation import (
     validate_records,
 )
 from rop.schemas.dataset_manifest import (
+    DATASET_MANIFEST_CONTRACT_VERSION,
+    RECORDS_FINGERPRINT_SCHEME_VERSION,
     AuthorizationStatus,
+    DatasetManifest,
     DatasetRejectionCode,
     DatasetSourceDescriptor,
     PermittedPurpose,
@@ -607,3 +611,168 @@ def test_unknown_or_revoked_sources_never_become_training_approval(
         require_authorized_source(
             _source(authorization=authorization), PermittedPurpose.TRAINING
         )
+
+
+# --- Task 207 correction: scheme provenance, deduplication, label validity --
+
+
+def _valid_manifest():
+    splits = assign_group_safe_splits(
+        _records(12), train_ratio=0.5, validation_ratio=0.25
+    )
+    return _manifest_for(splits)
+
+
+def test_manifest_persists_the_fingerprint_scheme_and_contract_version() -> None:
+    from rop.dataset_preparation import FINGERPRINT_SCHEME_VERSION
+
+    manifest = _valid_manifest()
+    assert manifest.fingerprint_scheme_version == "records-fingerprint-v2"
+    assert manifest.fingerprint_scheme_version == FINGERPRINT_SCHEME_VERSION
+    assert RECORDS_FINGERPRINT_SCHEME_VERSION == FINGERPRINT_SCHEME_VERSION
+    assert manifest.contract_version == DATASET_MANIFEST_CONTRACT_VERSION == "2"
+    dumped = manifest.model_dump(mode="json")
+    assert dumped["fingerprint_scheme_version"] == "records-fingerprint-v2"
+    assert DatasetManifest.model_validate(dumped) == manifest
+
+
+def test_manifest_rejects_a_mismatched_or_missing_fingerprint_scheme() -> None:
+    dumped = _valid_manifest().model_dump(mode="json")
+    for bad in ("records-fingerprint-v1", "records-fingerprint-v3", ""):
+        with pytest.raises(ValidationError):
+            DatasetManifest.model_validate(
+                {**dumped, "fingerprint_scheme_version": bad}
+            )
+    without_scheme = {
+        key: value
+        for key, value in dumped.items()
+        if key != "fingerprint_scheme_version"
+    }
+    with pytest.raises(ValidationError):
+        DatasetManifest.model_validate(without_scheme)
+
+
+def test_manifest_rejects_the_previous_contract_version() -> None:
+    dumped = _valid_manifest().model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        DatasetManifest.model_validate({**dumped, "contract_version": "1"})
+
+
+def test_fingerprints_stay_deterministic_for_valid_deduplicated_input() -> None:
+    first = _valid_manifest()
+    second = _valid_manifest()
+    assert first.dataset_fingerprint == second.dataset_fingerprint
+    assert first.split_fingerprints == second.split_fingerprints
+    assert first == second
+
+
+def test_identical_content_in_one_split_is_rejected_with_its_own_code() -> None:
+    first = _record("r-0", "group-a", "shared content")
+    second = _record("r-1", "group-a", "Shared   Content")
+    assert first.labels == second.labels
+    _expect_code(
+        PreparedSplits(train=(first, second), validation=(), test=()),
+        DatasetRejectionCode.DUPLICATE_CONTENT_IN_SPLIT,
+    )
+    # Also when the duplicate sits in a different group of the same split.
+    third = _record("r-2", "group-b", "shared content")
+    _expect_code(
+        PreparedSplits(train=(first, third), validation=(), test=()),
+        DatasetRejectionCode.DUPLICATE_CONTENT_IN_SPLIT,
+    )
+
+
+def test_duplicate_error_codes_stay_distinct() -> None:
+    same_split = DatasetRejectionCode.DUPLICATE_CONTENT_IN_SPLIT
+    cross_split = DatasetRejectionCode.CONTENT_CROSS_SPLIT
+    conflict = DatasetRejectionCode.DUPLICATE_CONTENT_LABEL_CONFLICT
+    assert len({same_split, cross_split, conflict}) == 3
+    a = _record("r-0", "group-a", "shared")
+    b = _record("r-1", "group-b", "shared")
+    _expect_code(PreparedSplits(train=(a,), validation=(), test=(b,)), cross_split)
+    c = _record("r-2", "group-a", "shared", labels=("POTASSIUM_HIGH",))
+    _expect_code(PreparedSplits(train=(a, c), validation=(), test=()), conflict)
+
+
+def test_same_split_duplicate_message_is_safe() -> None:
+    first = _record("secret-record", "secret-group", "secret content")
+    second = _record("other-record", "secret-group", "secret content")
+    with pytest.raises(DatasetPreparationError) as caught:
+        _manifest_for(PreparedSplits(train=(first, second), validation=(), test=()))
+    message = str(caught.value)
+    for sensitive in ("secret-record", "secret-group", "secret content", "other-"):
+        assert sensitive not in message
+
+
+def test_deduplicated_input_builds_a_manifest_after_manual_duplicates_fail() -> None:
+    records = (
+        _record("r-0", "group-a", "shared"),
+        _record("r-1", "group-a", "shared"),
+        _record("r-2", "group-b", "unique"),
+    )
+    with pytest.raises(DatasetPreparationError):
+        _manifest_for(PreparedSplits(train=records, validation=(), test=()))
+    deduplicated = exact_deduplicate(records)
+    manifest = _manifest_for(PreparedSplits(train=deduplicated, validation=(), test=()))
+    assert manifest.train_counts.record_count == 2
+
+
+@pytest.mark.parametrize("blank", ["", " ", "   ", "\t", "\u00a0"])
+def test_blank_record_labels_are_rejected(blank: str) -> None:
+    with pytest.raises(ValidationError):
+        _record("r-0", "group-a", "content", labels=(blank,))
+    with pytest.raises(ValidationError):
+        _record("r-0", "group-a", "content", labels=("ANION_GAP_HIGH", blank))
+
+
+@pytest.mark.parametrize(
+    "bad_space",
+    [
+        (),
+        ("ANION_GAP_HIGH", "ANION_GAP_HIGH"),
+        ("POTASSIUM_HIGH", "ANION_GAP_HIGH"),
+        ("ANION_GAP_HIGH", " "),
+        ("", "ANION_GAP_HIGH"),
+    ],
+)
+def test_malformed_label_spaces_are_rejected_by_every_entry_point(
+    bad_space: tuple[str, ...],
+) -> None:
+    splits = assign_group_safe_splits(
+        _records(12), train_ratio=0.5, validation_ratio=0.25
+    )
+    with pytest.raises(DatasetPreparationError) as built:
+        build_manifest(
+            **{**MANIFEST_KWARGS, "label_space": bad_space},
+            source=_source(),
+            splits=splits,
+        )
+    assert built.value.code is DatasetRejectionCode.RECORD_STRUCTURE_INVALID
+    with pytest.raises(DatasetPreparationError) as validated:
+        validate_records(_records(12)[:1], bad_space)
+    assert validated.value.code is DatasetRejectionCode.RECORD_STRUCTURE_INVALID
+
+
+def test_label_space_error_message_does_not_echo_labels() -> None:
+    with pytest.raises(DatasetPreparationError) as caught:
+        validate_records(_records(12)[:1], ("secret-label", "secret-label"))
+    assert "secret-label" not in str(caught.value)
+
+
+def test_manifest_contract_rejects_malformed_label_distribution() -> None:
+    dumped = _valid_manifest().model_dump(mode="json")
+    for bad in (
+        [],
+        [["ANION_GAP_HIGH", 1], ["ANION_GAP_HIGH", 1]],
+        [["POTASSIUM_HIGH", 1], ["ANION_GAP_HIGH", 1]],
+        [["ANION_GAP_HIGH", 1], [" ", 0]],
+        [["", 0]],
+    ):
+        with pytest.raises(ValidationError):
+            DatasetManifest.model_validate({**dumped, "label_distribution": bad})
+
+
+def test_validate_label_space_helper_accepts_a_canonical_space() -> None:
+    from rop.schemas.dataset_manifest import validate_label_space
+
+    assert validate_label_space(LABEL_SPACE) == LABEL_SPACE
