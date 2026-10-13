@@ -22,7 +22,11 @@ from pydantic import (
 
 from rop.native_artifacts import NativeModelArtifact
 from rop.native_model import NativeModel, NativeModelParameters
-from rop.native_training import NativeTrainingError, canonical_label_mapping
+from rop.native_training import (
+    NativeTrainingError,
+    canonical_label_mapping,
+    label_space_hash,
+)
 from rop.tokenization import Vocabulary, encode_text
 
 MAX_LABELS = 32
@@ -159,11 +163,39 @@ class NativeLocalInference:
                 "LABEL_ORDER_NONCANONICAL",
                 "labels must follow the canonical training label order",
             ) from None
+        # Sortedness alone is not an identity: a different sorted label set of
+        # the same size would silently relabel the head outputs. Require the
+        # exact label space the artifact was trained against.
+        if label_space_hash(tuple(labels)) != artifact.training_report.label_space_hash:
+            raise NativeInferenceError(
+                "LABEL_SPACE_BINDING_MISMATCH",
+                "labels are not the label space the artifact was trained on",
+            )
         self._artifact = artifact
         self._vocabulary = vocabulary
         self._labels = labels
         self._config = config
         self._model = _model_from_verified_parameters(artifact)
+
+    @property
+    def artifact(self) -> NativeModelArtifact:
+        """The verified artifact bound at construction (read-only, immutable)."""
+        return self._artifact
+
+    @property
+    def artifact_hash(self) -> str:
+        """Hash of the already verified bound artifact (read-only)."""
+        return self._artifact.artifact_hash
+
+    @property
+    def vocabulary(self) -> Vocabulary:
+        """The vocabulary bound at construction (read-only)."""
+        return self._vocabulary
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """The canonical label space bound to the artifact (read-only)."""
+        return self._labels
 
     def predict_text(self, text: str) -> NativeInferenceResponse:
         """Tokenize and score locally; raw text is not retained or echoed."""

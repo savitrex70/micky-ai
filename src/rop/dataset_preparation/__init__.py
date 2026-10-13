@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from rop.schemas.dataset_manifest import (
+    DATASET_MANIFEST_CONTRACT_VERSION,
+    RECORDS_FINGERPRINT_SCHEME_VERSION,
     AuthorizationStatus,
     DatasetManifest,
     DatasetRejectionCode,
@@ -34,14 +36,16 @@ from rop.schemas.dataset_manifest import (
     PermittedPurpose,
     RawDatasetRecord,
     SplitCounts,
+    validate_label_space,
 )
 
 # Stable transformation identifier for this pipeline version; recorded
 # in every manifest so an auditor can pin the exact normalization.
 NORMALIZATION_TRANSFORMATION_VERSION = "native-normalization-v1"
 SPLIT_STRATEGY = "group-hash-v1"
-# Identifies the record-set fingerprint encoding; part of the hashed domain.
-FINGERPRINT_SCHEME_VERSION = "records-fingerprint-v2"
+# Identifies the record-set fingerprint encoding; part of the hashed domain and
+# recorded in every manifest as ``fingerprint_scheme_version``.
+FINGERPRINT_SCHEME_VERSION = RECORDS_FINGERPRINT_SCHEME_VERSION
 _HASH_SPACE = 16**16
 MAX_RECORDS = 1_000_000
 
@@ -106,10 +110,26 @@ def require_authorized_source(
         )
 
 
+def _require_valid_label_space(label_space: tuple[str, ...]) -> None:
+    """Reject a malformed label space with a stable, content-free error."""
+    try:
+        validate_label_space(tuple(label_space))
+        malformed = False
+    except (ValueError, TypeError):
+        malformed = True
+    if malformed:
+        # Raised outside the handler so nothing from the label space is chained.
+        raise DatasetPreparationError(
+            DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
+            "the label space must be nonempty, unique, sorted and nonblank",
+        )
+
+
 def validate_records(
     records: Iterable[RawDatasetRecord], label_space: tuple[str, ...]
 ) -> tuple[RawDatasetRecord, ...]:
     """Reject unsafe, out-of-space or structurally invalid records."""
+    _require_valid_label_space(label_space)
     accepted: list[RawDatasetRecord] = []
     seen_ids: set[str] = set()
     for record in records:
@@ -262,13 +282,14 @@ def build_manifest(
 
     return DatasetManifest.model_validate(
         {
-            "contract_version": "1",
+            "contract_version": DATASET_MANIFEST_CONTRACT_VERSION,
             "dataset_id": dataset_id,
             "schema_version": schema_version,
             "label_space_version": label_space_version,
             "source": source.model_dump(mode="json"),
             "transformation_versions": [NORMALIZATION_TRANSFORMATION_VERSION],
             "split_strategy": SPLIT_STRATEGY,
+            "fingerprint_scheme_version": FINGERPRINT_SCHEME_VERSION,
             "dataset_fingerprint": dataset_fingerprint,
             "split_fingerprints": split_fingerprints,
             "train_counts": SplitCounts(
@@ -300,11 +321,7 @@ def _validate_split_integrity(
     Messages carry stable reason codes only; no identifier, group key or
     content ever appears in them.
     """
-    if len(set(label_space)) != len(label_space):
-        raise DatasetPreparationError(
-            DatasetRejectionCode.RECORD_STRUCTURE_INVALID,
-            "the label space must not repeat a label",
-        )
+    _require_valid_label_space(label_space)
     named = (
         ("train", splits.train),
         ("validation", splits.validation),
@@ -313,6 +330,7 @@ def _validate_split_integrity(
     seen_ids: set[str] = set()
     split_of_fingerprint: dict[str, str] = {}
     labels_of_fingerprint: dict[str, tuple[str, ...]] = {}
+    seen_fingerprints: set[str] = set()
     split_of_group: dict[str, str] = {}
     for split_name, records in named:
         for record in records:
@@ -371,6 +389,16 @@ def _validate_split_integrity(
                     DatasetRejectionCode.DUPLICATE_CONTENT_LABEL_CONFLICT,
                     "identical content carries conflicting labels",
                 )
+            # Cross-split and conflicting-label cases are reported above with
+            # their own codes; what remains is identical content (with
+            # identical labels) repeated inside a single split.
+            if record.content_fingerprint in seen_fingerprints:
+                raise DatasetPreparationError(
+                    DatasetRejectionCode.DUPLICATE_CONTENT_IN_SPLIT,
+                    "identical normalized content appears more than once; "
+                    "deduplicate before building a manifest",
+                )
+            seen_fingerprints.add(record.content_fingerprint)
 
 
 def _length_prefixed(value: str) -> bytes:

@@ -546,3 +546,17 @@ def test_vocabulary_hash_binds_the_authorized_content_only() -> None:
     first = _fit(splits, manifest, texts)
     second = _fit(splits, manifest, dict(reversed(list(texts.items()))))
     assert first.vocabulary_hash == second.vocabulary_hash
+
+
+def test_vocabulary_requires_the_declared_fingerprint_scheme() -> None:
+    splits = _splits()
+    manifest = _manifest(splits)
+    assert manifest.fingerprint_scheme_version == "records-fingerprint-v2"
+    # A manifest whose declared scheme differs (bypassing validation) is
+    # refused before any fingerprint comparison.
+    stale = manifest.model_copy(
+        update={"fingerprint_scheme_version": "records-fingerprint-v1"}
+    )
+    with pytest.raises(TokenizerError) as caught:
+        _fit(splits, stale, _training_texts(splits))
+    assert caught.value.code is TokenizerErrorCode.MANIFEST_MISMATCH
