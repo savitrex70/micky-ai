@@ -1504,8 +1504,8 @@ def test_predicting_every_label_has_perfect_recall_but_not_balanced_accuracy() -
         ((EvaluationSplit.TRAIN,), False),
         ((EvaluationSplit.VALIDATION,), False),
         ((EvaluationSplit.TEST,), True),
-        ((EvaluationSplit.TRAIN, EvaluationSplit.TEST), False),
-        ((EvaluationSplit.VALIDATION, EvaluationSplit.TEST), False),
+        ((EvaluationSplit.TEST, EvaluationSplit.TRAIN), False),
+        ((EvaluationSplit.TEST, EvaluationSplit.VALIDATION), False),
     ],
 )
 def test_only_test_only_run_can_be_accepted(splits, should_accept) -> None:
