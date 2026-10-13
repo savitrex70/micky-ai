@@ -10,6 +10,13 @@ The deterministic system must remain useful when no trained model is available. 
 
 See the [Stage 8 native-intelligence architecture](docs/stage-8-native-intelligence-architecture.md) for component boundaries, data governance, offline safeguards, acceptance criteria, and the provisional Task 201–215 roadmap.
 
+The deterministic baseline is evaluated by a model-free harness over a synthetic case set (contract/behavior tests only, no real-world accuracy claim). See the [baseline evaluation protocol](docs/stage-8-baseline-evaluation-protocol.md) for metrics, predeclared thresholds, and held-out policy:
+
+```powershell
+Copy-Item .env.example .env   # once; dummy settings, no database server needed
+python -m rop.evaluation --cases src/rop/evaluation/synthetic_cases_v1.json --baseline-revision <git-sha>
+```
+
 ## Stack
 
 - Python 3.12

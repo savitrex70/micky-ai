@@ -1,0 +1,860 @@
+{
+  "case_set_id": "synthetic-baseline-v1",
+  "case_set_version": "1.0",
+  "cases": [
+    {
+      "case_id": "abstention-ambiguous-text",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "Ambiguous free-form text with no configured relation abstains instead of contradicting.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000010",
+          "session_id": "10000000-0000-4000-8000-000000000010",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-contradiction-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000101",
+            "30000000-0000-4000-8000-000000000102"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000101",
+            "session_id": "10000000-0000-4000-8000-000000000010",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic unrelated note",
+            "content_digest": "ff5d85d9238ae36de5ca781805c365fe7a610ef71aa2f0826b7c5e6579a11adc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000102",
+            "session_id": "10000000-0000-4000-8000-000000000010",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic ambiguous remark",
+            "content_digest": "5f03a137e474431f4264e6102d4623d51f4b3f426f764cde0a8b0d907df97266",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [
+        {
+          "rule_id": "baseline-contradiction-rule-v1",
+          "task_id": "baseline-contradiction-v1",
+          "affirming_content": "synthetic flag present",
+          "denying_content": "synthetic flag absent",
+          "required_evidence_type": "OBSERVATION",
+          "min_evidence_count": 1,
+          "uncertainty": 0.3
+        }
+      ],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-different-text",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "Readable texts that match no configured expectation abstain without contradiction.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000014",
+          "session_id": "10000000-0000-4000-8000-000000000014",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000141",
+            "30000000-0000-4000-8000-000000000142"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000141",
+            "session_id": "10000000-0000-4000-8000-000000000014",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic unrelated note",
+            "content_digest": "ff5d85d9238ae36de5ca781805c365fe7a610ef71aa2f0826b7c5e6579a11adc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000142",
+            "session_id": "10000000-0000-4000-8000-000000000014",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic ambiguous remark",
+            "content_digest": "5f03a137e474431f4264e6102d4623d51f4b3f426f764cde0a8b0d907df97266",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-empty-no-requirement",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "Empty evidence without a configured requirement abstains rather than reporting insufficiency.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000013",
+          "session_id": "10000000-0000-4000-8000-000000000013",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": [],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-missing-side",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "A contradiction pair with only one side present abstains instead of contradicting.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000011",
+          "session_id": "10000000-0000-4000-8000-000000000011",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-contradiction-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000111"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000111",
+            "session_id": "10000000-0000-4000-8000-000000000011",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic flag present",
+            "content_digest": "cd71fd24226e44c5665a8fe3571784b67b8d48401d095d47f16607334d650c62",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [
+        {
+          "rule_id": "baseline-contradiction-rule-v1",
+          "task_id": "baseline-contradiction-v1",
+          "affirming_content": "synthetic flag present",
+          "denying_content": "synthetic flag absent",
+          "required_evidence_type": "OBSERVATION",
+          "min_evidence_count": 1,
+          "uncertainty": 0.3
+        }
+      ],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-no-rules",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "Present evidence with no configured rules abstains without asserting anything.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000008",
+          "session_id": "10000000-0000-4000-8000-000000000008",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000081"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000081",
+            "session_id": "10000000-0000-4000-8000-000000000008",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-nonmatching",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "Evidence that matches no configured condition abstains without asserting anything.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000009",
+          "session_id": "10000000-0000-4000-8000-000000000009",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000091"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000091",
+            "session_id": "10000000-0000-4000-8000-000000000009",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic unrelated note",
+            "content_digest": "ff5d85d9238ae36de5ca781805c365fe7a610ef71aa2f0826b7c5e6579a11adc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "abstention-unreadable-side",
+      "case_set_version": "1.0",
+      "category": "abstention",
+      "description": "An unreadable record cannot satisfy a contradiction side and never counts as readable support.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000012",
+          "session_id": "10000000-0000-4000-8000-000000000012",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-contradiction-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000121",
+            "30000000-0000-4000-8000-000000000122"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000121",
+            "session_id": "10000000-0000-4000-8000-000000000012",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic flag present",
+            "content_digest": "cd71fd24226e44c5665a8fe3571784b67b8d48401d095d47f16607334d650c62",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000122",
+            "session_id": "10000000-0000-4000-8000-000000000012",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "",
+            "content_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "availability": "UNREADABLE",
+            "uncertainty": 1.0,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [
+        {
+          "rule_id": "baseline-contradiction-rule-v1",
+          "task_id": "baseline-contradiction-v1",
+          "affirming_content": "synthetic flag present",
+          "denying_content": "synthetic flag absent",
+          "required_evidence_type": "OBSERVATION",
+          "min_evidence_count": 1,
+          "uncertainty": 0.3
+        }
+      ],
+      "requirements": [],
+      "expected_status": "ABSTAINED",
+      "expected_reason": "NO_JUSTIFIED_BASIS",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "contradiction-pair",
+      "case_set_version": "1.0",
+      "category": "contradiction",
+      "description": "Both sides of a configured mutually exclusive pair are met with exact references.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000004",
+          "session_id": "10000000-0000-4000-8000-000000000004",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-contradiction-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000041",
+            "30000000-0000-4000-8000-000000000042"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000041",
+            "session_id": "10000000-0000-4000-8000-000000000004",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic flag present",
+            "content_digest": "cd71fd24226e44c5665a8fe3571784b67b8d48401d095d47f16607334d650c62",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000042",
+            "session_id": "10000000-0000-4000-8000-000000000004",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic flag absent",
+            "content_digest": "f570093efbbd74db35f83dfd5bb7d0cf076450a37cd782d41a6f2752cd63a2c3",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [
+        {
+          "rule_id": "baseline-contradiction-rule-v1",
+          "task_id": "baseline-contradiction-v1",
+          "affirming_content": "synthetic flag present",
+          "denying_content": "synthetic flag absent",
+          "required_evidence_type": "OBSERVATION",
+          "min_evidence_count": 1,
+          "uncertainty": 0.3
+        }
+      ],
+      "requirements": [],
+      "expected_status": "CONTRADICTED",
+      "expected_reason": "RULE_CONTRADICTION_FOUND",
+      "expected_supporting": ["30000000-0000-4000-8000-000000000041"],
+      "expected_contradicting": ["30000000-0000-4000-8000-000000000042"],
+      "expected_missing": []
+    },
+    {
+      "case_id": "contradiction-unrelated-excluded",
+      "case_set_version": "1.0",
+      "category": "contradiction",
+      "description": "Present-but-unsatisfying records are excluded from contradiction references.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000005",
+          "session_id": "10000000-0000-4000-8000-000000000005",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-contradiction-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000051",
+            "30000000-0000-4000-8000-000000000052",
+            "30000000-0000-4000-8000-000000000053"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000051",
+            "session_id": "10000000-0000-4000-8000-000000000005",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic flag present",
+            "content_digest": "cd71fd24226e44c5665a8fe3571784b67b8d48401d095d47f16607334d650c62",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000052",
+            "session_id": "10000000-0000-4000-8000-000000000005",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic unrelated note",
+            "content_digest": "ff5d85d9238ae36de5ca781805c365fe7a610ef71aa2f0826b7c5e6579a11adc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000053",
+            "session_id": "10000000-0000-4000-8000-000000000005",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-003",
+            "content_text": "synthetic flag absent",
+            "content_digest": "f570093efbbd74db35f83dfd5bb7d0cf076450a37cd782d41a6f2752cd63a2c3",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [
+        {
+          "rule_id": "baseline-contradiction-rule-v1",
+          "task_id": "baseline-contradiction-v1",
+          "affirming_content": "synthetic flag present",
+          "denying_content": "synthetic flag absent",
+          "required_evidence_type": "OBSERVATION",
+          "min_evidence_count": 1,
+          "uncertainty": 0.3
+        }
+      ],
+      "requirements": [],
+      "expected_status": "CONTRADICTED",
+      "expected_reason": "RULE_CONTRADICTION_FOUND",
+      "expected_supporting": ["30000000-0000-4000-8000-000000000051"],
+      "expected_contradicting": ["30000000-0000-4000-8000-000000000053"],
+      "expected_missing": []
+    },
+    {
+      "case_id": "insufficient-absent-requirement",
+      "case_set_version": "1.0",
+      "category": "insufficient",
+      "description": "A configured required item that is absent yields insufficiency with its symbolic identifier.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000006",
+          "session_id": "10000000-0000-4000-8000-000000000006",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000061"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000061",
+            "session_id": "10000000-0000-4000-8000-000000000006",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [
+        {
+          "requirement_id": "consent-record",
+          "task_id": "baseline-support-v1",
+          "required_evidence_type": "OBSERVATION",
+          "expected_content": "synthetic consent record"
+        }
+      ],
+      "expected_status": "INSUFFICIENT",
+      "expected_reason": "EVIDENCE_MISSING",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": ["consent-record"]
+    },
+    {
+      "case_id": "insufficient-empty-with-requirement",
+      "case_set_version": "1.0",
+      "category": "insufficient",
+      "description": "Empty evidence with a configured requirement reports the missing identifier.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000007",
+          "session_id": "10000000-0000-4000-8000-000000000007",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": [],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [],
+      "contradiction_rules": [],
+      "requirements": [
+        {
+          "requirement_id": "consent-record",
+          "task_id": "baseline-support-v1",
+          "required_evidence_type": "OBSERVATION",
+          "expected_content": "synthetic consent record"
+        }
+      ],
+      "expected_status": "INSUFFICIENT",
+      "expected_reason": "EVIDENCE_MISSING",
+      "expected_supporting": [],
+      "expected_contradicting": [],
+      "expected_missing": ["consent-record"]
+    },
+    {
+      "case_id": "invalid-unknown-reference",
+      "case_set_version": "1.0",
+      "category": "invalid-input",
+      "description": "A request reference with no supplied record fails closed with a typed binding error.",
+      "raw_binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000015",
+          "session_id": "10000000-0000-4000-8000-000000000015",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000159"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "expect_error": "INVALID_BINDING"
+    },
+    {
+      "case_id": "invalid-wrong-type",
+      "case_set_version": "1.0",
+      "category": "invalid-input",
+      "description": "A non-mapping request payload fails closed with a typed binding error.",
+      "raw_binding": {
+        "request": "not-a-request",
+        "evidence": [],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "expect_error": "INVALID_BINDING"
+    },
+    {
+      "case_id": "supported-basic",
+      "case_set_version": "1.0",
+      "category": "supported",
+      "description": "A satisfied exact-content rule produces support with exact references.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000001",
+          "session_id": "10000000-0000-4000-8000-000000000001",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": ["30000000-0000-4000-8000-000000000011"],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000011",
+            "session_id": "10000000-0000-4000-8000-000000000001",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "SUPPORTED",
+      "expected_reason": "RULE_MATCH",
+      "expected_supporting": ["30000000-0000-4000-8000-000000000011"],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "supported-requirement-met",
+      "case_set_version": "1.0",
+      "category": "supported",
+      "description": "Present evidence satisfying every configured requirement is not reported missing.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000003",
+          "session_id": "10000000-0000-4000-8000-000000000003",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000031",
+            "30000000-0000-4000-8000-000000000032"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000031",
+            "session_id": "10000000-0000-4000-8000-000000000003",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000032",
+            "session_id": "10000000-0000-4000-8000-000000000003",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic consent record",
+            "content_digest": "54935476f31334d778588e6a797ecec04a3992eb61ef3244dff17162c303b24d",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 1,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [
+        {
+          "requirement_id": "consent-record",
+          "task_id": "baseline-support-v1",
+          "required_evidence_type": "OBSERVATION",
+          "expected_content": "synthetic consent record"
+        }
+      ],
+      "expected_status": "SUPPORTED",
+      "expected_reason": "RULE_MATCH",
+      "expected_supporting": ["30000000-0000-4000-8000-000000000031"],
+      "expected_contradicting": [],
+      "expected_missing": []
+    },
+    {
+      "case_id": "supported-threshold-excludes-unrelated",
+      "case_set_version": "1.0",
+      "category": "supported",
+      "description": "A satisfied count threshold cites only satisfying records and excludes unrelated evidence.",
+      "binding": {
+        "request": {
+          "request_id": "20000000-0000-4000-8000-000000000002",
+          "session_id": "10000000-0000-4000-8000-000000000002",
+          "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "task_id": "baseline-support-v1",
+          "evidence_ids": [
+            "30000000-0000-4000-8000-000000000021",
+            "30000000-0000-4000-8000-000000000022",
+            "30000000-0000-4000-8000-000000000023"
+          ],
+          "request_source": "NATIVE_REASONING_REQUEST_TASK_202"
+        },
+        "evidence": [
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000021",
+            "session_id": "10000000-0000-4000-8000-000000000002",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-001",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000022",
+            "session_id": "10000000-0000-4000-8000-000000000002",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-002",
+            "content_text": "synthetic baseline observation",
+            "content_digest": "a4db30fa316b645464c6044cca9ba0dc922bedacdc83a7921197c490afe482fc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          },
+          {
+            "evidence_id": "30000000-0000-4000-8000-000000000023",
+            "session_id": "10000000-0000-4000-8000-000000000002",
+            "context_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence_type": "OBSERVATION",
+            "source_reference": "chart:encounter-123",
+            "provenance_id": "prov-003",
+            "content_text": "synthetic unrelated note",
+            "content_digest": "ff5d85d9238ae36de5ca781805c365fe7a610ef71aa2f0826b7c5e6579a11adc",
+            "availability": "AVAILABLE",
+            "uncertainty": 0.2,
+            "evidence_source": "NATIVE_EVIDENCE_TASK_203"
+          }
+        ],
+        "binding_source": "NATIVE_BINDING_TASK_204"
+      },
+      "support_rules": [
+        {
+          "rule_id": "baseline-support-rule-v1",
+          "task_id": "baseline-support-v1",
+          "condition": {
+            "required_evidence_type": "OBSERVATION",
+            "min_evidence_count": 2,
+            "expected_content": "synthetic baseline observation"
+          },
+          "uncertainty": 0.2
+        }
+      ],
+      "contradiction_rules": [],
+      "requirements": [],
+      "expected_status": "SUPPORTED",
+      "expected_reason": "RULE_MATCH",
+      "expected_supporting": [
+        "30000000-0000-4000-8000-000000000021",
+        "30000000-0000-4000-8000-000000000022"
+      ],
+      "expected_contradicting": [],
+      "expected_missing": []
+    }
+  ]
+}
