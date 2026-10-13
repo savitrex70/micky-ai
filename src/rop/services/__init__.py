@@ -142,6 +142,11 @@ from rop.services.missing_information_lifecycle import (
     MissingInformationLifecycleContractError,
     MissingInformationLifecycleService,
 )
+from rop.services.native_composition import (
+    NativeCompositionContractError,
+    NativeCompositionRule,
+    NativeCompositionService,
+)
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
 from rop.services.reasoning_chain_audit import (
@@ -583,6 +588,9 @@ __all__ = [
     "MISSING_INFORMATION_LIFECYCLE_SOURCE_TASK_131",
     "MissingInformationLifecycleContractError",
     "MissingInformationLifecycleService",
+    "NativeCompositionContractError",
+    "NativeCompositionRule",
+    "NativeCompositionService",
     "ObservationService",
     "ObservationExtractionService",
     "ALLOWED_BOUNDARY_OUTCOMES",
