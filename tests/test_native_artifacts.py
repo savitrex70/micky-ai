@@ -268,3 +268,96 @@ def test_saved_files_are_canonical_and_leave_no_temporary_files(tmp_path):
     save_native_artifact(artifact, path)
     assert path.read_text(encoding="utf-8") == serialize_native_artifact(artifact)
     assert [item.name for item in tmp_path.iterdir()] == ["model.json"]
+
+
+# --- Task 210/211: label-space identity is covered by the artifact -----------------
+
+
+def test_artifact_carries_and_hashes_the_label_space_identity(tmp_path):
+    from rop.native_training import label_space_hash
+
+    artifact, vocabulary = _artifact()
+    assert artifact.contract_version == "2"
+    report = artifact.training_report
+    assert report.label_space_hash == label_space_hash(report.label_map)
+    payload = json.loads(serialize_native_artifact(artifact))
+    assert payload["training_report"]["label_space_hash"] == report.label_space_hash
+    assert payload["training_report"]["label_map"] == list(report.label_map)
+    path = tmp_path / "model.json"
+    save_native_artifact(artifact, path)
+    assert _load(path, artifact, vocabulary).training_report == report
+
+
+def test_changing_the_label_space_hash_changes_the_artifact_hash():
+    from rop.native_training import label_space_hash
+
+    artifact, _ = _artifact()
+    other_map = ("ANION_GAP_HIGH", "SODIUM_LOW")
+    relabelled = artifact.training_report.model_copy(
+        update={
+            "label_map": other_map,
+            "label_space_hash": label_space_hash(other_map),
+        }
+    )
+    payload = json.loads(serialize_native_artifact(artifact))
+    payload["training_report"] = relabelled.model_dump(mode="json")
+    assert native_artifacts._artifact_hash(
+        {k: v for k, v in payload.items() if k != "artifact_hash"}
+    ) != (artifact.artifact_hash)
+
+
+def test_relabelled_artifact_is_rejected_even_when_resealed(tmp_path):
+    artifact, vocabulary = _artifact()
+
+    def mutate(payload):
+        # A consistent but different label set of the same size, resealed.
+        payload["training_report"]["label_map"] = ["ANION_GAP_HIGH", "SODIUM_LOW"]
+
+    payload = _resealed(artifact, mutate)
+    # The report's own hash no longer matches its (relabelled) map.
+    with pytest.raises(ValidationError) as caught:
+        NativeModelArtifact.model_validate(payload)
+    assert "label_space_hash" in str(caught.value)
+    path = tmp_path / "relabelled.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(NativeArtifactError) as loaded:
+        _load(path, artifact, vocabulary)
+    assert loaded.value.code == "ARTIFACT_INVALID"
+
+
+def test_forged_label_space_hash_is_rejected_even_when_resealed(tmp_path):
+    artifact, vocabulary = _artifact()
+
+    def mutate(payload):
+        payload["training_report"]["label_space_hash"] = "1" * 64
+
+    payload = _resealed(artifact, mutate)
+    with pytest.raises(ValidationError):
+        NativeModelArtifact.model_validate(payload)
+    path = tmp_path / "forged.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(NativeArtifactError) as loaded:
+        _load(path, artifact, vocabulary)
+    assert loaded.value.code == "ARTIFACT_INVALID"
+
+
+def test_unsealed_label_tampering_fails_the_artifact_hash(tmp_path):
+    artifact, vocabulary = _artifact()
+    payload = json.loads(serialize_native_artifact(artifact))
+    payload["training_report"]["label_space_hash"] = "2" * 64
+    path = tmp_path / "unsealed.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(NativeArtifactError) as loaded:
+        _load(path, artifact, vocabulary)
+    assert loaded.value.code == "ARTIFACT_INVALID"
+
+
+def test_artifact_rejects_the_previous_contract_version():
+    artifact, _ = _artifact()
+
+    def mutate(payload):
+        payload["contract_version"] = "1"
+
+    payload = _resealed(artifact, mutate)
+    with pytest.raises(ValidationError):
+        NativeModelArtifact.model_validate(payload)

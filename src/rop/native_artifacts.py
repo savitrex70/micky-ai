@@ -30,7 +30,9 @@ from rop.native_training import NativeTrainingReport
 from rop.schemas.native_model import NativeModelConfig
 from rop.tokenization import Vocabulary
 
-ARTIFACT_CONTRACT_VERSION = "1"
+# Version 2 embeds the version-2 training report, whose canonical label map and
+# label_space_hash are therefore covered by artifact_hash.
+ARTIFACT_CONTRACT_VERSION = "2"
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 
@@ -96,7 +98,7 @@ class NativeModelArtifact(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["1"] = "1"
+    contract_version: Literal["2"] = "2"
     model_config_payload: NativeModelConfig
     dataset_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     vocabulary_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -123,6 +125,8 @@ class NativeModelArtifact(BaseModel):
             raise ValueError("training report dataset fingerprint mismatch")
         if self.training_report.vocabulary_hash != self.vocabulary_hash:
             raise ValueError("training report vocabulary hash mismatch")
+        if len(self.training_report.label_map) != config.num_labels:
+            raise ValueError("training report label map size mismatch")
         if (
             _parameter_hash(self.parameters.to_parameters())
             != self.training_report.parameters_hash
