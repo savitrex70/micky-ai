@@ -24,10 +24,38 @@ acceptance by itself.
 - **213 — Output validation:** model/vocabulary identity, label-space, ordering,
   score threshold and cardinality are validated before use.
 - **214 — Resource benchmark:** local latency and traced-memory measurements;
-  benchmark results are descriptive, not evidence of clinical utility.
+  benchmark results are descriptive, not evidence of clinical utility. The
+  report (contract version 3) names the exact artifact, the strict suggestion
+  policy hash, the configuration hash and a digest of the ordered case set. The
+  benchmark refuses to run (`TRACEMALLOC_ALREADY_ACTIVE`) when a `tracemalloc`
+  session is already active, so it never resets or measures through a trace
+  owned by other code.
 - **215 — Acceptance gate:** evaluates only the held-out TEST split, compares
   the candidate to the deterministic baseline, binds the run to the dataset,
-  model, vocabulary and benchmark, and requires every acceptance condition.
+  checkpoint, vocabulary, policy and benchmark, and requires every acceptance
+  condition (report contract version 2).
+
+## Acceptance identity binding
+
+The gate takes a predeclared `expected_benchmark_config` and rejects a
+benchmark that does not match every one of these:
+
+- **Artifact:** the supplied artifact hash equals the inference adapter's
+  artifact hash and `benchmark.artifact_hash`. Model version and vocabulary
+  hash alone do not identify a checkpoint.
+- **Label space:** the inference labels hash to the label-space hash recorded
+  by training in the artifact.
+- **Policy:** `benchmark.policy_hash` equals the gate policy's hash.
+- **Configuration and budgets:** the benchmark's configuration hash, declared
+  latency and memory budgets and repetition counts equal the predeclared
+  configuration, so a report with caller-chosen budgets cannot pass.
+- **Workload:** the benchmark case-set digest equals the digest of the held-out
+  TEST texts in canonical TEST-entry order, and every TEST case was measured.
+
+`Stage8AcceptanceReport` itself rejects a report whose evaluation, benchmark,
+model, vocabulary, artifact or policy identities disagree, and requires its
+blockers and `accepted` flag to follow exactly from the recorded real-data,
+resource-budget and evaluation outcomes.
 
 ## Required owner-run validation
 
