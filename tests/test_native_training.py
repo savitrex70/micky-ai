@@ -6,6 +6,7 @@ import dataclasses
 import math
 
 import pytest
+from pydantic import ValidationError
 
 from rop.dataset_preparation import (
     PreparedSplits,
@@ -14,10 +15,14 @@ from rop.dataset_preparation import (
 )
 from rop.native_model import NativeModel, NativeModelParameters
 from rop.native_training import (
+    LABEL_SPACE_HASH_DOMAIN,
+    NATIVE_TRAINING_REPORT_CONTRACT_VERSION,
     NativeTrainingConfig,
     NativeTrainingError,
     NativeTrainingExample,
+    NativeTrainingReport,
     canonical_label_mapping,
+    label_space_hash,
     train_native_model,
 )
 from rop.schemas.dataset_manifest import (
@@ -547,3 +552,114 @@ def test_gradient_clipping_bounds_each_parameter_step():
         abs(a - b) <= bound
         for a, b in zip(initial.head_bias, result.parameters.head_bias, strict=True)
     )
+
+
+# --- Task 210 correction: label-space identity ----------------------------------
+
+
+def test_label_space_hash_is_deterministic_and_domain_separated() -> None:
+    import hashlib
+
+    first = label_space_hash(LABEL_SPACE)
+    assert first == label_space_hash(tuple(LABEL_SPACE))
+    assert len(first) == 64 and first == first.lower()
+    # Domain separation: not the bare SHA-256 of the joined labels.
+    assert first != hashlib.sha256("|".join(LABEL_SPACE).encode()).hexdigest()
+    assert LABEL_SPACE_HASH_DOMAIN == "rop.native.label-space.v1"
+
+
+def test_same_size_label_sets_have_different_label_space_hashes() -> None:
+    reference = label_space_hash(("ANION_GAP_HIGH", "POTASSIUM_HIGH"))
+    assert label_space_hash(("ANION_GAP_HIGH", "SODIUM_LOW")) != reference
+    assert label_space_hash(("A_LABEL", "B_LABEL")) != reference
+    assert label_space_hash(("ANION_GAP_HIGH", "POTASSIUM_LOW")) != reference
+
+
+def test_label_space_hash_encoding_is_unambiguous() -> None:
+    # Length prefixes keep ("AB", "C") distinct from ("A", "BC").
+    assert label_space_hash(("AB", "C")) != label_space_hash(("A", "BC"))
+    assert label_space_hash(("A", "B")) != label_space_hash(("A", "B", "C"))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ("POTASSIUM_HIGH", "ANION_GAP_HIGH"),
+        ("ANION_GAP_HIGH", "ANION_GAP_HIGH"),
+        ("ANION_GAP_HIGH",),
+        ("ANION_GAP_HIGH", " "),
+    ],
+)
+def test_label_space_hash_refuses_a_non_canonical_space(bad) -> None:
+    with pytest.raises(NativeTrainingError) as caught:
+        label_space_hash(bad)
+    assert caught.value.code == "LABEL_SPACE_INVALID"
+
+
+def test_training_report_records_the_exact_label_mapping_identity() -> None:
+    report = _train().report
+    assert report.contract_version == NATIVE_TRAINING_REPORT_CONTRACT_VERSION == "2"
+    assert report.label_space_scheme_version == "native-label-space-v1"
+    # label_map[i] is the label of head index i: it is the exact mapping used.
+    assert report.label_map == tuple(MAPPING)
+    assert all(MAPPING[label] == index for index, label in enumerate(report.label_map))
+    assert report.label_space_hash == label_space_hash(LABEL_SPACE)
+    assert report.label_space_hash == label_space_hash(report.label_map)
+
+
+def test_report_hash_is_computed_by_training_not_supplied() -> None:
+    # Training has no parameter through which a hash could be supplied.
+    import inspect
+
+    assert "label_space_hash" not in inspect.signature(train_native_model).parameters
+
+
+def test_report_rejects_a_forged_or_mismatched_label_space_hash() -> None:
+    report = _train().report
+    payload = report.model_dump(mode="json")
+    other = label_space_hash(("ANION_GAP_HIGH", "SODIUM_LOW"))
+    with pytest.raises(ValidationError, match="label_space_hash"):
+        NativeTrainingReport.model_validate({**payload, "label_space_hash": other})
+    # A relabelled map with the original hash is rejected as well.
+    with pytest.raises(ValidationError, match="label_space_hash"):
+        NativeTrainingReport.model_validate(
+            {**payload, "label_map": ["ANION_GAP_HIGH", "SODIUM_LOW"]}
+        )
+    assert NativeTrainingReport.model_validate(payload) == report
+
+
+@pytest.mark.parametrize(
+    "bad_map",
+    [
+        ["POTASSIUM_HIGH", "ANION_GAP_HIGH"],
+        ["ANION_GAP_HIGH", "ANION_GAP_HIGH"],
+        ["ANION_GAP_HIGH", " "],
+    ],
+)
+def test_report_rejects_a_non_canonical_label_map(bad_map) -> None:
+    payload = _train().report.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="label_map"):
+        NativeTrainingReport.model_validate({**payload, "label_map": bad_map})
+
+
+def test_report_requires_the_label_space_fields_and_new_contract_version() -> None:
+    payload = _train().report.model_dump(mode="json")
+    for key in ("label_space_hash", "label_map"):
+        without = {k: v for k, v in payload.items() if k != key}
+        with pytest.raises(ValidationError):
+            NativeTrainingReport.model_validate(without)
+    with pytest.raises(ValidationError):
+        NativeTrainingReport.model_validate({**payload, "contract_version": "1"})
+
+
+def test_report_contains_no_raw_training_text() -> None:
+    dumped = str(_train().report.model_dump(mode="json"))
+    assert "synthetic token" not in dumped
+
+
+def test_training_refuses_a_manifest_declaring_another_fingerprint_scheme() -> None:
+    splits, manifest, *_ = _fixture()
+    stale = manifest.model_copy(
+        update={"fingerprint_scheme_version": "records-fingerprint-v1"}
+    )
+    assert _code(manifest=stale) == "TRAINING_FINGERPRINT_MISMATCH"
