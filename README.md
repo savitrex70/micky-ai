@@ -1,6 +1,14 @@
 # Reasoning Operating Platform
 
-The Reasoning Operating Platform (ROP) is being built incrementally. The deterministic reasoning infrastructure through Stage 6 is complete, spanning rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 work on the provider-agnostic LLM boundary is beginning: the boundary seam exists and is exercised only through test-only fakes. ROP contains no concrete model provider integration, no credentials, and no network inference.
+The Reasoning Operating Platform (ROP) is being built incrementally. Its deterministic reasoning infrastructure includes rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 implementation and integration coverage through Task 200 has been completed. The project owner reported that the final local pytest, Ruff, and Black gates passed at that checkpoint. ROP has no concrete third-party model integration and performs no network inference.
+
+## Stage 8: native intelligence plan
+
+Stage 8 is planned work, not an implemented model. The direction is a project-owned deterministic reasoning engine and, only if experiments justify it, a model with randomly initialized weights trained by ROP on authorized data. The plan excludes commercial models, third-party pretrained models or checkpoints, Ollama and other external model-serving products, hosted inference APIs, and remote inference. General-purpose numerical/training libraries may be considered as engineering tools, but their pretrained models and automatic download paths are not permitted.
+
+The deterministic system must remain useful when no trained model is available. Model suggestions must pass strict schema, identity, provenance, privacy, uncertainty, and evidence-reference checks and must not override supported evidence, readable contradictions, or Stage 7 audit contracts. Passing software tests does not validate a model for clinical use or authorize autonomous clinical decisions.
+
+See the [Stage 8 native-intelligence architecture](docs/stage-8-native-intelligence-architecture.md) for component boundaries, data governance, offline safeguards, acceptance criteria, and the provisional Task 201–215 roadmap.
 
 ## Stack
 
@@ -136,8 +144,10 @@ session and domain-record preparation.
 This gives integration coverage across the Task 153–188 service boundaries,
 but it is not a claim that every surrounding API lifecycle or external
 dependency is exercised in production conditions. The Stage 6 and provider
-boundaries remain substituted, and the final coverage still requires review
-and the project owner's full pytest gate before Stage 7 is treated as complete.
+boundaries remain substituted. The project owner reported that the final
+local pytest, Ruff, and Black gates passed at the Task 200 checkpoint. Those
+software checks do not validate a future model for clinical use or substitute
+for any required clinical validation and qualified oversight.
 
 To validate the integration coverage and repository from the project root,
 with the virtual environment from the local Python workflow above activated:
@@ -170,7 +180,7 @@ The API's persistence endpoints:
 | `GET` | `/sessions/{session_id}/observations` | List observations for a session |
 | `POST` | `/sessions/{session_id}/extract-observations` | Extract and store observations from free text |
 
-Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The deterministic pipeline performs no diagnosis, no model inference, and no clinical interpretation; all reasoning stages are deterministic and rule-based, and no concrete model provider integration exists.
+Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The current production pipeline performs no diagnosis, model inference, or clinical interpretation; current reasoning paths are deterministic and rule-based. Stage 8 native-model work is planned only and has not been implemented.
 
 ### Observation extraction pipeline
 
