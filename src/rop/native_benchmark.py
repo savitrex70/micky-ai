@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import statistics
 import time
 import tracemalloc
@@ -104,10 +105,10 @@ class NativeBenchmarkReport(BaseModel):
     cases_measured: StrictInt = Field(ge=1, le=MAX_BENCHMARK_CASES)
     warmup_iterations: StrictInt = Field(ge=0, le=100)
     measured_iterations: StrictInt = Field(ge=1, le=10000)
-    latency_mean_ms: StrictFloat = Field(ge=0.0)
-    latency_median_ms: StrictFloat = Field(ge=0.0)
-    latency_p95_ms: StrictFloat = Field(ge=0.0)
-    latency_max_ms: StrictFloat = Field(ge=0.0)
+    latency_mean_ms: StrictFloat = Field(ge=0.0, allow_inf_nan=False)
+    latency_median_ms: StrictFloat = Field(ge=0.0, allow_inf_nan=False)
+    latency_p95_ms: StrictFloat = Field(ge=0.0, allow_inf_nan=False)
+    latency_max_ms: StrictFloat = Field(ge=0.0, allow_inf_nan=False)
     peak_traced_memory_bytes: StrictInt = Field(ge=0)
     output_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     within_declared_budgets: StrictBool
@@ -126,10 +127,57 @@ class NativeBenchmarkReport(BaseModel):
         )
         if self.within_declared_budgets is not expected:
             raise ValueError("budget verdict contradicts the declared budgets")
+        self._latency_statistics_describe_one_sample_set()
+        self._config_hash_matches_recorded_configuration()
         return self
+
+    def _latency_statistics_describe_one_sample_set(self) -> None:
+        """Reject only relationships no single set of samples can produce.
+
+        The mean is deliberately not ordered against the median or p95: a
+        skewed sample set can put it on either side of both.
+        """
+        statistics_ms = (
+            self.latency_mean_ms,
+            self.latency_median_ms,
+            self.latency_p95_ms,
+            self.latency_max_ms,
+        )
+        if not all(math.isfinite(value) and value >= 0.0 for value in statistics_ms):
+            raise ValueError("latency statistics must be finite and nonnegative")
+        if (
+            self.latency_median_ms > self.latency_p95_ms
+            or self.latency_p95_ms > self.latency_max_ms
+            or self.latency_mean_ms > self.latency_max_ms
+            or any(value > self.latency_max_ms for value in statistics_ms)
+        ):
+            raise ValueError(
+                "latency statistics are inconsistent: median <= p95 <= max and "
+                "mean <= max must hold"
+            )
+
+    def _config_hash_matches_recorded_configuration(self) -> None:
+        """The recorded configuration fields must reproduce the recorded hash."""
+        recorded = NativeBenchmarkConfig(
+            contract_version=self.contract_version,
+            warmup_iterations=self.warmup_iterations,
+            measured_iterations=self.measured_iterations,
+            latency_budget_ms=self.declared_latency_budget_ms,
+            peak_memory_budget_bytes=self.declared_peak_memory_budget_bytes,
+        )
+        if recorded.config_hash() != self.benchmark_config_hash:
+            raise ValueError(
+                "benchmark configuration hash does not match the recorded "
+                "configuration"
+            )
 
 
 def _percentile95(values: list[float]) -> float:
+    """Nearest-rank 95th percentile: the sorted value at rank ceil(0.95 * n).
+
+    Deterministic and always one of the measured samples, so it can never fall
+    below the median or exceed the maximum of the same sample set.
+    """
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, (95 * len(ordered) + 99) // 100 - 1))
     return ordered[index]
@@ -225,10 +273,11 @@ def run_native_benchmark(
     output_digest = hashlib.sha256(
         json.dumps(output_digests, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    mean_ms = statistics.fmean(elapsed_ms)
+    maximum_ms = max(elapsed_ms)
+    # fmean can round one ulp above the maximum for near-identical samples.
+    mean_ms = min(statistics.fmean(elapsed_ms), maximum_ms)
     median_ms = statistics.median(elapsed_ms)
     p95_ms = _percentile95(elapsed_ms)
-    maximum_ms = max(elapsed_ms)
     within_budget = (
         maximum_ms <= config.latency_budget_ms
         and peak_memory <= config.peak_memory_budget_bytes

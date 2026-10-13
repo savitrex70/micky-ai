@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import tracemalloc
 
 import pytest
@@ -506,3 +507,137 @@ def test_public_case_set_digest_matches_the_report_and_is_sensitive():
     assert case_set_digest(TEXTS) != case_set_digest(tuple(reversed(TEXTS)))
     assert case_set_digest(TEXTS) != case_set_digest(TEXTS[:1])
     assert case_set_digest(TEXTS) != case_set_digest(("synthetic one", "synthetic 2"))
+
+
+# --- latency-statistic coherence ------------------------------------------------------
+
+
+def _payload(**patch):
+    report, _ = _run()
+    payload = report.model_dump()
+    payload.update(patch)
+    return payload
+
+
+def _stats(mean, median, p95, maximum):
+    return {
+        "latency_mean_ms": mean,
+        "latency_median_ms": median,
+        "latency_p95_ms": p95,
+        "latency_max_ms": maximum,
+    }
+
+
+def _rejects(payload, reason):
+    with pytest.raises(ValidationError, match=reason):
+        NativeBenchmarkReport.model_validate(payload)
+
+
+def test_a_report_with_coherent_latency_statistics_validates():
+    payload = _payload(**_stats(1.0, 1.5, 3.0, 4.0))
+    assert NativeBenchmarkReport.model_validate(payload).latency_max_ms == 4.0
+    # Every statistic equal to the maximum is one valid sample set.
+    flat = _payload(**_stats(2.0, 2.0, 2.0, 2.0))
+    assert NativeBenchmarkReport.model_validate(flat).latency_p95_ms == 2.0
+    # The mean is not ordered against the median or p95: a skewed sample set
+    # can put it on either side, so neither arrangement is rejected.
+    for mean in (0.5, 3.5):
+        skewed = _payload(**_stats(mean, 1.0, 3.0, 4.0))
+        assert NativeBenchmarkReport.model_validate(skewed).latency_mean_ms == mean
+
+
+def test_mean_above_the_maximum_is_rejected():
+    _rejects(_payload(**_stats(5.0, 1.0, 3.0, 4.0)), "latency statistics are incon")
+
+
+def test_median_above_p95_is_rejected():
+    _rejects(_payload(**_stats(1.0, 3.5, 3.0, 4.0)), "latency statistics are incon")
+
+
+def test_p95_above_the_maximum_is_rejected():
+    _rejects(_payload(**_stats(1.0, 1.0, 4.5, 4.0)), "latency statistics are incon")
+
+
+def test_median_above_the_maximum_is_rejected():
+    _rejects(_payload(**_stats(0.5, 4.5, 4.5, 4.0)), "latency statistics are incon")
+
+
+@pytest.mark.parametrize("field", list(_stats(0, 0, 0, 0)))
+@pytest.mark.parametrize("bad", [math.inf, -math.inf, math.nan, -1.0])
+def test_non_finite_or_negative_latency_statistics_are_rejected(field, bad):
+    payload = _payload(**_stats(1.0, 1.0, 1.0, 1.0))
+    payload[field] = bad
+    with pytest.raises(ValidationError):
+        NativeBenchmarkReport.model_validate(payload)
+
+
+def test_a_within_budget_verdict_cannot_cover_inconsistent_latency_statistics():
+    # The maximum fits the budget, so the verdict itself is truthful; only the
+    # impossible mean/median/p95 relationship can reject it.
+    for stats in (
+        _stats(2.0, 0.1, 0.2, 0.5),  # mean above max
+        _stats(0.1, 0.4, 0.2, 0.5),  # median above p95
+        _stats(0.1, 0.1, 0.9, 0.5),  # p95 above max
+    ):
+        payload = _payload(**stats, within_declared_budgets=True)
+        assert payload["latency_max_ms"] <= payload["declared_latency_budget_ms"]
+        _rejects(payload, "latency statistics are incon")
+
+
+def test_a_real_run_always_satisfies_the_coherence_rules():
+    report, _ = _run(texts=("a one", "a two", "a three"), measured_iterations=9)
+    assert report.latency_median_ms <= report.latency_p95_ms <= report.latency_max_ms
+    assert report.latency_mean_ms <= report.latency_max_ms
+
+
+# --- configuration-hash recomputation -------------------------------------------------
+
+
+def test_malformed_configuration_hash_is_rejected():
+    for bad in ("", "f" * 63, "F" * 64, "g" * 64, "f" * 65):
+        _rejects(_payload(benchmark_config_hash=bad), "benchmark_config_hash")
+
+
+def test_unrelated_but_well_formed_configuration_hash_is_rejected():
+    for unrelated in ("e" * 64, hashlib.sha256(b"unrelated").hexdigest()):
+        _rejects(
+            _payload(benchmark_config_hash=unrelated),
+            "configuration hash does not match",
+        )
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"warmup_iterations": 2},
+        {"declared_latency_budget_ms": 59999.0},
+        {"declared_peak_memory_budget_bytes": 10000001},
+    ],
+)
+def test_changing_a_configuration_field_without_the_hash_is_rejected(patch):
+    _rejects(_payload(**patch), "configuration hash does not match")
+
+
+def test_changing_a_field_with_its_recomputed_hash_is_accepted():
+    patch = {"declared_latency_budget_ms": 59999.0, "warmup_iterations": 3}
+    recomputed = NativeBenchmarkConfig(
+        warmup_iterations=3,
+        measured_iterations=5,
+        latency_budget_ms=59999.0,
+        peak_memory_budget_bytes=10000000,
+    ).config_hash()
+    payload = _payload(benchmark_config_hash=recomputed, **patch)
+    assert NativeBenchmarkReport.model_validate(payload).warmup_iterations == 3
+
+
+def test_recorded_fields_reproduce_the_predeclared_configuration_hash():
+    report, _ = _run()
+    rebuilt = NativeBenchmarkConfig(
+        warmup_iterations=report.warmup_iterations,
+        measured_iterations=report.measured_iterations,
+        latency_budget_ms=report.declared_latency_budget_ms,
+        peak_memory_budget_bytes=report.declared_peak_memory_budget_bytes,
+    )
+    assert (
+        rebuilt.config_hash() == report.benchmark_config_hash == _config().config_hash()
+    )
