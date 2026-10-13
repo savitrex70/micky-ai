@@ -15,20 +15,26 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from rop.schemas.evaluation_harness import (
-    EVALUATION_CONTRACT_VERSION,
+    EVALUATION_REPORT_CONTRACT_VERSION,
     ZERO_TOLERANCE_METRIC,
     CandidatePrediction,
     EvaluationComparisonReport,
     EvaluationHarnessError,
     EvaluationManifestEntry,
     EvaluationMetricKind,
-    EvaluationMetricThreshold,
     EvaluationRunConfiguration,
     EvaluationSplit,
     EvaluationSplitManifest,
     RunOutcomeSummary,
     canonical_examples_digest,
+    metric_value,
+    observed_metric_value,
+    threshold_violated,
 )
+
+# Kept for the existing private-name call sites and tests.
+_metric_value = metric_value
+_threshold_violated = threshold_violated
 
 
 @dataclass(frozen=True)
@@ -371,96 +377,59 @@ def compare_systems(
         or candidate_outcome.invalid_evidence_reference_rate > 0.0
     )
 
-    metric_failures: list[str] = []
-    for metric_kind, threshold in thresholds.items():
-        if metric_kind == EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE:
-            continue  # already enforced by the zero-tolerance gate
-        if (
-            metric_kind == EvaluationMetricKind.LATENCY_MS
-            and candidate_outcome.latency_ms_max is None
-        ):
-            # A declared latency bound cannot be verified without a
-            # measurement, so it fails closed instead of passing silently.
-            metric_failures.append(metric_kind.value)
-            continue
-        value = _metric_value(metric_kind, candidate_outcome)
-        if _threshold_violated(threshold, value):
-            metric_failures.append(metric_kind.value)
-
-    improves = candidate_outcome.macro_f1 > baseline_outcome.macro_f1
     safety_configuration = thresholds[
         EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE
     ]
-    safety_cap_is_zero = safety_configuration.maximum == 0.0
-    if not safety_cap_is_zero:
+    if safety_configuration.maximum != 0.0:
         raise EvaluationHarnessError(
             "SAFETY_MISCONFIGURED", "the zero-tolerance cap must be exactly 0.0"
         )
 
-    accepted = not safety_failure and not metric_failures and improves
+    # Every declared threshold becomes a recorded, recomputable gate result.
+    # A declared latency bound without a measurement fails closed.
+    gate_results = []
+    for metric_kind, threshold in sorted(
+        thresholds.items(), key=lambda item: item[0].value
+    ):
+        observed = observed_metric_value(metric_kind, candidate_outcome)
+        passed = observed is not None and not threshold_violated(threshold, observed)
+        gate_results.append(
+            {
+                "metric": metric_kind,
+                "observed_value": observed,
+                "minimum": threshold.minimum,
+                "maximum": threshold.maximum,
+                "passed": passed,
+            }
+        )
+
+    improves = candidate_outcome.macro_f1 > baseline_outcome.macro_f1
+    accepted = (
+        not safety_failure and improves and all(gate["passed"] for gate in gate_results)
+    )
 
     return EvaluationComparisonReport.model_validate(
         {
-            "contract_version": EVALUATION_CONTRACT_VERSION,
+            "contract_version": EVALUATION_REPORT_CONTRACT_VERSION,
             "run_id": run_configuration.run_id,
             "run_configuration_hash": canonical_examples_digest(run_configuration),
             "dataset_id": manifest.dataset_id,
             "dataset_snapshot_hash": manifest.dataset_snapshot_hash,
-            "confusion_matrix_scalar": sum(
+            "baseline_confusion_total": sum(
                 count for _, _, count in baseline_outcome.confusion_matrix
+            ),
+            "candidate_confusion_total": sum(
+                count for _, _, count in candidate_outcome.confusion_matrix
             ),
             "baseline": baseline_outcome.model_dump(),
             "candidate": candidate_outcome.model_dump(),
+            "gate_results": gate_results,
             "candidate_improves_macro_f1": improves,
             "safety_failure": safety_failure,
             "accepted": accepted,
             "limitations": sorted(limitations),
         }
     )
-
-
-def _threshold_violated(threshold: EvaluationMetricThreshold, value: float) -> bool:
-    """Evaluate every declared bound; neither bound is ever skipped."""
-    if threshold.minimum is not None and value < threshold.minimum:
-        return True
-    return threshold.maximum is not None and value > threshold.maximum
-
-
-_METRIC_FIELDS: dict[EvaluationMetricKind, str] = {
-    EvaluationMetricKind.MACRO_F1: "macro_f1",
-    EvaluationMetricKind.BALANCED_ACCURACY: "balanced_accuracy",
-    EvaluationMetricKind.COVERAGE: "coverage",
-    EvaluationMetricKind.ABSTENTION_RATE: "abstention_rate",
-    EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE: (
-        "invalid_evidence_reference_rate"
-    ),
-    EvaluationMetricKind.PER_CLASS_PRECISION: "per_class",
-    EvaluationMetricKind.PER_CLASS_RECALL: "per_class",
-    EvaluationMetricKind.LATENCY_MS: "latency_ms_max",
-}
-
-
-def _metric_value(
-    metric_kind: EvaluationMetricKind, outcome: RunOutcomeSummary
-) -> float:
-    """Read the scalar for one metric kind from an outcome summary."""
-    if metric_kind in (
-        EvaluationMetricKind.PER_CLASS_PRECISION,
-        EvaluationMetricKind.PER_CLASS_RECALL,
-    ):
-        # Class-floor over the declared per-class reports.
-        values = [
-            (
-                report.precision
-                if metric_kind == EvaluationMetricKind.PER_CLASS_PRECISION
-                else report.recall
-            )
-            for report in outcome.per_class
-        ]
-        return min(values) if values else 0.0
-    field_name = _METRIC_FIELDS[metric_kind]
-    value = getattr(outcome, field_name)
-    return float(value) if value is not None else 0.0
 
 
 __all__ = [

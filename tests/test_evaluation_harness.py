@@ -13,8 +13,10 @@ from rop.evaluation import (
     evaluate_predictions,
 )
 from rop.schemas.evaluation_harness import (
+    EVALUATION_REPORT_CONTRACT_VERSION,
     MAX_LATENCY_THRESHOLD_MS,
     CandidatePrediction,
+    EvaluationComparisonReport,
     EvaluationHarnessError,
     EvaluationManifestEntry,
     EvaluationMetricConfiguration,
@@ -367,61 +369,200 @@ def test_candidate_that_loses_to_baseline_is_not_accepted() -> None:
     assert report.accepted is False
 
 
-def test_report_rejects_a_safety_failure_marked_accepted() -> None:
-    baseline = evaluate_predictions(
-        manifest=_manifest(),
-        predictions=(),
-        labels=LABELS,
-        system_id="baseline",
+def _report_payload(*, accepted: bool) -> dict:
+    """A genuine report payload from the harness, ready to be forged."""
+    candidate = _perfect() if accepted else _empty_baseline()
+    report = compare_systems(
+        run_configuration=_run_configuration(_manifest()),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=candidate,
     )
-    candidate_payload = baseline.model_dump(mode="json")
-    candidate_payload["system_id"] = "candidate"
-    candidate_payload["invalid_evidence_reference_rate"] = 0.5
-    with pytest.raises(ValidationError, match="safety failure"):
-        import rop.schemas.evaluation_harness as schemas
+    assert report.accepted is accepted
+    return report.model_dump(mode="json")
 
-        schemas.EvaluationComparisonReport.model_validate(
-            {
-                "contract_version": "1",
-                "run_id": "run-1",
-                "run_configuration_hash": "a" * 64,
-                "dataset_id": DATASET_ID,
-                "dataset_snapshot_hash": "c" * 64,
-                "confusion_matrix_scalar": 0,
-                "baseline": baseline.model_dump(mode="json"),
-                "candidate": candidate_payload,
-                "candidate_improves_macro_f1": True,
-                "safety_failure": True,
-                "accepted": True,
-                "limitations": [],
-            }
-        )
+
+def _forged(payload: dict, **patch: object) -> EvaluationComparisonReport:
+    return EvaluationComparisonReport.model_validate({**payload, **patch})
+
+
+def test_genuine_accepted_and_rejected_reports_round_trip() -> None:
+    accepted = _report_payload(accepted=True)
+    rejected = _report_payload(accepted=False)
+    assert EvaluationComparisonReport.model_validate(accepted).accepted is True
+    assert EvaluationComparisonReport.model_validate(rejected).accepted is False
+    assert accepted["contract_version"] == EVALUATION_REPORT_CONTRACT_VERSION
+
+
+def test_report_rejects_the_previous_contract_version() -> None:
+    with pytest.raises(ValidationError):
+        _forged(_report_payload(accepted=True), contract_version="1")
+
+
+def test_report_rejects_a_safety_failure_marked_accepted() -> None:
+    payload = _report_payload(accepted=True)
+    payload["candidate"]["invalid_evidence_reference_rate"] = 0.5
+    safety = next(
+        g
+        for g in payload["gate_results"]
+        if g["metric"] == "INVALID_EVIDENCE_REFERENCE_RATE"
+    )
+    safety["observed_value"] = 0.5
+    safety["passed"] = False
+    with pytest.raises(ValidationError, match="safety failure can never"):
+        _forged(payload, safety_failure=True, accepted=True)
 
 
 def test_report_requires_improvement_for_acceptance() -> None:
-    baseline = evaluate_predictions(
-        manifest=_manifest(), predictions=(), labels=LABELS, system_id="baseline"
-    )
-    payload = baseline.model_dump(mode="json")
+    payload = _report_payload(accepted=False)
     with pytest.raises(ValidationError, match="improve"):
-        import rop.schemas.evaluation_harness as schemas
+        _forged(payload, accepted=True)
 
-        schemas.EvaluationComparisonReport.model_validate(
-            {
-                "contract_version": "1",
-                "run_id": "run-1",
-                "run_configuration_hash": "a" * 64,
-                "dataset_id": DATASET_ID,
-                "dataset_snapshot_hash": "c" * 64,
-                "confusion_matrix_scalar": 0,
-                "baseline": payload,
-                "candidate": payload,
-                "candidate_improves_macro_f1": False,
-                "safety_failure": False,
-                "accepted": True,
-                "limitations": [],
-            }
+
+def test_forged_improvement_flag_is_rejected_in_both_directions() -> None:
+    accepted = _report_payload(accepted=True)
+    with pytest.raises(ValidationError, match="macro-F1"):
+        _forged(accepted, candidate_improves_macro_f1=False, accepted=False)
+    rejected = _report_payload(accepted=False)
+    with pytest.raises(ValidationError, match="macro-F1"):
+        _forged(rejected, candidate_improves_macro_f1=True)
+
+
+def test_forged_improvement_flag_against_swapped_scores_is_rejected() -> None:
+    payload = _report_payload(accepted=True)
+    payload["baseline"], payload["candidate"] = (
+        payload["candidate"],
+        payload["baseline"],
+    )
+    # The flag still claims an improvement, but the scores now say otherwise.
+    with pytest.raises(ValidationError, match="macro-F1"):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+@pytest.mark.parametrize("system", ["baseline", "candidate"])
+def test_misstated_safety_flag_is_rejected_in_both_directions(system: str) -> None:
+    payload = _report_payload(accepted=True)
+    # Claim a clean run while an embedded system has an invalid reference.
+    payload[system]["invalid_evidence_reference_rate"] = 0.25
+    with pytest.raises(ValidationError, match="safety_failure"):
+        _forged(payload, safety_failure=False, accepted=False)
+    # Claim a safety failure while both embedded systems are clean.
+    clean = _report_payload(accepted=True)
+    with pytest.raises(ValidationError, match="safety_failure"):
+        _forged(clean, safety_failure=True, accepted=False)
+
+
+def test_acceptance_cannot_be_claimed_while_a_recorded_gate_failed() -> None:
+    payload = _report_payload(accepted=True)
+    gates = payload["gate_results"]
+    macro = next(gate for gate in gates if gate["metric"] == "MACRO_F1")
+    # A recorded gate that failed its own bounds: observed below the minimum.
+    macro["observed_value"] = 0.25
+    macro["passed"] = False
+    payload["candidate"]["macro_f1"] = 0.25
+    payload["baseline"]["macro_f1"] = 0.0
+    with pytest.raises(ValidationError, match="accepted must equal"):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_a_gate_verdict_cannot_contradict_its_own_bounds() -> None:
+    payload = _report_payload(accepted=True)
+    macro = next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")
+    macro["minimum"] = 1.0
+    macro["maximum"] = 1.0
+    macro["observed_value"] = 1.0
+    payload["candidate"]["macro_f1"] = 1.0
+    assert macro["passed"] is True  # still a consistent pass
+    EvaluationComparisonReport.model_validate(payload)
+    macro["minimum"] = 0.99
+    macro["maximum"] = 0.99
+    with pytest.raises(ValidationError, match="verdict"):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_a_gate_observed_value_must_match_the_candidate_outcome() -> None:
+    payload = _report_payload(accepted=True)
+    macro = next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")
+    macro["observed_value"] = 0.9
+    with pytest.raises(ValidationError, match="observed value"):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_a_rejected_report_cannot_be_flipped_to_accepted_by_its_gates() -> None:
+    # Every recorded gate and the comparison pass, so ``accepted=False`` is
+    # itself inconsistent: acceptance is derived, not independently chosen.
+    payload = _report_payload(accepted=True)
+    with pytest.raises(ValidationError, match="accepted must equal"):
+        _forged(payload, accepted=False)
+
+
+def test_gate_results_must_be_unique_canonical_and_record_the_safety_cap() -> None:
+    payload = _report_payload(accepted=True)
+    gates = payload["gate_results"]
+    with pytest.raises(ValidationError, match="canonically sorted"):
+        _forged(payload, gate_results=list(reversed(gates)))
+    with pytest.raises(ValidationError, match="at most once"):
+        _forged(payload, gate_results=[gates[0], gates[0], *gates[1:]])
+    without_safety = [
+        g for g in gates if g["metric"] != "INVALID_EVIDENCE_REFERENCE_RATE"
+    ]
+    with pytest.raises(ValidationError, match="zero-tolerance"):
+        _forged(payload, gate_results=without_safety)
+    loosened = [
+        {**g, "maximum": 0.5} if g["metric"] == "INVALID_EVIDENCE_REFERENCE_RATE" else g
+        for g in gates
+    ]
+    with pytest.raises(ValidationError, match="zero-tolerance"):
+        _forged(payload, gate_results=loosened)
+
+
+def test_confusion_totals_are_checked_against_their_own_matrices() -> None:
+    payload = _report_payload(accepted=True)
+    with pytest.raises(ValidationError, match="baseline confusion total"):
+        _forged(
+            payload,
+            baseline_confusion_total=payload["baseline_confusion_total"] + 1,
         )
+    with pytest.raises(ValidationError, match="candidate confusion total"):
+        _forged(
+            payload,
+            candidate_confusion_total=payload["candidate_confusion_total"] + 1,
+        )
+    assert "confusion_matrix_scalar" not in payload
+
+
+def test_report_gate_results_cover_every_declared_threshold() -> None:
+    payload = _report_payload(accepted=True)
+    assert [gate["metric"] for gate in payload["gate_results"]] == [
+        "ABSTENTION_RATE",
+        "INVALID_EVIDENCE_REFERENCE_RATE",
+        "MACRO_F1",
+    ]
+    assert all(gate["passed"] for gate in payload["gate_results"])
+
+
+def test_unmeasured_latency_gate_is_recorded_as_a_failed_gate() -> None:
+    latency = {
+        "metric": EvaluationMetricKind.LATENCY_MS,
+        "minimum": None,
+        "maximum": 5.0,
+    }
+    candidate = tuple(
+        _prediction(
+            prediction.example_id, list(prediction.predicted_labels), latency_ms=None
+        )
+        for prediction in _perfect()
+    )
+    report = compare_systems(
+        run_configuration=_custom_run_configuration(
+            _manifest(), [latency, _safety_threshold()]
+        ),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=candidate,
+    )
+    gate = next(g for g in report.gate_results if g.metric.value == "LATENCY_MS")
+    assert gate.observed_value is None and gate.passed is False
+    assert report.accepted is False
+    EvaluationComparisonReport.model_validate(report.model_dump(mode="json"))
 
 
 # --- reproducibility --------------------------------------------------------

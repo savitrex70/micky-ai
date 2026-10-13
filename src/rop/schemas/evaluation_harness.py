@@ -18,6 +18,10 @@ from pydantic import (
 )
 
 EVALUATION_CONTRACT_VERSION = "1"
+# The comparison report's public shape changed (recorded gate results and
+# explicit baseline/candidate confusion totals), so it carries its own
+# contract version; configuration contracts remain at version 1.
+EVALUATION_REPORT_CONTRACT_VERSION = "2"
 MAX_LABELS = 32
 MAX_EXAMPLES = 100000
 MAX_REASON_LENGTH = 500
@@ -341,19 +345,102 @@ class RunOutcomeSummary(BaseModel):
         return value
 
 
-class EvaluationComparisonReport(BaseModel):
-    """Privacy-safe, versioned comparison of baseline vs candidate."""
+def threshold_violated(threshold: EvaluationMetricThreshold, value: float) -> bool:
+    """Evaluate every declared bound; neither bound is ever skipped."""
+    if threshold.minimum is not None and value < threshold.minimum:
+        return True
+    return threshold.maximum is not None and value > threshold.maximum
+
+
+_METRIC_FIELDS: dict[EvaluationMetricKind, str] = {
+    EvaluationMetricKind.MACRO_F1: "macro_f1",
+    EvaluationMetricKind.BALANCED_ACCURACY: "balanced_accuracy",
+    EvaluationMetricKind.COVERAGE: "coverage",
+    EvaluationMetricKind.ABSTENTION_RATE: "abstention_rate",
+    EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE: (
+        "invalid_evidence_reference_rate"
+    ),
+    EvaluationMetricKind.PER_CLASS_PRECISION: "per_class",
+    EvaluationMetricKind.PER_CLASS_RECALL: "per_class",
+    EvaluationMetricKind.LATENCY_MS: "latency_ms_max",
+}
+
+
+def metric_value(
+    metric_kind: EvaluationMetricKind, outcome: RunOutcomeSummary
+) -> float:
+    """Read the scalar for one metric kind from an outcome summary."""
+    if metric_kind in (
+        EvaluationMetricKind.PER_CLASS_PRECISION,
+        EvaluationMetricKind.PER_CLASS_RECALL,
+    ):
+        # Class-floor over the declared per-class reports.
+        values = [
+            (
+                report.precision
+                if metric_kind == EvaluationMetricKind.PER_CLASS_PRECISION
+                else report.recall
+            )
+            for report in outcome.per_class
+        ]
+        return min(values) if values else 0.0
+    field_name = _METRIC_FIELDS[metric_kind]
+    value = getattr(outcome, field_name)
+    return float(value) if value is not None else 0.0
+
+
+def observed_metric_value(
+    metric_kind: EvaluationMetricKind, outcome: RunOutcomeSummary
+) -> float | None:
+    """Observed value for a gate; ``None`` when a declared latency is unmeasured."""
+    if (
+        metric_kind == EvaluationMetricKind.LATENCY_MS
+        and outcome.latency_ms_max is None
+    ):
+        return None
+    return metric_value(metric_kind, outcome)
+
+
+class EvaluationGateResult(BaseModel):
+    """One predeclared metric gate: observed candidate value, bounds, verdict."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["1"]
+    metric: EvaluationMetricKind
+    observed_value: StrictFloat | None
+    minimum: StrictFloat | None = Field(ge=0.0)
+    maximum: StrictFloat | None = Field(ge=0.0)
+    passed: StrictBool
+
+    @model_validator(mode="after")
+    def _bounds_are_a_valid_threshold(self) -> EvaluationGateResult:
+        # Reuse the predeclared-threshold rules so a forged gate cannot carry
+        # an out-of-range or inverted bound pair.
+        EvaluationMetricThreshold(
+            metric=self.metric, minimum=self.minimum, maximum=self.maximum
+        )
+        return self
+
+
+class EvaluationComparisonReport(BaseModel):
+    """Privacy-safe, versioned comparison of baseline vs candidate.
+
+    Every derived field is recomputed from the embedded outcomes and the
+    recorded gate results; none of them is trusted as supplied.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    contract_version: Literal["2"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
     run_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     dataset_id: StrictStr = Field(min_length=1, max_length=200)
     dataset_snapshot_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
-    confusion_matrix_scalar: StrictInt = Field(ge=0)
+    baseline_confusion_total: StrictInt = Field(ge=0)
+    candidate_confusion_total: StrictInt = Field(ge=0)
     baseline: RunOutcomeSummary
     candidate: RunOutcomeSummary
+    gate_results: tuple[EvaluationGateResult, ...] = Field(min_length=1, max_length=32)
     candidate_improves_macro_f1: StrictBool
     safety_failure: StrictBool
     accepted: StrictBool
@@ -368,13 +455,94 @@ class EvaluationComparisonReport(BaseModel):
             raise ValueError("limitations must be canonically sorted")
         return value
 
+    @field_validator("gate_results")
+    @classmethod
+    def _canonical_gate_results(
+        cls, value: tuple[EvaluationGateResult, ...]
+    ) -> tuple[EvaluationGateResult, ...]:
+        metrics = [gate.metric for gate in value]
+        if len(set(metrics)) != len(metrics):
+            raise ValueError("gate results must reference each metric at most once")
+        if value != tuple(sorted(value, key=lambda gate: gate.metric.value)):
+            raise ValueError("gate results must be canonically sorted by metric")
+        zero_tolerance = [
+            gate
+            for gate in value
+            if gate.metric == EvaluationMetricKind.INVALID_EVIDENCE_REFERENCE_RATE
+        ]
+        if len(zero_tolerance) != 1 or zero_tolerance[0].maximum != 0.0:
+            raise ValueError(
+                "gate results must record the zero-tolerance metric capped at 0.0"
+            )
+        return value
+
     @model_validator(mode="after")
-    def _acceptance_follows_predeclared_gate(self) -> EvaluationComparisonReport:
+    def _derived_fields_match_the_embedded_outcomes(
+        self,
+    ) -> EvaluationComparisonReport:
+        # 1. Confusion totals are the sums of their own system's matrix.
+        if self.baseline_confusion_total != sum(
+            count for _, _, count in self.baseline.confusion_matrix
+        ):
+            raise ValueError(
+                "baseline confusion total must equal its confusion matrix sum"
+            )
+        if self.candidate_confusion_total != sum(
+            count for _, _, count in self.candidate.confusion_matrix
+        ):
+            raise ValueError(
+                "candidate confusion total must equal its confusion matrix sum"
+            )
+
+        # 2. The improvement flag follows the scores, never a supplied Boolean.
+        improves = self.candidate.macro_f1 > self.baseline.macro_f1
+        if self.candidate_improves_macro_f1 != improves:
+            raise ValueError(
+                "candidate_improves_macro_f1 must match the embedded macro-F1 scores"
+            )
+
+        # 3. Zero-tolerance safety is derived from both embedded systems.
+        safety_failure = (
+            self.baseline.invalid_evidence_reference_rate > 0.0
+            or self.candidate.invalid_evidence_reference_rate > 0.0
+        )
+        if self.safety_failure != safety_failure:
+            raise ValueError(
+                "safety_failure must match the embedded invalid-reference rates"
+            )
+
+        # 4. Every recorded gate is recomputed from the candidate outcome.
+        for gate in self.gate_results:
+            observed = observed_metric_value(gate.metric, self.candidate)
+            if gate.observed_value != observed:
+                raise ValueError(
+                    "a gate's observed value must match the candidate outcome"
+                )
+            threshold = EvaluationMetricThreshold(
+                metric=gate.metric, minimum=gate.minimum, maximum=gate.maximum
+            )
+            should_pass = observed is not None and not threshold_violated(
+                threshold, observed
+            )
+            if gate.passed != should_pass:
+                raise ValueError("a gate's verdict must match its bounds")
+
+        # 5. Acceptance is the conjunction of its recorded parts, nothing else.
         if self.safety_failure and self.accepted:
             raise ValueError("a safety failure can never be accepted")
         if self.accepted and not self.candidate_improves_macro_f1:
             raise ValueError(
                 "acceptance requires the candidate to improve the predeclared metric"
+            )
+        expected_accepted = (
+            not safety_failure
+            and improves
+            and all(gate.passed for gate in self.gate_results)
+        )
+        if self.accepted != expected_accepted:
+            raise ValueError(
+                "accepted must equal the safety state, the baseline comparison "
+                "and every recorded gate verdict"
             )
         return self
 
