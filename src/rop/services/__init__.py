@@ -147,6 +147,8 @@ from rop.services.native_composition import (
     NativeCompositionContractError,
     NativeCompositionRule,
     NativeCompositionService,
+    NativeContradictionRule,
+    NativeEvidenceRequirement,
 )
 from rop.services.observation import ObservationService
 from rop.services.observation_extraction import ObservationExtractionService
@@ -593,6 +595,8 @@ __all__ = [
     "NativeCompositionContractError",
     "NativeCompositionRule",
     "NativeCompositionService",
+    "NativeContradictionRule",
+    "NativeEvidenceRequirement",
     "ObservationService",
     "ObservationExtractionService",
     "ALLOWED_BOUNDARY_OUTCOMES",

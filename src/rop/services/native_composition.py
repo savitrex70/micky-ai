@@ -1,12 +1,13 @@
 """Task 204 correction: deterministic native reasoning composition.
 
-Project-owned deterministic composition over validated Task 204
-request/evidence bindings. Consumes ``NativeEvidenceBinding`` and
-produces ``NativeReasoningResult``-shaped dictionaries using only
-supplied evidence and explicitly injected rules. No model, provider,
+Task 205: explicit contradiction, missing-information, and
+abstention semantics over validated Task 204 request/evidence
+bindings. Consumes ``NativeEvidenceBinding`` and produces
+``NativeReasoningResult``-shaped dictionaries using only supplied
+evidence and explicitly injected rules. No model, provider,
 network, persistence, training, or global mutable registry lives
-here, and none is needed: the default service (no rules registered)
-honestly abstains on every binding.
+here, and none is needed: the default service (no rules
+registered) honestly abstains on every binding.
 
 Rule model (explicit configuration, not hidden knowledge):
 
@@ -14,8 +15,8 @@ Rule model (explicit configuration, not hidden knowledge):
   construction. The shipped codebase registers no built-in rules,
   so no clinical or domain claim is manufactured here. Tests use
   synthetic task/rule identifiers.
-- A rule declares the single ``task_id`` it serves, a stable
-  ``rule_id``, a fixed uncertainty, and one explicit
+- A support rule declares the single ``task_id`` it serves, a
+  stable ``rule_id``, a fixed uncertainty, and one explicit
   ``NativeCompositionCondition``. The condition names the single
   evidence type the rule handles, the minimum number of justifying
   records required, and the exact content expectation. It is
@@ -31,27 +32,44 @@ Rule model (explicit configuration, not hidden knowledge):
   against an explicitly configured expectation is the narrowest
   content-level predicate available: it proves the validated bytes
   are exactly what the project configured, not that any clinical
-  claim is true. The finding therefore means "the configured
-  content expectation was met by exactly these records".
+  claim is true. Findings therefore mean "the configured content
+  expectation was met by exactly these records".
 - A ``SUPPORTED`` result references only the records satisfying
   the predicate. Present-but-unsatisfying records are excluded,
   never promoted to supporting evidence.
+- A contradiction rule (``NativeContradictionRule``) declares two
+  exact content expectations configured as mutually exclusive for
+  one task, plus the required evidence type and a per-side minimum
+  count. The Task 203 schema encodes no claim-level structure, so
+  incompatibility cannot be inferred from text: it is asserted by
+  explicit configuration and detected by byte-exact positive
+  matches on both sides. Different text alone never contradicts;
+  a missing, unreadable, or unbound side never contradicts.
+- A missing-information requirement (``NativeEvidenceRequirement``)
+  declares one symbolic requirement identifier, its task, the
+  required evidence type, and the exact content that would satisfy
+  it. An unmet requirement yields ``INSUFFICIENT`` with the stable
+  symbolic identifier; requirements never invent records.
+- Outcome precedence is fixed and documented: contradiction first
+  (an established finding about present evidence is reported, not
+  collapsed), then insufficiency (a configured necessary input is
+  absent), then support, then abstention. Each outcome carries only
+  the references its own justification establishes.
 - Anything else -- no matching rule, empty evidence, an uncovered
   type, unmet count, or no content match -- yields an explicit
   ``ABSTAINED`` result (``NO_JUSTIFIED_BASIS``), never a
-  fabricated conclusion. Contradiction handling and
-  missing-information policy belong to Task 205 and are not
-  implemented here.
+  fabricated conclusion.
 
-Configuration is locked at construction: the stored rule tuple
+Configuration is locked at construction: the stored rule tuples
 cannot be replaced afterwards, and there is no global registry,
 environment selection, or post-construction mutation path.
 
-Determinism: rule selection is first-match in registration order,
-output references preserve the binding's sorted order verbatim,
-and ``result_id`` is a UUID5 derived from the binding identity and
-the outcome, so equivalent inputs yield equivalent outputs with no
-timestamps, randomness, or process state.
+Determinism: rule selection is first-match in registration order
+within each phase, output references preserve the binding's sorted
+order verbatim, missing identifiers are sorted, and ``result_id``
+is a UUID5 derived from the binding identity and the outcome, so
+equivalent inputs yield equivalent outputs with no timestamps,
+randomness, or process state.
 """
 
 from __future__ import annotations
@@ -75,22 +93,52 @@ from rop.schemas.native_reasoning import (
 
 __all__ = [
     "ABSTAIN_UNCERTAINTY",
+    "INSUFFICIENT_UNCERTAINTY",
     "NativeCompositionCondition",
     "NativeCompositionContractError",
     "NativeCompositionRule",
     "NativeCompositionService",
+    "NativeContradictionRule",
+    "NativeEvidenceRequirement",
 ]
 
 # Identifier syntax mirrors the Task 202 request contract, which owns
 # identifier rules. The composition service does not invent syntax.
 _TASK_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _RULE_ID_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+_MISSING_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 ABSTAIN_UNCERTAINTY = 1.0
 """Uncertainty reported on abstained composition results."""
 
+INSUFFICIENT_UNCERTAINTY = 1.0
+"""Uncertainty reported on insufficient composition results.
+
+The unmet requirement is established, but the conclusion the
+requirement would support cannot be assessed: maximum uncertainty.
+"""
+
 _RESULT_ID_NAMESPACE = uuid.NAMESPACE_URL
 _RESULT_ID_DOMAIN = "native-composition-task-204"
+
+
+def _checked_uncertainty(value: object) -> float:
+    """Validate an uncertainty declaration and normalize its representation.
+
+    Rejects booleans, strings, non-numeric values, non-finite
+    values, and out-of-range values with a generic message.
+    Integer inputs are normalized to float so equivalent
+    configurations always compare and serialize identically.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError("uncertainty is invalid")
+    if not isinstance(value, (int, float)):
+        raise ValueError("uncertainty is invalid")
+    if not math.isfinite(value):
+        raise ValueError("uncertainty is invalid")
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("uncertainty is invalid")
+    return float(value)
 
 
 @dataclass(frozen=True)
@@ -168,14 +216,117 @@ class NativeCompositionRule:
             raise ValueError("task_id is invalid")
         if not isinstance(self.condition, NativeCompositionCondition):
             raise ValueError("condition is invalid")
-        if isinstance(self.uncertainty, bool) or isinstance(self.uncertainty, str):
-            raise ValueError("uncertainty is invalid")
-        if not isinstance(self.uncertainty, (int, float)):
-            raise ValueError("uncertainty is invalid")
-        if not math.isfinite(self.uncertainty):
-            raise ValueError("uncertainty is invalid")
-        if not 0.0 <= self.uncertainty <= 1.0:
-            raise ValueError("uncertainty is invalid")
+        object.__setattr__(self, "uncertainty", _checked_uncertainty(self.uncertainty))
+
+
+@dataclass(frozen=True)
+class NativeContradictionRule:
+    """One explicit deterministic contradiction rule (Task 205).
+
+    Declares two exact content expectations configured as mutually
+    exclusive for one task, the single evidence type either side
+    must have, a per-side minimum count, a stable ``rule_id``, and
+    a fixed uncertainty. Incompatibility is asserted by this
+    configuration -- never inferred from text difference -- and is
+    detected by byte-exact positive matches on both sides. A
+    missing, unreadable, or unbound side cannot contradict, and
+    the two expectations must differ so no record can satisfy both.
+    """
+
+    rule_id: str
+    task_id: str
+    affirming_content: str
+    denying_content: str
+    required_evidence_type: Literal["OBSERVATION", "ASSERTION"]
+    min_evidence_count: int
+    uncertainty: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.rule_id, str) or not _RULE_ID_RE.fullmatch(self.rule_id):
+            raise ValueError("rule_id is invalid")
+        if not isinstance(self.task_id, str) or not _TASK_ID_RE.fullmatch(self.task_id):
+            raise ValueError("task_id is invalid")
+        for field_name in ("affirming_content", "denying_content"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ValueError(f"{field_name} is invalid")
+            if not 1 <= len(value) <= MAX_CONTENT_LENGTH:
+                raise ValueError(f"{field_name} is invalid")
+        if self.affirming_content == self.denying_content:
+            raise ValueError("contradiction expectations must differ")
+        if self.required_evidence_type not in ("OBSERVATION", "ASSERTION"):
+            raise ValueError("required_evidence_type is invalid")
+        if isinstance(self.min_evidence_count, bool) or not isinstance(
+            self.min_evidence_count, int
+        ):
+            raise ValueError("min_evidence_count is invalid")
+        if not 1 <= self.min_evidence_count <= MAX_BINDING_RECORDS:
+            raise ValueError("min_evidence_count is invalid")
+        object.__setattr__(self, "uncertainty", _checked_uncertainty(self.uncertainty))
+
+    def matching_pair(
+        self, evidence: tuple[NativeEvidenceRecord, ...]
+    ) -> tuple[tuple[NativeEvidenceRecord, ...], tuple[NativeEvidenceRecord, ...]]:
+        """Select both contradiction sides, in binding order.
+
+        Returns ``(affirming, denying)`` record tuples. Only
+        validated records of the required type with byte-exact
+        matching content are selected on either side; anything else
+        is excluded. An empty side means no contradiction.
+        """
+        affirming: list[NativeEvidenceRecord] = []
+        denying: list[NativeEvidenceRecord] = []
+        for record in evidence:
+            if not isinstance(record, NativeEvidenceRecord):
+                continue
+            if record.evidence_type != self.required_evidence_type:
+                continue
+            if record.content_text == self.affirming_content:
+                affirming.append(record)
+            elif record.content_text == self.denying_content:
+                denying.append(record)
+        return tuple(affirming), tuple(denying)
+
+
+@dataclass(frozen=True)
+class NativeEvidenceRequirement:
+    """One explicit missing-information requirement (Task 205).
+
+    Declares a stable symbolic ``requirement_id`` (reported in
+    ``missing_information_ids`` when unmet), its task, the required
+    evidence type, and the exact content that would satisfy it.
+    Satisfied only by a validated bound record of the required type
+    with byte-exact matching content; nothing is invented when the
+    requirement is unmet.
+    """
+
+    requirement_id: str
+    task_id: str
+    required_evidence_type: Literal["OBSERVATION", "ASSERTION"]
+    expected_content: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.requirement_id, str) or not _MISSING_ID_RE.fullmatch(
+            self.requirement_id
+        ):
+            raise ValueError("requirement_id is invalid")
+        if not isinstance(self.task_id, str) or not _TASK_ID_RE.fullmatch(self.task_id):
+            raise ValueError("task_id is invalid")
+        if self.required_evidence_type not in ("OBSERVATION", "ASSERTION"):
+            raise ValueError("required_evidence_type is invalid")
+        if not isinstance(self.expected_content, str):
+            raise ValueError("expected_content is invalid")
+        if not 1 <= len(self.expected_content) <= MAX_CONTENT_LENGTH:
+            raise ValueError("expected_content is invalid")
+
+    def satisfied_by(self, evidence: tuple[NativeEvidenceRecord, ...]) -> bool:
+        """Return True when a validated record satisfies this requirement."""
+        return any(
+            isinstance(record, NativeEvidenceRecord)
+            and record.evidence_type == self.required_evidence_type
+            and record.content_text == self.expected_content
+            for record in evidence
+        )
 
 
 class NativeCompositionContractError(Exception):
@@ -202,7 +353,9 @@ class NativeCompositionService:
     cannot be replaced afterwards.
     """
 
-    _LOCKED_ATTRS = frozenset({"_rules", "_rules_locked"})
+    _LOCKED_ATTRS = frozenset(
+        {"_rules", "_contradiction_rules", "_requirements", "_rules_locked"}
+    )
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in self._LOCKED_ATTRS and self.__dict__.get("_rules_locked", False):
@@ -214,37 +367,72 @@ class NativeCompositionService:
     def __init__(
         self,
         rules: Sequence[NativeCompositionRule] | NativeCompositionRule | None = None,
+        contradiction_rules: (
+            Sequence[NativeContradictionRule] | NativeContradictionRule | None
+        ) = None,
+        requirements: (
+            Sequence[NativeEvidenceRequirement] | NativeEvidenceRequirement | None
+        ) = None,
     ) -> None:
-        if rules is None:
-            collected: tuple[NativeCompositionRule, ...] = ()
-        elif isinstance(rules, NativeCompositionRule):
-            collected = (rules,)
-        else:
-            try:
-                collected = tuple(rules)
-            except TypeError as exc:
-                raise NativeCompositionContractError(
-                    "INVALID_RULES", "composition rules are invalid"
-                ) from exc
-        for rule in collected:
-            if not isinstance(rule, NativeCompositionRule):
-                raise NativeCompositionContractError(
-                    "INVALID_RULES", "composition rules are invalid"
-                )
+        self._rules = self._checked_rules(rules, NativeCompositionRule, "INVALID_RULES")
+        contradictions = self._checked_rules(
+            contradiction_rules, NativeContradictionRule, "INVALID_RULES"
+        )
+        required = self._checked_rules(
+            requirements, NativeEvidenceRequirement, "INVALID_REQUIREMENTS"
+        )
         seen: set[str] = set()
-        for rule in collected:
+        for rule in (*self._rules, *contradictions):
             if rule.rule_id in seen:
                 raise NativeCompositionContractError(
                     "INVALID_RULES", "composition rules are invalid"
                 )
             seen.add(rule.rule_id)
-        self._rules = collected
+        seen_requirements: set[str] = set()
+        for requirement in required:
+            if requirement.requirement_id in seen_requirements:
+                raise NativeCompositionContractError(
+                    "INVALID_REQUIREMENTS", "composition requirements are invalid"
+                )
+            seen_requirements.add(requirement.requirement_id)
+        self._contradiction_rules = contradictions
+        self._requirements = required
         self._rules_locked = True
+
+    @staticmethod
+    def _checked_rules(rules: object, kind: type, invariant: str) -> tuple:  # type: ignore[type-arg]
+        """Normalize one explicit rule collection, rejecting anything else."""
+        if rules is None:
+            return ()
+        if isinstance(rules, kind):
+            return (rules,)
+        try:
+            collected = tuple(rules)  # type: ignore[arg-type]
+        except TypeError as exc:
+            raise NativeCompositionContractError(
+                invariant, "composition configuration is invalid"
+            ) from exc
+        for rule in collected:
+            if not isinstance(rule, kind):
+                raise NativeCompositionContractError(
+                    invariant, "composition configuration is invalid"
+                )
+        return collected
 
     @property
     def rules(self) -> tuple[NativeCompositionRule, ...]:
-        """The explicitly configured rules, in registration order."""
+        """The explicitly configured support rules, in registration order."""
         return self._rules
+
+    @property
+    def contradiction_rules(self) -> tuple[NativeContradictionRule, ...]:
+        """The explicitly configured contradiction rules, in order."""
+        return self._contradiction_rules
+
+    @property
+    def requirements(self) -> tuple[NativeEvidenceRequirement, ...]:
+        """The explicitly configured missing-information requirements, in order."""
+        return self._requirements
 
     def compose(
         self, binding: NativeEvidenceBinding | Mapping[str, Any]
@@ -253,11 +441,18 @@ class NativeCompositionService:
 
         Accepts a ``NativeEvidenceBinding`` or its JSON-compatible
         mapping form. Returns the ``NativeReasoningResult`` contract
-        as a JSON-mode dictionary. Raises
-        ``NativeCompositionContractError`` for invalid inputs instead
-        of repairing them.
+        as a JSON-mode dictionary. Outcome precedence is fixed:
+        contradiction, then insufficiency, then support, then
+        abstention. Raises ``NativeCompositionContractError`` for
+        invalid inputs instead of repairing them.
         """
         validated = self._validated_binding(binding)
+        contradicted = self._contradicted_result(validated)
+        if contradicted is not None:
+            return contradicted
+        insufficient = self._insufficient_result(validated)
+        if insufficient is not None:
+            return insufficient
         rule = self._select_rule(validated)
         if rule is not None:
             matched = rule.condition.matching(validated.evidence)
@@ -289,6 +484,112 @@ class NativeCompositionService:
                 return rule
         return None
 
+    def _contradicted_result(
+        self, binding: NativeEvidenceBinding
+    ) -> dict[str, Any] | None:
+        """Return a contradiction result for the first satisfied pair rule."""
+        for rule in self._contradiction_rules:
+            if rule.task_id != binding.request.task_id:
+                continue
+            affirming, denying = rule.matching_pair(binding.evidence)
+            if len(affirming) < rule.min_evidence_count:
+                continue
+            if len(denying) < rule.min_evidence_count:
+                continue
+            return self._contradiction_result(binding, rule, affirming, denying)
+        return None
+
+    def _insufficient_result(
+        self, binding: NativeEvidenceBinding
+    ) -> dict[str, Any] | None:
+        """Return an insufficiency result when a configured requirement is unmet."""
+        task_requirements = [
+            requirement
+            for requirement in self._requirements
+            if requirement.task_id == binding.request.task_id
+        ]
+        if not task_requirements:
+            return None
+        unmet = sorted(
+            requirement.requirement_id
+            for requirement in task_requirements
+            if not requirement.satisfied_by(binding.evidence)
+        )
+        if not unmet:
+            return None
+        met_contents = {
+            (requirement.required_evidence_type, requirement.expected_content)
+            for requirement in task_requirements
+            if requirement.satisfied_by(binding.evidence)
+        }
+        supporting = tuple(
+            record.evidence_id
+            for record in binding.evidence
+            if (record.evidence_type, record.content_text) in met_contents
+        )
+        request = binding.request
+        return self._build_result(
+            request_id=request.request_id,
+            session_id=request.session_id,
+            context_fingerprint=request.context_fingerprint,
+            status="INSUFFICIENT",
+            reason_code="EVIDENCE_MISSING",
+            uncertainty=INSUFFICIENT_UNCERTAINTY,
+            supporting=supporting,
+            contradicting=(),
+            missing=tuple(unmet),
+            rule_id=None,
+            result_tag="|".join(
+                [
+                    str(request.request_id),
+                    str(request.session_id),
+                    request.context_fingerprint,
+                    request.task_id,
+                    "insufficient",
+                    ",".join(unmet),
+                    ",".join(str(value) for value in supporting),
+                ]
+            ),
+        )
+
+    def _contradiction_result(
+        self,
+        binding: NativeEvidenceBinding,
+        rule: NativeContradictionRule,
+        affirming: tuple[NativeEvidenceRecord, ...],
+        denying: tuple[NativeEvidenceRecord, ...],
+    ) -> dict[str, Any]:
+        request = binding.request
+        supporting = tuple(record.evidence_id for record in affirming)
+        contradicting = tuple(record.evidence_id for record in denying)
+        return self._build_result(
+            request_id=request.request_id,
+            session_id=request.session_id,
+            context_fingerprint=request.context_fingerprint,
+            status="CONTRADICTED",
+            reason_code="RULE_CONTRADICTION_FOUND",
+            uncertainty=rule.uncertainty,
+            supporting=supporting,
+            contradicting=contradicting,
+            missing=(),
+            rule_id=rule.rule_id,
+            result_tag="|".join(
+                [
+                    str(request.request_id),
+                    str(request.session_id),
+                    request.context_fingerprint,
+                    request.task_id,
+                    rule.rule_id,
+                    rule.required_evidence_type,
+                    str(rule.min_evidence_count),
+                    rule.affirming_content,
+                    rule.denying_content,
+                    ",".join(str(value) for value in supporting),
+                    ",".join(str(value) for value in contradicting),
+                ]
+            ),
+        )
+
     def _abstained_result(self, binding: NativeEvidenceBinding) -> dict[str, Any]:
         request = binding.request
         supplied = sorted(str(record.evidence_id) for record in binding.evidence)
@@ -300,6 +601,8 @@ class NativeCompositionService:
             reason_code="NO_JUSTIFIED_BASIS",
             uncertainty=ABSTAIN_UNCERTAINTY,
             supporting=(),
+            contradicting=(),
+            missing=(),
             rule_id=None,
             result_tag="|".join(
                 [
@@ -329,6 +632,8 @@ class NativeCompositionService:
             reason_code="RULE_MATCH",
             uncertainty=rule.uncertainty,
             supporting=supporting,
+            contradicting=(),
+            missing=(),
             rule_id=rule.rule_id,
             result_tag="|".join(
                 [
@@ -351,10 +656,17 @@ class NativeCompositionService:
         request_id: UUID,
         session_id: UUID,
         context_fingerprint: str,
-        status: Literal["SUPPORTED", "ABSTAINED"],
-        reason_code: Literal["RULE_MATCH", "NO_JUSTIFIED_BASIS"],
+        status: Literal["SUPPORTED", "CONTRADICTED", "INSUFFICIENT", "ABSTAINED"],
+        reason_code: Literal[
+            "RULE_MATCH",
+            "RULE_CONTRADICTION_FOUND",
+            "EVIDENCE_MISSING",
+            "NO_JUSTIFIED_BASIS",
+        ],
         uncertainty: float,
         supporting: tuple[UUID, ...],
+        contradicting: tuple[UUID, ...],
+        missing: tuple[str, ...],
         rule_id: str | None,
         result_tag: str,
     ) -> dict[str, Any]:
@@ -371,8 +683,8 @@ class NativeCompositionService:
                     "reason_code": reason_code,
                     "uncertainty": uncertainty,
                     "supporting_evidence_ids": list(supporting),
-                    "contradicting_evidence_ids": [],
-                    "missing_information_ids": [],
+                    "contradicting_evidence_ids": list(contradicting),
+                    "missing_information_ids": list(missing),
                     "rule_id": rule_id,
                     "suggestion_text": None,
                     "result_source": NATIVE_REASONING_RESULT_SOURCE_TASK_202,

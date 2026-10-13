@@ -1,4 +1,4 @@
-"""Task 204 correction: deterministic composition tests.
+"""Task 204 correction and Task 205 composition semantics tests.
 
 Behavioral tests over synthetic fixtures. No model, provider,
 network, database, or clinical content.
@@ -29,11 +29,17 @@ from rop.services.native_composition import (
     NativeCompositionContractError,
     NativeCompositionRule,
     NativeCompositionService,
+    NativeContradictionRule,
+    NativeEvidenceRequirement,
 )
 
 _FP = "d" * 64
 _TASK = "synthetic-composition-test-v1"
 _RULE = "synthetic-rule-v1"
+_PAIR_TASK = "synthetic-contradiction-test-v1"
+_PAIR_RULE = "synthetic-contradiction-rule-v1"
+_CONTENT_A = "synthetic flag present"
+_CONTENT_B = "synthetic flag absent"
 
 
 def _condition(**overrides):  # type: ignore[no-untyped-def]
@@ -57,26 +63,55 @@ def _rule(**overrides):  # type: ignore[no-untyped-def]
     return NativeCompositionRule(**base)  # type: ignore[arg-type]
 
 
+def _pair_rule(**overrides):  # type: ignore[no-untyped-def]
+    base = {
+        "rule_id": _PAIR_RULE,
+        "task_id": _PAIR_TASK,
+        "affirming_content": _CONTENT_A,
+        "denying_content": _CONTENT_B,
+        "required_evidence_type": "OBSERVATION",
+        "min_evidence_count": 1,
+        "uncertainty": 0.3,
+    }
+    base.update(overrides)
+    return NativeContradictionRule(**base)  # type: ignore[arg-type]
+
+
+def _requirement(**overrides):  # type: ignore[no-untyped-def]
+    base = {
+        "requirement_id": "consent-record",
+        "task_id": _TASK,
+        "required_evidence_type": "OBSERVATION",
+        "expected_content": "synthetic consent text",
+    }
+    base.update(overrides)
+    return NativeEvidenceRequirement(**base)  # type: ignore[arg-type]
+
+
 def _binding(
     task_id: str = _TASK,
     evidence_type: str = "OBSERVATION",
     count: int = 2,
     contents: list[str] | None = None,
+    types: list[str] | None = None,
 ) -> NativeEvidenceBinding:
     session_id = uuid4()
     default_content = "normalized observation text"
     ids = sorted([uuid4() for _ in range(count)], key=str)
     if contents is None:
         contents = [default_content] * count
+    if types is None:
+        types = [evidence_type] * count
     assert len(contents) == count
+    assert len(types) == count
     records = []
-    for value, content in zip(ids, contents, strict=True):
+    for value, content, kind in zip(ids, contents, types, strict=True):
         records.append(
             {
                 "evidence_id": str(value),
                 "session_id": session_id,
                 "context_fingerprint": _FP,
-                "evidence_type": evidence_type,
+                "evidence_type": kind,
                 "source_reference": "chart:encounter-123",
                 "provenance_id": "prov-001",
                 "content_text": content,
@@ -392,3 +427,359 @@ def test_binding_behavior_intact() -> None:
     tampered["evidence"][0]["session_id"] = str(uuid4())
     with pytest.raises(ValidationError):
         NativeEvidenceBinding.model_validate(tampered)
+
+
+# --- Task 205: contradiction semantics ---
+
+
+def test_configured_pair_produces_contradicted() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    binding = _binding(task_id=_PAIR_TASK, count=2, contents=[_CONTENT_A, _CONTENT_B])
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "CONTRADICTED"
+    assert result.reason_code == "RULE_CONTRADICTION_FOUND"
+    assert result.rule_id == _PAIR_RULE
+    assert result.uncertainty == 0.3
+    assert result.missing_information_ids == ()
+    affirming = {
+        str(record.evidence_id)
+        for record in binding.evidence
+        if record.content_text == _CONTENT_A
+    }
+    denying = {
+        str(record.evidence_id)
+        for record in binding.evidence
+        if record.content_text == _CONTENT_B
+    }
+    assert {str(value) for value in result.supporting_evidence_ids} == affirming
+    assert {str(value) for value in result.contradicting_evidence_ids} == denying
+    assert affirming and denying
+    assert not (
+        {str(value) for value in result.supporting_evidence_ids}
+        & {str(value) for value in result.contradicting_evidence_ids}
+    )
+
+
+def test_contradiction_excludes_unrelated_evidence() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    binding = _binding(
+        task_id=_PAIR_TASK,
+        count=3,
+        contents=[_CONTENT_A, "unrelated text", _CONTENT_B],
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "CONTRADICTED"
+    assert len(result.supporting_evidence_ids) == 1
+    assert len(result.contradicting_evidence_ids) == 1
+    assert len(binding.evidence) == 3
+
+
+def test_contradiction_is_stable() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    binding = _binding(task_id=_PAIR_TASK, count=2, contents=[_CONTENT_A, _CONTENT_B])
+    assert service.compose(binding) == service.compose(binding)
+
+
+def test_different_text_alone_is_not_contradiction() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    binding = _binding(
+        task_id=_PAIR_TASK, count=2, contents=["unrelated text a", "unrelated text b"]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status != "CONTRADICTED"
+    assert result.status == "ABSTAINED"
+    assert result.supporting_evidence_ids == ()
+    assert result.contradicting_evidence_ids == ()
+
+
+def test_missing_side_is_not_contradiction() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    one_sided = NativeReasoningResult.model_validate(
+        service.compose(_binding(task_id=_PAIR_TASK, count=1, contents=[_CONTENT_A]))
+    )
+    assert one_sided.status != "CONTRADICTED"
+    assert one_sided.status == "ABSTAINED"
+
+
+def test_unreadable_side_is_not_contradiction() -> None:
+    session_id = uuid4()
+    content = _CONTENT_A
+    affirming_id = uuid4()
+    unreadable_id = uuid4()
+    ids = sorted([affirming_id, unreadable_id], key=str)
+    by_id = {affirming_id: content, unreadable_id: ""}
+    digests = {
+        affirming_id: compute_native_evidence_digest(content),
+        unreadable_id: compute_native_evidence_digest(""),
+    }
+    availability = {affirming_id: "AVAILABLE", unreadable_id: "UNREADABLE"}
+    binding = NativeEvidenceBinding.model_validate(
+        {
+            "request": {
+                "request_id": uuid4(),
+                "session_id": session_id,
+                "context_fingerprint": _FP,
+                "task_id": _PAIR_TASK,
+                "evidence_ids": [str(value) for value in ids],
+                "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
+            },
+            "evidence": [
+                {
+                    "evidence_id": str(value),
+                    "session_id": session_id,
+                    "context_fingerprint": _FP,
+                    "evidence_type": "OBSERVATION",
+                    "source_reference": "chart:encounter-123",
+                    "provenance_id": "prov-001",
+                    "content_text": by_id[value],
+                    "content_digest": digests[value],
+                    "availability": availability[value],
+                    "uncertainty": 0.2,
+                    "evidence_source": NATIVE_EVIDENCE_SOURCE_TASK_203,
+                }
+                for value in ids
+            ],
+            "binding_source": NATIVE_BINDING_SOURCE_TASK_204,
+        }
+    )
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status != "CONTRADICTED"
+    assert result.status == "ABSTAINED"
+
+
+def test_contradiction_takes_precedence_over_support() -> None:
+    service = NativeCompositionService(
+        rules=[
+            NativeCompositionRule(
+                rule_id=_RULE,
+                task_id=_PAIR_TASK,
+                condition=NativeCompositionCondition(
+                    required_evidence_type="OBSERVATION",
+                    min_evidence_count=1,
+                    expected_content=_CONTENT_A,
+                ),
+                uncertainty=0.2,
+            )
+        ],
+        contradiction_rules=[_pair_rule()],
+    )
+    binding = _binding(task_id=_PAIR_TASK, count=2, contents=[_CONTENT_A, _CONTENT_B])
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "CONTRADICTED"
+    assert result.rule_id == _PAIR_RULE
+
+
+def test_contradiction_references_are_unique_ordered_disjoint() -> None:
+    service = NativeCompositionService(
+        contradiction_rules=[_pair_rule(min_evidence_count=2)]
+    )
+    binding = _binding(
+        task_id=_PAIR_TASK,
+        count=4,
+        contents=[_CONTENT_A, _CONTENT_B, _CONTENT_A, _CONTENT_B],
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "CONTRADICTED"
+    supporting = [str(value) for value in result.supporting_evidence_ids]
+    contradicting = [str(value) for value in result.contradicting_evidence_ids]
+    assert len(supporting) == len(set(supporting)) == 2
+    assert len(contradicting) == len(set(contradicting)) == 2
+    assert supporting == sorted(supporting)
+    assert contradicting == sorted(contradicting)
+    assert not (set(supporting) & set(contradicting))
+
+
+def test_invalid_contradiction_configuration_fails_closed() -> None:
+    with pytest.raises(ValueError):
+        _pair_rule(affirming_content="same", denying_content="same")
+    with pytest.raises(ValueError):
+        _pair_rule(affirming_content="")
+    with pytest.raises(ValueError):
+        _pair_rule(denying_content="x" * 2001)
+    with pytest.raises(ValueError):
+        _pair_rule(required_evidence_type="DIAGNOSIS")  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _pair_rule(min_evidence_count=0)
+    with pytest.raises(ValueError):
+        _pair_rule(uncertainty="0.3")  # type: ignore[dict-item]
+    with pytest.raises(NativeCompositionContractError):
+        NativeCompositionService(
+            rules=[_rule()], contradiction_rules=[_pair_rule(rule_id=_RULE)]
+        )
+    with pytest.raises(NativeCompositionContractError):
+        NativeCompositionService(contradiction_rules=["not-a-rule"])  # type: ignore[list-item]
+
+
+# --- Task 205: missing-information semantics ---
+
+
+def test_absent_requirement_produces_insufficient() -> None:
+    service = NativeCompositionService(requirements=[_requirement()])
+    result = NativeReasoningResult.model_validate(service.compose(_binding()))
+    assert result.status == "INSUFFICIENT"
+    assert result.reason_code == "EVIDENCE_MISSING"
+    assert result.missing_information_ids == ("consent-record",)
+    assert result.contradicting_evidence_ids == ()
+    assert result.rule_id is None
+
+
+def test_missing_identifiers_are_valid_deterministic_unique_ordered() -> None:
+    service = NativeCompositionService(
+        requirements=[
+            _requirement(requirement_id="zeta-record"),
+            _requirement(requirement_id="alpha-record", expected_content="other text"),
+        ]
+    )
+    binding = _binding()
+    first = NativeReasoningResult.model_validate(service.compose(binding))
+    second = NativeReasoningResult.model_validate(service.compose(binding))
+    assert first.missing_information_ids == ("alpha-record", "zeta-record")
+    assert first.missing_information_ids == second.missing_information_ids
+    assert first == second
+
+
+def test_present_evidence_not_falsely_missing() -> None:
+    service = NativeCompositionService(
+        rules=[_rule()],
+        requirements=[_requirement(expected_content="normalized observation text")],
+    )
+    result = NativeReasoningResult.model_validate(service.compose(_binding()))
+    assert result.status == "SUPPORTED"
+    assert result.missing_information_ids == ()
+
+
+def test_missing_information_is_not_contradiction() -> None:
+    service = NativeCompositionService(
+        contradiction_rules=[_pair_rule()], requirements=[_requirement()]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(_binding()))
+    assert result.status == "INSUFFICIENT"
+    assert result.reason_code == "EVIDENCE_MISSING"
+
+
+def test_insufficiency_takes_precedence_over_support() -> None:
+    service = NativeCompositionService(rules=[_rule()], requirements=[_requirement()])
+    result = NativeReasoningResult.model_validate(service.compose(_binding()))
+    assert result.status == "INSUFFICIENT"
+    assert result.missing_information_ids == ("consent-record",)
+
+
+def test_empty_binding_without_requirement_abstains() -> None:
+    service = NativeCompositionService(requirements=[_requirement()])
+    session_id = uuid4()
+    binding = NativeEvidenceBinding.model_validate(
+        {
+            "request": {
+                "request_id": uuid4(),
+                "session_id": session_id,
+                "context_fingerprint": _FP,
+                "task_id": "unlisted-task-v1",
+                "evidence_ids": [],
+                "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
+            },
+            "evidence": [],
+            "binding_source": NATIVE_BINDING_SOURCE_TASK_204,
+        }
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "ABSTAINED"
+
+
+def test_empty_binding_with_requirement_is_insufficient() -> None:
+    service = NativeCompositionService(requirements=[_requirement()])
+    session_id = uuid4()
+    binding = NativeEvidenceBinding.model_validate(
+        {
+            "request": {
+                "request_id": uuid4(),
+                "session_id": session_id,
+                "context_fingerprint": _FP,
+                "task_id": _TASK,
+                "evidence_ids": [],
+                "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
+            },
+            "evidence": [],
+            "binding_source": NATIVE_BINDING_SOURCE_TASK_204,
+        }
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "INSUFFICIENT"
+    assert result.missing_information_ids == ("consent-record",)
+    assert result.supporting_evidence_ids == ()
+
+
+def test_detached_references_follow_binding_behavior() -> None:
+    service = NativeCompositionService(requirements=[_requirement()])
+    binding = _binding().model_dump(mode="json")
+    binding["request"]["evidence_ids"] = [str(uuid4())]
+    with pytest.raises(NativeCompositionContractError):
+        service.compose(binding)
+
+
+def test_invalid_requirement_configuration_fails_closed() -> None:
+    with pytest.raises(ValueError):
+        _requirement(requirement_id="has space")
+    with pytest.raises(ValueError):
+        _requirement(requirement_id="")
+    with pytest.raises(ValueError):
+        _requirement(task_id="")
+    with pytest.raises(ValueError):
+        _requirement(expected_content="")
+    with pytest.raises(ValueError):
+        _requirement(required_evidence_type="DIAGNOSIS")  # type: ignore[dict-item]
+    with pytest.raises(NativeCompositionContractError):
+        NativeCompositionService(requirements=[_requirement(), _requirement()])
+    with pytest.raises(NativeCompositionContractError):
+        NativeCompositionService(requirements=["not-a-requirement"])  # type: ignore[list-item]
+
+
+# --- Task 205: abstention semantics ---
+
+
+def test_ambiguous_free_text_abstains_without_relation() -> None:
+    service = NativeCompositionService(contradiction_rules=[_pair_rule()])
+    binding = _binding(
+        task_id=_PAIR_TASK, count=2, contents=["ambiguous claim a", "ambiguous claim b"]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "ABSTAINED"
+    assert result.reason_code == "NO_JUSTIFIED_BASIS"
+    assert result.supporting_evidence_ids == ()
+    assert result.contradicting_evidence_ids == ()
+    assert result.missing_information_ids == ()
+    assert result.rule_id is None
+
+
+def test_abstention_results_are_deterministic() -> None:
+    service = NativeCompositionService()
+    binding = _binding()
+    assert service.compose(binding) == service.compose(binding)
+
+
+def test_extended_configuration_remains_immutable() -> None:
+    contradictions = [_pair_rule()]
+    required = [_requirement()]
+    service = NativeCompositionService(
+        contradiction_rules=contradictions, requirements=required
+    )
+    contradictions.append(_pair_rule(rule_id="synthetic-contradiction-rule-v2"))
+    required.append(_requirement(requirement_id="other-record"))
+    assert len(service.contradiction_rules) == 1
+    assert len(service.requirements) == 1
+    with pytest.raises(NativeCompositionContractError):
+        service._contradiction_rules = ()  # type: ignore[attr-defined]
+    with pytest.raises(NativeCompositionContractError):
+        service._requirements = ()  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        service.contradiction_rules = ()  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        service.requirements = ()  # type: ignore[misc]
+
+
+def test_integer_uncertainty_normalizes_to_float() -> None:
+    rule = _rule(uncertainty=1)
+    assert rule.uncertainty == 1.0
+    assert isinstance(rule.uncertainty, float)
+    pair = _pair_rule(uncertainty=0)
+    assert pair.uncertainty == 0.0
