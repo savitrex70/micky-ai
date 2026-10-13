@@ -63,6 +63,14 @@ class VocabularyMetadata(BaseModel):
     dataset; only ``synthetic-test-only`` exists today. Token
     strings necessarily appear in the vocabulary artifact itself;
     training records are never copied into metadata.
+
+    ``metadata_integrity_hash`` is a SHA-256 over the canonical
+    metadata representation (sorted-key compact JSON) covering all
+    security- and audit-relevant fields except itself. The canonical
+    fields are: vocabulary_version, tokenizer_version, policy_version,
+    tokenizer_config_hash, reserved_tokens, vocabulary_size,
+    max_vocab_size, min_frequency, vocabulary_hash, dataset_id,
+    dataset_integrity_hash, split_assignment_hash, data_scope.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -80,6 +88,7 @@ class VocabularyMetadata(BaseModel):
     dataset_integrity_hash: str = Field(min_length=64, max_length=64)
     split_assignment_hash: str = Field(min_length=64, max_length=64)
     data_scope: Literal["synthetic-test-only"]
+    metadata_integrity_hash: str = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def _strict_metadata(self) -> VocabularyMetadata:
@@ -90,6 +99,7 @@ class VocabularyMetadata(BaseModel):
             "vocabulary_hash",
             "dataset_integrity_hash",
             "split_assignment_hash",
+            "metadata_integrity_hash",
         ):
             if not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
                 raise ValueError(f"{name} is invalid")

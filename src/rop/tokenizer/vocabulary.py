@@ -93,6 +93,30 @@ def _canonical_vocab_dict(tokens: tuple[str, ...]) -> dict[str, Any]:
     return {"vocabulary_version": VOCABULARY_VERSION, "tokens": list(tokens)}
 
 
+def _canonical_metadata_dict(metadata: VocabularyMetadata) -> dict[str, Any]:
+    """Canonical metadata representation (v1.0) for integrity hashing.
+
+    Covers all security- and audit-relevant metadata fields except
+    the metadata_integrity_hash itself. Field order is fixed by
+    sorted-key JSON serialization.
+    """
+    return {
+        "vocabulary_version": metadata.vocabulary_version,
+        "tokenizer_version": metadata.tokenizer_version,
+        "policy_version": metadata.policy_version,
+        "tokenizer_config_hash": metadata.tokenizer_config_hash,
+        "reserved_tokens": list(metadata.reserved_tokens),
+        "vocabulary_size": metadata.vocabulary_size,
+        "max_vocab_size": metadata.max_vocab_size,
+        "min_frequency": metadata.min_frequency,
+        "vocabulary_hash": metadata.vocabulary_hash,
+        "dataset_id": metadata.dataset_id,
+        "dataset_integrity_hash": metadata.dataset_integrity_hash,
+        "split_assignment_hash": metadata.split_assignment_hash,
+        "data_scope": metadata.data_scope,
+    }
+
+
 def _canonical_hash(canonical: dict[str, Any]) -> str:
     """SHA-256 over sorted-key compact JSON (Task 104 scheme)."""
     return hashlib.sha256(
@@ -165,20 +189,39 @@ def build_vocabulary(
     if settings.max_vocab_size is not None:
         eligible = eligible[: max(0, settings.max_vocab_size - len(RESERVED_TOKENS))]
     tokens = tuple(RESERVED_TOKENS) + tuple(eligible)
+    vocabulary_hash = _canonical_hash(_canonical_vocab_dict(tokens))
+    tokenizer_config_hash = _canonical_hash(_canonical_config_dict(config))
+    metadata_dict_for_hash = {
+        "vocabulary_version": VOCABULARY_VERSION,
+        "tokenizer_version": TOKENIZER_VERSION,
+        "policy_version": VOCABULARY_POLICY_VERSION,
+        "tokenizer_config_hash": tokenizer_config_hash,
+        "reserved_tokens": list(RESERVED_TOKENS),
+        "vocabulary_size": len(tokens),
+        "max_vocab_size": settings.max_vocab_size,
+        "min_frequency": settings.min_frequency,
+        "vocabulary_hash": vocabulary_hash,
+        "dataset_id": manifest.dataset_id,
+        "dataset_integrity_hash": manifest.record_integrity_hash,
+        "split_assignment_hash": result.split_manifest.assignment_hash,
+        "data_scope": "synthetic-test-only",
+    }
+    metadata_integrity_hash = _canonical_hash(metadata_dict_for_hash)
     metadata = VocabularyMetadata(
         vocabulary_version=VOCABULARY_VERSION,
         tokenizer_version=TOKENIZER_VERSION,
         policy_version=VOCABULARY_POLICY_VERSION,
-        tokenizer_config_hash=_canonical_hash(_canonical_config_dict(config)),
+        tokenizer_config_hash=tokenizer_config_hash,
         reserved_tokens=tuple(RESERVED_TOKENS),
         vocabulary_size=len(tokens),
         max_vocab_size=settings.max_vocab_size,
         min_frequency=settings.min_frequency,
-        vocabulary_hash=_canonical_hash(_canonical_vocab_dict(tokens)),
+        vocabulary_hash=vocabulary_hash,
         dataset_id=manifest.dataset_id,
         dataset_integrity_hash=manifest.record_integrity_hash,
         split_assignment_hash=result.split_manifest.assignment_hash,
         data_scope="synthetic-test-only",
+        metadata_integrity_hash=metadata_integrity_hash,
     )
     return Vocabulary(metadata=metadata, tokens=tokens)
 
@@ -190,11 +233,11 @@ def verify_vocabulary(
 ) -> None:
     """Independently verify a vocabulary object (Task 208).
 
-    Always recomputes the vocabulary hash from the tokens; never
-    trusts a caller-supplied hash. With a tokenizer configuration
-    supplied, additionally verifies the recorded configuration
-    hash. Raises a typed error for any mismatch; returns ``None``
-    when valid.
+    Always recomputes the vocabulary hash from the tokens and the
+    metadata integrity hash from the metadata fields; never trusts
+    caller-supplied hashes. With a tokenizer configuration supplied,
+    additionally verifies the recorded configuration hash. Raises a
+    typed error for any mismatch; returns ``None`` when valid.
     """
     if not isinstance(vocabulary, Vocabulary):
         raise TokenizerError("INCOMPATIBLE_VOCABULARY", "vocabulary is invalid")
@@ -203,6 +246,11 @@ def verify_vocabulary(
         != vocabulary.metadata.vocabulary_hash
     ):
         raise TokenizerError("HASH_MISMATCH", "vocabulary hash does not match")
+    expected_metadata_hash = _canonical_hash(
+        _canonical_metadata_dict(vocabulary.metadata)
+    )
+    if expected_metadata_hash != vocabulary.metadata.metadata_integrity_hash:
+        raise TokenizerError("HASH_MISMATCH", "metadata integrity hash does not match")
     if tokenizer_config is not None:
         config = _checked_config(tokenizer_config)
         if (

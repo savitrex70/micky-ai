@@ -483,3 +483,158 @@ def test_policy_versions_and_no_network_dependency() -> None:
         "urllib",
     }
     assert not (imported & forbidden)
+    package = pathlib.Path(__file__).parent.parent / "src" / "rop" / "tokenizer"
+    imported: set[str] = set()
+    for name in ("__init__.py", "tokenizer.py", "vocabulary.py"):
+        for line in (package / name).read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("import "):
+                imported.add(stripped.split()[1].split(".")[0])
+            elif stripped.startswith("from "):
+                imported.add(stripped.split()[1].split(".")[0])
+    forbidden = {
+        "anthropic",
+        "gemini",
+        "httpx",
+        "ollama",
+        "openai",
+        "os",
+        "requests",
+        "sklearn",
+        "socket",
+        "subprocess",
+        "torch",
+        "transformers",
+        "urllib",
+    }
+    assert not (imported & forbidden)
+
+
+# --- metadata integrity ---
+
+
+def test_metadata_integrity_hash_verified() -> None:
+    """A valid vocabulary passes metadata integrity verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    verify_vocabulary(vocab)  # no config provided
+    verify_vocabulary(vocab, tokenizer_config=CONFIG)  # with config
+
+
+def test_metadata_integrity_tamper_dataset_id_fails() -> None:
+    """Changing dataset_id while preserving other hashes fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["dataset_id"] = "different-dataset-id"
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_dataset_integrity_hash_fails() -> None:
+    """Changing dataset_integrity_hash fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["dataset_integrity_hash"] = "0" * 64
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_split_assignment_hash_fails() -> None:
+    """Changing split_assignment_hash fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["split_assignment_hash"] = "0" * 64
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_min_frequency_fails() -> None:
+    """Changing min_frequency fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["min_frequency"] = 999
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_max_vocab_size_fails() -> None:
+    """Changing max_vocab_size fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["max_vocab_size"] = 999
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_policy_version_fails() -> None:
+    """Changing policy_version fails verification."""
+    import copy
+
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    tampered = copy.deepcopy(vocab)
+    object.__setattr__(tampered.metadata, "policy_version", "9.9")
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_tamper_vocabulary_hash_fails() -> None:
+    """Changing the recorded vocabulary_hash fails verification."""
+    result = _prepare(_standard_contents(), split_config=SPLIT)
+    vocab = build_vocabulary(result, tokenizer_config=CONFIG)
+    dumped = vocab.model_dump(mode="json")
+    dumped["metadata"]["vocabulary_hash"] = "0" * 64
+    tampered = Vocabulary.model_validate(dumped)
+    with pytest.raises(TokenizerError) as exc:
+        verify_vocabulary(tampered)
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_metadata_integrity_identical_artifacts_same_hash() -> None:
+    """Independently built identical artifacts produce identical metadata hashes."""
+    first = build_vocabulary(
+        _prepare(_standard_contents(), split_config=SPLIT), tokenizer_config=CONFIG
+    )
+    second = build_vocabulary(
+        _prepare(_standard_contents(), split_config=SPLIT), tokenizer_config=CONFIG
+    )
+    assert first.metadata.metadata_integrity_hash == (
+        second.metadata.metadata_integrity_hash
+    )
+    assert first == second
+
+
+def test_legitimate_config_change_distinguishable_via_config_hash() -> None:
+    """A legitimate config change is reflected in the config hash only."""
+    result = _prepare({"synthetic-group-001": "hello world"})
+    first = build_vocabulary(result, tokenizer_config=CONFIG)
+    other_config = TokenizerConfig(
+        tokenizer_version="1.0",
+        normalization="NFC",
+        preserve_case=True,
+        max_sequence_length=8,
+    )
+    second = build_vocabulary(result, tokenizer_config=other_config)
+    assert first.metadata.vocabulary_hash == second.metadata.vocabulary_hash
+    assert first.metadata.metadata_integrity_hash != (
+        second.metadata.metadata_integrity_hash
+    )
+    assert first.metadata.tokenizer_config_hash != (
+        second.metadata.tokenizer_config_hash
+    )
