@@ -17,16 +17,31 @@ Rule model (explicit configuration, not hidden knowledge):
 - A rule declares the single ``task_id`` it serves, a stable
   ``rule_id``, a fixed uncertainty, and one explicit
   ``NativeCompositionCondition``. The condition names the single
-  evidence type the rule handles and the minimum number of such
-  records required. It is actually evaluated against the validated
-  binding: a rule fires only when the task matches, every supplied
-  record has the required type, and the count threshold is met.
-  Task-plus-type matching alone never establishes a finding.
+  evidence type the rule handles, the minimum number of justifying
+  records required, and the exact content expectation. It is
+  actually evaluated against the validated binding: a rule fires
+  only when the task matches and at least the required number of
+  supplied records both have the required type and byte-exact
+  matching content. Structural eligibility (task, type, count)
+  alone never establishes a finding -- see below.
+- Why exact content match: the Task 203 record carries free-form
+  normalized text with no labels, values, or structured fields, so
+  no domain predicate (keyword, threshold, label) can be
+  represented without inventing interpretation. Byte-equality
+  against an explicitly configured expectation is the narrowest
+  content-level predicate available: it proves the validated bytes
+  are exactly what the project configured, not that any clinical
+  claim is true. The finding therefore means "the configured
+  content expectation was met by exactly these records".
+- A ``SUPPORTED`` result references only the records satisfying
+  the predicate. Present-but-unsatisfying records are excluded,
+  never promoted to supporting evidence.
 - Anything else -- no matching rule, empty evidence, an uncovered
-  type, or an unmet count -- yields an explicit ``ABSTAINED``
-  result (``NO_JUSTIFIED_BASIS``), never a fabricated conclusion.
-  Contradiction handling and missing-information policy belong to
-  Task 205 and are not implemented here.
+  type, unmet count, or no content match -- yields an explicit
+  ``ABSTAINED`` result (``NO_JUSTIFIED_BASIS``), never a
+  fabricated conclusion. Contradiction handling and
+  missing-information policy belong to Task 205 and are not
+  implemented here.
 
 Configuration is locked at construction: the stored rule tuple
 cannot be replaced afterwards, and there is no global registry,
@@ -52,7 +67,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from rop.schemas.native_binding import MAX_BINDING_RECORDS, NativeEvidenceBinding
-from rop.schemas.native_evidence import NativeEvidenceRecord
+from rop.schemas.native_evidence import MAX_CONTENT_LENGTH, NativeEvidenceRecord
 from rop.schemas.native_reasoning import (
     NATIVE_REASONING_RESULT_SOURCE_TASK_202,
     NativeReasoningResult,
@@ -82,16 +97,18 @@ _RESULT_ID_DOMAIN = "native-composition-task-204"
 class NativeCompositionCondition:
     """One explicit deterministic rule condition (Task 204).
 
-    Names the single evidence type a rule handles and the minimum
-    number of such records required for the rule to fire. Evaluated
-    by :meth:`holds` against validated binding evidence only: task
-    and type matching without a true condition never establishes a
-    finding. There is exactly one condition kind; anything else is
-    rejected at construction rather than interpreted.
+    Names the single evidence type a rule handles, the minimum
+    number of justifying records required, and the exact content
+    expectation. Evaluated by :meth:`matching` against validated
+    binding evidence only: structural eligibility without content
+    satisfaction never establishes a finding. There is exactly one
+    condition kind; anything else is rejected at construction
+    rather than interpreted.
     """
 
     required_evidence_type: Literal["OBSERVATION", "ASSERTION"]
     min_evidence_count: int
+    expected_content: str
 
     def __post_init__(self) -> None:
         if self.required_evidence_type not in ("OBSERVATION", "ASSERTION"):
@@ -102,20 +119,28 @@ class NativeCompositionCondition:
             raise ValueError("min_evidence_count is invalid")
         if not 1 <= self.min_evidence_count <= MAX_BINDING_RECORDS:
             raise ValueError("min_evidence_count is invalid")
+        if not isinstance(self.expected_content, str):
+            raise ValueError("expected_content is invalid")
+        if not 1 <= len(self.expected_content) <= MAX_CONTENT_LENGTH:
+            raise ValueError("expected_content is invalid")
 
-    def holds(self, evidence: tuple[NativeEvidenceRecord, ...]) -> bool:
-        """Evaluate the condition against validated binding evidence.
+    def matching(
+        self, evidence: tuple[NativeEvidenceRecord, ...]
+    ) -> tuple[NativeEvidenceRecord, ...]:
+        """Select the records satisfying this condition, in order.
 
-        Returns True only when every record is a validated native
-        evidence record of the required type and the count threshold
-        is met. Foreign values fail safe to False, which abstains.
+        Returns the validated records that both have the required
+        type and byte-exact matching content, preserving binding
+        order. Foreign or unsatisfying values are excluded, never
+        coerced or repaired; an empty result means the predicate is
+        false, which abstains.
         """
-        if len(evidence) < self.min_evidence_count:
-            return False
-        return all(
-            isinstance(record, NativeEvidenceRecord)
-            and record.evidence_type == self.required_evidence_type
+        return tuple(
+            record
             for record in evidence
+            if isinstance(record, NativeEvidenceRecord)
+            and record.evidence_type == self.required_evidence_type
+            and record.content_text == self.expected_content
         )
 
 
@@ -124,10 +149,11 @@ class NativeCompositionRule:
     """One explicitly configured deterministic composition rule.
 
     Fires only for bindings whose request names ``task_id`` and for
-    which ``condition.holds`` evaluates true. Carries no behavior
-    beyond this declaration; evaluation semantics live in the
-    condition and ``NativeCompositionService`` so invalid outcomes
-    cannot arise from caller-supplied callables.
+    which ``condition.matching`` selects at least
+    ``min_evidence_count`` records. Carries no behavior beyond this
+    declaration; evaluation semantics live in the condition and
+    ``NativeCompositionService`` so invalid outcomes cannot arise
+    from caller-supplied callables.
     """
 
     rule_id: str
@@ -233,8 +259,10 @@ class NativeCompositionService:
         """
         validated = self._validated_binding(binding)
         rule = self._select_rule(validated)
-        if rule is not None and self._rule_covers(rule, validated):
-            return self._supported_result(validated, rule)
+        if rule is not None:
+            matched = rule.condition.matching(validated.evidence)
+            if len(matched) >= rule.condition.min_evidence_count:
+                return self._supported_result(validated, rule, matched)
         return self._abstained_result(validated)
 
     def _validated_binding(
@@ -261,12 +289,6 @@ class NativeCompositionService:
                 return rule
         return None
 
-    @staticmethod
-    def _rule_covers(
-        rule: NativeCompositionRule, binding: NativeEvidenceBinding
-    ) -> bool:
-        return rule.condition.holds(binding.evidence)
-
     def _abstained_result(self, binding: NativeEvidenceBinding) -> dict[str, Any]:
         request = binding.request
         supplied = sorted(str(record.evidence_id) for record in binding.evidence)
@@ -292,10 +314,13 @@ class NativeCompositionService:
         )
 
     def _supported_result(
-        self, binding: NativeEvidenceBinding, rule: NativeCompositionRule
+        self,
+        binding: NativeEvidenceBinding,
+        rule: NativeCompositionRule,
+        matched: tuple[NativeEvidenceRecord, ...],
     ) -> dict[str, Any]:
         request = binding.request
-        supporting = tuple(record.evidence_id for record in binding.evidence)
+        supporting = tuple(record.evidence_id for record in matched)
         return self._build_result(
             request_id=request.request_id,
             session_id=request.session_id,
@@ -314,6 +339,7 @@ class NativeCompositionService:
                     rule.rule_id,
                     rule.condition.required_evidence_type,
                     str(rule.condition.min_evidence_count),
+                    rule.condition.expected_content,
                     ",".join(str(value) for value in supporting),
                 ]
             ),

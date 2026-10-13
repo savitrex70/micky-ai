@@ -40,6 +40,7 @@ def _condition(**overrides):  # type: ignore[no-untyped-def]
     base = {
         "required_evidence_type": "OBSERVATION",
         "min_evidence_count": 1,
+        "expected_content": "normalized observation text",
     }
     base.update(overrides)
     return NativeCompositionCondition(**base)  # type: ignore[arg-type]
@@ -60,10 +61,31 @@ def _binding(
     task_id: str = _TASK,
     evidence_type: str = "OBSERVATION",
     count: int = 2,
+    contents: list[str] | None = None,
 ) -> NativeEvidenceBinding:
     session_id = uuid4()
-    content = "normalized observation text"
+    default_content = "normalized observation text"
     ids = sorted([uuid4() for _ in range(count)], key=str)
+    if contents is None:
+        contents = [default_content] * count
+    assert len(contents) == count
+    records = []
+    for value, content in zip(ids, contents, strict=True):
+        records.append(
+            {
+                "evidence_id": str(value),
+                "session_id": session_id,
+                "context_fingerprint": _FP,
+                "evidence_type": evidence_type,
+                "source_reference": "chart:encounter-123",
+                "provenance_id": "prov-001",
+                "content_text": content,
+                "content_digest": compute_native_evidence_digest(content),
+                "availability": "AVAILABLE",
+                "uncertainty": 0.2,
+                "evidence_source": NATIVE_EVIDENCE_SOURCE_TASK_203,
+            }
+        )
     return NativeEvidenceBinding.model_validate(
         {
             "request": {
@@ -74,22 +96,7 @@ def _binding(
                 "evidence_ids": [str(value) for value in ids],
                 "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
             },
-            "evidence": [
-                {
-                    "evidence_id": str(value),
-                    "session_id": session_id,
-                    "context_fingerprint": _FP,
-                    "evidence_type": evidence_type,
-                    "source_reference": "chart:encounter-123",
-                    "provenance_id": "prov-001",
-                    "content_text": content,
-                    "content_digest": compute_native_evidence_digest(content),
-                    "availability": "AVAILABLE",
-                    "uncertainty": 0.2,
-                    "evidence_source": NATIVE_EVIDENCE_SOURCE_TASK_203,
-                }
-                for value in ids
-            ],
+            "evidence": records,
             "binding_source": NATIVE_BINDING_SOURCE_TASK_204,
         }
     )
@@ -192,6 +199,14 @@ def test_invalid_rule_declarations_fail_closed() -> None:
         _condition(min_evidence_count=True)  # type: ignore[dict-item]
     with pytest.raises(ValueError):
         _condition(min_evidence_count=65)
+    with pytest.raises(ValueError):
+        _condition(expected_content="")  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(expected_content="x" * 2001)  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(expected_content=123)  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(expected_content=None)  # type: ignore[dict-item]
     with pytest.raises(TypeError):
         NativeCompositionCondition(required_evidence_type="OBSERVATION")  # type: ignore[call-arg]
     with pytest.raises(NativeCompositionContractError):
@@ -204,11 +219,53 @@ def test_type_match_alone_cannot_support_without_true_condition() -> None:
     service = NativeCompositionService(
         [_rule(condition=_condition(min_evidence_count=2))]
     )
-    result = NativeReasoningResult.model_validate(service.compose(_binding(count=1)))
+    short = NativeReasoningResult.model_validate(service.compose(_binding(count=1)))
+    assert short.status == "ABSTAINED"
+    assert short.reason_code == "NO_JUSTIFIED_BASIS"
+    assert short.rule_id is None
+    assert short.supporting_evidence_ids == ()
+
+
+def test_structural_eligibility_without_content_match_abstains() -> None:
+    # Task, type, and count all match, but no record carries the
+    # configured content: structural eligibility is not justification.
+    service = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=2))]
+    )
+    binding = _binding(count=2, contents=["other text a", "other text b"])
+    result = NativeReasoningResult.model_validate(service.compose(binding))
     assert result.status == "ABSTAINED"
     assert result.reason_code == "NO_JUSTIFIED_BASIS"
     assert result.rule_id is None
     assert result.supporting_evidence_ids == ()
+
+
+def test_supported_references_only_satisfying_evidence() -> None:
+    service = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=2))]
+    )
+    binding = _binding(
+        count=3,
+        contents=[
+            "normalized observation text",
+            "unrelated text",
+            "normalized observation text",
+        ],
+    )
+    result = NativeReasoningResult.model_validate(service.compose(binding))
+    assert result.status == "SUPPORTED"
+    satisfying = {
+        str(record.evidence_id)
+        for record in binding.evidence
+        if record.content_text == "normalized observation text"
+    }
+    assert satisfying and len(satisfying) == 2
+    assert {str(value) for value in result.supporting_evidence_ids} == satisfying
+
+
+def test_condition_matching_excludes_foreign_values() -> None:
+    condition = _condition()
+    assert condition.matching(("not-a-record",)) == ()  # type: ignore[arg-type]
 
 
 def test_false_condition_never_supports() -> None:
