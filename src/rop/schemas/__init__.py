@@ -1,6 +1,24 @@
 """Pydantic schemas."""
 
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
+from rop.schemas.dataset_authorization import (
+    DATASET_AUTHORIZATION_VERSION,
+    TEST_SOURCE_PREFIX,
+    DataSourceAuthorization,
+)
+from rop.schemas.dataset_manifest import (
+    DATASET_MANIFEST_VERSION,
+    DEDUP_POLICY_VERSION,
+    SPLIT_POLICY_NAME,
+    TRANSFORM_VERSION,
+    DatasetManifest,
+    DatasetRecord,
+    GroupAssignment,
+    PartitionRecords,
+    PreparationResult,
+    SplitConfig,
+    SplitManifest,
+)
 from rop.schemas.decision_candidate_assessment import (
     DecisionCandidateAssessmentRead,
     DecisionCandidateAssessmentSetRead,
@@ -396,6 +414,20 @@ from rop.schemas.template_match import TemplateMatchRead
 
 __all__ = [
     "CandidateHypothesisRead",
+    "DATASET_AUTHORIZATION_VERSION",
+    "DATASET_MANIFEST_VERSION",
+    "DEDUP_POLICY_VERSION",
+    "DataSourceAuthorization",
+    "DatasetManifest",
+    "DatasetRecord",
+    "GroupAssignment",
+    "PartitionRecords",
+    "PreparationResult",
+    "SPLIT_POLICY_NAME",
+    "SplitConfig",
+    "SplitManifest",
+    "TEST_SOURCE_PREFIX",
+    "TRANSFORM_VERSION",
     "DecisionCandidateAssessmentRead",
     "DecisionCandidateAssessmentSetRead",
     "DecisionCandidateEvaluationRead",

@@ -17,6 +17,8 @@ Copy-Item .env.example .env   # once; dummy settings, no database server needed
 python -m rop.evaluation --cases src/rop/evaluation/synthetic_cases_v1.json --baseline-revision <git-sha>
 ```
 
+Dataset preparation is synthetic-only until an authorized source exists; see the [dataset governance](docs/stage-8-dataset-governance.md) and run `pytest tests/test_dataset_preparation.py -q`.
+
 ## Stack
 
 - Python 3.12
