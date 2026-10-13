@@ -74,6 +74,11 @@ from rop.schemas.llm_request_serialization import (
     LLM_REQUEST_SERIALIZATION_SOURCE_TASK_104,
 )
 from rop.schemas.missing_information import MissingInformationRead
+from rop.schemas.native_evidence import (
+    NATIVE_EVIDENCE_SOURCE_TASK_203,
+    NativeEvidenceRecord,
+    compute_native_evidence_digest,
+)
 from rop.schemas.native_reasoning import (
     NATIVE_REASONING_ERROR_SOURCE_TASK_202,
     NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
@@ -421,12 +426,15 @@ __all__ = [
     "HypothesisScoreRead",
     "HypothesisUpdate",
     "MissingInformationRead",
+    "NATIVE_EVIDENCE_SOURCE_TASK_203",
     "NATIVE_REASONING_ERROR_SOURCE_TASK_202",
     "NATIVE_REASONING_REQUEST_SOURCE_TASK_202",
     "NATIVE_REASONING_RESULT_SOURCE_TASK_202",
     "NativeReasoningError",
     "NativeReasoningRequest",
     "NativeReasoningResult",
+    "NativeEvidenceRecord",
+    "compute_native_evidence_digest",
     "ObservationCreate",
     "ObservationExtractionRequest",
     "ObservationExtractionResponse",
