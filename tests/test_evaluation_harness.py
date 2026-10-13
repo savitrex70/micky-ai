@@ -1287,3 +1287,29 @@ def test_binary_confusion_zero_predicted_and_zero_actual_positives_are_valid() -
     assert all(row.recall == 0.0 for row in zero_actual.per_class)
     assert all(row.true_negatives == 4 for row in zero_actual.per_class)
     assert sum(count for _, _, count in zero_actual.label_cooccurrence_counts) == 0
+
+
+@pytest.mark.parametrize(
+    ("expected", "predicted", "expected_counts"),
+    [
+        (["A"], ["A", "B"], {"A": (1, 0, 0, 0), "B": (0, 1, 0, 0), "C": (0, 0, 0, 1)}),
+        (["A", "B"], ["A", "C"], {"A": (1, 0, 0, 0), "B": (0, 0, 1, 0), "C": (0, 1, 0, 0)}),
+        (["A"], ["B"], {"A": (0, 0, 1, 0), "B": (0, 1, 0, 0), "C": (0, 0, 0, 1)}),
+        ([], ["B", "C"], {"A": (0, 0, 0, 1), "B": (0, 1, 0, 0), "C": (0, 1, 0, 0)}),
+    ],
+)
+def test_binary_confusion_semantics_for_multilabel_edges(expected, predicted, expected_counts) -> None:
+    manifest = _split_manifest([("example-1", "TEST", expected)])
+    outcome = evaluate_predictions(
+        manifest=manifest,
+        predictions=(_prediction("example-1", predicted),),
+        labels=("A", "B", "C"),
+        system_id="candidate",
+    )
+    actual = {
+        row.label: (row.true_positives, row.false_positives, row.false_negatives, row.true_negatives)
+        for row in outcome.per_class
+    }
+    assert actual == expected_counts
+    assert tuple(row[0] for row in outcome.binary_confusion) == ("A", "B", "C")
+    assert all(sum(row[1:]) == outcome.example_count for row in outcome.binary_confusion)

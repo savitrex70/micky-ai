@@ -335,7 +335,14 @@ class EvaluationClassReport(BaseModel):
 
 
 class RunOutcomeSummary(BaseModel):
-    """One evaluated system outcome; no tuning inputs are carried here."""
+    """Aggregate outcomes with auditable sufficient counts.
+
+    Abstentions count as negative predictions for every label: expected labels
+    become false negatives and absent labels become true negatives. An example
+    with no expected labels therefore contributes true negatives for labels it
+    does not predict, and false positives for labels it does predict. The
+    co-occurrence field is diagnostic only and is not a standard confusion matrix.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
