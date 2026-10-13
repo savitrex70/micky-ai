@@ -104,16 +104,18 @@ class DataSourceAuthorization(BaseModel):
 class TrustedSourceRegistry(BaseModel):
     """The only authorization registry the pipeline accepts (Task 207).
 
-    Membership here -- not schema shape alone -- is what the
-    preparation pipeline trusts, and today only the
-    ``synthetic-test-only`` kind exists: every entry must live in
-    the test source-id namespace, enforced at construction.
-    Application code composes registries from raw mappings through
-    ``compose_test_registry`` (pipeline side); a production
-    registry kind requires a reviewed approval-verification
-    mechanism that does not exist yet, so preparing non-test data
-    fails closed. Frozen after construction: entries cannot be
-    added, removed, or altered in place.
+    The name marks the intended scope, not a verified property:
+    nothing here authenticates approvals. What this model
+    enforces is test-only containment -- it can express solely the
+    ``synthetic-test-only`` kind with test-namespaced entries, so
+    anything composed through it (directly or via
+    ``compose_test_registry``) can only ever feed the test-only
+    preparation path, whose manifests are permanently marked as
+    test-scoped. A production registry kind requires a reviewed
+    approval-verification mechanism that does not exist yet, so
+    preparing non-test data fails closed. Frozen after
+    construction: entries cannot be added, removed, or altered in
+    place.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

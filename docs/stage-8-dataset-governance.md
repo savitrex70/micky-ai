@@ -12,12 +12,22 @@ this task.
   restrictions, status, approval reference, and optional expiry.
   Shape validation never equals authentication: constructing the
   model directly proves nothing.
-- Trust comes only from membership in a `TrustedSourceRegistry`
-  composed through the explicit `compose_test_registry` path,
-  which today accepts solely the `synthetic-test-only` kind with
-  test-namespaced entries. Raw mappings, manifest fields,
-  booleans, and bare authorization models passed to the
-  preparation API are rejected outright. There is no production
+- Trust is containment, not verification. The preparation API
+  accepts only a `TrustedSourceRegistry`, which today can express
+  solely the `synthetic-test-only` kind with test-namespaced
+  entries. Raw mappings, manifest fields, booleans, and bare
+  authorization models passed to the preparation API are rejected
+  outright. The `synthetic-test-` prefix is a namespace
+  convention that keeps fixtures from colliding with future real
+  identifiers -- it proves nothing about an approval and is
+  never represented as authentication. What the prefix plus the
+  registry kind do enforce is test-only containment: a test-only
+  registry cannot authorize a production-named dataset
+  (identifiers must carry the `synthetic-` scope), and every
+  manifest produced carries `authorization_kind:
+  synthetic-test-only` permanently. Fabricated approvals
+  therefore yield, at most, test-marked fixtures -- never
+  production-trusted artifacts. There is no production
   composition path: manufacturing one would require a reviewed
   approval-verification mechanism that does not exist, so
   preparing non-test data fails closed.
@@ -87,11 +97,13 @@ returned.
 
 ## Manifests and hashes
 
-`DatasetManifest` (v2.0) carries identifiers, policy versions,
+`DatasetManifest` (v2.1) carries identifiers, policy versions,
 counts, label/rejection tallies, and a record-integrity hash
 binding every retained record's identity, source, group, label,
 validated content digest, and provenance reference (raw content
-never embedded). `SplitManifest` (v1.0) carries the policy, seed,
+never embedded). Both manifests carry `authorization_kind:
+synthetic-test-only`, permanently marking their trust scope.
+`SplitManifest` (v1.1) carries the policy, seed,
 ratios, sorted group assignments, partition counts, and the
 assignment hash bound to the dataset integrity hash. The v1
 content-only hash is not interchangeable: old manifests fail

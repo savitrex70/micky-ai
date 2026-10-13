@@ -454,6 +454,7 @@ def split_records(
     *,
     dataset_id: str,
     dataset_integrity_hash: str,
+    authorization_kind: Literal["synthetic-test-only"],
 ) -> SplitManifest:
     """Assign leakage groups to partitions by seeded group hash.
 
@@ -517,7 +518,8 @@ def split_records(
     ).hexdigest()
     return SplitManifest(
         dataset_id=dataset_id,
-        manifest_version="1.0",
+        manifest_version="1.1",
+        authorization_kind=authorization_kind,
         split_policy=SPLIT_POLICY_NAME,
         seed=config.seed,
         train_ratio=config.train_ratio,
@@ -604,17 +606,21 @@ def verify_split(
         )
     except DatasetPreparationError:
         _fail()
-    recomputed = split_records(
-        records,
-        SplitConfig(
-            seed=split.seed,
-            train_ratio=split.train_ratio,
-            validation_ratio=split.validation_ratio,
-            test_ratio=split.test_ratio,
-        ),
-        dataset_id=split.dataset_id,
-        dataset_integrity_hash=expected_hash,
-    )
+    try:
+        recomputed = split_records(
+            records,
+            SplitConfig(
+                seed=split.seed,
+                train_ratio=split.train_ratio,
+                validation_ratio=split.validation_ratio,
+                test_ratio=split.test_ratio,
+            ),
+            dataset_id=split.dataset_id,
+            dataset_integrity_hash=expected_hash,
+            authorization_kind=split.authorization_kind,
+        )
+    except Exception:
+        _fail()
     if recomputed.assignment_hash != split.assignment_hash or [
         (entry.group_id, entry.partition) for entry in recomputed.assignments
     ] != [(entry.group_id, entry.partition) for entry in split.assignments]:
@@ -689,6 +695,10 @@ def prepare_dataset(
         r"[a-z0-9][a-z0-9_.-]{0,63}", dataset_id
     ):
         raise DatasetPreparationError("INVALID_CONFIG", "dataset identifier is invalid")
+    if not dataset_id.startswith("synthetic-"):
+        raise DatasetPreparationError(
+            "INVALID_CONFIG", "dataset identifier is not test-scoped"
+        )
     if not isinstance(purpose, str) or not re.fullmatch(
         r"[a-z0-9][a-z0-9_.-]{0,63}", purpose
     ):
@@ -770,6 +780,7 @@ def prepare_dataset(
             split_config,
             dataset_id=dataset_id,
             dataset_integrity_hash=integrity_hash,
+            authorization_kind=authorizations.registry_kind,
         )
     except DatasetPreparationError as exc:
         if exc.code in ("INSUFFICIENT_GROUPS", "EMPTY_PARTITION"):
@@ -786,7 +797,8 @@ def prepare_dataset(
         rejection_tally[entry.code] = rejection_tally.get(entry.code, 0) + 1
     dataset_manifest = DatasetManifest(
         dataset_id=dataset_id,
-        manifest_version="2.0",
+        manifest_version="2.1",
+        authorization_kind=authorizations.registry_kind,
         source_ids=tuple(sorted({record.source_id for record in kept})),
         purpose=purpose,
         operation=operation,  # type: ignore[arg-type]

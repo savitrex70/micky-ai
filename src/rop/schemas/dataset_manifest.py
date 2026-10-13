@@ -17,10 +17,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DATASET_MANIFEST_VERSION = "2.0"
+DATASET_MANIFEST_VERSION = "2.1"
 TRANSFORM_VERSION = "1.0"
 DEDUP_POLICY_VERSION = "1.0"
 SPLIT_POLICY_NAME = "group-hash-partition-v1"
+SPLIT_MANIFEST_VERSION = "1.1"
 RECORD_INTEGRITY_VERSION = "2.0"
 
 MAX_CONTENT_LENGTH = 2000
@@ -166,12 +167,21 @@ class GroupAssignment(BaseModel):
 
 
 class DatasetManifest(BaseModel):
-    """Versioned manifest of a prepared dataset (Task 207)."""
+    """Versioned manifest of a prepared dataset (Task 207).
+
+    ``authorization_kind`` records the trust scope the dataset was
+    prepared under. Only ``synthetic-test-only`` exists: every
+    manifest produced today is structurally marked test-scoped and
+    cannot pass as production-authorized evidence. A production
+    kind would require a new schema version and reviewed approval
+    verification.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset_id: str = Field(min_length=1, max_length=64)
-    manifest_version: Literal["2.0"]
+    manifest_version: Literal["2.1"]
+    authorization_kind: Literal["synthetic-test-only"]
     source_ids: tuple[str, ...] = Field(min_length=1)
     purpose: str = Field(min_length=1, max_length=64)
     operation: Literal["training", "validation", "evaluation"]
@@ -221,12 +231,17 @@ class DatasetManifest(BaseModel):
 
 
 class SplitManifest(BaseModel):
-    """Versioned manifest of leakage-safe partition assignments (Task 207)."""
+    """Versioned manifest of leakage-safe partition assignments (Task 207).
+
+    Carries the same ``authorization_kind`` taint as its dataset
+    manifest: test-scoped splits cannot pass as production splits.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset_id: str = Field(min_length=1, max_length=64)
-    manifest_version: Literal["1.0"]
+    manifest_version: Literal["1.1"]
+    authorization_kind: Literal["synthetic-test-only"]
     split_policy: Literal["group-hash-partition-v1"]
     seed: int
     train_ratio: float
@@ -313,6 +328,7 @@ __all__ = [
     "MAX_LABELS",
     "MAX_SOURCE_REF_LENGTH",
     "RECORD_INTEGRITY_VERSION",
+    "SPLIT_MANIFEST_VERSION",
     "SPLIT_POLICY_NAME",
     "TRANSFORM_VERSION",
     "DatasetManifest",

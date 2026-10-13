@@ -218,6 +218,74 @@ def test_fabricated_approval_dictionary_rejected() -> None:
     assert exc.value.code == "AUTHORIZATION_INVALID"
 
 
+def test_fabricated_test_namespace_gains_no_production_trust() -> None:
+    fabricated = _auth(
+        source_id="synthetic-test-fabricated-001",
+        approval_reference="real-approval-999",
+        license_basis="fabricated hospital agreement",
+    )
+    registry = compose_test_registry([fabricated])
+    records = _trust_records("synthetic-test-fabricated-001")
+    # A production-named dataset cannot be prepared under test authorization.
+    with pytest.raises(DatasetPreparationError) as exc:
+        _prep(records, registry, dataset_id="hospital-dataset-001")
+    assert exc.value.code == "INVALID_CONFIG"
+    # The same fabrication through the test path yields manifests
+    # permanently marked test-scoped: usable as fixtures, useless
+    # as production evidence.
+    result = _prep(records, registry)
+    assert result.dataset_manifest.authorization_kind == "synthetic-test-only"
+    assert result.split_manifest.authorization_kind == "synthetic-test-only"
+    dumped = json.dumps(result.dataset_manifest.model_dump(mode="json"), sort_keys=True)
+    assert "real-approval-999" not in dumped
+    assert "hospital agreement" not in dumped
+
+
+def _trust_records(source):
+    contents = [
+        "synthetic baseline content",
+        "second content",
+        "third content",
+        "fourth content",
+        "fifth content",
+    ]
+    return [
+        _record(
+            f"synthetic-rec-00{i}",
+            source=source,
+            content=content,
+            group=f"synthetic-group-00{i}",
+        )
+        for i, content in enumerate(contents, start=1)
+    ]
+
+
+def test_direct_registry_construction_cannot_bypass_boundary() -> None:
+    # Direct Pydantic construction validates shape only. What it
+    # cannot do is produce anything but test-marked artifacts, or
+    # authorize a production-named dataset.
+    registry = TrustedSourceRegistry.model_validate(
+        {
+            "registry_version": "1.0",
+            "registry_kind": "synthetic-test-only",
+            "entries": [
+                _auth(
+                    source_id="synthetic-test-direct-001",
+                    approval_reference="direct-approval-001",
+                )
+            ],
+        }
+    )
+    records = _trust_records("synthetic-test-direct-001")
+    with pytest.raises(DatasetPreparationError) as exc:
+        _prep(records, registry, dataset_id="production-dataset-001")
+    assert exc.value.code == "INVALID_CONFIG"
+    result = _prep(records, registry)
+    assert result.dataset_manifest.authorization_kind == "synthetic-test-only"
+    assert result.dataset_manifest.manifest_version == "2.1"
+    assert result.split_manifest.manifest_version == "1.1"
+
+
 def test_bare_schema_instance_is_not_authenticated() -> None:
     entry = DataSourceAuthorization.model_validate(_auth())
     with pytest.raises(DatasetPreparationError) as exc:
@@ -653,6 +721,12 @@ def test_integrity_validator_rejects_tampering() -> None:
     )
     with pytest.raises(DatasetPreparationError) as exc:
         verify_split(tampered_dataset_hash, records)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+    tampered_kind = result.split_manifest.model_copy(
+        update={"authorization_kind": "production"}
+    )
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(tampered_kind, records)
     assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
     swapped = list(result.split_manifest.assignments)
     first = swapped[0]
