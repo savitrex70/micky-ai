@@ -31,6 +31,24 @@ ExpectedReason = Literal[
     "RULE_MATCH", "RULE_CONTRADICTION_FOUND", "EVIDENCE_MISSING", "NO_JUSTIFIED_BASIS"
 ]
 
+# A valid case's scenario label must agree with its expected
+# outcome; contradictory labels are rejected at load, before any
+# evaluation begins. Reason codes are bound to statuses by the same
+# compatibility matrix the Task 202 contract enforces.
+_CATEGORY_STATUS: dict[str, str] = {
+    "supported": "SUPPORTED",
+    "contradiction": "CONTRADICTED",
+    "insufficient": "INSUFFICIENT",
+    "abstention": "ABSTAINED",
+}
+
+_STATUS_REASON: dict[str, str] = {
+    "SUPPORTED": "RULE_MATCH",
+    "CONTRADICTED": "RULE_CONTRADICTION_FOUND",
+    "INSUFFICIENT": "EVIDENCE_MISSING",
+    "ABSTAINED": "NO_JUSTIFIED_BASIS",
+}
+
 
 def _reject_ambiguous_number(value: object, field_name: str) -> object:
     """Reject booleans and strings before lax numeric parsing."""
@@ -115,9 +133,14 @@ class EvaluationCase(BaseModel):
     """One independently authored evaluation case (Task 206).
 
     Valid cases carry a validated binding, an explicit composition
-    configuration, and exact expected outcomes. Invalid-input cases
-    carry a raw payload plus the expected typed-error invariant and
-    are scored separately from predictions.
+    configuration, and exact expected outcomes. The scenario
+    ``category`` must agree with ``expected_status`` (supported →
+    SUPPORTED, contradiction → CONTRADICTED, insufficient →
+    INSUFFICIENT, abstention → ABSTAINED), and the expected reason
+    code must be the compatible one for that status; inconsistent
+    labels are rejected at load. Invalid-input cases carry a raw
+    payload plus the expected typed-error invariant and are scored
+    separately from predictions.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -166,6 +189,10 @@ class EvaluationCase(BaseModel):
                 raise ValueError("expect_error is invalid")
             if self.expected_status is None or self.expected_reason is None:
                 raise ValueError("expected outcome is invalid")
+            if _CATEGORY_STATUS[self.category] != self.expected_status:
+                raise ValueError("category and expected status are inconsistent")
+            if _STATUS_REASON[self.expected_status] != self.expected_reason:
+                raise ValueError("expected status and reason are inconsistent")
             _sorted_unique_uuids(self.expected_supporting, "expected_supporting")
             _sorted_unique_uuids(self.expected_contradicting, "expected_contradicting")
         return self

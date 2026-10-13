@@ -3,10 +3,12 @@
 Loads a versioned case set, executes the actual deterministic
 composition service through its public contract, scores
 predeclared metrics, and emits a deterministic machine-readable
-report. Every case is evaluated twice per run; any divergence
-fails determinism. Unexpected errors mark the run invalid, never
-silently dropped. No model, provider, network, training, GPU,
-database session, or hosted service is used.
+report. Every valid and invalid-input case is evaluated twice per
+run on fresh service instances; any divergence fails determinism.
+Cross-invocation report-byte equality is verified separately by
+rerunning the command. Unexpected errors mark the run invalid,
+never silently dropped. No model, provider, network, training,
+GPU, database session, or hosted service is used.
 """
 
 from __future__ import annotations
@@ -50,6 +52,10 @@ _PENDING_REASON = "pending task/data approval; blocks final model acceptance"
 
 class EvaluationHarnessError(Exception):
     """A case-file or harness-usage failure with a non-sensitive message."""
+
+
+class NonDeterministicEvaluation(EvaluationHarnessError):
+    """A repeated execution diverged; the run cannot be trusted."""
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -263,7 +269,7 @@ def _evaluate_valid_case(
             f"({type(exc).__name__})"
         ) from exc
     if first != second:
-        raise EvaluationHarnessError(
+        raise NonDeterministicEvaluation(
             f"case '{case.case_id}': non-deterministic evaluation"
         )
     actual_supporting = {str(value) for value in first["supporting_evidence_ids"]}
@@ -290,19 +296,40 @@ def _evaluate_valid_case(
 
 
 def _evaluate_invalid_case(case: EvaluationCase) -> dict[str, Any]:
-    """An invalid-input case passes only when the typed error is raised."""
+    """An invalid-input case passes only when the typed error is raised.
+
+    Executed twice on fresh service instances like valid cases; any
+    divergence fails determinism instead of being trusted.
+    """
+    assert case.raw_binding is not None and case.expect_error is not None
+    first = _run_invalid_once(case)
+    second = _run_invalid_once(case)
+    if first != second:
+        raise NonDeterministicEvaluation(
+            f"case '{case.case_id}': non-deterministic evaluation"
+        )
+    if first["error"] is not None:
+        raise EvaluationHarnessError(
+            f"case '{case.case_id}': unexpected evaluation error ({first['error']})"
+        )
+    return {"passed": first["passed"]}
+
+
+def _run_invalid_once(case: EvaluationCase) -> dict[str, Any]:
+    """One normalized invalid-input execution; never raises for outcomes."""
     assert case.raw_binding is not None and case.expect_error is not None
     service = NativeCompositionService()
     try:
         service.compose(case.raw_binding)
     except NativeCompositionContractError as exc:
-        return {"passed": exc.invariant == case.expect_error}
+        return {
+            "passed": exc.invariant == case.expect_error,
+            "invariant": exc.invariant,
+            "error": None,
+        }
     except Exception as exc:
-        raise EvaluationHarnessError(
-            f"case '{case.case_id}': unexpected evaluation error "
-            f"({type(exc).__name__})"
-        ) from exc
-    return {"passed": False}
+        return {"passed": False, "invariant": None, "error": type(exc).__name__}
+    return {"passed": False, "invariant": None, "error": None}
 
 
 def evaluate_case_set(
@@ -316,6 +343,7 @@ def evaluate_case_set(
     invalid = [case for case in ordered if case.category == "invalid-input"]
 
     run_errors: list[str] = []
+    nondeterministic = 0
     status_hits = 0
     reason_hits = 0
     exact_hits = 0
@@ -338,6 +366,11 @@ def evaluate_case_set(
         try:
             service = _build_service(case)
             outcome = _evaluate_valid_case(case, service)
+        except NonDeterministicEvaluation as exc:
+            run_errors.append(str(exc))
+            nondeterministic += 1
+            failed += 1
+            continue
         except EvaluationHarnessError as exc:
             run_errors.append(str(exc))
             failed += 1
@@ -363,7 +396,11 @@ def evaluate_case_set(
                 contradiction["incorrect"] += 1
         elif case.expected_status == "ABSTAINED":
             abstention["expected"] += 1
-            if outcome["actual_status"] == "ABSTAINED":
+            if (
+                outcome["actual_status"] == "ABSTAINED"
+                and outcome["reason_match"]
+                and outcome["refs_exact"]
+            ):
                 abstention["correct"] += 1
             else:
                 abstention["incorrect"] += 1
@@ -387,12 +424,20 @@ def evaluate_case_set(
                 invalid_passed += 1
             else:
                 invalid_failed += 1
+        except NonDeterministicEvaluation as exc:
+            run_errors.append(str(exc))
+            nondeterministic += 1
+            invalid_failed += 1
         except EvaluationHarnessError as exc:
             run_errors.append(str(exc))
             invalid_failed += 1
 
     run_valid = not run_errors
-    determinism_passed = run_valid
+    # Determinism reflects the per-case repeat executions that
+    # actually ran for valid and invalid cases alike -- never a
+    # restatement of run_valid. Cross-invocation report-byte
+    # equality is verified separately by rerunning the command.
+    determinism_passed = nondeterministic == 0
     n_valid = len(valid)
     status_metric = _ratio(status_hits, n_valid)
     unsupported_rate = (unsupported_total / emitted_total) if emitted_total else 0.0
@@ -436,7 +481,8 @@ def evaluate_case_set(
         _threshold(
             "determinism",
             "passed" if determinism_passed else "failed",
-            "provisional operational target: repeat evaluation identical",
+            "provisional operational target: per-case repeat executions "
+            "identical for valid and invalid cases",
         ),
         _threshold("model-valid-contract-rate", "pending", _PENDING_REASON),
         _threshold("model-fabricated-refs-zero", "pending", _PENDING_REASON),
@@ -574,6 +620,7 @@ __all__ = [
     "EvaluationReport",
     "MetricValue",
     "ModelAcceptance",
+    "NonDeterministicEvaluation",
     "ThresholdStatus",
     "UnsupportedReferences",
     "canonical_json_bytes",

@@ -56,7 +56,15 @@ on `main`; case-set version `1.0`; report schema version `1.0`.
   harness; a mismatch is investigated as a fixture or
   implementation defect, never resolved by copying outputs.
 - Categories: `supported`, `contradiction`, `insufficient`,
-  `abstention`, `invalid-input`.
+  `abstention`, `invalid-input`. The category must agree with the
+  expected status (`supported` → `SUPPORTED`, `contradiction` →
+  `CONTRADICTED`, `insufficient` → `INSUFFICIENT`, `abstention` →
+  `ABSTAINED`), and the expected reason code must be the compatible
+  one for that status (`SUPPORTED` → `RULE_MATCH`,
+  `CONTRADICTED` → `RULE_CONTRADICTION_FOUND`,
+  `INSUFFICIENT` → `EVIDENCE_MISSING`, `ABSTAINED` →
+  `NO_JUSTIFIED_BASIS`). Inconsistent labels are rejected during
+  whole-case-set validation, before any evaluation begins.
 - Inclusion: cases exercising all four result statuses and the
   §7 boundaries below. Exclusion: anything requiring a model,
   network, GPU, real patient data, or clinical judgment.
@@ -98,18 +106,32 @@ on `main`; case-set version `1.0`; report schema version `1.0`.
   match with fabricated, detached, unrelated, or misclassified
   refs scores incorrect.
 - **Unsupported-reference rate:** refs in results absent from the
-  validated input set / total emitted refs. Zero emitted →
+  validated input set / total emitted refs. Only supporting and
+  contradicting evidence UUIDs count here; missing-information
+  identifiers are symbolic requirement names, not evidence
+  references, and are excluded. Zero emitted →
   rate `0.0` with `denominator_zero: true`. Target is **zero**;
   non-zero fails the integrity gate regardless of accuracy.
 - **Contradiction:** correct (expected + exact), false (emitted but
-  not expected). **Abstention:** correct, unjustified
-  (expected abstain, got supported/contradicted).
+  not expected). **Abstention:** correct only when the expected
+  `ABSTAINED` status, the expected reason, and the exact
+  references all match; anything else on an abstention-expecting
+  case is incorrect, including unjustified supported or
+  contradicted outcomes (unexpected contradictions additionally
+  count as false contradictions). Status agreement and abstention
+  correctness are deliberately different metrics: the first asks
+  whether the status was right, the second whether the abstention
+  was fully right.
   **Insufficiency:** correct, incorrect.
 - **Coverage:** per-status counts; abstention rate =
   abstained / valid. Lower abstention is not automatically better.
-- **Determinism:** every case evaluated twice per run; report
-  bytes after canonical serialization must be identical across
-  runs (no timestamps exist to exclude).
+- **Determinism:** every valid and invalid-input case is
+  executed twice per run on fresh service instances; any
+  divergence fails determinism. The `determinism` gate reports
+  these executed repeat checks, never a restatement of run
+  validity. Report bytes after canonical serialization must
+  additionally be identical across separate invocations (verified
+  by rerunning the command; no timestamps exist to exclude).
 - **Integrity:** invalid-input passed/failed; unexpected errors
   (case ID + fixed label only) fail the run — reports marked
   invalid, never silently dropped.
