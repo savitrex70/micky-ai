@@ -25,6 +25,7 @@ from rop.schemas.native_reasoning import (
     NativeReasoningResult,
 )
 from rop.services.native_composition import (
+    NativeCompositionCondition,
     NativeCompositionContractError,
     NativeCompositionRule,
     NativeCompositionService,
@@ -35,11 +36,20 @@ _TASK = "synthetic-composition-test-v1"
 _RULE = "synthetic-rule-v1"
 
 
+def _condition(**overrides):  # type: ignore[no-untyped-def]
+    base = {
+        "required_evidence_type": "OBSERVATION",
+        "min_evidence_count": 1,
+    }
+    base.update(overrides)
+    return NativeCompositionCondition(**base)  # type: ignore[arg-type]
+
+
 def _rule(**overrides):  # type: ignore[no-untyped-def]
     base = {
         "rule_id": _RULE,
         "task_id": _TASK,
-        "required_evidence_type": "OBSERVATION",
+        "condition": _condition(),
         "uncertainty": 0.2,
     }
     base.update(overrides)
@@ -86,8 +96,10 @@ def _binding(
 
 
 def test_rule_produces_stable_supported_result() -> None:
-    service = NativeCompositionService([_rule()])
-    result = NativeReasoningResult.model_validate(service.compose(_binding()))
+    service = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=2))]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(_binding(count=2)))
     assert result.status == "SUPPORTED"
     assert result.reason_code == "RULE_MATCH"
     assert result.rule_id == _RULE
@@ -163,11 +175,78 @@ def test_invalid_rule_declarations_fail_closed() -> None:
     with pytest.raises(ValueError):
         _rule(uncertainty=1.5)
     with pytest.raises(ValueError):
-        _rule(required_evidence_type="DIAGNOSIS")  # type: ignore[dict-item]
+        _rule(condition="not-a-condition")  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _rule(condition=None)  # type: ignore[dict-item]
+    with pytest.raises(TypeError):
+        NativeCompositionRule(rule_id=_RULE, task_id=_TASK, uncertainty=0.2)  # type: ignore[call-arg]
+    with pytest.raises(ValueError):
+        _condition(required_evidence_type="DIAGNOSIS")  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(min_evidence_count=0)
+    with pytest.raises(ValueError):
+        _condition(min_evidence_count=-1)
+    with pytest.raises(ValueError):
+        _condition(min_evidence_count="2")  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(min_evidence_count=True)  # type: ignore[dict-item]
+    with pytest.raises(ValueError):
+        _condition(min_evidence_count=65)
+    with pytest.raises(TypeError):
+        NativeCompositionCondition(required_evidence_type="OBSERVATION")  # type: ignore[call-arg]
     with pytest.raises(NativeCompositionContractError):
         NativeCompositionService([_rule(), _rule()])
     with pytest.raises(NativeCompositionContractError):
         NativeCompositionService(["not-a-rule"])  # type: ignore[list-item]
+
+
+def test_type_match_alone_cannot_support_without_true_condition() -> None:
+    service = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=2))]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(_binding(count=1)))
+    assert result.status == "ABSTAINED"
+    assert result.reason_code == "NO_JUSTIFIED_BASIS"
+    assert result.rule_id is None
+    assert result.supporting_evidence_ids == ()
+
+
+def test_false_condition_never_supports() -> None:
+    service = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=3))]
+    )
+    result = NativeReasoningResult.model_validate(service.compose(_binding(count=2)))
+    assert result.status != "SUPPORTED"
+    assert result.status == "ABSTAINED"
+    assert result.rule_id is None
+
+
+def test_identical_rule_configurations_produce_equivalent_results() -> None:
+    first = NativeCompositionService([_rule()])
+    second = NativeCompositionService(
+        [_rule(condition=_condition(min_evidence_count=1))]
+    )
+    binding = _binding()
+    assert first.compose(binding) == second.compose(binding)
+
+
+def test_service_configuration_cannot_be_replaced() -> None:
+    rules = [_rule()]
+    service = NativeCompositionService(rules)
+    rules.append(_rule(rule_id="synthetic-rule-v2"))
+    assert service.rules == (rules[0],)
+    with pytest.raises(AttributeError):
+        service.rules[0].rule_id = "changed"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        service.rules.append(service.rules[0])  # type: ignore[attr-defined]
+    with pytest.raises(NativeCompositionContractError):
+        service._rules = ()  # type: ignore[attr-defined]
+    with pytest.raises(NativeCompositionContractError):
+        service._rules_locked = False  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        service.rules = ()  # type: ignore[misc]
+    assert service.rules == (rules[0],)
+    assert service.compose(_binding())["status"] == "SUPPORTED"
 
 
 def test_uncovered_inputs_abstain_without_fabrication() -> None:

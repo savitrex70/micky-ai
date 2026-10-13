@@ -143,6 +143,7 @@ from rop.services.missing_information_lifecycle import (
     MissingInformationLifecycleService,
 )
 from rop.services.native_composition import (
+    NativeCompositionCondition,
     NativeCompositionContractError,
     NativeCompositionRule,
     NativeCompositionService,
@@ -588,6 +589,7 @@ __all__ = [
     "MISSING_INFORMATION_LIFECYCLE_SOURCE_TASK_131",
     "MissingInformationLifecycleContractError",
     "MissingInformationLifecycleService",
+    "NativeCompositionCondition",
     "NativeCompositionContractError",
     "NativeCompositionRule",
     "NativeCompositionService",

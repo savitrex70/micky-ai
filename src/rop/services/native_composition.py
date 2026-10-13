@@ -14,15 +14,23 @@ Rule model (explicit configuration, not hidden knowledge):
   construction. The shipped codebase registers no built-in rules,
   so no clinical or domain claim is manufactured here. Tests use
   synthetic task/rule identifiers.
-- A rule declares the single ``task_id`` it serves, the single
-  evidence type it handles, a stable ``rule_id``, and a fixed
-  uncertainty. A rule fires only when the binding's task matches
-  and every supplied record has the required type.
-- Anything else -- no matching rule, empty evidence, or a type the
-  rule does not cover -- yields an explicit ``ABSTAINED`` result
-  (``NO_JUSTIFIED_BASIS``), never a fabricated conclusion.
+- A rule declares the single ``task_id`` it serves, a stable
+  ``rule_id``, a fixed uncertainty, and one explicit
+  ``NativeCompositionCondition``. The condition names the single
+  evidence type the rule handles and the minimum number of such
+  records required. It is actually evaluated against the validated
+  binding: a rule fires only when the task matches, every supplied
+  record has the required type, and the count threshold is met.
+  Task-plus-type matching alone never establishes a finding.
+- Anything else -- no matching rule, empty evidence, an uncovered
+  type, or an unmet count -- yields an explicit ``ABSTAINED``
+  result (``NO_JUSTIFIED_BASIS``), never a fabricated conclusion.
   Contradiction handling and missing-information policy belong to
   Task 205 and are not implemented here.
+
+Configuration is locked at construction: the stored rule tuple
+cannot be replaced afterwards, and there is no global registry,
+environment selection, or post-construction mutation path.
 
 Determinism: rule selection is first-match in registration order,
 output references preserve the binding's sorted order verbatim,
@@ -43,7 +51,8 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from rop.schemas.native_binding import NativeEvidenceBinding
+from rop.schemas.native_binding import MAX_BINDING_RECORDS, NativeEvidenceBinding
+from rop.schemas.native_evidence import NativeEvidenceRecord
 from rop.schemas.native_reasoning import (
     NATIVE_REASONING_RESULT_SOURCE_TASK_202,
     NativeReasoningResult,
@@ -51,6 +60,7 @@ from rop.schemas.native_reasoning import (
 
 __all__ = [
     "ABSTAIN_UNCERTAINTY",
+    "NativeCompositionCondition",
     "NativeCompositionContractError",
     "NativeCompositionRule",
     "NativeCompositionService",
@@ -69,19 +79,60 @@ _RESULT_ID_DOMAIN = "native-composition-task-204"
 
 
 @dataclass(frozen=True)
+class NativeCompositionCondition:
+    """One explicit deterministic rule condition (Task 204).
+
+    Names the single evidence type a rule handles and the minimum
+    number of such records required for the rule to fire. Evaluated
+    by :meth:`holds` against validated binding evidence only: task
+    and type matching without a true condition never establishes a
+    finding. There is exactly one condition kind; anything else is
+    rejected at construction rather than interpreted.
+    """
+
+    required_evidence_type: Literal["OBSERVATION", "ASSERTION"]
+    min_evidence_count: int
+
+    def __post_init__(self) -> None:
+        if self.required_evidence_type not in ("OBSERVATION", "ASSERTION"):
+            raise ValueError("required_evidence_type is invalid")
+        if isinstance(self.min_evidence_count, bool) or not isinstance(
+            self.min_evidence_count, int
+        ):
+            raise ValueError("min_evidence_count is invalid")
+        if not 1 <= self.min_evidence_count <= MAX_BINDING_RECORDS:
+            raise ValueError("min_evidence_count is invalid")
+
+    def holds(self, evidence: tuple[NativeEvidenceRecord, ...]) -> bool:
+        """Evaluate the condition against validated binding evidence.
+
+        Returns True only when every record is a validated native
+        evidence record of the required type and the count threshold
+        is met. Foreign values fail safe to False, which abstains.
+        """
+        if len(evidence) < self.min_evidence_count:
+            return False
+        return all(
+            isinstance(record, NativeEvidenceRecord)
+            and record.evidence_type == self.required_evidence_type
+            for record in evidence
+        )
+
+
+@dataclass(frozen=True)
 class NativeCompositionRule:
     """One explicitly configured deterministic composition rule.
 
-    Fires only for bindings whose request names ``task_id`` and whose
-    every supplied record has ``required_evidence_type``. Carries no
-    behavior beyond this declaration; evaluation semantics live in
-    ``NativeCompositionService`` so invalid outcomes cannot arise
-    from caller-supplied callables.
+    Fires only for bindings whose request names ``task_id`` and for
+    which ``condition.holds`` evaluates true. Carries no behavior
+    beyond this declaration; evaluation semantics live in the
+    condition and ``NativeCompositionService`` so invalid outcomes
+    cannot arise from caller-supplied callables.
     """
 
     rule_id: str
     task_id: str
-    required_evidence_type: Literal["OBSERVATION", "ASSERTION"]
+    condition: NativeCompositionCondition
     uncertainty: float
 
     def __post_init__(self) -> None:
@@ -89,8 +140,8 @@ class NativeCompositionRule:
             raise ValueError("rule_id is invalid")
         if not isinstance(self.task_id, str) or not _TASK_ID_RE.fullmatch(self.task_id):
             raise ValueError("task_id is invalid")
-        if self.required_evidence_type not in ("OBSERVATION", "ASSERTION"):
-            raise ValueError("required_evidence_type is invalid")
+        if not isinstance(self.condition, NativeCompositionCondition):
+            raise ValueError("condition is invalid")
         if isinstance(self.uncertainty, bool) or isinstance(self.uncertainty, str):
             raise ValueError("uncertainty is invalid")
         if not isinstance(self.uncertainty, (int, float)):
@@ -121,7 +172,18 @@ class NativeCompositionService:
     Pure orchestration over validated bindings. Dependencies (rules)
     are supplied explicitly at construction; nothing is discovered,
     downloaded, selected from the environment, or shared globally.
+    The stored rule configuration is locked at construction and
+    cannot be replaced afterwards.
     """
+
+    _LOCKED_ATTRS = frozenset({"_rules", "_rules_locked"})
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self._LOCKED_ATTRS and self.__dict__.get("_rules_locked", False):
+            raise NativeCompositionContractError(
+                "INVALID_CONFIGURATION", "service configuration is immutable"
+            )
+        super().__setattr__(name, value)
 
     def __init__(
         self,
@@ -151,6 +213,7 @@ class NativeCompositionService:
                 )
             seen.add(rule.rule_id)
         self._rules = collected
+        self._rules_locked = True
 
     @property
     def rules(self) -> tuple[NativeCompositionRule, ...]:
@@ -202,12 +265,7 @@ class NativeCompositionService:
     def _rule_covers(
         rule: NativeCompositionRule, binding: NativeEvidenceBinding
     ) -> bool:
-        if not binding.evidence:
-            return False
-        return all(
-            record.evidence_type == rule.required_evidence_type
-            for record in binding.evidence
-        )
+        return rule.condition.holds(binding.evidence)
 
     def _abstained_result(self, binding: NativeEvidenceBinding) -> dict[str, Any]:
         request = binding.request
@@ -254,6 +312,8 @@ class NativeCompositionService:
                     request.context_fingerprint,
                     request.task_id,
                     rule.rule_id,
+                    rule.condition.required_evidence_type,
+                    str(rule.condition.min_evidence_count),
                     ",".join(str(value) for value in supporting),
                 ]
             ),
