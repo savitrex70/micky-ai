@@ -29,12 +29,18 @@ from rop.schemas.native_model import NativeModelConfig
 _INIT_BOUND_DIVISOR = 2.0
 
 
-def _sigmoid_probability(logit: float) -> float:
-    """Numerically stable sigmoid for finite logits of any magnitude."""
+def stable_sigmoid(logit: float) -> float:
+    """Numerically stable logistic function for any finite logit.
+
+    ``exp`` is only ever evaluated on a non-positive argument, so it can
+    underflow toward zero but never overflow. The result is therefore
+    finite and within [0, 1] for every finite input, with no clipping of
+    legitimately extreme probabilities.
+    """
     if logit >= 0.0:
-        return 1.0 / (1.0 + math.exp(-min(logit, 60.0)))
-    exponent = math.exp(max(logit, -60.0))
-    return exponent / (1.0 + exponent)
+        return 1.0 / (1.0 + math.exp(-logit))
+    exponential = math.exp(logit)
+    return exponential / (1.0 + exponential)
 
 
 class NativeModelError(Exception):
@@ -116,7 +122,17 @@ class NativeModel:
         truncated. This output is an untrusted advisory suggestion, never
         evidence or a conclusion.
         """
-        if any(not isinstance(token_id, int) or token_id < 0 for token_id in token_ids):
+        # ``bool`` is a subclass of ``int``; reject it explicitly so that
+        # True/False can never be accepted as token identifiers 1/0.
+        if any(
+            isinstance(token_id, bool) or not isinstance(token_id, int)
+            for token_id in token_ids
+        ):
+            raise NativeModelError(
+                "TOKEN_ID_INVALID_TYPE",
+                "token identifiers must be integers and not booleans",
+            )
+        if any(token_id < 0 for token_id in token_ids):
             raise NativeModelError(
                 "TOKEN_ID_OUT_OF_RANGE",
                 "token identifiers must be non-negative integers",
@@ -141,7 +157,7 @@ class NativeModel:
             + self.parameters.head_bias[label]
             for label, row in enumerate(self.parameters.head_weight)
         )
-        return tuple(_sigmoid_probability(logit) for logit in logits)
+        return tuple(stable_sigmoid(logit) for logit in logits)
 
     @staticmethod
     def reproducible(
@@ -156,4 +172,5 @@ __all__ = [
     "NativeModelConfig",
     "NativeModelError",
     "NativeModelParameters",
+    "stable_sigmoid",
 ]
