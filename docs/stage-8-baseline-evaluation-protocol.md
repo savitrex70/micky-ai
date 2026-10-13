@@ -1,4 +1,4 @@
-# Stage 8 Baseline Evaluation Protocol (v1.0)
+# Stage 8 Baseline Evaluation Protocol (v1.1)
 
 **Status:** Active for deterministic baseline contract evaluation.
 **Version:** `1.1` (v1.1 correction: invalid-input repeat checks,
@@ -47,7 +47,7 @@ The deterministic composition service
 driven through its public contract (`compose` over validated
 `NativeEvidenceBinding`), configured per case by the checked-in
 synthetic case set. Contract versions: Task 202/203/204 schemas as
-on `main`; case-set version `1.0`; report schema version `1.0`.
+on `main`; case-set version `1.0`; report schema version `1.1`.
 
 ## 3. Cases and labels
 
@@ -188,7 +188,7 @@ replace an authorized held-out dataset.
 
 ## 8. Report and reproducibility
 
-Machine-readable JSON report (schema `1.0`): versions, baseline
+Machine-readable JSON report (schema `1.1`): versions, baseline
 revision (or explicit `unresolved-baseline`), case-set ID/version/
 SHA-256, counts, all §5 metrics, per-category outcomes,
 distribution, determinism outcome, threshold statuses, model

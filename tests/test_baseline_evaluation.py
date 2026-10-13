@@ -317,11 +317,11 @@ def test_valid_case_executions_use_different_service_instances(
 ) -> None:
     from rop.services.native_composition import NativeCompositionService
 
-    seen: list[int] = []
+    seen: list[NativeCompositionService] = []
     original = NativeCompositionService.compose
 
     def _recording(self, binding):
-        seen.append(id(self))
+        seen.append(self)
         return original(self, binding)
 
     monkeypatch.setattr(NativeCompositionService, "compose", _recording)
@@ -331,7 +331,8 @@ def test_valid_case_executions_use_different_service_instances(
     )
     assert report.determinism.repeat_passed is True
     assert len(seen) == 2
-    assert seen[0] != seen[1]
+    assert seen[0] is not seen[1]
+    assert seen[0].rules == seen[1].rules
 
 
 def test_identical_unexpected_errors_fail_determinism_gate(
