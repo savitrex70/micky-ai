@@ -1,8 +1,12 @@
 # Stage 8 Baseline Evaluation Protocol (v1.0)
 
 **Status:** Active for deterministic baseline contract evaluation.
-**Version:** `1.0`. Any threshold or metric change requires a reviewed
-version bump before the affected final evaluation is run.
+**Version:** `1.1` (v1.1 correction: invalid-input repeat checks,
+fail-closed determinism gate with exposed check counts, fresh
+service instances per execution, and label-consistency validation;
+report schema `1.1` adds determinism check counts, case-set format
+unchanged at `1.0`). Any threshold or metric change requires a
+reviewed version bump before the affected final evaluation is run.
 **Scope:** Tasks 202–205 deterministic engine only. No model, training
 data, or dataset pipeline is evaluated here.
 
@@ -126,12 +130,18 @@ on `main`; case-set version `1.0`; report schema version `1.0`.
 - **Coverage:** per-status counts; abstention rate =
   abstained / valid. Lower abstention is not automatically better.
 - **Determinism:** every valid and invalid-input case is
-  executed twice per run on fresh service instances; any
-  divergence fails determinism. The `determinism` gate reports
-  these executed repeat checks, never a restatement of run
-  validity. Report bytes after canonical serialization must
-  additionally be identical across separate invocations (verified
-  by rerunning the command; no timestamps exist to exclude).
+  executed twice per run, each execution on a separately
+  constructed, identically configured service instance; no mutable
+  service state is shared between repeats. The report exposes
+  `checks_attempted`, `checks_completed`, and `diverged` counts.
+  The gate passes only when every required check completed with
+  identical outcomes and no divergence or repeat-execution error
+  occurred; a missing or failed check fails the gate instead of
+  counting as deterministic. `run_valid` (no unexpected errors)
+  and determinism remain distinct metrics. Report bytes after
+  canonical serialization must additionally be identical across
+  separate invocations (verified by rerunning the command; no
+  timestamps exist to exclude).
 - **Integrity:** invalid-input passed/failed; unexpected errors
   (case ID + fixed label only) fail the run — reports marked
   invalid, never silently dropped.
@@ -149,7 +159,8 @@ Provisional operational targets:
 
 - `baseline-self-consistency`: status agreement is 1.0 on the
   synthetic set (guards fixture/implementation drift).
-- `determinism`: repeat evaluation identical.
+- `determinism`: every required repeat check completed with
+  identical outcomes and no divergence or repeat-execution error.
 
 Pending (block final model acceptance; never default silently):
 

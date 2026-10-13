@@ -306,6 +306,108 @@ def test_case_set_model_validates() -> None:
     assert len(case_set_sha256(case_set)) == 64
 
 
+def test_report_schema_and_protocol_versions() -> None:
+    report = evaluate_case_set(_loaded_fixture(), baseline_revision="test")
+    assert report.report_schema_version == "1.1"
+    assert report.protocol_version == "1.1"
+
+
+def test_valid_case_executions_use_different_service_instances(
+    monkeypatch,
+) -> None:
+    from rop.services.native_composition import NativeCompositionService
+
+    seen: list[int] = []
+    original = NativeCompositionService.compose
+
+    def _recording(self, binding):
+        seen.append(id(self))
+        return original(self, binding)
+
+    monkeypatch.setattr(NativeCompositionService, "compose", _recording)
+    case = _case_by_id("supported-basic")
+    report = evaluate_case_set(
+        load_case_set(_single_case_set(case)), baseline_revision="test"
+    )
+    assert report.determinism.repeat_passed is True
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+
+
+def test_identical_unexpected_errors_fail_determinism_gate(
+    monkeypatch,
+) -> None:
+    from rop.services.native_composition import NativeCompositionService
+
+    def _boom(self, binding):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(NativeCompositionService, "compose", _boom)
+    report = evaluate_case_set(_loaded_fixture(), baseline_revision="test")
+    assert report.run_valid is False
+    assert report.errored == report.total_cases
+    assert report.determinism.checks_attempted == report.total_cases
+    assert report.determinism.checks_completed == 0
+    assert report.determinism.diverged == 0
+    assert report.determinism.repeat_passed is False
+    assert any(
+        threshold.threshold_id == "determinism" and threshold.status == "failed"
+        for threshold in report.thresholds
+    )
+
+
+def test_error_on_either_execution_fails_determinism_gate(
+    monkeypatch,
+) -> None:
+    from rop.services.native_composition import NativeCompositionService
+
+    calls = {"count": 0}
+
+    def _flaky(self, binding):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("synthetic failure")
+        return {"status": "ABSTAINED"}
+
+    monkeypatch.setattr(NativeCompositionService, "compose", _flaky)
+    case = _case_by_id("supported-basic")
+    report = evaluate_case_set(
+        load_case_set(_single_case_set(case)), baseline_revision="test"
+    )
+    assert report.run_valid is False
+    assert report.determinism.checks_completed == 0
+    assert report.determinism.repeat_passed is False
+
+
+def test_divergent_valid_result_fails_determinism_gate(monkeypatch) -> None:
+    from rop.services.native_composition import NativeCompositionService
+
+    calls = {"count": 0}
+
+    def _flip(self, binding):
+        calls["count"] += 1
+        return {"status": "SUPPORTED" if calls["count"] == 1 else "ABSTAINED"}
+
+    monkeypatch.setattr(NativeCompositionService, "compose", _flip)
+    case = _case_by_id("supported-basic")
+    report = evaluate_case_set(
+        load_case_set(_single_case_set(case)), baseline_revision="test"
+    )
+    assert report.run_valid is False
+    assert report.determinism.diverged == 1
+    assert report.determinism.checks_completed == 0
+    assert report.determinism.repeat_passed is False
+    assert any("non-deterministic" in entry for entry in report.run_errors)
+
+
+def test_successful_repeat_checks_exposed_in_report() -> None:
+    report = evaluate_case_set(_loaded_fixture(), baseline_revision="test")
+    assert report.determinism.repeat_passed is True
+    assert report.determinism.checks_attempted == 16
+    assert report.determinism.checks_completed == 16
+    assert report.determinism.diverged == 0
+
+
 def test_invalid_cases_evaluated_twice(monkeypatch) -> None:
     from rop.services.native_composition import NativeCompositionService
 

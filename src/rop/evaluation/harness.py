@@ -36,8 +36,8 @@ from rop.services.native_composition import (
     NativeEvidenceRequirement,
 )
 
-EVALUATION_PROTOCOL_VERSION = "1.0"
-REPORT_SCHEMA_VERSION = "1.0"
+EVALUATION_PROTOCOL_VERSION = "1.1"
+REPORT_SCHEMA_VERSION = "1.1"
 
 BASELINE_REVISION_UNRESOLVED = "unresolved-baseline"
 
@@ -178,11 +178,22 @@ class CategoryOutcome(BaseModel):
 
 
 class DeterminismOutcome(BaseModel):
-    """Repeat-evaluation outcome for the run."""
+    """Repeat-execution evidence for the run.
+
+    Every case requires one repeat check: both executions must
+    finish on separately constructed service instances with
+    identical normalized outcomes. The gate passes only when every
+    required check completed with no divergence and no
+    repeat-execution error; a missing or failed check fails the
+    gate instead of counting as deterministic.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     repeat_passed: bool
+    checks_attempted: int
+    checks_completed: int
+    diverged: int
 
 
 class ThresholdStatus(BaseModel):
@@ -210,8 +221,8 @@ class EvaluationReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    report_schema_version: Literal["1.0"]
-    protocol_version: Literal["1.0"]
+    report_schema_version: Literal["1.1"]
+    protocol_version: Literal["1.1"]
     baseline_revision: str
     case_set_id: str
     case_set_version: Literal["1.0"]
@@ -255,14 +266,18 @@ def _input_evidence_ids(case: EvaluationCase) -> set[str]:
     return {str(record.evidence_id) for record in case.binding.evidence}
 
 
-def _evaluate_valid_case(
-    case: EvaluationCase, service: NativeCompositionService
-) -> dict[str, Any]:
-    """Evaluate one valid case twice; unexpected errors fail closed."""
+def _evaluate_valid_case(case: EvaluationCase) -> dict[str, Any]:
+    """Evaluate one valid case twice on separately built services.
+
+    Each execution constructs its own identically configured
+    service instance, so no mutable service state is shared between
+    repeats. Service construction failures are evaluation failures.
+    Unexpected errors fail closed; divergence fails determinism.
+    """
     assert case.binding is not None
     try:
-        first = service.compose(case.binding)
-        second = service.compose(case.binding)
+        first = _build_service(case).compose(case.binding)
+        second = _build_service(case).compose(case.binding)
     except Exception as exc:
         raise EvaluationHarnessError(
             f"case '{case.case_id}': unexpected evaluation error "
@@ -343,7 +358,8 @@ def evaluate_case_set(
     invalid = [case for case in ordered if case.category == "invalid-input"]
 
     run_errors: list[str] = []
-    nondeterministic = 0
+    diverged = 0
+    repeat_completed = 0
     status_hits = 0
     reason_hits = 0
     exact_hits = 0
@@ -364,17 +380,17 @@ def evaluate_case_set(
     for case in valid:
         assert case.expected_status is not None
         try:
-            service = _build_service(case)
-            outcome = _evaluate_valid_case(case, service)
+            outcome = _evaluate_valid_case(case)
         except NonDeterministicEvaluation as exc:
             run_errors.append(str(exc))
-            nondeterministic += 1
+            diverged += 1
             failed += 1
             continue
         except EvaluationHarnessError as exc:
             run_errors.append(str(exc))
             failed += 1
             continue
+        repeat_completed += 1
         if outcome["status_match"]:
             status_hits += 1
         else:
@@ -426,18 +442,24 @@ def evaluate_case_set(
                 invalid_failed += 1
         except NonDeterministicEvaluation as exc:
             run_errors.append(str(exc))
-            nondeterministic += 1
+            diverged += 1
             invalid_failed += 1
+            continue
         except EvaluationHarnessError as exc:
             run_errors.append(str(exc))
             invalid_failed += 1
+            continue
+        repeat_completed += 1
 
     run_valid = not run_errors
-    # Determinism reflects the per-case repeat executions that
-    # actually ran for valid and invalid cases alike -- never a
-    # restatement of run_valid. Cross-invocation report-byte
-    # equality is verified separately by rerunning the command.
-    determinism_passed = nondeterministic == 0
+    # The determinism gate passes only when every required case
+    # completed its repeat check with no divergence and no
+    # repeat-execution error. Missing or failed checks fail the
+    # gate; they never count as deterministic. Cross-invocation
+    # report-byte equality is verified separately by rerunning the
+    # command.
+    total_cases = len(ordered)
+    determinism_passed = diverged == 0 and repeat_completed == total_cases
     n_valid = len(valid)
     status_metric = _ratio(status_hits, n_valid)
     unsupported_rate = (unsupported_total / emitted_total) if emitted_total else 0.0
@@ -481,8 +503,8 @@ def evaluate_case_set(
         _threshold(
             "determinism",
             "passed" if determinism_passed else "failed",
-            "provisional operational target: per-case repeat executions "
-            "identical for valid and invalid cases",
+            "provisional operational target: every required repeat "
+            "check completed with identical outcomes",
         ),
         _threshold("model-valid-contract-rate", "pending", _PENDING_REASON),
         _threshold("model-fabricated-refs-zero", "pending", _PENDING_REASON),
@@ -494,7 +516,7 @@ def evaluate_case_set(
     )
 
     return EvaluationReport(
-        report_schema_version="1.0",
+        report_schema_version=REPORT_SCHEMA_VERSION,
         protocol_version=EVALUATION_PROTOCOL_VERSION,
         baseline_revision=baseline_revision,
         case_set_id=case_set.case_set_id,
@@ -520,7 +542,12 @@ def evaluate_case_set(
         insufficiency=CategoryOutcome(**insufficiency),
         status_distribution=distribution,
         abstention_rate=_ratio(abstained, n_valid),
-        determinism=DeterminismOutcome(repeat_passed=determinism_passed),
+        determinism=DeterminismOutcome(
+            repeat_passed=determinism_passed,
+            checks_attempted=total_cases,
+            checks_completed=repeat_completed,
+            diverged=diverged,
+        ),
         thresholds=thresholds,
         model_acceptance=ModelAcceptance(
             evaluated=False,
