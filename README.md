@@ -19,6 +19,8 @@ python -m rop.evaluation --cases src/rop/evaluation/synthetic_cases_v1.json --ba
 
 Dataset preparation is synthetic-only until an authorized source exists; see the [dataset governance](docs/stage-8-dataset-governance.md) and run `pytest tests/test_dataset_preparation.py -q`.
 
+Tokenization and vocabulary construction are project-controlled and deterministic, fitted only on the synthetic-test-only training partition; see the [tokenizer and vocabulary design](docs/stage-8-tokenizer-vocabulary.md).
+
 ## Stack
 
 - Python 3.12
