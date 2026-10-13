@@ -328,7 +328,9 @@ class EvaluationClassReport(BaseModel):
         precision = self.true_positives / predicted if predicted else 0.0
         recall = self.true_positives / actual if actual else 0.0
         if not _metrics_close(self.precision, precision):
-            raise ValueError("precision must match TP/(TP+FP); zero denominator means 0.0")
+            raise ValueError(
+                "precision must match TP/(TP+FP); zero denominator means 0.0"
+            )
         if not _metrics_close(self.recall, recall):
             raise ValueError("recall must match TP/(TP+FN); zero denominator means 0.0")
         return self
@@ -358,16 +360,26 @@ class RunOutcomeSummary(BaseModel):
     labels: tuple[StrictStr, ...] = Field(min_length=2, max_length=MAX_LABELS)
     per_class: tuple[EvaluationClassReport, ...] = Field(max_length=MAX_LABELS)
     # Diagnostic expected/predicted co-occurrence, not a conventional confusion matrix.
-    label_cooccurrence_counts: tuple[tuple[str, str, StrictInt], ...] = Field(max_length=1024)
+    label_cooccurrence_counts: tuple[
+        tuple[str, str, StrictInt], ...
+    ] = Field(max_length=1024)
     # Per label: (label, TP, FP, FN, TN), one binary decision per example.
-    binary_confusion: tuple[tuple[StrictStr, StrictInt, StrictInt, StrictInt, StrictInt], ...] = Field(max_length=MAX_LABELS)
+    binary_confusion: tuple[
+        tuple[StrictStr, StrictInt, StrictInt, StrictInt, StrictInt], ...
+    ] = Field(max_length=MAX_LABELS)
     latency_ms_max: StrictFloat | None = Field(ge=0.0)
 
     @field_validator("labels")
     @classmethod
     def _canonical_labels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(set(value)) != len(value) or value != tuple(sorted(value)) or any(not label.strip() for label in value):
-            raise ValueError("summary labels must be unique, nonblank and canonically sorted")
+        if (
+            len(set(value)) != len(value)
+            or value != tuple(sorted(value))
+            or any(not label.strip() for label in value)
+        ):
+            raise ValueError(
+                "summary labels must be unique, nonblank and canonically sorted"
+            )
         return value
 
     @field_validator("per_class")
@@ -402,13 +414,25 @@ class RunOutcomeSummary(BaseModel):
 
     @model_validator(mode="after")
     def _summary_metrics_match_counts(self) -> RunOutcomeSummary:
-        if self.abstention_count > self.example_count or self.invalid_reference_count > self.example_count:
+        if (
+            self.abstention_count > self.example_count
+            or self.invalid_reference_count > self.example_count
+        ):
             raise ValueError("outcome counts cannot exceed example_count")
         if tuple(r.label for r in self.per_class) != self.labels:
             raise ValueError("per-class reports must exactly match declared labels")
         if tuple(row[0] for row in self.binary_confusion) != self.labels:
             raise ValueError("binary confusion must exactly match declared labels")
-        expected_binary = tuple((r.label, r.true_positives, r.false_positives, r.false_negatives, r.true_negatives) for r in self.per_class)
+        expected_binary = tuple(
+            (
+                r.label,
+                r.true_positives,
+                r.false_positives,
+                r.false_negatives,
+                r.true_negatives,
+            )
+            for r in self.per_class
+        )
         if self.binary_confusion != expected_binary:
             raise ValueError("binary confusion counts must match per-class counts")
         f1_values = []
@@ -419,17 +443,49 @@ class RunOutcomeSummary(BaseModel):
             recalls.append(r.recall)
         macro_f1 = sum(f1_values) / len(f1_values) if f1_values else 0.0
         balanced_accuracy = sum(recalls) / len(recalls) if recalls else 0.0
-        coverage = (self.example_count - self.abstention_count) / self.example_count if self.example_count else 0.0
-        abstention_rate = self.abstention_count / self.example_count if self.example_count else 0.0
-        invalid_rate = self.invalid_reference_count / self.example_count if self.example_count else 0.0
-        for actual, expected, name in ((self.macro_f1, macro_f1, "macro_f1"), (self.balanced_accuracy, balanced_accuracy, "balanced_accuracy"), (self.coverage, coverage, "coverage"), (self.abstention_rate, abstention_rate, "abstention_rate"), (self.invalid_evidence_reference_rate, invalid_rate, "invalid-reference rate")):
+        coverage = (
+            (self.example_count - self.abstention_count) / self.example_count
+            if self.example_count
+            else 0.0
+        )
+        abstention_rate = (
+            self.abstention_count / self.example_count if self.example_count else 0.0
+        )
+        invalid_rate = (
+            self.invalid_reference_count / self.example_count
+            if self.example_count
+            else 0.0
+        )
+        derived_metrics = (
+            (self.macro_f1, macro_f1, "macro_f1"),
+            (self.balanced_accuracy, balanced_accuracy, "balanced_accuracy"),
+            (self.coverage, coverage, "coverage"),
+            (self.abstention_rate, abstention_rate, "abstention_rate"),
+            (
+                self.invalid_evidence_reference_rate,
+                invalid_rate,
+                "invalid-reference rate",
+            ),
+        )
+        for actual, expected, name in derived_metrics:
             if not _metrics_close(actual, expected):
                 raise ValueError(f"{name} must match recorded sufficient counts")
         for r in self.per_class:
-            if r.true_positives + r.false_negatives > self.example_count or r.true_positives + r.false_positives > self.example_count:
+            if (
+                r.true_positives + r.false_negatives > self.example_count
+                or r.true_positives + r.false_positives > self.example_count
+            ):
                 raise ValueError("per-class counts exceed example_count")
-            if r.true_positives + r.false_negatives + r.true_negatives + r.false_positives != self.example_count:
-                raise ValueError("binary confusion counts must account for every example")
+            if (
+                r.true_positives
+                + r.false_negatives
+                + r.true_negatives
+                + r.false_positives
+                != self.example_count
+            ):
+                raise ValueError(
+                    "binary confusion counts must account for every example"
+                )
         return self
 
 
@@ -572,16 +628,38 @@ class EvaluationComparisonReport(BaseModel):
         self,
     ) -> EvaluationComparisonReport:
         # These totals count diagnostic co-occurrence cells, not examples.
-        if self.baseline_label_cooccurrence_total != sum(count for _, _, count in self.baseline.label_cooccurrence_counts):
-            raise ValueError("baseline co-occurrence total must equal its diagnostic cell sum")
-        if self.candidate_label_cooccurrence_total != sum(count for _, _, count in self.candidate.label_cooccurrence_counts):
-            raise ValueError("candidate co-occurrence total must equal its diagnostic cell sum")
-        if self.metric_configuration_hash != canonical_metric_configuration_digest(self.metric_configuration):
-            raise ValueError("metric configuration identity does not match canonical configuration")
+        baseline_cooccurrence_total = sum(
+            count for _, _, count in self.baseline.label_cooccurrence_counts
+        )
+        if self.baseline_label_cooccurrence_total != baseline_cooccurrence_total:
+            raise ValueError(
+                "baseline co-occurrence total must equal its diagnostic cell sum"
+            )
+        candidate_cooccurrence_total = sum(
+            count for _, _, count in self.candidate.label_cooccurrence_counts
+        )
+        if self.candidate_label_cooccurrence_total != candidate_cooccurrence_total:
+            raise ValueError(
+                "candidate co-occurrence total must equal its diagnostic cell sum"
+            )
+        if (
+            self.metric_configuration_hash
+            != canonical_metric_configuration_digest(self.metric_configuration)
+        ):
+            raise ValueError(
+                "metric configuration identity does not match canonical configuration"
+            )
         if self.task.task_id != self.metric_configuration.task_id:
-            raise ValueError("task definition and metric configuration identities must match")
-        if self.baseline.labels != self.task.labels or self.candidate.labels != self.task.labels:
-            raise ValueError("outcome labels must exactly match the evaluated task label space")
+            raise ValueError(
+                "task definition and metric configuration identities must match"
+            )
+        if (
+            self.baseline.labels != self.task.labels
+            or self.candidate.labels != self.task.labels
+        ):
+            raise ValueError(
+                "outcome labels must exactly match the evaluated task label space"
+            )
         declared = {item.metric: item for item in self.metric_configuration.thresholds}
         recorded = {gate.metric: gate for gate in self.gate_results}
         if set(recorded) != set(declared) or len(recorded) != len(self.gate_results):
@@ -674,12 +752,18 @@ def reject_tuning_references(payload: dict[str, Any]) -> None:
         )
 
 
-def canonical_metric_configuration_digest(configuration: EvaluationMetricConfiguration) -> str:
+def canonical_metric_configuration_digest(
+    configuration: EvaluationMetricConfiguration,
+) -> str:
     """SHA-256 of the canonical, predeclared metric configuration."""
     import hashlib
     import json
 
-    payload = json.dumps(configuration.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(
+        configuration.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 

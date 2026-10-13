@@ -520,12 +520,16 @@ def test_confusion_totals_are_checked_against_their_own_matrices() -> None:
     with pytest.raises(ValidationError, match="baseline confusion total"):
         _forged(
             payload,
-            baseline_label_cooccurrence_total=payload["baseline_label_cooccurrence_total"] + 1,
+            baseline_label_cooccurrence_total=(
+                payload["baseline_label_cooccurrence_total"] + 1
+            ),
         )
     with pytest.raises(ValidationError, match="candidate confusion total"):
         _forged(
             payload,
-            candidate_label_cooccurrence_total=payload["candidate_label_cooccurrence_total"] + 1,
+            candidate_label_cooccurrence_total=(
+                payload["candidate_label_cooccurrence_total"] + 1
+            ),
         )
     assert "label_cooccurrence_counts_scalar" not in payload
 
@@ -1220,30 +1224,58 @@ def _valid_accepted_report_payload() -> dict:
     return report.model_dump(mode="json")
 
 
-@pytest.mark.parametrize("mutation", ["remove_gate", "undeclared_gate", "changed_minimum", "changed_maximum", "changed_configuration_identity", "changed_task_label_space", "forged_acceptance"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "remove_gate",
+        "undeclared_gate",
+        "changed_minimum",
+        "changed_maximum",
+        "changed_configuration_identity",
+        "changed_task_label_space",
+        "forged_acceptance",
+    ],
+)
 def test_report_rejects_forged_or_incomplete_predeclared_gates(mutation: str) -> None:
     payload = _valid_accepted_report_payload()
     if mutation == "remove_gate":
-        payload["gate_results"] = [g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"]
+        payload["gate_results"] = [
+            g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"
+        ]
     elif mutation == "undeclared_gate":
-        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["metric"] = "PER_CLASS_RECALL"
+        next(
+            g for g in payload["gate_results"] if g["metric"] == "MACRO_F1"
+        )["metric"] = "PER_CLASS_RECALL"
     elif mutation == "changed_minimum":
-        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["minimum"] = 0.4
+        next(
+            g for g in payload["gate_results"] if g["metric"] == "MACRO_F1"
+        )["minimum"] = 0.4
     elif mutation == "changed_maximum":
-        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["maximum"] = 0.9
+        next(
+            g for g in payload["gate_results"] if g["metric"] == "MACRO_F1"
+        )["maximum"] = 0.9
     elif mutation == "changed_configuration_identity":
-        payload["metric_configuration"]["configuration_id"] = "altered-without-new-digest"
+        payload["metric_configuration"]["configuration_id"] = (
+            "altered-without-new-digest"
+        )
     elif mutation == "changed_task_label_space":
         payload["task"]["labels"] = ["ALTERNATE_A", "ALTERNATE_B"]
     else:
-        payload["gate_results"] = [g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"]
+        payload["gate_results"] = [
+            g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"
+        ]
         payload["accepted"] = True
     with pytest.raises(ValidationError):
         EvaluationComparisonReport.model_validate(payload)
 
 
 def test_summary_rejects_counts_that_disagree_with_precision_and_recall() -> None:
-    outcome = evaluate_predictions(manifest=_manifest(), predictions=_perfect(), labels=LABELS, system_id="candidate")
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=_perfect(),
+        labels=LABELS,
+        system_id="candidate",
+    )
     payload = outcome.model_dump(mode="json")
     payload["per_class"][0]["true_positives"] += 1
     with pytest.raises(ValidationError):
@@ -1251,7 +1283,12 @@ def test_summary_rejects_counts_that_disagree_with_precision_and_recall() -> Non
 
 
 def test_summary_rejects_forged_macro_f1_and_coverage() -> None:
-    outcome = evaluate_predictions(manifest=_manifest(), predictions=_perfect(), labels=LABELS, system_id="candidate")
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=_perfect(),
+        labels=LABELS,
+        system_id="candidate",
+    )
     payload = outcome.model_dump(mode="json")
     payload["macro_f1"] = 0.25
     with pytest.raises(ValidationError):
@@ -1262,10 +1299,13 @@ def test_summary_rejects_forged_macro_f1_and_coverage() -> None:
         type(outcome).model_validate(payload)
 
 
-def test_binary_confusion_is_per_label_and_counts_abstentions_as_negative_predictions() -> None:
+def test_binary_confusion_counts_abstentions_as_negative_predictions() -> None:
     outcome = evaluate_predictions(
         manifest=_manifest(),
-        predictions=tuple(_prediction(f"example-{i}", [], abstained=True) for i in range(1, 5)),
+        predictions=tuple(
+            _prediction(f"example-{i}", [], abstained=True)
+            for i in range(1, 5)
+        ),
         labels=LABELS,
         system_id="candidate",
     )
@@ -1280,10 +1320,26 @@ def test_binary_confusion_is_per_label_and_counts_abstentions_as_negative_predic
 
 
 def test_binary_confusion_zero_predicted_and_zero_actual_positives_are_valid() -> None:
-    zero_predicted = evaluate_predictions(manifest=_manifest(), predictions=tuple(_prediction(f"example-{i}", []) for i in range(1, 5)), labels=LABELS, system_id="candidate")
+    zero_predicted = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=tuple(
+            _prediction(f"example-{i}", []) for i in range(1, 5)
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
     assert all(row.precision == 0.0 for row in zero_predicted.per_class)
-    empty_expected = _split_manifest([(f"example-{i}", "TEST", []) for i in range(1, 5)])
-    zero_actual = evaluate_predictions(manifest=empty_expected, predictions=tuple(_prediction(f"example-{i}", []) for i in range(1, 5)), labels=LABELS, system_id="candidate")
+    empty_expected = _split_manifest(
+        [(f"example-{i}", "TEST", []) for i in range(1, 5)]
+    )
+    zero_actual = evaluate_predictions(
+        manifest=empty_expected,
+        predictions=tuple(
+            _prediction(f"example-{i}", []) for i in range(1, 5)
+        ),
+        labels=LABELS,
+        system_id="candidate",
+    )
     assert all(row.recall == 0.0 for row in zero_actual.per_class)
     assert all(row.true_negatives == 4 for row in zero_actual.per_class)
     assert sum(count for _, _, count in zero_actual.label_cooccurrence_counts) == 0
@@ -1293,12 +1349,22 @@ def test_binary_confusion_zero_predicted_and_zero_actual_positives_are_valid() -
     ("expected", "predicted", "expected_counts"),
     [
         (["A"], ["A", "B"], {"A": (1, 0, 0, 0), "B": (0, 1, 0, 0), "C": (0, 0, 0, 1)}),
-        (["A", "B"], ["A", "C"], {"A": (1, 0, 0, 0), "B": (0, 0, 1, 0), "C": (0, 1, 0, 0)}),
+        (
+            ["A", "B"],
+            ["A", "C"],
+            {
+                "A": (1, 0, 0, 0),
+                "B": (0, 0, 1, 0),
+                "C": (0, 1, 0, 0),
+            },
+        ),
         (["A"], ["B"], {"A": (0, 0, 1, 0), "B": (0, 1, 0, 0), "C": (0, 0, 0, 1)}),
         ([], ["B", "C"], {"A": (0, 0, 0, 1), "B": (0, 1, 0, 0), "C": (0, 1, 0, 0)}),
     ],
 )
-def test_binary_confusion_semantics_for_multilabel_edges(expected, predicted, expected_counts) -> None:
+def test_binary_confusion_semantics_for_multilabel_edges(
+    expected, predicted, expected_counts
+) -> None:
     manifest = _split_manifest([("example-1", "TEST", expected)])
     outcome = evaluate_predictions(
         manifest=manifest,
@@ -1307,9 +1373,16 @@ def test_binary_confusion_semantics_for_multilabel_edges(expected, predicted, ex
         system_id="candidate",
     )
     actual = {
-        row.label: (row.true_positives, row.false_positives, row.false_negatives, row.true_negatives)
+        row.label: (
+            row.true_positives,
+            row.false_positives,
+            row.false_negatives,
+            row.true_negatives,
+        )
         for row in outcome.per_class
     }
     assert actual == expected_counts
     assert tuple(row[0] for row in outcome.binary_confusion) == ("A", "B", "C")
-    assert all(sum(row[1:]) == outcome.example_count for row in outcome.binary_confusion)
+    assert all(
+        sum(row[1:]) == outcome.example_count for row in outcome.binary_confusion
+    )

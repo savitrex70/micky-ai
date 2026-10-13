@@ -302,8 +302,22 @@ def evaluate_predictions(
             "invalid_reference_count": invalid_references,
             "labels": tuple(sorted(labels)),
             "per_class": per_class,
-            "label_cooccurrence_counts": tuple(sorted((expected, predicted, count) for (expected, predicted), count in confusion_counts.items())),
-            "binary_confusion": tuple((row["label"], row["true_positives"], row["false_positives"], row["false_negatives"], row["true_negatives"]) for row in per_class),
+            "label_cooccurrence_counts": tuple(
+                sorted(
+                    (expected, predicted, count)
+                    for (expected, predicted), count in confusion_counts.items()
+                )
+            ),
+            "binary_confusion": tuple(
+                (
+                    row["label"],
+                    row["true_positives"],
+                    row["false_positives"],
+                    row["false_negatives"],
+                    row["true_negatives"],
+                )
+                for row in per_class
+            ),
             "latency_ms_max": latency_max,
         }
     )
@@ -422,12 +436,20 @@ def compare_systems(
             "run_id": run_configuration.run_id,
             "task": run_configuration.task.model_dump(mode="json"),
             "run_configuration_hash": canonical_examples_digest(run_configuration),
-            "metric_configuration": run_configuration.metric_configuration.model_dump(mode="json"),
-            "metric_configuration_hash": canonical_metric_configuration_digest(run_configuration.metric_configuration),
+            "metric_configuration": run_configuration.metric_configuration.model_dump(
+                mode="json"
+            ),
+            "metric_configuration_hash": canonical_metric_configuration_digest(
+                run_configuration.metric_configuration
+            ),
             "dataset_id": manifest.dataset_id,
             "dataset_snapshot_hash": manifest.dataset_snapshot_hash,
-            "baseline_label_cooccurrence_total": sum(count for _, _, count in baseline_outcome.label_cooccurrence_counts),
-            "candidate_label_cooccurrence_total": sum(count for _, _, count in candidate_outcome.label_cooccurrence_counts),
+            "baseline_label_cooccurrence_total": sum(
+                count for _, _, count in baseline_outcome.label_cooccurrence_counts
+            ),
+            "candidate_label_cooccurrence_total": sum(
+                count for _, _, count in candidate_outcome.label_cooccurrence_counts
+            ),
             "baseline": baseline_outcome.model_dump(),
             "candidate": candidate_outcome.model_dump(),
             "gate_results": gate_results,
