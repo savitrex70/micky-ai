@@ -21,7 +21,7 @@ from pydantic import (
 EVALUATION_CONTRACT_VERSION = "1"
 # The report now embeds the predeclared metric contract and validates all
 # derived per-label binary counts; configuration contracts remain at version 1.
-EVALUATION_REPORT_CONTRACT_VERSION = "3"
+EVALUATION_REPORT_CONTRACT_VERSION = "4"
 MAX_LABELS = 32
 MAX_EXAMPLES = 100000
 MAX_REASON_LENGTH = 500
@@ -349,6 +349,7 @@ class RunOutcomeSummary(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     system_id: StrictStr = Field(min_length=1, max_length=100)
+    evaluated_cohort_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     macro_f1: StrictFloat = Field(ge=0.0, le=1.0)
     balanced_accuracy: StrictFloat = Field(ge=0.0, le=1.0)
     coverage: StrictFloat = Field(ge=0.0, le=1.0)
@@ -575,9 +576,11 @@ class EvaluationComparisonReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["3"]
+    contract_version: Literal["4"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
     task: EvaluationTaskDefinition
+    run_configuration: EvaluationRunConfiguration
+    evaluated_manifest: EvaluationSplitManifest
     run_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     metric_configuration: EvaluationMetricConfiguration
     metric_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -627,6 +630,61 @@ class EvaluationComparisonReport(BaseModel):
     def _derived_fields_match_the_embedded_outcomes(
         self,
     ) -> EvaluationComparisonReport:
+        # Recompute the identity from the full validated predeclared configuration.
+        configuration = self.run_configuration
+        if self.run_configuration_hash != canonical_examples_digest(configuration):
+            raise ValueError(
+                "run configuration identity does not match embedded configuration"
+            )
+        if (
+            self.run_id != configuration.run_id
+            or self.task != configuration.task
+            or self.metric_configuration != configuration.metric_configuration
+        ):
+            raise ValueError(
+                "report identity fields must match embedded run configuration"
+            )
+        if (
+            self.dataset_id != configuration.split_manifest.dataset_id
+            or self.dataset_snapshot_hash
+            != configuration.split_manifest.dataset_snapshot_hash
+            or self.evaluated_manifest.dataset_id != self.dataset_id
+            or self.evaluated_manifest.dataset_snapshot_hash
+            != self.dataset_snapshot_hash
+            or self.evaluated_manifest.task_id != self.task.task_id
+        ):
+            raise ValueError(
+                "report dataset identity must match embedded run configuration"
+            )
+        expected_entries = tuple(
+            entry
+            for entry in configuration.split_manifest.entries
+            if entry.split in configuration.evaluated_splits
+        )
+        if not expected_entries:
+            raise ValueError("evaluated cohort must not be empty")
+        if self.evaluated_manifest.entries != expected_entries:
+            raise ValueError(
+                "evaluated manifest must exactly match the configured split selection"
+            )
+        cohort_hash = canonical_evaluated_manifest_digest(self.evaluated_manifest)
+        if (
+            self.baseline.evaluated_cohort_hash != cohort_hash
+            or self.candidate.evaluated_cohort_hash != cohort_hash
+        ):
+            raise ValueError(
+                "both outcomes must bind to the exact evaluated manifest"
+            )
+        expected_examples = len(expected_entries)
+        if (
+            self.baseline.example_count != expected_examples
+            or self.candidate.example_count != expected_examples
+            or self.baseline.example_count != self.candidate.example_count
+        ):
+            raise ValueError(
+                "both outcomes must account for every example in the evaluated cohort"
+            )
+
         # These totals count diagnostic co-occurrence cells, not examples.
         baseline_cooccurrence_total = sum(
             count for _, _, count in self.baseline.label_cooccurrence_counts
@@ -761,6 +819,21 @@ def canonical_metric_configuration_digest(
 
     payload = json.dumps(
         configuration.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_evaluated_manifest_digest(
+    manifest: EvaluationSplitManifest,
+) -> str:
+    """SHA-256 over the safe, canonical evaluated manifest, never raw text."""
+    import hashlib
+    import json
+
+    payload = json.dumps(
+        manifest.model_dump(mode="json"),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")

@@ -27,6 +27,7 @@ from rop.schemas.evaluation_harness import (
     EvaluationSplit,
     EvaluationSplitManifest,
     RunOutcomeSummary,
+    canonical_evaluated_manifest_digest,
     canonical_examples_digest,
     metric_value,
     observed_metric_value,
@@ -292,6 +293,7 @@ def evaluate_predictions(
     return RunOutcomeSummary.model_validate(
         {
             "system_id": system_id,
+            "evaluated_cohort_hash": canonical_evaluated_manifest_digest(manifest),
             "macro_f1": macro_f1,
             "balanced_accuracy": balanced_accuracy,
             "coverage": coverage,
@@ -435,6 +437,8 @@ def compare_systems(
             "contract_version": EVALUATION_REPORT_CONTRACT_VERSION,
             "run_id": run_configuration.run_id,
             "task": run_configuration.task.model_dump(mode="json"),
+            "run_configuration": run_configuration.model_dump(mode="json"),
+            "evaluated_manifest": manifest.model_dump(mode="json"),
             "run_configuration_hash": canonical_examples_digest(run_configuration),
             "metric_configuration": run_configuration.metric_configuration.model_dump(
                 mode="json"

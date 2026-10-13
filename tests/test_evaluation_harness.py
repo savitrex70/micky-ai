@@ -27,6 +27,7 @@ from rop.schemas.evaluation_harness import (
     EvaluationSplitManifest,
     EvaluationTaskDefinition,
     EvaluationTaskKind,
+    canonical_examples_digest,
     reject_tuning_references,
 )
 
@@ -388,9 +389,16 @@ def _forged(payload: dict, **patch: object) -> EvaluationComparisonReport:
 def test_genuine_accepted_and_rejected_reports_round_trip() -> None:
     accepted = _report_payload(accepted=True)
     rejected = _report_payload(accepted=False)
-    assert EvaluationComparisonReport.model_validate(accepted).accepted is True
-    assert EvaluationComparisonReport.model_validate(rejected).accepted is False
+    accepted_report = EvaluationComparisonReport.model_validate(accepted)
+    rejected_report = EvaluationComparisonReport.model_validate(rejected)
+    assert accepted_report.accepted is True
+    assert rejected_report.accepted is False
     assert accepted["contract_version"] == EVALUATION_REPORT_CONTRACT_VERSION
+    assert (
+        accepted_report.run_configuration_hash
+        == canonical_examples_digest(accepted_report.run_configuration)
+    )
+    assert accepted_report.model_dump(mode="json") == accepted
 
 
 def test_report_rejects_the_previous_contract_version() -> None:
@@ -1386,3 +1394,90 @@ def test_binary_confusion_semantics_for_multilabel_edges(
     assert all(
         sum(row[1:]) == outcome.example_count for row in outcome.binary_confusion
     )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "run_configuration_hash",
+        "evaluated_splits",
+        "dataset_snapshot",
+        "manifest_entry",
+        "expected_labels",
+        "configuration_manifest_entry",
+        "configuration_expected_labels",
+        "run_id",
+        "task",
+        "metric_configuration",
+    ],
+)
+def test_report_rejects_run_identity_or_cohort_tampering(mutation: str) -> None:
+    payload = _report_payload(accepted=True)
+    if mutation == "run_configuration_hash":
+        payload["run_configuration_hash"] = "d" * 64
+    elif mutation == "evaluated_splits":
+        payload["run_configuration"]["evaluated_splits"] = ["VALIDATION"]
+    elif mutation == "dataset_snapshot":
+        payload["run_configuration"]["split_manifest"][
+            "dataset_snapshot_hash"
+        ] = "e" * 64
+    elif mutation == "manifest_entry":
+        payload["evaluated_manifest"]["entries"][0]["example_id"] = "tampered-example"
+    elif mutation == "expected_labels":
+        payload["evaluated_manifest"]["entries"][0]["expected_labels"] = [
+            "POTASSIUM_HIGH"
+        ]
+    elif mutation == "configuration_manifest_entry":
+        payload["run_configuration"]["split_manifest"]["entries"][0][
+            "example_id"
+        ] = "tampered-config-example"
+    elif mutation == "configuration_expected_labels":
+        payload["run_configuration"]["split_manifest"]["entries"][0][
+            "expected_labels"
+        ] = ["POTASSIUM_HIGH"]
+    elif mutation == "run_id":
+        payload["run_id"] = "forged-run-id"
+    elif mutation == "task":
+        payload["task"]["task_id"] = "other-task"
+    elif mutation == "metric_configuration":
+        payload["metric_configuration"]["configuration_id"] = "other-metric-config"
+    with pytest.raises(ValidationError):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_report_rejects_baseline_summary_from_a_smaller_cohort() -> None:
+    payload = _report_payload(accepted=True)
+    smaller = _split_manifest(
+        [
+            ("example-1", "TEST", ["ANION_GAP_HIGH"]),
+            ("example-2", "TEST", ["POTASSIUM_HIGH"]),
+        ]
+    )
+    small_summary = evaluate_predictions(
+        manifest=smaller,
+        predictions=(
+            _prediction("example-1", ["ANION_GAP_HIGH"]),
+            _prediction("example-2", ["POTASSIUM_HIGH"]),
+        ),
+        labels=LABELS,
+        system_id="baseline",
+    )
+    payload["baseline"] = small_summary.model_dump(mode="json")
+    with pytest.raises(
+        ValidationError, match="evaluated manifest|evaluated cohort|example_count"
+    ):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_report_rejects_outcome_count_changed_without_cohort_change() -> None:
+    payload = _report_payload(accepted=True)
+    payload["baseline"]["example_count"] = 3
+    with pytest.raises(ValidationError):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_report_rejects_different_baseline_and_candidate_cohort_hashes() -> None:
+    payload = _report_payload(accepted=True)
+    payload["baseline"]["evaluated_cohort_hash"] = "a" * 64
+    with pytest.raises(ValidationError, match="exact evaluated manifest"):
+        EvaluationComparisonReport.model_validate(payload)
