@@ -1497,6 +1497,7 @@ def test_predicting_every_label_has_perfect_recall_but_not_balanced_accuracy() -
     assert all(row.balanced_accuracy == 0.5 for row in outcome.per_class)
     assert outcome.balanced_accuracy == 0.5
 
+
 @pytest.mark.parametrize(
     ("splits", "should_accept"),
     [
@@ -1509,14 +1510,28 @@ def test_predicting_every_label_has_perfect_recall_but_not_balanced_accuracy() -
 )
 def test_only_test_only_run_can_be_accepted(splits, should_accept) -> None:
     manifest = _split_manifest(
-        [(f"test-{i}", "TEST", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
-        + [(f"train-{i}", "TRAIN", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
-        + [(f"validation-{i}", "VALIDATION", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
+        [
+            (f"test-{i}", "TEST", [LABELS[(i - 1) % 2]])
+            for i in range(1, 5)
+        ]
+        + [
+            (f"train-{i}", "TRAIN", [LABELS[(i - 1) % 2]])
+            for i in range(1, 5)
+        ]
+        + [
+            (f"validation-{i}", "VALIDATION", [LABELS[(i - 1) % 2]])
+            for i in range(1, 5)
+        ]
     )
     configuration = _run_configuration(manifest, evaluated_splits=splits)
     entries = tuple(entry for entry in manifest.entries if entry.split in splits)
-    baseline = tuple(_prediction(entry.example_id, []) for entry in entries)
-    candidate = tuple(_prediction(entry.example_id, list(entry.expected_labels)) for entry in entries)
+    baseline = tuple(
+        _prediction(entry.example_id, []) for entry in entries
+    )
+    candidate = tuple(
+        _prediction(entry.example_id, list(entry.expected_labels))
+        for entry in entries
+    )
     report = compare_systems(
         run_configuration=configuration,
         baseline_predictions=baseline,

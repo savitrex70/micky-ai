@@ -92,7 +92,7 @@ class EvaluationManifestEntry(BaseModel):
 class EvaluationTaskDefinition(BaseModel):
     """Versioned, predeclared candidate task and label space."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     contract_version: Literal["1"]
     task_id: StrictStr = Field(min_length=1, max_length=100)
@@ -122,7 +122,7 @@ class EvaluationTaskDefinition(BaseModel):
 class EvaluationMetricThreshold(BaseModel):
     """One predeclared acceptance threshold for one metric."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     metric: EvaluationMetricKind
     minimum: StrictFloat | None = Field(ge=0.0)
@@ -155,7 +155,7 @@ class EvaluationMetricThreshold(BaseModel):
 class EvaluationMetricConfiguration(BaseModel):
     """Versioned metric/threshold contract; thresholds precede evaluation."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     contract_version: Literal["1"]
     configuration_id: StrictStr = Field(min_length=1, max_length=100)
@@ -195,7 +195,7 @@ class EvaluationMetricConfiguration(BaseModel):
 class EvaluationSplitManifest(BaseModel):
     """Immutable split assignment for one evaluation dataset snapshot."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     contract_version: Literal["1"]
     dataset_id: StrictStr = Field(min_length=1, max_length=200)
@@ -246,7 +246,7 @@ class CandidatePrediction(BaseModel):
     referenced evidence that the split did not supply.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     example_id: StrictStr = Field(min_length=1, max_length=200)
     predicted_labels: tuple[StrictStr, ...] = Field(max_length=MAX_LABELS)
@@ -274,7 +274,7 @@ class CandidatePrediction(BaseModel):
 class EvaluationRunConfiguration(BaseModel):
     """Everything needed to reproduce one run, before seeing outcomes."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     contract_version: Literal["1"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
@@ -309,9 +309,14 @@ def _metrics_close(actual: float, expected: float) -> bool:
 
 
 class EvaluationClassReport(BaseModel):
-    """Per-class outcome; zero-denominator precision and recall are 0.0."""
+    """Per-class outcome with zero-denominator rates defined as 0.0.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    Sensitivity is recall; specificity is TN/(TN+FP). Per-label balanced
+    accuracy is their arithmetic mean. The overall multilabel score is the
+    macro mean of those per-label balanced-accuracy values.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     label: StrictStr = Field(min_length=1, max_length=100)
     true_positives: StrictInt = Field(ge=0)
@@ -339,9 +344,13 @@ class EvaluationClassReport(BaseModel):
         specificity = self.true_negatives / negatives if negatives else 0.0
         balanced_accuracy = (recall + specificity) / 2.0
         if not _metrics_close(self.specificity, specificity):
-            raise ValueError("specificity must match TN/(TN+FP); zero denominator means 0.0")
+            raise ValueError(
+                "specificity must match TN/(TN+FP); zero denominator means 0.0"
+            )
         if not _metrics_close(self.balanced_accuracy, balanced_accuracy):
-            raise ValueError("balanced_accuracy must average sensitivity and specificity")
+            raise ValueError(
+                "balanced_accuracy must average sensitivity and specificity"
+            )
         return self
 
 
@@ -355,7 +364,7 @@ class RunOutcomeSummary(BaseModel):
     co-occurrence field is diagnostic only and is not a standard confusion matrix.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     system_id: StrictStr = Field(min_length=1, max_length=100)
     evaluated_cohort_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -454,7 +463,8 @@ class RunOutcomeSummary(BaseModel):
         macro_f1 = sum(f1_values) / len(f1_values) if f1_values else 0.0
         balanced_accuracy = (
             sum(balanced_accuracies) / len(balanced_accuracies)
-            if balanced_accuracies else 0.0
+            if balanced_accuracies
+            else 0.0
         )
         coverage = (
             (self.example_count - self.abstention_count) / self.example_count
@@ -561,7 +571,7 @@ def observed_metric_value(
 class EvaluationGateResult(BaseModel):
     """One predeclared metric gate: observed candidate value, bounds, verdict."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     metric: EvaluationMetricKind
     observed_value: StrictFloat | None
@@ -586,7 +596,7 @@ class EvaluationComparisonReport(BaseModel):
     recorded gate results; none of them is trusted as supplied.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     contract_version: Literal["5"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
@@ -775,7 +785,9 @@ class EvaluationComparisonReport(BaseModel):
         # 5. Acceptance is the conjunction of its recorded parts, nothing else.
         if self.safety_failure and self.accepted:
             raise ValueError("a safety failure can never be accepted")
-        if self.accepted and configuration.evaluated_splits != (EvaluationSplit.TEST,):
+        if self.accepted and configuration.evaluated_splits != (
+            EvaluationSplit.TEST,
+        ):
             raise ValueError("accepted reports require TEST-only held-out evaluation")
         if self.accepted and not self.candidate_improves_macro_f1:
             raise ValueError(
