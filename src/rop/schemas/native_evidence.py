@@ -47,7 +47,7 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 NATIVE_EVIDENCE_SOURCE_TASK_203 = "NATIVE_EVIDENCE_TASK_203"
 
@@ -110,6 +110,18 @@ class NativeEvidenceRecord(BaseModel):
     availability: NativeEvidenceAvailability
     uncertainty: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
     evidence_source: Literal["NATIVE_EVIDENCE_TASK_203"]
+
+    @field_validator("uncertainty", mode="before")
+    @classmethod
+    def _reject_ambiguous_uncertainty(cls, value: object) -> object:
+        # Pydantic's lax float parsing would silently convert numeric
+        # strings ("0.2") and booleans (True -> 1.0). Reject those
+        # ambiguous inputs here with a generic message; genuine JSON
+        # numbers (int or float) pass through to range/finiteness
+        # checks unchanged.
+        if isinstance(value, bool) or isinstance(value, str):
+            raise ValueError("uncertainty is invalid")
+        return value
 
     @model_validator(mode="after")
     def _strict_record(self) -> NativeEvidenceRecord:

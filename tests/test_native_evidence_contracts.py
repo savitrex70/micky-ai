@@ -311,3 +311,43 @@ def test_task_202_contracts_remain_compatible() -> None:
         "NativeReasoningError",
     ):
         assert name in schemas.__all__
+
+
+def test_uncertainty_accepts_numeric_boundaries() -> None:
+    assert _record(uncertainty=0.0).uncertainty == 0.0
+    assert _record(uncertainty=1.0).uncertainty == 1.0
+
+
+def test_uncertainty_accepts_ordinary_numeric_value() -> None:
+    assert _record(uncertainty=0.5).uncertainty == 0.5
+
+
+def test_uncertainty_rejects_numeric_strings() -> None:
+    with pytest.raises(ValidationError):
+        _record(uncertainty="0.2")  # type: ignore[dict-item]
+    with pytest.raises(ValidationError):
+        _record(uncertainty="0")  # type: ignore[dict-item]
+
+
+def test_uncertainty_rejects_booleans() -> None:
+    with pytest.raises(ValidationError):
+        _record(uncertainty=True)  # type: ignore[dict-item]
+    with pytest.raises(ValidationError):
+        _record(uncertainty=False)  # type: ignore[dict-item]
+
+
+def test_uncertainty_rejects_nonfinite_and_out_of_range() -> None:
+    with pytest.raises(ValidationError):
+        _record(uncertainty=float("nan"))
+    with pytest.raises(ValidationError):
+        _record(uncertainty=float("inf"))
+    with pytest.raises(ValidationError):
+        _record(uncertainty=float("-inf"))
+    with pytest.raises(ValidationError):
+        _record(uncertainty=-0.1)
+    with pytest.raises(ValidationError):
+        _record(uncertainty=1.1)
+    with pytest.raises(ValidationError):
+        _record(uncertainty=2)  # type: ignore[dict-item]
+    with pytest.raises(ValidationError):
+        _record(uncertainty=-1)  # type: ignore[dict-item]
