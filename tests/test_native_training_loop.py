@@ -603,6 +603,61 @@ class TestInputAndIntegrityValidation:
             _run(model, result=result, vocabulary=vocabulary)
         assert exc.value.code == "EMPTY_PARTITION"
 
+    def test_empty_validation_partition_rejected(self) -> None:
+        result = prepare_dataset(
+            records=[
+                {
+                    "record_id": "r-01",
+                    "source_id": "synthetic-test-loop-1",
+                    "group_id": "g-01",
+                    "label": "alpha",
+                    "content_text": "synthetic one record here",
+                    "provenance_ref": "synthetic-in-repo-fixture-1",
+                },
+                {
+                    "record_id": "r-02",
+                    "source_id": "synthetic-test-loop-1",
+                    "group_id": "g-02",
+                    "label": "beta",
+                    "content_text": "synthetic two records here",
+                    "provenance_ref": "synthetic-in-repo-fixture-1",
+                },
+            ],
+            authorizations=REGISTRY,
+            dataset_id="synthetic-native-loop",
+            purpose="native-training",
+            operation="training",
+            as_of="2026-01-01",
+            allowed_labels=("alpha", "beta"),
+            grouping_unit="single record",
+            split_config={
+                "seed": 7,
+                "train_ratio": 1.0,
+                "validation_ratio": 0.0,
+                "test_ratio": 0.0,
+            },
+        )
+        assert len(partition_records(result, "validation")) == 0
+        vocabulary = build_vocabulary(result, tokenizer_config=_TOKENIZER_CONFIG)
+        model = initialize_model(
+            NativeModelConfig(
+                model_version="1.0",
+                architecture="tiny-encoder-v1",
+                vocab_size=vocabulary.metadata.vocabulary_size,
+                hidden_dim=16,
+                num_layers=1,
+                num_heads=4,
+                max_seq_len=16,
+                num_classes=2,
+                dropout=0.1,
+                init_seed=42,
+                init_std=0.05,
+            )
+        )
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(model, result=result, vocabulary=vocabulary)
+        assert exc.value.code == "EMPTY_PARTITION"
+
     def test_tampered_record_digest_rejected(self) -> None:
         target = next(
             entry for entry in _RESULT.partitions if entry.partition == "train"
