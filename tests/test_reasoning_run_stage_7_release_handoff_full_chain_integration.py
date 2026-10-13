@@ -2034,12 +2034,9 @@ def test_task_198_raw_request_and_provider_payloads_are_not_published() -> None:
     assert chain["bundle165"]["provider_name"] == upstream["slice163"]["provider_name"]
     assert chain["bundle165"]["model_name"] == upstream["slice163"]["model_name"]
     assert (
-        chain["package168"]["t162_provider_name"]
-        == upstream["pkg162"]["provider_name"]
+        chain["package168"]["t162_provider_name"] == upstream["pkg162"]["provider_name"]
     )
-    assert (
-        chain["package168"]["t162_model_name"] == upstream["pkg162"]["model_name"]
-    )
+    assert chain["package168"]["t162_model_name"] == upstream["pkg162"]["model_name"]
 
 
 def test_task_198_malformed_evidence_diagnostics_do_not_echo_untrusted_values() -> None:
@@ -2190,7 +2187,10 @@ def test_task_200_full_valid_path_runs_from_entry_through_consistent_handoff():
     assert upstream["diagnostics"]["diagnostics_status"] == "HEALTHY"
 
     for boundary, field in _BUSINESS_BOUNDARIES:
-        assert chain[boundary][field] == "READY", (boundary, field)
+        # The two final-attestation boundaries publish CERTIFIED, not READY,
+        # for a fully valid path; every other business boundary is READY.
+        expected = "CERTIFIED" if field == "attestation_status" else "READY"
+        assert chain[boundary][field] == expected, (boundary, field)
     for boundary, field, _ in _VERIFICATION_BOUNDARIES:
         assert chain[boundary][field] == "CONSISTENT", (boundary, field)
     assert chain["package186"]["package_status"] == "READY"
@@ -2262,15 +2262,21 @@ def test_task_200_readable_gate_contradiction_remains_inconsistent_through_188()
     projection.gate_status = "UNAVAILABLE"
     result = _compose_gate_handoff_from_projection(chain, projection)
 
-    assert result["audit184"]["gate_audit_status"] == "INCONSISTENT"
-    assert "GATE_STATUS_MISMATCH" in result["audit184"]["findings"]
-    assert result["consistency185"]["gate_consistency_status"] == "INCONSISTENT"
-    assert "EXPECTED_STATUS_MISMATCH" in result["consistency185"]["findings"]
-    assert result["audit187"]["package_audit_status"] == "INCONSISTENT"
-    assert "T184_AUDIT_INCONSISTENT" in result["audit187"]["findings"]
-    assert "T185_CONSISTENCY_INCONSISTENT" in result["audit187"]["findings"]
-    assert result["consistency188"]["consistency_status"] == "INCONSISTENT"
-    assert "AUDIT_UNAVAILABLE" not in result["consistency188"]["findings"]
+    # The helper returns validated read models, so they are read by attribute.
+    audit184 = result["audit184"]
+    consistency185 = result["consistency185"]
+    audit187 = result["audit187"]
+    consistency188 = result["consistency188"]
+
+    assert audit184.gate_audit_status == "INCONSISTENT"
+    assert "GATE_STATUS_MISMATCH" in audit184.findings
+    assert consistency185.gate_consistency_status == "INCONSISTENT"
+    assert "EXPECTED_STATUS_MISMATCH" in consistency185.findings
+    assert audit187.package_audit_status == "INCONSISTENT"
+    assert "T184_AUDIT_INCONSISTENT" in audit187.findings
+    assert "T185_CONSISTENCY_INCONSISTENT" in audit187.findings
+    assert consistency188.consistency_status == "INCONSISTENT"
+    assert "AUDIT_UNAVAILABLE" not in consistency188.findings
 
 
 def test_task_200_detached_gate_audit_identity_remains_untrusted_through_188():

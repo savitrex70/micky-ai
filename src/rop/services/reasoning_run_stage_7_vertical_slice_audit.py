@@ -57,6 +57,9 @@ from pydantic import ValidationError
 from rop.schemas.reasoning_run_stage_7_audit_package import (
     ReasoningRunStage7AuditPackageRead,
 )
+from rop.schemas.reasoning_run_stage_7_upstream_sources import (
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+)
 from rop.schemas.reasoning_run_stage_7_vertical_slice import (
     ReasoningRunStage7VerticalSliceRead,
 )
@@ -68,10 +71,6 @@ from rop.services.reasoning_run_stage_7_audit_package import (
 )
 from rop.services.reasoning_run_stage_7_vertical_slice import (
     REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
-)
-
-REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164 = (
-    "REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_TASK_164"
 )
 
 # Canonical Task 155 request fingerprint shape: SHA-256 hex digest, exactly

@@ -1351,13 +1351,11 @@ def test_schema_still_rejects_extra_fields_and_blank_attribution_xor() -> None:
         _SCHEMA_VALIDATE({**unavailable, "provider_name": "p", "model_name": None})
 
 
-def test_schema_imports_only_source_constants_from_services() -> None:
+def test_schema_imports_nothing_from_services() -> None:
+    # The Task 162/163/164 source constants live in the dependency-free
+    # upstream-sources schema module, so the schema imports no service name.
     tree = ast.parse(_SCHEMA_FILE.read_text())
-    allowed = {
-        "REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162",
-        "REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163",
-        "REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164",
-    }
+    allowed: set[str] = set()
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:

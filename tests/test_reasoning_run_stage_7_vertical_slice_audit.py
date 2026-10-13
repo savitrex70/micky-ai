@@ -1265,6 +1265,7 @@ def test_audit_modules_import_only_published_contracts() -> None:
 
     assert rop_imports == {
         "rop.schemas.reasoning_run_stage_7_audit_package",
+        "rop.schemas.reasoning_run_stage_7_upstream_sources",
         "rop.schemas.reasoning_run_stage_7_vertical_slice",
         "rop.schemas.reasoning_run_stage_7_vertical_slice_audit",
         "rop.services.reasoning_run_stage_7_audit_package",

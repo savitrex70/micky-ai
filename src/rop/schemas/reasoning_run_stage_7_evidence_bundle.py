@@ -24,6 +24,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from rop.schemas.reasoning_run_stage_7_upstream_sources import (
+    REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
+    REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
+)
+
 # The Task 165 source constant lives here, next to the contract that enforces
 # it, so the schema never has to import the service that imports the schema.
 # The service re-exports the same name.
@@ -48,22 +54,9 @@ _SOURCE_FINDING_CODES = {
 def _canonical_sources() -> dict[str, str]:
     """Return the canonical Task 162/163/164 source constants by bundle field.
 
-    The constants are imported on first use rather than at module import
-    time: the schemas package is loaded before the services package, and
-    the services import the schemas, so a top-level import here would be
-    circular. Only the three source constants are ever read; no service
-    is called.
+    The constants live in the dependency-free upstream-sources schema module,
+    so this contract reads them without importing any service.
     """
-    from rop.services.reasoning_run_stage_7_audit_package import (
-        REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
-    )
-    from rop.services.reasoning_run_stage_7_vertical_slice import (
-        REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163,
-    )
-    from rop.services.reasoning_run_stage_7_vertical_slice_audit import (
-        REASONING_RUN_STAGE_7_VERTICAL_SLICE_AUDIT_SOURCE_TASK_164,
-    )
-
     return {
         "t162_audit_source": REASONING_RUN_STAGE_7_AUDIT_PACKAGE_SOURCE_TASK_162,
         "certification_source": (REASONING_RUN_STAGE_7_VERTICAL_SLICE_SOURCE_TASK_163),
