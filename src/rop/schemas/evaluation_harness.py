@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import math
 from typing import Any, Literal
 
 from pydantic import (
@@ -21,7 +22,7 @@ EVALUATION_CONTRACT_VERSION = "1"
 # The comparison report's public shape changed (recorded gate results and
 # explicit baseline/candidate confusion totals), so it carries its own
 # contract version; configuration contracts remain at version 1.
-EVALUATION_REPORT_CONTRACT_VERSION = "2"
+EVALUATION_REPORT_CONTRACT_VERSION = "3"
 MAX_LABELS = 32
 MAX_EXAMPLES = 100000
 MAX_REASON_LENGTH = 500
@@ -303,8 +304,13 @@ class EvaluationRunConfiguration(BaseModel):
         return self
 
 
+def _metrics_close(actual: float, expected: float) -> bool:
+    """Deterministic metric comparison policy: rel_tol=1e-12, abs_tol=1e-12."""
+    return math.isclose(actual, expected, rel_tol=1e-12, abs_tol=1e-12)
+
+
 class EvaluationClassReport(BaseModel):
-    """Per-class outcome for one run; bounded and deterministic."""
+    """Per-class outcome; zero-denominator precision and recall are 0.0."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -312,8 +318,21 @@ class EvaluationClassReport(BaseModel):
     true_positives: StrictInt = Field(ge=0)
     false_positives: StrictInt = Field(ge=0)
     false_negatives: StrictInt = Field(ge=0)
+    true_negatives: StrictInt = Field(ge=0)
     precision: StrictFloat = Field(ge=0.0, le=1.0)
     recall: StrictFloat = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _metrics_match_counts(self) -> EvaluationClassReport:
+        predicted = self.true_positives + self.false_positives
+        actual = self.true_positives + self.false_negatives
+        precision = self.true_positives / predicted if predicted else 0.0
+        recall = self.true_positives / actual if actual else 0.0
+        if not _metrics_close(self.precision, precision):
+            raise ValueError("precision must match TP/(TP+FP); zero denominator means 0.0")
+        if not _metrics_close(self.recall, recall):
+            raise ValueError("recall must match TP/(TP+FN); zero denominator means 0.0")
+        return self
 
 
 class RunOutcomeSummary(BaseModel):
@@ -328,9 +347,22 @@ class RunOutcomeSummary(BaseModel):
     abstention_rate: StrictFloat = Field(ge=0.0, le=1.0)
     invalid_evidence_reference_rate: StrictFloat = Field(ge=0.0, le=1.0)
     example_count: StrictInt = Field(ge=0)
+    abstention_count: StrictInt = Field(ge=0)
+    invalid_reference_count: StrictInt = Field(ge=0)
+    labels: tuple[StrictStr, ...] = Field(min_length=2, max_length=MAX_LABELS)
     per_class: tuple[EvaluationClassReport, ...] = Field(max_length=MAX_LABELS)
-    confusion_matrix: tuple[tuple[str, str, StrictInt], ...] = Field(max_length=1024)
+    # Diagnostic expected/predicted co-occurrence, not a conventional confusion matrix.
+    label_cooccurrence_counts: tuple[tuple[str, str, StrictInt], ...] = Field(max_length=1024)
+    # Per label: (label, TP, FP, FN, TN), one binary decision per example.
+    binary_confusion: tuple[tuple[StrictStr, StrictInt, StrictInt, StrictInt, StrictInt], ...] = Field(max_length=MAX_LABELS)
     latency_ms_max: StrictFloat | None = Field(ge=0.0)
+
+    @field_validator("labels")
+    @classmethod
+    def _canonical_labels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value) or value != tuple(sorted(value)) or any(not label.strip() for label in value):
+            raise ValueError("summary labels must be unique, nonblank and canonically sorted")
+        return value
 
     @field_validator("per_class")
     @classmethod
@@ -343,6 +375,56 @@ class RunOutcomeSummary(BaseModel):
         if value != tuple(sorted(value, key=lambda report: report.label)):
             raise ValueError("per-class reports must be canonically sorted")
         return value
+
+    @field_validator("label_cooccurrence_counts")
+    @classmethod
+    def _canonical_cooccurrence(cls, value):
+        keys = [(expected, predicted) for expected, predicted, _ in value]
+        if any(count < 1 for _, _, count in value) or len(set(keys)) != len(keys):
+            raise ValueError("co-occurrence cells must be unique and positive")
+        if value != tuple(sorted(value)):
+            raise ValueError("co-occurrence cells must be canonically sorted")
+        return value
+
+    @field_validator("binary_confusion")
+    @classmethod
+    def _canonical_binary_confusion(cls, value):
+        labels = [row[0] for row in value]
+        if len(set(labels)) != len(labels) or labels != sorted(labels):
+            raise ValueError("binary confusion labels must be unique and sorted")
+        return value
+
+    @model_validator(mode="after")
+    def _summary_metrics_match_counts(self) -> RunOutcomeSummary:
+        if self.abstention_count > self.example_count or self.invalid_reference_count > self.example_count:
+            raise ValueError("outcome counts cannot exceed example_count")
+        if tuple(r.label for r in self.per_class) != self.labels:
+            raise ValueError("per-class reports must exactly match declared labels")
+        if tuple(row[0] for row in self.binary_confusion) != self.labels:
+            raise ValueError("binary confusion must exactly match declared labels")
+        expected_binary = tuple((r.label, r.true_positives, r.false_positives, r.false_negatives, r.true_negatives) for r in self.per_class)
+        if self.binary_confusion != expected_binary:
+            raise ValueError("binary confusion counts must match per-class counts")
+        f1_values = []
+        recalls = []
+        for r in self.per_class:
+            denom = r.precision + r.recall
+            f1_values.append(2 * r.precision * r.recall / denom if denom else 0.0)
+            recalls.append(r.recall)
+        macro_f1 = sum(f1_values) / len(f1_values) if f1_values else 0.0
+        balanced_accuracy = sum(recalls) / len(recalls) if recalls else 0.0
+        coverage = (self.example_count - self.abstention_count) / self.example_count if self.example_count else 0.0
+        abstention_rate = self.abstention_count / self.example_count if self.example_count else 0.0
+        invalid_rate = self.invalid_reference_count / self.example_count if self.example_count else 0.0
+        for actual, expected, name in ((self.macro_f1, macro_f1, "macro_f1"), (self.balanced_accuracy, balanced_accuracy, "balanced_accuracy"), (self.coverage, coverage, "coverage"), (self.abstention_rate, abstention_rate, "abstention_rate"), (self.invalid_evidence_reference_rate, invalid_rate, "invalid-reference rate")):
+            if not _metrics_close(actual, expected):
+                raise ValueError(f"{name} must match recorded sufficient counts")
+        for r in self.per_class:
+            if r.true_positives + r.false_negatives > self.example_count or r.true_positives + r.false_positives > self.example_count:
+                raise ValueError("per-class counts exceed example_count")
+            if r.true_positives + r.false_negatives + r.true_negatives + r.false_positives != self.example_count:
+                raise ValueError("binary confusion counts must account for every example")
+        return self
 
 
 def threshold_violated(threshold: EvaluationMetricThreshold, value: float) -> bool:
@@ -431,13 +513,15 @@ class EvaluationComparisonReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["2"]
+    contract_version: Literal["3"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
     run_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    metric_configuration: EvaluationMetricConfiguration
+    metric_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     dataset_id: StrictStr = Field(min_length=1, max_length=200)
     dataset_snapshot_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
-    baseline_confusion_total: StrictInt = Field(ge=0)
-    candidate_confusion_total: StrictInt = Field(ge=0)
+    baseline_label_cooccurrence_total: StrictInt = Field(ge=0)
+    candidate_label_cooccurrence_total: StrictInt = Field(ge=0)
     baseline: RunOutcomeSummary
     candidate: RunOutcomeSummary
     gate_results: tuple[EvaluationGateResult, ...] = Field(min_length=1, max_length=32)
@@ -480,19 +564,21 @@ class EvaluationComparisonReport(BaseModel):
     def _derived_fields_match_the_embedded_outcomes(
         self,
     ) -> EvaluationComparisonReport:
-        # 1. Confusion totals are the sums of their own system's matrix.
-        if self.baseline_confusion_total != sum(
-            count for _, _, count in self.baseline.confusion_matrix
-        ):
-            raise ValueError(
-                "baseline confusion total must equal its confusion matrix sum"
-            )
-        if self.candidate_confusion_total != sum(
-            count for _, _, count in self.candidate.confusion_matrix
-        ):
-            raise ValueError(
-                "candidate confusion total must equal its confusion matrix sum"
-            )
+        # These totals count diagnostic co-occurrence cells, not examples.
+        if self.baseline_label_cooccurrence_total != sum(count for _, _, count in self.baseline.label_cooccurrence_counts):
+            raise ValueError("baseline co-occurrence total must equal its diagnostic cell sum")
+        if self.candidate_label_cooccurrence_total != sum(count for _, _, count in self.candidate.label_cooccurrence_counts):
+            raise ValueError("candidate co-occurrence total must equal its diagnostic cell sum")
+        if self.metric_configuration_hash != canonical_metric_configuration_digest(self.metric_configuration):
+            raise ValueError("metric configuration identity does not match canonical configuration")
+        declared = {item.metric: item for item in self.metric_configuration.thresholds}
+        recorded = {gate.metric: gate for gate in self.gate_results}
+        if set(recorded) != set(declared) or len(recorded) != len(self.gate_results):
+            raise ValueError("gate results must exactly match all declared metrics")
+        for metric, threshold in declared.items():
+            gate = recorded[metric]
+            if gate.minimum != threshold.minimum or gate.maximum != threshold.maximum:
+                raise ValueError("recorded gate bounds must match declared thresholds")
 
         # 2. The improvement flag follows the scores, never a supplied Boolean.
         improves = self.candidate.macro_f1 > self.baseline.macro_f1
@@ -575,6 +661,15 @@ def reject_tuning_references(payload: dict[str, Any]) -> None:
             "the run configuration carries forbidden tuning keys: "
             f"{sorted(present)[0]}",
         )
+
+
+def canonical_metric_configuration_digest(configuration: EvaluationMetricConfiguration) -> str:
+    """SHA-256 of the canonical, predeclared metric configuration."""
+    import hashlib
+    import json
+
+    payload = json.dumps(configuration.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def canonical_examples_digest(

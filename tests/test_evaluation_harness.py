@@ -520,14 +520,14 @@ def test_confusion_totals_are_checked_against_their_own_matrices() -> None:
     with pytest.raises(ValidationError, match="baseline confusion total"):
         _forged(
             payload,
-            baseline_confusion_total=payload["baseline_confusion_total"] + 1,
+            baseline_label_cooccurrence_total=payload["baseline_label_cooccurrence_total"] + 1,
         )
     with pytest.raises(ValidationError, match="candidate confusion total"):
         _forged(
             payload,
-            candidate_confusion_total=payload["candidate_confusion_total"] + 1,
+            candidate_label_cooccurrence_total=payload["candidate_label_cooccurrence_total"] + 1,
         )
-    assert "confusion_matrix_scalar" not in payload
+    assert "label_cooccurrence_counts_scalar" not in payload
 
 
 def test_report_gate_results_cover_every_declared_threshold() -> None:
@@ -674,7 +674,7 @@ def _empty_baseline() -> tuple[CandidatePrediction, ...]:
 
 
 def _confusion(outcome) -> dict[tuple[str, str], int]:
-    return {(row, col): count for row, col, count in outcome.confusion_matrix}
+    return {(row, col): count for row, col, count in outcome.label_cooccurrence_counts}
 
 
 # --- A. confusion-matrix accounting -----------------------------------------
@@ -1206,3 +1206,82 @@ def test_split_helper_rejects_invalid_identifiers_with_a_stable_error() -> None:
         assign_splits_deterministically(
             example_ids=("example-1", "   "), train_ratio=0.6, validation_ratio=0.2
         )
+
+
+# --- F. final report and summary integrity regressions -----------------------
+
+def _valid_accepted_report_payload() -> dict:
+    report = compare_systems(
+        run_configuration=_run_configuration(_manifest()),
+        baseline_predictions=_empty_baseline(),
+        candidate_predictions=_perfect(),
+    )
+    assert report.accepted is True
+    return report.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("mutation", ["remove_gate", "undeclared_gate", "changed_minimum", "changed_maximum", "changed_configuration_identity", "forged_acceptance"])
+def test_report_rejects_forged_or_incomplete_predeclared_gates(mutation: str) -> None:
+    payload = _valid_accepted_report_payload()
+    if mutation == "remove_gate":
+        payload["gate_results"] = [g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"]
+    elif mutation == "undeclared_gate":
+        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["metric"] = "PER_CLASS_RECALL"
+    elif mutation == "changed_minimum":
+        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["minimum"] = 0.4
+    elif mutation == "changed_maximum":
+        next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["maximum"] = 0.9
+    elif mutation == "changed_configuration_identity":
+        payload["metric_configuration"]["configuration_id"] = "altered-without-new-digest"
+    else:
+        payload["gate_results"] = [g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"]
+        payload["accepted"] = True
+    with pytest.raises(ValidationError):
+        EvaluationComparisonReport.model_validate(payload)
+
+
+def test_summary_rejects_counts_that_disagree_with_precision_and_recall() -> None:
+    outcome = evaluate_predictions(manifest=_manifest(), predictions=_perfect(), labels=LABELS, system_id="candidate")
+    payload = outcome.model_dump(mode="json")
+    payload["per_class"][0]["true_positives"] += 1
+    with pytest.raises(ValidationError):
+        type(outcome).model_validate(payload)
+
+
+def test_summary_rejects_forged_macro_f1_and_coverage() -> None:
+    outcome = evaluate_predictions(manifest=_manifest(), predictions=_perfect(), labels=LABELS, system_id="candidate")
+    payload = outcome.model_dump(mode="json")
+    payload["macro_f1"] = 0.25
+    with pytest.raises(ValidationError):
+        type(outcome).model_validate(payload)
+    payload = outcome.model_dump(mode="json")
+    payload["coverage"] = 0.5
+    with pytest.raises(ValidationError):
+        type(outcome).model_validate(payload)
+
+
+def test_binary_confusion_is_per_label_and_counts_abstentions_as_negative_predictions() -> None:
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=tuple(_prediction(f"example-{i}", [], abstained=True) for i in range(1, 5)),
+        labels=LABELS,
+        system_id="candidate",
+    )
+    assert outcome.abstention_count == outcome.example_count == 4
+    assert outcome.coverage == 0.0
+    assert outcome.abstention_rate == 1.0
+    for row in outcome.binary_confusion:
+        _, tp, fp, fn, tn = row
+        assert tp == fp == tn == 0
+        assert fn == 2
+        assert tp + fp + fn + tn == outcome.example_count
+
+
+def test_binary_confusion_zero_predicted_and_zero_actual_positives_are_valid() -> None:
+    zero_predicted = evaluate_predictions(manifest=_manifest(), predictions=tuple(_prediction(f"example-{i}", []) for i in range(1, 5)), labels=LABELS, system_id="candidate")
+    assert all(row.precision == 0.0 for row in zero_predicted.per_class)
+    empty_expected = _split_manifest([(f"example-{i}", "TEST", []) for i in range(1, 5)])
+    zero_actual = evaluate_predictions(manifest=empty_expected, predictions=tuple(_prediction(f"example-{i}", []) for i in range(1, 5)), labels=LABELS, system_id="candidate")
+    assert all(row.recall == 0.0 for row in zero_actual.per_class)
+    assert all(row.true_negatives == 4 for row in zero_actual.per_class)
+    assert sum(count for _, _, count in zero_actual.label_cooccurrence_counts) == 0

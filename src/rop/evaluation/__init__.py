@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from rop.schemas.evaluation_harness import (
     EVALUATION_REPORT_CONTRACT_VERSION,
+    canonical_metric_configuration_digest,
     ZERO_TOLERANCE_METRIC,
     CandidatePrediction,
     EvaluationComparisonReport,
@@ -42,6 +43,7 @@ class _Counters:
     true_positives: int
     false_positives: int
     false_negatives: int
+    true_negatives: int
 
 
 def assign_splits_deterministically(
@@ -117,6 +119,7 @@ def _label_counters(
         true_positives=int(label in expected and label in predicted),
         false_positives=int(label not in expected and label in predicted),
         false_negatives=int(label in expected and label not in predicted),
+        true_negatives=int(label not in expected and label not in predicted),
     )
 
 
@@ -186,17 +189,22 @@ def evaluate_predictions(
     latency_max: float | None = None
 
     def add_counts(label: str, counters: _Counters) -> None:
-        previous = tp_fp_fn.get(label, _Counters(0, 0, 0))
+        previous = tp_fp_fn.get(label, _Counters(0, 0, 0, 0))
         tp_fp_fn[label] = _Counters(
             previous.true_positives + counters.true_positives,
             previous.false_positives + counters.false_positives,
             previous.false_negatives + counters.false_negatives,
+            previous.true_negatives + counters.true_negatives,
         )
 
     def record_abstention(expected: tuple[str, ...]) -> None:
-        for expected_label in expected:
-            confusion_counts[(expected_label, "<ABSTAIN>")] += 1
-            add_counts(expected_label, _Counters(0, 0, 1))
+        expected_set = frozenset(expected)
+        for label in labels:
+            if label in expected_set:
+                confusion_counts[(label, "<ABSTAIN>")] += 1
+                add_counts(label, _Counters(0, 0, 1, 0))
+            else:
+                add_counts(label, _Counters(0, 0, 0, 1))
 
     for example_id, entry in sorted(manifest_by_id.items()):
         example_count += 1
@@ -226,7 +234,7 @@ def evaluate_predictions(
         predicted_set = frozenset(prediction.predicted_labels) & expected_label_set
         expected_set = frozenset(entry.expected_labels)
 
-        for label in sorted(expected_set | predicted_set):
+        for label in labels:
             add_counts(label, _label_counters(expected_set, predicted_set, label))
         for expected_label in sorted(expected_set):
             if predicted_set:
@@ -245,7 +253,7 @@ def evaluate_predictions(
     f1_scores: list[float] = []
     recalls: list[float] = []
     for label in sorted(labels):
-        counts = tp_fp_fn.get(label, _Counters(0, 0, 0))
+        counts = tp_fp_fn.get(label, _Counters(0, 0, 0, 0))
         precision = (
             counts.true_positives / (counts.true_positives + counts.false_positives)
             if (counts.true_positives + counts.false_positives) > 0
@@ -269,6 +277,7 @@ def evaluate_predictions(
                 "true_positives": counts.true_positives,
                 "false_positives": counts.false_positives,
                 "false_negatives": counts.false_negatives,
+                "true_negatives": counts.true_negatives,
                 "precision": precision,
                 "recall": recall,
             }
@@ -289,13 +298,12 @@ def evaluate_predictions(
             "abstention_rate": abstention_rate,
             "invalid_evidence_reference_rate": invalid_rate,
             "example_count": example_count,
+            "abstention_count": abstentions,
+            "invalid_reference_count": invalid_references,
+            "labels": tuple(sorted(labels)),
             "per_class": per_class,
-            "confusion_matrix": tuple(
-                sorted(
-                    (expected, predicted, count)
-                    for (expected, predicted), count in confusion_counts.items()
-                )
-            ),
+            "label_cooccurrence_counts": tuple(sorted((expected, predicted, count) for (expected, predicted), count in confusion_counts.items())),
+            "binary_confusion": tuple((row["label"], row["true_positives"], row["false_positives"], row["false_negatives"], row["true_negatives"]) for row in per_class),
             "latency_ms_max": latency_max,
         }
     )
@@ -413,14 +421,12 @@ def compare_systems(
             "contract_version": EVALUATION_REPORT_CONTRACT_VERSION,
             "run_id": run_configuration.run_id,
             "run_configuration_hash": canonical_examples_digest(run_configuration),
+            "metric_configuration": run_configuration.metric_configuration.model_dump(mode="json"),
+            "metric_configuration_hash": canonical_metric_configuration_digest(run_configuration.metric_configuration),
             "dataset_id": manifest.dataset_id,
             "dataset_snapshot_hash": manifest.dataset_snapshot_hash,
-            "baseline_confusion_total": sum(
-                count for _, _, count in baseline_outcome.confusion_matrix
-            ),
-            "candidate_confusion_total": sum(
-                count for _, _, count in candidate_outcome.confusion_matrix
-            ),
+            "baseline_label_cooccurrence_total": sum(count for _, _, count in baseline_outcome.label_cooccurrence_counts),
+            "candidate_label_cooccurrence_total": sum(count for _, _, count in candidate_outcome.label_cooccurrence_counts),
             "baseline": baseline_outcome.model_dump(),
             "candidate": candidate_outcome.model_dump(),
             "gate_results": gate_results,
