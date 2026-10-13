@@ -33,6 +33,12 @@ PermittedOperation = Literal["training", "validation", "evaluation"]
 class DataSourceAuthorization(BaseModel):
     """One auditable source-authorization record (Task 207).
 
+    Shape validation only: a valid instance claims approval but
+    does not prove it. Authentication comes solely from membership
+    in a ``TrustedSourceRegistry`` composed through the explicit
+    test-only path; constructing this model directly never
+    authenticates anything.
+
     ``restrictions`` and ``retention_notes`` are audit metadata
     only: the offline pipeline cannot verify compliance with
     unevaluated conditions, so a non-empty ``restrictions`` entry
@@ -95,10 +101,43 @@ class DataSourceAuthorization(BaseModel):
         return self
 
 
+class TrustedSourceRegistry(BaseModel):
+    """The only authorization registry the pipeline accepts (Task 207).
+
+    Membership here -- not schema shape alone -- is what the
+    preparation pipeline trusts, and today only the
+    ``synthetic-test-only`` kind exists: every entry must live in
+    the test source-id namespace, enforced at construction.
+    Application code composes registries from raw mappings through
+    ``compose_test_registry`` (pipeline side); a production
+    registry kind requires a reviewed approval-verification
+    mechanism that does not exist yet, so preparing non-test data
+    fails closed. Frozen after construction: entries cannot be
+    added, removed, or altered in place.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    registry_version: Literal["1.0"]
+    registry_kind: Literal["synthetic-test-only"]
+    entries: tuple[DataSourceAuthorization, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _strict_registry(self) -> TrustedSourceRegistry:
+        seen = {entry.source_id for entry in self.entries}
+        if len(seen) != len(self.entries):
+            raise ValueError("registry entries must not contain duplicates")
+        for entry in self.entries:
+            if not entry.source_id.startswith(TEST_SOURCE_PREFIX):
+                raise ValueError("registry entry is not test authorization")
+        return self
+
+
 __all__ = [
     "DATASET_AUTHORIZATION_VERSION",
     "TEST_SOURCE_PREFIX",
     "AuthorizationStatus",
     "DataSourceAuthorization",
     "PermittedOperation",
+    "TrustedSourceRegistry",
 ]

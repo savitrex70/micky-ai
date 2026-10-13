@@ -15,6 +15,8 @@ from rop.dataset_preparation.pipeline import (
     NEAR_DUPLICATE_JACCARD_THRESHOLD,
     DatasetPreparationError,
     check_authorization,
+    compose_test_registry,
+    dataset_integrity_hash,
     deduplicate_records,
     normalize_content,
     partition_records,
@@ -22,7 +24,10 @@ from rop.dataset_preparation.pipeline import (
     validate_record,
     verify_split,
 )
-from rop.schemas.dataset_authorization import DataSourceAuthorization
+from rop.schemas.dataset_authorization import (
+    DataSourceAuthorization,
+    TrustedSourceRegistry,
+)
 from rop.schemas.dataset_manifest import SplitConfig
 
 LABELS = ["refutes", "supports"]
@@ -48,7 +53,7 @@ def _auth(**overrides):
 
 
 def _registry(*entries):
-    return {entry["source_id"]: entry for entry in entries}
+    return compose_test_registry(list(entries) if entries else [_auth()])
 
 
 def _record(
@@ -75,7 +80,7 @@ def _record(
 def _prep(records, registry=None, **overrides):
     params = {
         "records": records,
-        "authorizations": (registry if registry is not None else _registry(_auth())),
+        "authorizations": (registry if registry is not None else _registry()),
         "dataset_id": "synthetic-dataset-001",
         "purpose": PURPOSE,
         "operation": "training",
@@ -83,16 +88,13 @@ def _prep(records, registry=None, **overrides):
         "allowed_labels": LABELS,
         "grouping_unit": GROUPING_UNIT,
         "split_config": SPLIT,
-        "allow_test_sources": True,
     }
     params.update(overrides)
     return prepare_dataset(**params)
 
 
-def _validated(*records, allow_test_sources=True):
-    registry = {
-        "synthetic-test-source-001": DataSourceAuthorization.model_validate(_auth())
-    }
+def _validated(*records):
+    registry = _registry()
     return tuple(
         validate_record(
             record,
@@ -101,7 +103,6 @@ def _validated(*records, allow_test_sources=True):
             purpose=PURPOSE,
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=allow_test_sources,
         )
         for record in records
     )
@@ -119,7 +120,7 @@ def test_missing_source_authorization_rejected() -> None:
     with pytest.raises(DatasetPreparationError) as exc:
         prepare_dataset(
             records=[_record("synthetic-rec-001", source="synthetic-test-unknown")],
-            authorizations={},
+            authorizations=_registry(),
             dataset_id="synthetic-dataset-001",
             purpose=PURPOSE,
             operation="training",
@@ -127,7 +128,6 @@ def test_missing_source_authorization_rejected() -> None:
             allowed_labels=LABELS,
             grouping_unit=GROUPING_UNIT,
             split_config=SPLIT,
-            allow_test_sources=True,
         )
     assert exc.value.code == "INSUFFICIENT_GROUPS"
 
@@ -147,7 +147,6 @@ def test_purpose_mismatch_rejected() -> None:
             purpose="training",
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=True,
         )
     assert exc.value.code == "PURPOSE_MISMATCH"
 
@@ -160,7 +159,6 @@ def test_expiry_revocation_restriction_rejected() -> None:
             purpose=PURPOSE,
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=True,
         )
     assert exc.value.code == "AUTHORIZATION_EXPIRED"
     boundary = DataSourceAuthorization.model_validate(_auth(valid_until=AS_OF))
@@ -169,7 +167,6 @@ def test_expiry_revocation_restriction_rejected() -> None:
         purpose=PURPOSE,
         operation="training",
         as_of=AS_OF,
-        allow_test_sources=True,
     )
     revoked = DataSourceAuthorization.model_validate(_auth(status="REVOKED"))
     with pytest.raises(DatasetPreparationError) as exc:
@@ -178,7 +175,6 @@ def test_expiry_revocation_restriction_rejected() -> None:
             purpose=PURPOSE,
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=True,
         )
     assert exc.value.code == "AUTHORIZATION_NOT_APPROVED"
     restricted = DataSourceAuthorization.model_validate(
@@ -190,7 +186,6 @@ def test_expiry_revocation_restriction_rejected() -> None:
             purpose=PURPOSE,
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=True,
         )
     assert exc.value.code == "AUTHORIZATION_RESTRICTED"
 
@@ -206,11 +201,44 @@ def test_caller_boolean_cannot_self_certify() -> None:
     assert exc.value.code == "UNKNOWN_SOURCE"
 
 
-def test_synthetic_authorization_refused_by_production_path() -> None:
+def test_fabricated_approval_dictionary_rejected() -> None:
+    fabricated = _auth(
+        source_id="hospital-real-001",
+        approval_reference="real-approval-001",
+        license_basis="hospital agreement",
+    )
     with pytest.raises(DatasetPreparationError) as exc:
-        _validated(_record("synthetic-rec-001"), allow_test_sources=False)
-    # default allow_test_sources=False
+        compose_test_registry([fabricated])
     assert exc.value.code == "TEST_SOURCE_NOT_PERMITTED"
+    with pytest.raises(DatasetPreparationError) as exc:
+        _prep(
+            [_record("synthetic-rec-001", source="hospital-real-001")],
+            {"hospital-real-001": fabricated},
+        )
+    assert exc.value.code == "AUTHORIZATION_INVALID"
+
+
+def test_bare_schema_instance_is_not_authenticated() -> None:
+    entry = DataSourceAuthorization.model_validate(_auth())
+    with pytest.raises(DatasetPreparationError) as exc:
+        validate_record(
+            _record("synthetic-rec-001"),
+            allowed_labels=tuple(LABELS),
+            authorizations=entry,  # type: ignore[arg-type]
+            purpose=PURPOSE,
+            operation="training",
+            as_of=AS_OF,
+        )
+    assert exc.value.code == "AUTHORIZATION_INVALID"
+
+
+def test_test_registry_only_accepts_test_entries() -> None:
+    registry = _registry()
+    assert isinstance(registry, TrustedSourceRegistry)
+    assert registry.registry_kind == "synthetic-test-only"
+    with pytest.raises(DatasetPreparationError) as exc:
+        compose_test_registry(["not-a-mapping"])  # type: ignore[list-item]
+    assert exc.value.code == "AUTHORIZATION_INVALID"
 
 
 def test_operation_not_permitted_rejected() -> None:
@@ -223,7 +251,6 @@ def test_operation_not_permitted_rejected() -> None:
             purpose=PURPOSE,
             operation="training",
             as_of=AS_OF,
-            allow_test_sources=True,
         )
     assert exc.value.code == "OPERATION_NOT_PERMITTED"
 
@@ -503,7 +530,6 @@ def test_different_seeds_both_valid() -> None:
         verify_split(
             result.split_manifest,
             [record for part in result.partitions for record in part.records],
-            dataset_content_hash=result.dataset_manifest.content_chain_hash,
         )
     assert first == _prep(
         records,
@@ -550,6 +576,16 @@ def test_exact_duplicates_never_cross_partitions() -> None:
                 "synthetic-rec-004",
                 content="fourth content here",
                 group="synthetic-group-004",
+            ),
+            _record(
+                "synthetic-rec-005",
+                content="fifth content here",
+                group="synthetic-group-005",
+            ),
+            _record(
+                "synthetic-rec-006",
+                content="sixth content here",
+                group="synthetic-group-006",
             ),
         ]
     )
@@ -600,18 +636,23 @@ def test_impossible_split_fails_explicitly() -> None:
 def test_integrity_validator_rejects_tampering() -> None:
     result = _prep(_grouped_fixture())
     records = [record for part in result.partitions for record in part.records]
-    content_hash = result.dataset_manifest.content_chain_hash
     tampered_counts = result.split_manifest.model_copy(
         update={"train_count": result.split_manifest.train_count + 1}
     )
     with pytest.raises(DatasetPreparationError) as exc:
-        verify_split(tampered_counts, records, dataset_content_hash=content_hash)
+        verify_split(tampered_counts, records)
     assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
     tampered_hash = result.split_manifest.model_copy(
         update={"assignment_hash": "0" * 64}
     )
     with pytest.raises(DatasetPreparationError) as exc:
-        verify_split(tampered_hash, records, dataset_content_hash=content_hash)
+        verify_split(tampered_hash, records)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+    tampered_dataset_hash = result.split_manifest.model_copy(
+        update={"dataset_integrity_hash": "0" * 64}
+    )
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(tampered_dataset_hash, records)
     assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
     swapped = list(result.split_manifest.assignments)
     first = swapped[0]
@@ -621,11 +662,11 @@ def test_integrity_validator_rejects_tampering() -> None:
         update={"assignments": tuple(swapped)}
     )
     with pytest.raises(DatasetPreparationError) as exc:
-        verify_split(tampered_assign, records, dataset_content_hash=content_hash)
+        verify_split(tampered_assign, records)
     assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
     dropped = [record for record in records if record.group_id != "synthetic-group-001"]
     with pytest.raises(DatasetPreparationError) as exc:
-        verify_split(result.split_manifest, dropped, dataset_content_hash=content_hash)
+        verify_split(result.split_manifest, dropped)
     assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
 
 
@@ -687,16 +728,166 @@ def test_manifest_carries_no_raw_content() -> None:
 
 def test_content_hash_chain_binds_dataset() -> None:
     first = _prep(_grouped_fixture())
-    altered = [
-        (
-            dict(record, content="altered content here")
-            if record["record_id"] == "synthetic-rec-001"
-            else record
-        )
-        for record in _grouped_fixture()
-    ]
+    altered = []
+    for record in _grouped_fixture():
+        if record["record_id"] == "synthetic-rec-001":
+            record = dict(record, content_text="altered content here")
+        altered.append(record)
     second = _prep(altered)
     assert (
-        first.dataset_manifest.content_chain_hash
-        != second.dataset_manifest.content_chain_hash
+        first.dataset_manifest.record_integrity_hash
+        != second.dataset_manifest.record_integrity_hash
     )
+
+
+def _modified_raw(field, value):
+    out = []
+    for record in _grouped_fixture():
+        if record["record_id"] == "synthetic-rec-001":
+            record = dict(record)
+            record[field] = value
+        out.append(record)
+    return out
+
+
+def _modified_validated(field, value, extra_auth=()):
+    raws = _modified_raw(field, value)
+    registry = _registry(*([_auth()] + list(extra_auth)))
+    return tuple(
+        validate_record(
+            raw,
+            allowed_labels=tuple(LABELS),
+            authorizations=registry,
+            purpose=PURPOSE,
+            operation="training",
+            as_of=AS_OF,
+        )
+        for raw in raws
+    )
+
+
+def _integrity_of(records) -> str:
+    return dataset_integrity_hash(records)
+
+
+def test_label_change_alters_integrity_hash() -> None:
+    first = _prep(_grouped_fixture())
+    modified = _modified_validated("label", "refutes")
+    assert first.dataset_manifest.record_integrity_hash != _integrity_of(modified)
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(first.split_manifest, modified)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+
+def test_group_change_alters_integrity_hash() -> None:
+    first = _prep(_grouped_fixture())
+    modified = _modified_validated("group_id", "synthetic-group-009")
+    assert first.dataset_manifest.record_integrity_hash != _integrity_of(modified)
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(first.split_manifest, modified)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+
+def test_source_change_alters_integrity_hash() -> None:
+    first = _prep(_grouped_fixture())
+    extra = _auth(source_id="synthetic-test-source-002")
+    modified = _modified_validated("source_id", "synthetic-test-source-002", [extra])
+    assert first.dataset_manifest.record_integrity_hash != _integrity_of(modified)
+
+
+def test_provenance_change_alters_integrity_hash() -> None:
+    first = _prep(_grouped_fixture())
+    modified = _modified_validated("provenance_ref", "synthetic:doc-9")
+    assert first.dataset_manifest.record_integrity_hash != _integrity_of(modified)
+
+
+def test_record_id_change_alters_integrity_hash() -> None:
+    first = _prep(_grouped_fixture())
+    modified = _modified_validated("record_id", "synthetic-rec-009")
+    assert first.dataset_manifest.record_integrity_hash != _integrity_of(modified)
+
+
+def test_same_records_different_order_identical_hash() -> None:
+    first = _prep(_grouped_fixture())
+    shuffled = list(reversed(_grouped_fixture()))
+    second = _prep(shuffled)
+    assert first == second
+    assert (
+        first.dataset_manifest.record_integrity_hash
+        == second.dataset_manifest.record_integrity_hash
+    )
+
+
+def test_legacy_content_only_hash_does_not_verify() -> None:
+    import hashlib
+
+    from rop.dataset_preparation.pipeline import canonical_json_bytes
+
+    result = _prep(_grouped_fixture())
+    records = [record for part in result.partitions for record in part.records]
+    legacy = hashlib.sha256(
+        canonical_json_bytes(sorted(record.content_hash for record in records))
+    ).hexdigest()
+    assert legacy != result.dataset_manifest.record_integrity_hash
+    tampered = result.split_manifest.model_copy(
+        update={"dataset_integrity_hash": legacy}
+    )
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(tampered, records)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+
+def test_empty_nonzero_partition_fails_explicitly() -> None:
+    # Seed 2 with (0.6, 0.2, 0.2) assigns all six fixture groups to
+    # train/test, leaving validation empty under the hash algorithm.
+    records = [
+        _record(
+            f"synthetic-rec-00{i}", content=f"synthetic content number {i}", group=group
+        )
+        for i, group in enumerate(
+            [f"synthetic-group-00{j}" for j in range(1, 7)], start=1
+        )
+    ]
+    with pytest.raises(DatasetPreparationError) as exc:
+        _prep(
+            records,
+            split_config=SplitConfig(
+                seed=2, train_ratio=0.6, validation_ratio=0.2, test_ratio=0.2
+            ),
+        )
+    assert exc.value.code == "EMPTY_PARTITION"
+
+
+def test_zero_ratio_partition_legitimately_empty() -> None:
+    result = _prep(
+        _grouped_fixture(),
+        split_config=SplitConfig(
+            seed=7, train_ratio=1.0, validation_ratio=0.0, test_ratio=0.0
+        ),
+    )
+    assert partition_records(result, "validation") == ()
+    assert partition_records(result, "test") == ()
+    assert (
+        len(partition_records(result, "train")) == result.dataset_manifest.record_count
+    )
+    verify_split(
+        result.split_manifest,
+        [record for part in result.partitions for record in part.records],
+    )
+
+
+def test_empty_partition_tampering_detected() -> None:
+    result = _prep(_grouped_fixture())
+    records = [record for part in result.partitions for record in part.records]
+    reduced = result.split_manifest.model_copy(
+        update={
+            "assignments": tuple(
+                entry
+                for entry in result.split_manifest.assignments
+                if entry.partition == "train"
+            )
+        }
+    )
+    with pytest.raises(DatasetPreparationError) as exc:
+        verify_split(reduced, records)
+    assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"

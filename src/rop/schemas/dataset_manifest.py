@@ -17,10 +17,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DATASET_MANIFEST_VERSION = "1.0"
+DATASET_MANIFEST_VERSION = "2.0"
 TRANSFORM_VERSION = "1.0"
 DEDUP_POLICY_VERSION = "1.0"
 SPLIT_POLICY_NAME = "group-hash-partition-v1"
+RECORD_INTEGRITY_VERSION = "2.0"
 
 MAX_CONTENT_LENGTH = 2000
 MAX_SOURCE_REF_LENGTH = 255
@@ -170,7 +171,7 @@ class DatasetManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     dataset_id: str = Field(min_length=1, max_length=64)
-    manifest_version: Literal["1.0"]
+    manifest_version: Literal["2.0"]
     source_ids: tuple[str, ...] = Field(min_length=1)
     purpose: str = Field(min_length=1, max_length=64)
     operation: Literal["training", "validation", "evaluation"]
@@ -182,7 +183,7 @@ class DatasetManifest(BaseModel):
     label_counts: tuple[LabelCount, ...]
     rejection_counts: tuple[RejectionCount, ...]
     record_count: int = Field(ge=0)
-    content_chain_hash: str = Field(min_length=64, max_length=64)
+    record_integrity_hash: str = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def _strict_manifest(self) -> DatasetManifest:
@@ -214,8 +215,8 @@ class DatasetManifest(BaseModel):
         codes = [entry.code for entry in self.rejection_counts]
         if codes != sorted(codes) or len(set(codes)) != len(codes):
             raise ValueError("rejection_counts must be unique and sorted")
-        if not _FINGERPRINT_RE.fullmatch(self.content_chain_hash):
-            raise ValueError("content_chain_hash is invalid")
+        if not _FINGERPRINT_RE.fullmatch(self.record_integrity_hash):
+            raise ValueError("record_integrity_hash is invalid")
         return self
 
 
@@ -236,7 +237,7 @@ class SplitManifest(BaseModel):
     validation_count: int = Field(ge=0)
     test_count: int = Field(ge=0)
     assignment_hash: str = Field(min_length=64, max_length=64)
-    dataset_content_hash: str = Field(min_length=64, max_length=64)
+    dataset_integrity_hash: str = Field(min_length=64, max_length=64)
 
     @model_validator(mode="after")
     def _strict_split_manifest(self) -> SplitManifest:
@@ -252,8 +253,8 @@ class SplitManifest(BaseModel):
                 raise ValueError("assignments entry is invalid")
         if not _FINGERPRINT_RE.fullmatch(self.assignment_hash):
             raise ValueError("assignment_hash is invalid")
-        if not _FINGERPRINT_RE.fullmatch(self.dataset_content_hash):
-            raise ValueError("dataset_content_hash is invalid")
+        if not _FINGERPRINT_RE.fullmatch(self.dataset_integrity_hash):
+            raise ValueError("dataset_integrity_hash is invalid")
         return self
 
 
@@ -311,6 +312,7 @@ __all__ = [
     "MAX_CONTENT_LENGTH",
     "MAX_LABELS",
     "MAX_SOURCE_REF_LENGTH",
+    "RECORD_INTEGRITY_VERSION",
     "SPLIT_POLICY_NAME",
     "TRANSFORM_VERSION",
     "DatasetManifest",

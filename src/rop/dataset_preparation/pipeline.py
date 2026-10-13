@@ -7,16 +7,15 @@ accounting, exact and near-duplicate quarantine before
 partitioning, leakage-safe group-hash splits, and independent
 split-integrity verification.
 
-Trust model: records and manifests are untrusted caller input for
-shape; trust comes only from membership in the explicitly
-injected authorization registry, which the application must
-compose from reviewed configuration. There is no
-``authorized: true`` field anywhere -- supplying one is rejected
-as an unknown field and changes nothing. Synthetic test sources
-(use the ``synthetic-test-`` namespace) are refused by the
-production path unless the caller explicitly opts into test mode.
-Approval-reference authenticity cannot be verified in-process and
-is documented as depending on registry composition.
+Trust model: the preparation API accepts only a
+``TrustedSourceRegistry`` composed through the explicit
+``compose_test_registry`` path -- never raw mappings, manifest
+fields, booleans, or bare authorization models, all of which are
+rejected outright. Shape validation never equals authentication:
+today only the synthetic-test-only registry kind exists, so
+preparing non-test data fails closed. Approval-reference
+authenticity cannot be verified in-process and depends on
+registry composition, documented as a limitation.
 
 No model, tokenizer, training, network, download, persistence,
 clock reads, or global state lives here. Diagnostics carry
@@ -32,15 +31,17 @@ import json
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from rop.schemas.dataset_authorization import (
     TEST_SOURCE_PREFIX,
     DataSourceAuthorization,
+    TrustedSourceRegistry,
 )
 from rop.schemas.dataset_manifest import (
     DEDUP_POLICY_VERSION,
     MAX_CONTENT_LENGTH,
+    RECORD_INTEGRITY_VERSION,
     SPLIT_POLICY_NAME,
     TRANSFORM_VERSION,
     DatasetManifest,
@@ -82,6 +83,7 @@ RejectionCode = Literal[
     "UNSUPPORTED_LABEL",
     "PROHIBITED_CONTENT",
     "EMPTY_CONTENT",
+    "EMPTY_PARTITION",
     "OVERSIZED_CONTENT",
     "CORRUPT_UNICODE",
     "DIGEST_MISMATCH",
@@ -175,19 +177,15 @@ def check_authorization(
     purpose: str,
     operation: str,
     as_of: str,
-    allow_test_sources: bool = False,
 ) -> None:
     """Verify one registry authorization for one requested use.
 
     Raises ``DatasetPreparationError`` with a specific safe code
-    for unknown, non-approved, expired, mismatched, restricted, or
-    test-only authorization. ``as_of`` is an explicit ``YYYY-MM-DD``
+    for non-approved, expired, mismatched, or restricted
+    authorization. Test-only scoping is enforced at registry
+    composition, not here. ``as_of`` is an explicit ``YYYY-MM-DD``
     reference date; no clock is read.
     """
-    if entry.source_id.startswith(TEST_SOURCE_PREFIX) and not allow_test_sources:
-        raise DatasetPreparationError(
-            "TEST_SOURCE_NOT_PERMITTED", "test authorization is not permitted here"
-        )
     if entry.status != "APPROVED":
         raise DatasetPreparationError(
             "AUTHORIZATION_NOT_APPROVED", "source authorization is not approved"
@@ -211,6 +209,47 @@ def check_authorization(
         )
 
 
+def compose_test_registry(
+    entries: Sequence[Mapping[str, Any]],
+) -> TrustedSourceRegistry:
+    """Compose an explicitly test-only authorization registry.
+
+    The single sanctioned path from raw mappings to a registry the
+    pipeline accepts. Every entry must live in the test source-id
+    namespace; anything else fails closed. There is no production
+    composition path: manufacturing one would require a reviewed
+    approval-verification mechanism that does not exist, so
+    preparing non-test data fails closed.
+    """
+    try:
+        raw = [dict(entry) for entry in entries]
+    except (TypeError, ValueError) as exc:
+        raise DatasetPreparationError(
+            "AUTHORIZATION_INVALID", "authorization registry is invalid"
+        ) from exc
+    for entry in raw:
+        source_id = entry.get("source_id")
+        if not isinstance(source_id, str) or not source_id.startswith(
+            TEST_SOURCE_PREFIX
+        ):
+            raise DatasetPreparationError(
+                "TEST_SOURCE_NOT_PERMITTED",
+                "registry entry is not test authorization",
+            )
+    try:
+        return TrustedSourceRegistry.model_validate(
+            {
+                "registry_version": "1.0",
+                "registry_kind": "synthetic-test-only",
+                "entries": raw,
+            }
+        )
+    except Exception as exc:
+        raise DatasetPreparationError(
+            "AUTHORIZATION_INVALID", "authorization registry is invalid"
+        ) from exc
+
+
 def _record_id_of(raw: Mapping[str, Any]) -> str | None:
     value = raw.get("record_id")
     return value if isinstance(value, str) and value else None
@@ -220,37 +259,39 @@ def validate_record(
     raw: Mapping[str, Any],
     *,
     allowed_labels: tuple[str, ...],
-    authorizations: Mapping[str, DataSourceAuthorization],
+    authorizations: TrustedSourceRegistry,
     purpose: str,
     operation: str,
     as_of: str,
-    allow_test_sources: bool = False,
 ) -> DatasetRecord:
     """Validate and normalize one raw input mapping into a ``DatasetRecord``.
 
-    Order: source membership, authorization validity, presence of
-    binding identifiers, normalization, content policy, label
-    allow-list, digest verification, strict schema validation.
-    Every failure raises ``DatasetPreparationError`` naming only a
-    safe code; raw content never escapes.
+    The registry -- not the record -- confers trust: a bare
+    authorization model or raw mapping passed as ``authorizations``
+    is rejected outright. Order: registry membership,
+    authorization validity, presence of binding identifiers,
+    normalization, content policy, label allow-list, digest
+    verification, strict schema validation. Every failure raises
+    ``DatasetPreparationError`` naming only a safe code; raw
+    content never escapes.
     """
     if not isinstance(raw, Mapping):
         raise DatasetPreparationError("MALFORMED_RECORD", "record is invalid")
+    if not isinstance(authorizations, TrustedSourceRegistry):
+        raise DatasetPreparationError(
+            "AUTHORIZATION_INVALID", "authorization registry is invalid"
+        )
     data = dict(raw)
     source_id = data.get("source_id")
-    entry = authorizations.get(source_id) if isinstance(source_id, str) else None
+    lookup = {entry.source_id: entry for entry in authorizations.entries}
+    entry = lookup.get(source_id) if isinstance(source_id, str) else None
     if entry is None:
         raise DatasetPreparationError("UNKNOWN_SOURCE", "record source is unknown")
-    if not isinstance(entry, DataSourceAuthorization):
-        raise DatasetPreparationError(
-            "AUTHORIZATION_INVALID", "source authorization is invalid"
-        )
     check_authorization(
         entry,
         purpose=purpose,
         operation=operation,
         as_of=as_of,
-        allow_test_sources=allow_test_sources,
     )
     record_id = data.get("record_id")
     if not isinstance(record_id, str) or not record_id:
@@ -412,14 +453,19 @@ def split_records(
     config: SplitConfig,
     *,
     dataset_id: str,
-    dataset_content_hash: str,
+    dataset_integrity_hash: str,
 ) -> SplitManifest:
     """Assign leakage groups to partitions by seeded group hash.
 
     Every group lands in exactly one partition; related records
     never cross boundaries. Fails closed with
     ``INSUFFICIENT_GROUPS`` when fewer groups exist than partitions
-    with a nonzero ratio, instead of relaxing the grouping policy.
+    with a nonzero ratio, and with ``EMPTY_PARTITION`` when hash
+    assignment leaves a requested nonzero-ratio partition without
+    groups -- instead of relaxing the grouping policy, falling back
+    to record-level splitting, or retuning the seed and ratios.
+    Ratios are approximate by design: whole groups cannot match
+    exact proportions.
     """
     groups = sorted({record.group_id for record in records})
     ratios = (
@@ -446,6 +492,7 @@ def split_records(
                 chosen = name
                 break
         assignments.append(GroupAssignment(group_id=group_id, partition=chosen))  # type: ignore[arg-type]
+    _check_partition_coverage(assignments, ratios)
     counts = {"train": 0, "validation": 0, "test": 0}
     group_partition = {entry.group_id: entry.partition for entry in assignments}
     for record in records:
@@ -464,7 +511,7 @@ def split_records(
                     {"group_id": entry.group_id, "partition": entry.partition}
                     for entry in assignments
                 ],
-                "dataset_content_hash": dataset_content_hash,
+                "dataset_integrity_hash": dataset_integrity_hash,
             }
         )
     ).hexdigest()
@@ -481,28 +528,50 @@ def split_records(
         validation_count=counts["validation"],
         test_count=counts["test"],
         assignment_hash=assignment_hash,
-        dataset_content_hash=dataset_content_hash,
+        dataset_integrity_hash=dataset_integrity_hash,
     )
+
+
+def _check_partition_coverage(
+    assignments: Sequence[GroupAssignment],
+    ratios: Sequence[tuple[str, float]],
+) -> None:
+    """Require every nonzero-ratio partition to hold at least one group."""
+    covered = {entry.partition for entry in assignments}
+    for name, ratio in ratios:
+        if ratio > 0 and name not in covered:
+            raise DatasetPreparationError(
+                "EMPTY_PARTITION", "split left a requested partition empty"
+            )
 
 
 def verify_split(
     split: SplitManifest,
     records: Sequence[DatasetRecord],
-    *,
-    dataset_content_hash: str,
 ) -> None:
     """Independently verify every split-integrity invariant.
 
-    Raises ``DatasetPreparationError`` with code
+    Recomputes the dataset integrity hash from the full retained
+    record representation (never trusting a caller-supplied hash),
+    then checks membership, uniqueness, group confinement,
+    partition coverage, counts, assignment bytes, and
+    byte-identical reproducibility. Raises
+    ``DatasetPreparationError`` with code
     ``SPLIT_INTEGRITY_FAILURE`` for any violation; the message
     carries no record content.
     """
 
-    def _fail() -> None:
+    def _fail() -> NoReturn:
         raise DatasetPreparationError(
             "SPLIT_INTEGRITY_FAILURE", "split integrity check failed"
         )
 
+    try:
+        expected_hash = _dataset_integrity_hash(records)
+    except Exception:
+        _fail()
+    if split.dataset_integrity_hash != expected_hash:
+        _fail()
     by_id = {record.record_id: record for record in records}
     if len(by_id) != len(records):
         _fail()
@@ -524,7 +593,16 @@ def verify_split(
         or counts["test"] != split.test_count
     ):
         _fail()
-    if split.dataset_content_hash != dataset_content_hash:
+    try:
+        _check_partition_coverage(
+            split.assignments,
+            (
+                ("train", split.train_ratio),
+                ("validation", split.validation_ratio),
+                ("test", split.test_ratio),
+            ),
+        )
+    except DatasetPreparationError:
         _fail()
     recomputed = split_records(
         records,
@@ -535,7 +613,7 @@ def verify_split(
             test_ratio=split.test_ratio,
         ),
         dataset_id=split.dataset_id,
-        dataset_content_hash=dataset_content_hash,
+        dataset_integrity_hash=expected_hash,
     )
     if recomputed.assignment_hash != split.assignment_hash or [
         (entry.group_id, entry.partition) for entry in recomputed.assignments
@@ -543,16 +621,51 @@ def verify_split(
         _fail()
 
 
-def _dataset_content_hash(records: Sequence[DatasetRecord]) -> str:
+def _record_integrity_dict(record: DatasetRecord) -> dict[str, str]:
+    """Canonical per-record integrity representation (policy v2.0).
+
+    Binds record, source, and group identity, label, the validated
+    normalized-content digest, and the provenance reference. Raw
+    content is never embedded: integrity flows through its digest.
+    """
+    return {
+        "integrity_version": RECORD_INTEGRITY_VERSION,
+        "record_id": record.record_id,
+        "source_id": record.source_id,
+        "group_id": record.group_id,
+        "label": record.label,
+        "content_hash": record.content_hash,
+        "provenance_ref": record.provenance_ref,
+    }
+
+
+def dataset_integrity_hash(records: Sequence[DatasetRecord]) -> str:
+    """Recompute the versioned integrity hash over retained records.
+
+    Requires validated ``DatasetRecord`` instances; callers must
+    validate first. Used by manifests, split verification, and
+    independent audit checks.
+    """
+    return _dataset_integrity_hash(records)
+
+
+def _dataset_integrity_hash(records: Sequence[DatasetRecord]) -> str:
+    """Hash the canonical integrity representation of retained records.
+
+    Records are ordered by the documented stable key
+    (``record_id``); any change to identity, source, grouping,
+    label, content digest, or provenance alters the hash.
+    """
+    ordered = sorted(records, key=lambda record: record.record_id)
     return hashlib.sha256(
-        canonical_json_bytes(sorted(record.content_hash for record in records))
+        canonical_json_bytes([_record_integrity_dict(record) for record in ordered])
     ).hexdigest()
 
 
 def prepare_dataset(
     *,
     records: Sequence[Mapping[str, Any]],
-    authorizations: Mapping[str, Any],
+    authorizations: TrustedSourceRegistry,
     dataset_id: str,
     purpose: str,
     operation: str,
@@ -560,14 +673,16 @@ def prepare_dataset(
     allowed_labels: Sequence[str],
     grouping_unit: str,
     split_config: SplitConfig | Mapping[str, Any],
-    allow_test_sources: bool = False,
 ) -> PreparationResult:
     """Run the full offline preparation pipeline deterministically.
 
-    Validates the authorization registry shape, then per record:
-    authorization, validation, and normalization. Deduplicates
-    survivors, splits by leakage group, builds versioned manifests,
-    and independently verifies the split before returning. Any
+    The registry -- composed through ``compose_test_registry`` --
+    is the sole trust root: raw mappings or bare authorization
+    models passed as ``authorizations`` are rejected outright.
+    Per record: registry membership, authorization validity,
+    validation, and normalization. Deduplicates survivors, splits
+    by leakage group, builds versioned manifests, and
+    independently verifies the split before returning. Any
     unexpected condition fails closed with a safe typed error.
     """
     if not isinstance(dataset_id, str) or not re.fullmatch(
@@ -615,31 +730,10 @@ def prepare_dataset(
             raise DatasetPreparationError(
                 "INVALID_SPLIT_CONFIG", "split configuration is invalid"
             ) from exc
-    if not isinstance(authorizations, Mapping):
+    if not isinstance(authorizations, TrustedSourceRegistry):
         raise DatasetPreparationError(
             "AUTHORIZATION_INVALID", "authorization registry is invalid"
         )
-    registry: dict[str, DataSourceAuthorization] = {}
-    for source_id, entry in authorizations.items():
-        if not isinstance(source_id, str):
-            raise DatasetPreparationError(
-                "AUTHORIZATION_INVALID", "authorization registry is invalid"
-            )
-        try:
-            validated = (
-                entry
-                if isinstance(entry, DataSourceAuthorization)
-                else DataSourceAuthorization.model_validate(dict(entry))
-            )
-        except Exception as exc:
-            raise DatasetPreparationError(
-                "AUTHORIZATION_INVALID", "source authorization is invalid"
-            ) from exc
-        if validated.source_id != source_id:
-            raise DatasetPreparationError(
-                "AUTHORIZATION_INVALID", "source authorization is invalid"
-            )
-        registry[source_id] = validated
 
     accepted: list[DatasetRecord] = []
     rejections: list[RejectionDiagnostic] = []
@@ -650,11 +744,10 @@ def prepare_dataset(
             record = validate_record(
                 raw,
                 allowed_labels=labels,
-                authorizations=registry,
+                authorizations=authorizations,
                 purpose=purpose,
                 operation=operation,
                 as_of=as_of,
-                allow_test_sources=allow_test_sources,
             )
             if record.record_id in seen_ids:
                 raise DatasetPreparationError(
@@ -670,13 +763,16 @@ def prepare_dataset(
     kept, duplicate_rejections = deduplicate_records(accepted)
     rejections.extend(duplicate_rejections)
 
-    content_hash = _dataset_content_hash(kept)
+    integrity_hash = _dataset_integrity_hash(kept)
     try:
         split = split_records(
-            kept, split_config, dataset_id=dataset_id, dataset_content_hash=content_hash
+            kept,
+            split_config,
+            dataset_id=dataset_id,
+            dataset_integrity_hash=integrity_hash,
         )
     except DatasetPreparationError as exc:
-        if exc.code == "INSUFFICIENT_GROUPS":
+        if exc.code in ("INSUFFICIENT_GROUPS", "EMPTY_PARTITION"):
             raise
         raise DatasetPreparationError(
             "INVALID_SPLIT_CONFIG", "split configuration is invalid"
@@ -690,7 +786,7 @@ def prepare_dataset(
         rejection_tally[entry.code] = rejection_tally.get(entry.code, 0) + 1
     dataset_manifest = DatasetManifest(
         dataset_id=dataset_id,
-        manifest_version="1.0",
+        manifest_version="2.0",
         source_ids=tuple(sorted({record.source_id for record in kept})),
         purpose=purpose,
         operation=operation,  # type: ignore[arg-type]
@@ -711,9 +807,9 @@ def prepare_dataset(
             for code in sorted(rejection_tally)
         ),
         record_count=len(kept),
-        content_chain_hash=content_hash,
+        record_integrity_hash=integrity_hash,
     )
-    verify_split(split, kept, dataset_content_hash=content_hash)
+    verify_split(split, kept)
 
     group_partition = {entry.group_id: entry.partition for entry in split.assignments}
     partitions: list[PartitionRecords] = []
@@ -765,6 +861,8 @@ __all__ = [
     "canonical_json_bytes",
     "record_content_hash",
     "check_authorization",
+    "compose_test_registry",
+    "dataset_integrity_hash",
     "validate_record",
     "deduplicate_records",
     "split_records",

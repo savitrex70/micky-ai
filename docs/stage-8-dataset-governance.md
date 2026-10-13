@@ -10,17 +10,21 @@ this task.
 - A `DataSourceAuthorization` record describes source, origin,
   license basis, purpose, operations, retention notes,
   restrictions, status, approval reference, and optional expiry.
-- Shape validation never equals trust. Trust comes only from
-  membership in the explicitly injected registry, which the
-  application must compose from reviewed configuration. The
-  pipeline never downloads, fetches, or self-certifies
-  authorization, and there is no `authorized: true` field
-  anywhere: supplying one is rejected as an unknown field.
+  Shape validation never equals authentication: constructing the
+  model directly proves nothing.
+- Trust comes only from membership in a `TrustedSourceRegistry`
+  composed through the explicit `compose_test_registry` path,
+  which today accepts solely the `synthetic-test-only` kind with
+  test-namespaced entries. Raw mappings, manifest fields,
+  booleans, and bare authorization models passed to the
+  preparation API are rejected outright. There is no production
+  composition path: manufacturing one would require a reviewed
+  approval-verification mechanism that does not exist, so
+  preparing non-test data fails closed.
 - Every record's source must resolve to a registry entry that is
   `APPROVED`, purpose- and operation-matched, unexpired as of the
-  explicit reference date, restriction-free, and non-test (unless
-  the caller explicitly opts into test mode). Anything else fails
-  closed before the record is admitted.
+  explicit reference date, and restriction-free. Anything else
+  fails closed before the record is admitted.
 - Approval-reference authenticity cannot be verified in-process;
   it depends on registry composition, documented here as a
   limitation. Non-empty `restrictions` and `retention_notes` are
@@ -63,27 +67,37 @@ scaling; production use would need blocking (out of scope).
 
 Groups (by validated `group_id`, whose meaning is declared per
 run in `grouping_unit`) are assigned by seeded hash to exactly
-one partition; related records never cross boundaries. Fewer
-groups than nonzero-ratio partitions fails closed
-(`INSUFFICIENT_GROUPS`) instead of relaxing grouping. Ratios sum
-to 1.0; zero-ratio partitions are allowed. No stratification is
+one partition; related records never cross boundaries. Two
+explicit guards replace silent behavior: fewer groups than
+nonzero-ratio partitions fails closed (`INSUFFICIENT_GROUPS`),
+and a requested nonzero-ratio partition left empty by hash
+assignment fails closed (`EMPTY_PARTITION`) instead of shipping
+an unusable held-out split, retuning the seed, or falling back
+to record-level splitting. Ratios are approximate by design
+(whole groups cannot match exact proportions) and zero-ratio
+partitions are legitimately empty. No stratification is
 performed: rare-label coverage is reported, not guaranteed.
 Test records are held back by construction -- train through the
 `partition_records(result, "train")` accessor, which cannot yield
 validation or test records. Split integrity (membership,
-uniqueness, group confinement, counts, hashes, byte-identical
-reproduction, no silent re-entry of rejected records) is verified
-independently before the result is returned.
+uniqueness, group confinement, partition coverage, counts,
+hashes, byte-identical reproduction, no silent re-entry of
+rejected records) is verified independently before the result is
+returned.
 
 ## Manifests and hashes
 
-`DatasetManifest` carries identifiers, policy versions, counts,
-label/rejection tallies, and a content-chain hash; `SplitManifest`
-carries the policy, seed, ratios, sorted group assignments,
-partition counts, and the assignment hash bound to the dataset
-hash. No raw content. Canonical bytes are sorted-key compact JSON
-with SHA-256 (the Task 104 scheme); hashed assignment strings
-carry a domain-separation prefix.
+`DatasetManifest` (v2.0) carries identifiers, policy versions,
+counts, label/rejection tallies, and a record-integrity hash
+binding every retained record's identity, source, group, label,
+validated content digest, and provenance reference (raw content
+never embedded). `SplitManifest` (v1.0) carries the policy, seed,
+ratios, sorted group assignments, partition counts, and the
+assignment hash bound to the dataset integrity hash. The v1
+content-only hash is not interchangeable: old manifests fail
+verification under the new code. No raw content. Canonical bytes
+are sorted-key compact JSON with SHA-256 (the Task 104 scheme);
+hashed assignment strings carry a domain-separation prefix.
 
 ## Privacy and repository safeguards
 
