@@ -32,6 +32,7 @@ from pydantic import (
 )
 
 from rop.dataset_preparation import (
+    FINGERPRINT_SCHEME_VERSION,
     PreparedSplits,
     content_fingerprint,
     records_fingerprint,
@@ -230,6 +231,13 @@ def build_vocabulary(
             "training texts must cover exactly the training split records",
         )
 
+    # The manifest must declare the very scheme this code recomputes under; a
+    # fingerprint from another scheme can never be compared as equal.
+    if manifest.fingerprint_scheme_version != FINGERPRINT_SCHEME_VERSION:
+        raise TokenizerError(
+            TokenizerErrorCode.MANIFEST_MISMATCH,
+            "the manifest declares a different fingerprint scheme",
+        )
     expected_fingerprint = records_fingerprint(splits.train)
     recorded = dict(manifest.split_fingerprints).get("train")
     if recorded != expected_fingerprint:

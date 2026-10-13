@@ -35,9 +35,18 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 from rop.dataset_preparation import (
+    FINGERPRINT_SCHEME_VERSION,
     PreparedSplits,
     content_fingerprint,
     records_fingerprint,
@@ -50,6 +59,13 @@ from rop.schemas.dataset_manifest import (
 )
 from rop.schemas.native_model import NativeModelConfig
 from rop.tokenization import Vocabulary, encode_text
+
+# The training report names the canonical label-space identity it trained
+# against, so a different (even equally sorted, equally sized) label set can
+# never be substituted for the head's output indices at inference time.
+LABEL_SPACE_SCHEME_VERSION = "native-label-space-v1"
+LABEL_SPACE_HASH_DOMAIN = "rop.native.label-space.v1"
+NATIVE_TRAINING_REPORT_CONTRACT_VERSION = "2"
 
 
 class NativeTrainingError(Exception):
@@ -105,10 +121,16 @@ class NativeTrainingReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["1"] = "1"
+    contract_version: Literal["2"] = "2"
     model_version: StrictStr = Field(min_length=1, max_length=32)
     dataset_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     vocabulary_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    # Canonical label map: ``label_map[i]`` is the label of head index ``i``.
+    label_space_scheme_version: Literal["native-label-space-v1"] = (
+        "native-label-space-v1"
+    )
+    label_map: tuple[StrictStr, ...] = Field(min_length=2, max_length=32)
+    label_space_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     initialization_seed: StrictInt = Field(ge=0)
     epochs_completed: StrictInt = Field(ge=1, le=500)
     example_count: StrictInt = Field(ge=1, le=100000)
@@ -116,6 +138,27 @@ class NativeTrainingReport(BaseModel):
     initial_binary_cross_entropy: StrictFloat = Field(ge=0.0)
     final_binary_cross_entropy: StrictFloat = Field(ge=0.0)
     parameters_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _label_space_hash_matches_label_map(self) -> NativeTrainingReport:
+        # Recomputed, never trusted: the recorded hash must be the identity of
+        # exactly the recorded canonical label map.
+        try:
+            expected = label_space_hash(self.label_map)
+            valid = True
+        except NativeTrainingError:
+            expected = ""
+            valid = False
+        if not valid:
+            raise ValueError("label_map must be a canonical label space")
+        if self.label_space_hash != expected:
+            raise ValueError("label_space_hash must match the recorded label_map")
+        return self
+
+
+def _length_prefixed(value: str) -> bytes:
+    raw = value.encode("utf-8")
+    return len(raw).to_bytes(8, "big") + raw
 
 
 def _parameter_hash(parameters: NativeModelParameters) -> str:
@@ -148,6 +191,26 @@ def canonical_label_mapping(label_space: tuple[str, ...]) -> dict[str, int]:
             "the label space must be unique, nonblank and canonically sorted",
         )
     return {label: index for index, label in enumerate(label_space)}
+
+
+def label_space_hash(label_space: tuple[str, ...]) -> str:
+    """Domain-separated SHA-256 identity of a canonical label space.
+
+    The label space is validated by :func:`canonical_label_mapping` first, so
+    only the sorted, unique, nonblank space that defines the head indices can
+    be hashed. The encoding is length-prefixed and index-bound: a domain tag,
+    the label count, then ``(index, label)`` pairs in head order. Different
+    label sets of the same size therefore hash differently, and no two
+    distinct label spaces share an encoding.
+    """
+    mapping = canonical_label_mapping(label_space)
+    digest = hashlib.sha256()
+    digest.update(_length_prefixed(LABEL_SPACE_HASH_DOMAIN))
+    digest.update(len(mapping).to_bytes(8, "big"))
+    for label, index in mapping.items():
+        digest.update(index.to_bytes(8, "big"))
+        digest.update(_length_prefixed(label))
+    return digest.hexdigest()
 
 
 def _clip(value: float, bound: float) -> float:
@@ -316,7 +379,8 @@ def train_native_model(
         )
     fingerprint = records_fingerprint(splits.train)
     if (
-        dict(manifest.split_fingerprints).get("train") != fingerprint
+        manifest.fingerprint_scheme_version != FINGERPRINT_SCHEME_VERSION
+        or dict(manifest.split_fingerprints).get("train") != fingerprint
         or vocabulary.training_fingerprint != fingerprint
     ):
         raise NativeTrainingError(
@@ -426,6 +490,10 @@ def train_native_model(
         model_version=model_config.model_version,
         dataset_fingerprint=fingerprint,
         vocabulary_hash=vocabulary.vocabulary_hash,
+        # Derived from the validated canonical mapping used for the head, not
+        # accepted from the caller.
+        label_map=tuple(mapping),
+        label_space_hash=label_space_hash(tuple(mapping)),
         initialization_seed=model_config.initialization_seed,
         epochs_completed=training_config.epochs,
         example_count=len(examples),
@@ -443,6 +511,9 @@ __all__ = [
     "NativeTrainingExample",
     "NativeTrainingReport",
     "NativeTrainingResult",
+    "LABEL_SPACE_SCHEME_VERSION",
+    "NATIVE_TRAINING_REPORT_CONTRACT_VERSION",
     "canonical_label_mapping",
+    "label_space_hash",
     "train_native_model",
 ]
