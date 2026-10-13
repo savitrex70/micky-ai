@@ -73,7 +73,7 @@ def _error(**overrides):  # type: ignore[no-untyped-def]
 
 def test_valid_minimal_request() -> None:
     req = _request()
-    assert req.evidence_ids == []
+    assert req.evidence_ids == ()
     assert req.request_source == NATIVE_REASONING_REQUEST_SOURCE_TASK_202
 
 
@@ -494,3 +494,199 @@ def test_adversarial_malformed_inputs() -> None:
     # fingerprint swap must fail binding format, never silently detach
     with pytest.raises(ValidationError):
         _result(context_fingerprint=_FP2[:-1] + "!")
+
+
+# --- Task 202 correction: deep immutability ---
+
+
+def test_collections_are_tuples_not_lists() -> None:
+    req = _request(evidence_ids=sorted([uuid4(), uuid4()], key=str))
+    assert isinstance(req.evidence_ids, tuple)
+    res = _result()
+    assert isinstance(res.supporting_evidence_ids, tuple)
+    assert isinstance(res.contradicting_evidence_ids, tuple)
+    assert isinstance(res.missing_information_ids, tuple)
+
+
+def test_list_array_input_accepted_as_tuple() -> None:
+    ids = sorted([uuid4(), uuid4()], key=str)
+    req = _request(evidence_ids=[str(v) for v in ids])
+    assert [str(v) for v in req.evidence_ids] == [str(v) for v in ids]
+    res = _result(
+        status="INSUFFICIENT",
+        reason_code="EVIDENCE_MISSING",
+        supporting_evidence_ids=[],
+        missing_information_ids=["a", "b"],
+        rule_id=None,
+    )
+    assert res.missing_information_ids == ("a", "b")
+
+
+def test_validated_collections_cannot_be_modified_in_place() -> None:
+    req = _request(evidence_ids=sorted([uuid4()], key=str))
+    with pytest.raises(AttributeError):
+        req.evidence_ids.append(uuid4())  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        req.evidence_ids[0] = uuid4()  # type: ignore[index]
+    res = _result()
+    with pytest.raises(AttributeError):
+        res.supporting_evidence_ids.append(uuid4())  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        res.supporting_evidence_ids[0] = uuid4()  # type: ignore[index]
+    abstained = _result(
+        status="ABSTAINED",
+        reason_code="NO_JUSTIFIED_BASIS",
+        uncertainty=0.9,
+        supporting_evidence_ids=[],
+        missing_information_ids=[],
+        rule_id=None,
+    )
+    with pytest.raises(AttributeError):
+        abstained.missing_information_ids.append("x")  # type: ignore[attr-defined]
+
+
+def test_collection_reassignment_remains_prohibited() -> None:
+    req = _request()
+    with pytest.raises(ValidationError):
+        req.evidence_ids = ()  # type: ignore[misc]
+    res = _result()
+    with pytest.raises(ValidationError):
+        res.supporting_evidence_ids = ()  # type: ignore[misc]
+    with pytest.raises(ValidationError):
+        res.missing_information_ids = ()  # type: ignore[misc]
+
+
+def test_serialization_preserves_public_array_representation() -> None:
+    ids = sorted([uuid4(), uuid4()], key=str)
+    req = _request(evidence_ids=ids)
+    dumped = req.model_dump(mode="json")
+    assert dumped["evidence_ids"] == [str(v) for v in ids]
+    assert isinstance(dumped["evidence_ids"], list)
+    res = _result()
+    dumped_res = res.model_dump(mode="json")
+    assert isinstance(dumped_res["supporting_evidence_ids"], list)
+    assert isinstance(dumped_res["missing_information_ids"], list)
+    # round-trip through JSON-compatible data preserves equality
+    assert NativeReasoningRequest.model_validate(dumped) == req
+    assert NativeReasoningResult.model_validate(dumped_res) == res
+
+
+def test_mutation_cannot_bypass_validation_invariants() -> None:
+    res = _result()
+    # no mutating API exists, so the validated invariant set is intact
+    assert len(res.supporting_evidence_ids) > 0
+    assert res.status == "SUPPORTED"
+    assert res.reason_code == "RULE_MATCH"
+    with pytest.raises(AttributeError):
+        res.supporting_evidence_ids.clear()  # type: ignore[attr-defined]
+    assert len(res.supporting_evidence_ids) > 0
+
+
+# --- Task 202 correction: required fields ---
+
+
+def test_request_evidence_ids_and_source_are_required() -> None:
+    base = {
+        "request_id": uuid4(),
+        "session_id": uuid4(),
+        "context_fingerprint": _FP,
+        "task_id": "evidence-suggestion-v1",
+    }
+    with pytest.raises(ValidationError):
+        NativeReasoningRequest.model_validate(
+            {**base, "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202}
+        )
+    with pytest.raises(ValidationError):
+        NativeReasoningRequest.model_validate({**base, "evidence_ids": []})
+
+
+def test_result_collections_and_source_are_required() -> None:
+    base = {
+        "result_id": uuid4(),
+        "request_id": uuid4(),
+        "session_id": uuid4(),
+        "context_fingerprint": _FP,
+        "status": "ABSTAINED",
+        "reason_code": "NO_JUSTIFIED_BASIS",
+        "uncertainty": 0.9,
+        "rule_id": None,
+        "suggestion_text": None,
+    }
+    complete = {
+        **base,
+        "supporting_evidence_ids": [],
+        "contradicting_evidence_ids": [],
+        "missing_information_ids": [],
+        "result_source": NATIVE_REASONING_RESULT_SOURCE_TASK_202,
+    }
+    NativeReasoningResult.model_validate(complete)
+    for omitted in (
+        "supporting_evidence_ids",
+        "contradicting_evidence_ids",
+        "missing_information_ids",
+        "result_source",
+    ):
+        partial = {k: v for k, v in complete.items() if k != omitted}
+        with pytest.raises(ValidationError):
+            NativeReasoningResult.model_validate(partial)
+
+
+def test_error_source_is_required() -> None:
+    with pytest.raises(ValidationError):
+        NativeReasoningError.model_validate(
+            {
+                "error_code": "INVALID_REQUEST",
+                "message": "native reasoning request is invalid",
+                "retryable": False,
+            }
+        )
+
+
+def test_explicit_empty_collections_follow_status_rules() -> None:
+    # request permits an explicitly supplied empty set
+    assert _request(evidence_ids=[]).evidence_ids == ()
+    # ABSTAINED permits explicitly empty missing list
+    ok = _result(
+        status="ABSTAINED",
+        reason_code="NO_JUSTIFIED_BASIS",
+        uncertainty=0.9,
+        supporting_evidence_ids=[],
+        missing_information_ids=[],
+        rule_id=None,
+    )
+    assert ok.missing_information_ids == ()
+    # SUPPORTED rejects explicitly empty supporting list
+    with pytest.raises(ValidationError):
+        _result(supporting_evidence_ids=[])
+
+
+# --- Task 202 correction: deterministic request ordering ---
+
+
+def test_request_accepts_ordered_unique_references() -> None:
+    ids = sorted([uuid4(), uuid4(), uuid4()], key=str)
+    req = _request(evidence_ids=ids)
+    assert [str(v) for v in req.evidence_ids] == [str(v) for v in ids]
+
+
+def test_request_rejects_unsorted_references() -> None:
+    first, second = sorted([uuid4(), uuid4()], key=str)
+    with pytest.raises(ValidationError):
+        _request(evidence_ids=[second, first])
+
+
+def test_request_rejects_duplicate_references() -> None:
+    dup = uuid4()
+    with pytest.raises(ValidationError):
+        _request(evidence_ids=[dup, dup])
+
+
+def test_request_empty_references_permitted_when_explicit() -> None:
+    assert _request(evidence_ids=[]).evidence_ids == ()
+
+
+def test_request_maximum_bound() -> None:
+    ids = sorted([uuid4() for _ in range(64)], key=str)
+    assert len(_request(evidence_ids=ids).evidence_ids) == 64
+    with pytest.raises(ValidationError):
+        _request(evidence_ids=sorted([uuid4() for _ in range(65)], key=str))

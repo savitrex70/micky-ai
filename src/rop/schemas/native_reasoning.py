@@ -27,13 +27,26 @@ Three immutable Pydantic contracts:
    flag per code.
 
 All models use ``extra="forbid"`` and ``frozen=True`` so unknown
-fields are rejected and validated instances are immutable.
-Validators emit generic messages that never echo input values.
+fields are rejected and field reassignment is prohibited. Collection
+fields are tuples (not lists) so validated instances are also deeply
+immutable: JSON arrays are still accepted on input and still
+serialize as arrays in ``mode="json"``, but in-place mutation such
+as ``append`` is impossible. Validators emit generic messages that
+never echo input values.
+
+Required-field rationale: request/response identity, fingerprints,
+task/status/reason/uncertainty, every evidence and missing-information
+collection, and each ``*_source`` structural identifier are explicit
+contract fields and therefore required at construction. Omission is
+rejected rather than silently defaulting to an empty collection or
+an inserted source value. Only ``rule_id``/``suggestion_text`` (result)
+and ``request_id``/``session_id`` (error) are genuinely optional.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Literal
 from uuid import UUID
 
@@ -96,13 +109,14 @@ _ERROR_RETRYABILITY: dict[str, bool] = {
 }
 
 
-def _is_sorted_unique_uuids(values: list[UUID]) -> bool:
+def _is_sorted_unique_uuids(values: Sequence[UUID]) -> bool:
     texts = [str(v) for v in values]
     return len(set(texts)) == len(texts) and texts == sorted(texts)
 
 
-def _is_sorted_unique_strs(values: list[str]) -> bool:
-    return len(set(values)) == len(values) and values == sorted(values)
+def _is_sorted_unique_strs(values: Sequence[str]) -> bool:
+    items = list(values)
+    return len(set(items)) == len(items) and items == sorted(items)
 
 
 class NativeReasoningRequest(BaseModel):
@@ -120,10 +134,8 @@ class NativeReasoningRequest(BaseModel):
     session_id: UUID
     context_fingerprint: str = Field(min_length=64, max_length=64)
     task_id: str = Field(min_length=1, max_length=MAX_TASK_ID_LENGTH)
-    evidence_ids: list[UUID] = Field(default_factory=list, max_length=MAX_EVIDENCE_REFS)
-    request_source: Literal["NATIVE_REASONING_REQUEST_TASK_202"] = (
-        NATIVE_REASONING_REQUEST_SOURCE_TASK_202
-    )
+    evidence_ids: tuple[UUID, ...] = Field(max_length=MAX_EVIDENCE_REFS)
+    request_source: Literal["NATIVE_REASONING_REQUEST_TASK_202"]
 
     @model_validator(mode="after")
     def _strict_request(self) -> NativeReasoningRequest:
@@ -131,9 +143,8 @@ class NativeReasoningRequest(BaseModel):
             raise ValueError("context_fingerprint is invalid")
         if not _TASK_ID_RE.fullmatch(self.task_id):
             raise ValueError("task_id is invalid")
-        texts = [str(v) for v in self.evidence_ids]
-        if len(set(texts)) != len(texts):
-            raise ValueError("evidence_ids must not contain duplicates")
+        if not _is_sorted_unique_uuids(self.evidence_ids):
+            raise ValueError("evidence_ids must be unique and sorted")
         return self
 
 
@@ -158,20 +169,12 @@ class NativeReasoningResult(BaseModel):
     status: NativeReasoningStatus
     reason_code: NativeReasoningReasonCode
     uncertainty: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
-    supporting_evidence_ids: list[UUID] = Field(
-        default_factory=list, max_length=MAX_EVIDENCE_REFS
-    )
-    contradicting_evidence_ids: list[UUID] = Field(
-        default_factory=list, max_length=MAX_EVIDENCE_REFS
-    )
-    missing_information_ids: list[str] = Field(
-        default_factory=list, max_length=MAX_MISSING_IDS
-    )
+    supporting_evidence_ids: tuple[UUID, ...] = Field(max_length=MAX_EVIDENCE_REFS)
+    contradicting_evidence_ids: tuple[UUID, ...] = Field(max_length=MAX_EVIDENCE_REFS)
+    missing_information_ids: tuple[str, ...] = Field(max_length=MAX_MISSING_IDS)
     rule_id: str | None = Field(default=None, max_length=MAX_RULE_ID_LENGTH)
     suggestion_text: str | None = Field(default=None, max_length=MAX_SUGGESTION_LENGTH)
-    result_source: Literal["NATIVE_REASONING_RESULT_TASK_202"] = (
-        NATIVE_REASONING_RESULT_SOURCE_TASK_202
-    )
+    result_source: Literal["NATIVE_REASONING_RESULT_TASK_202"]
 
     @model_validator(mode="after")
     def _strict_result(self) -> NativeReasoningResult:
@@ -255,9 +258,7 @@ class NativeReasoningError(BaseModel):
     retryable: bool
     request_id: UUID | None = None
     session_id: UUID | None = None
-    error_source: Literal["NATIVE_REASONING_ERROR_TASK_202"] = (
-        NATIVE_REASONING_ERROR_SOURCE_TASK_202
-    )
+    error_source: Literal["NATIVE_REASONING_ERROR_TASK_202"]
 
     @model_validator(mode="after")
     def _strict_error(self) -> NativeReasoningError:
