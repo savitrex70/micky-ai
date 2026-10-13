@@ -82,20 +82,23 @@ The exact count is verified at initialization and recorded in metadata.
 
 1. **Validate** configuration (dimensions, divisibility, bounds).
 2. **Estimate** parameter count; reject if > 500,000 before allocation.
-3. **Allocate** model with `NativeModel(config)`.
-4. **Create** a dedicated `torch.Generator()` seeded with `config.init_seed`.
-5. **Initialize** all weight tensors with `normal_(mean=0.0, std=config.init_std)` using the dedicated generator.
-6. **Zero** all bias tensors.
-7. **Set** LayerNorm weights to 1, biases to 0.
-8. **Verify** all parameters are finite (no NaN/Inf).
-9. **Set** model to `eval()` mode.
-10. **Return** initialized `NativeModel`.
+3. **Preserve** global CPU RNG state via `torch.get_rng_state()`.
+4. **Allocate** model with `NativeModel(config)` (default initializers may run).
+5. **Restore** global CPU RNG state via `torch.set_rng_state()`.
+6. **Create** a dedicated `torch.Generator()` seeded with `config.init_seed`.
+7. **Initialize** all weight tensors with `normal_(mean=0.0, std=config.init_std)` using the dedicated generator.
+8. **Zero** all bias tensors.
+9. **Set** LayerNorm weights to 1, biases to 0.
+10. **Verify** all parameters are finite (no NaN/Inf).
+11. **Set** model to `eval()` mode.
+12. **Return** initialized `NativeModel`.
 
 ### Reproducibility
 
 - **Identical config + identical seed → identical parameter values** (bitwise).
 - **Different seed → different parameters** (tested deterministically).
 - Initialization uses a **local generator**, never the global RNG state.
+- Global RNG state is preserved: callers' random sequences are unaffected.
 - Parameter values are hashed (SHA-256 over sorted-name concatenated bytes) to produce `init_hash`.
 - Configuration is hashed (SHA-256 over canonical JSON) to produce `config_hash`.
 - Both hashes are recorded in `NativeModelMetadata`.

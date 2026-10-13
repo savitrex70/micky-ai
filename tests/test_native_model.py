@@ -660,3 +660,220 @@ def test_build_model_spec_includes_all_metadata() -> None:
     assert spec.metadata.init_hash is not None
     assert len(spec.metadata.init_hash) == 64
     assert spec.metadata.data_scope == "synthetic-test-only"
+
+
+# --- Finding 1: Global RNG state preservation ---
+
+
+def test_global_rng_state_preserved() -> None:
+    """initialize_model preserves the caller's global CPU RNG state."""
+    # Seed global RNG and capture state
+    torch.manual_seed(12345)
+    state_before = torch.get_rng_state()
+
+    # Draw a reference value without model construction
+    torch.manual_seed(12345)
+    ref_draw = torch.rand(())
+
+    # Now construct model and verify global state unchanged
+    torch.manual_seed(12345)
+    model = initialize_model(BASE_CONFIG)
+    state_after = torch.get_rng_state()
+
+    # Global RNG state must be identical
+    assert torch.equal(
+        state_before, state_after
+    ), "Global RNG state changed after initialize_model()"
+
+    # Model parameters must be reproducible
+    model2 = initialize_model(BASE_CONFIG)
+    for (name1, p1), (_name2, p2) in zip(
+        model.named_parameters(), model2.named_parameters(), strict=True
+    ):
+        assert torch.equal(p1, p2), f"Parameter {name1} not reproducible"
+
+    # Subsequent global draw must match reference
+    actual_draw = torch.rand(())
+    assert torch.equal(
+        actual_draw, ref_draw
+    ), "Global random sequence diverged after model construction"
+
+
+# --- Finding 2: Configuration revalidation at initialization boundary ---
+
+
+def test_revalidates_config_instance_with_invalid_seed() -> None:
+    """NativeModelConfig instances with invalid seed are rejected at
+    initialize_model.
+    """
+    # Create valid config, then mutate via model_copy to bypass
+    # constructor validation
+    invalid_config = BASE_CONFIG.model_copy(update={"init_seed": -1})
+    with pytest.raises(NativeModelError) as exc:
+        initialize_model(invalid_config)
+    assert exc.value.code == "INVALID_CONFIG"
+
+
+def test_revalidates_config_instance_with_unsupported_heads() -> None:
+    """NativeModelConfig instances with unsupported heads/hidden_dim are
+    rejected.
+    """
+    invalid_config = BASE_CONFIG.model_copy(update={"hidden_dim": 64, "num_heads": 5})
+    with pytest.raises(NativeModelError) as exc:
+        initialize_model(invalid_config)
+    assert exc.value.code == "INVALID_CONFIG"
+
+
+def test_revalidates_config_instance_with_invalid_dropout() -> None:
+    """NativeModelConfig instances with invalid dropout are rejected."""
+    invalid_config = BASE_CONFIG.model_copy(update={"dropout": 0.6})
+    with pytest.raises(NativeModelError) as exc:
+        initialize_model(invalid_config)
+    assert exc.value.code == "INVALID_CONFIG"
+
+
+def test_revalidates_config_instance_with_invalid_architecture() -> None:
+    """NativeModelConfig instances with invalid architecture are rejected."""
+    invalid_config = BASE_CONFIG.model_copy(update={"architecture": "other-arch"})
+    with pytest.raises(NativeModelError) as exc:
+        initialize_model(invalid_config)
+    assert exc.value.code == "INVALID_CONFIG"
+
+
+def test_revalidates_config_instance_with_invalid_version() -> None:
+    """NativeModelConfig instances with invalid model_version are rejected."""
+    invalid_config = BASE_CONFIG.model_copy(update={"model_version": "9.9"})
+    with pytest.raises(NativeModelError) as exc:
+        initialize_model(invalid_config)
+    assert exc.value.code == "INVALID_CONFIG"
+
+
+def test_revalidates_config_instance_oversized_before_allocation() -> None:
+    """Oversized configurations are rejected before model allocation."""
+    # Monkeypatch NativeModel.__init__ to fail if called
+    import rop.native_model.native_model as nm_module
+
+    original_init = nm_module.NativeModel.__init__
+
+    def fail_init(self, config):
+        raise AssertionError(
+            "NativeModel.__init__ should not be called for invalid config"
+        )
+
+    try:
+        nm_module.NativeModel.__init__ = fail_init
+        huge_config = BASE_CONFIG.model_copy(
+            update={
+                "vocab_size": MAX_VOCAB_SIZE,
+                "hidden_dim": MAX_HIDDEN_DIM,
+                "num_layers": MAX_NUM_LAYERS,
+                "num_heads": MAX_NUM_HEADS,
+                "max_seq_len": MAX_SEQ_LEN,
+                "num_classes": 128,
+            }
+        )
+        with pytest.raises(NativeModelError) as exc:
+            initialize_model(huge_config)
+        assert exc.value.code == "CONFIG_INVALID"
+    finally:
+        nm_module.NativeModel.__init__ = original_init
+
+
+# --- Finding 3: Input validation in forward ---
+
+
+def test_forward_valid_input_shape() -> None:
+    """Forward pass with valid input returns correct output shape."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.randint(0, BASE_CONFIG.vocab_size, (3, 16), dtype=torch.long)
+    logits = model(token_ids)
+    assert logits.shape == (3, BASE_CONFIG.num_classes)
+    assert logits.dtype == torch.float32
+
+
+def test_forward_wrong_rank_raises() -> None:
+    """Forward pass with wrong tensor rank raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    # 1D tensor
+    with pytest.raises(NativeModelError) as exc:
+        model(torch.randint(0, 100, (16,), dtype=torch.long))
+    assert exc.value.code == "INVALID_INPUT"
+    # 3D tensor
+    with pytest.raises(NativeModelError) as exc:
+        model(torch.randint(0, 100, (2, 3, 16), dtype=torch.long))
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_wrong_type_raises() -> None:
+    """Forward pass with non-Tensor input raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    with pytest.raises(NativeModelError) as exc:
+        model([1, 2, 3])  # type: ignore[arg-type]
+    assert exc.value.code == "INVALID_INPUT"
+    with pytest.raises(NativeModelError) as exc:
+        model("not a tensor")  # type: ignore[arg-type]
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_empty_batch_raises() -> None:
+    """Forward pass with empty batch raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.empty((0, 16), dtype=torch.long)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_empty_sequence_raises() -> None:
+    """Forward pass with empty sequence raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.empty((3, 0), dtype=torch.long)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_exceeds_max_seq_len_raises() -> None:
+    """Forward pass with sequence exceeding max_seq_len raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    seq_len = BASE_CONFIG.max_seq_len + 1
+    token_ids = torch.randint(0, BASE_CONFIG.vocab_size, (2, seq_len), dtype=torch.long)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_float_dtype_raises() -> None:
+    """Forward pass with float dtype raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.randint(0, BASE_CONFIG.vocab_size, (2, 16), dtype=torch.float32)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_bool_dtype_raises() -> None:
+    """Forward pass with bool dtype raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.randint(0, 2, (2, 16), dtype=torch.bool)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_negative_token_ids_raises() -> None:
+    """Forward pass with negative token IDs raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.tensor([[1, -1, 3]], dtype=torch.long)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_forward_oov_token_ids_raises() -> None:
+    """Forward pass with token IDs >= vocab_size raises INVALID_INPUT."""
+    model = initialize_model(BASE_CONFIG)
+    token_ids = torch.tensor([[1, BASE_CONFIG.vocab_size, 3]], dtype=torch.long)
+    with pytest.raises(NativeModelError) as exc:
+        model(token_ids)
+    assert exc.value.code == "INVALID_INPUT"

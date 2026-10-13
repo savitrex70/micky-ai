@@ -4,6 +4,12 @@ A compact encoder-style Transformer for a narrow synthetic classification
 task. All parameters are randomly initialized from a documented seed.
 No pretrained weights, tokenizer, vocabulary, or downloaded artifact
 exists in this path.
+
+Initialization procedure (v1.0):
+- Global RNG state is preserved around model construction.
+- A dedicated torch.Generator seeded with config.init_seed is used
+  for all parameter initialization.
+- Identical config and seed yield bitwise-identical parameters.
 """
 
 from __future__ import annotations
@@ -66,17 +72,27 @@ def _canonical_hash(canonical: dict[str, Any]) -> str:
 
 
 def _checked_config(config: NativeModelConfig | dict[str, Any]) -> NativeModelConfig:
-    """Validate a model configuration mapping eagerly and strictly."""
+    """Validate a model configuration mapping eagerly and strictly.
+
+    Revalidates all fields even for existing NativeModelConfig instances
+    to prevent bypass via model_copy(update=...).
+    """
+    if isinstance(config, dict):
+        try:
+            return NativeModelConfig.model_validate(config)
+        except Exception as exc:
+            raise NativeModelError(
+                "INVALID_CONFIG", "model configuration is invalid"
+            ) from exc
     if isinstance(config, NativeModelConfig):
-        return config
-    if not isinstance(config, dict):
-        raise NativeModelError("INVALID_CONFIG", "model configuration is invalid")
-    try:
-        return NativeModelConfig.model_validate(config)
-    except Exception as exc:
-        raise NativeModelError(
-            "INVALID_CONFIG", "model configuration is invalid"
-        ) from exc
+        # Revalidate by dumping to dict and parsing again
+        try:
+            return NativeModelConfig.model_validate(config.model_dump())
+        except Exception as exc:
+            raise NativeModelError(
+                "INVALID_CONFIG", "model configuration is invalid"
+            ) from exc
+    raise NativeModelError("INVALID_CONFIG", "model configuration is invalid")
 
 
 class _EmbeddingLayer(nn.Module):
@@ -170,14 +186,34 @@ class NativeModel(nn.Module):
 
         Args:
             token_ids: Tensor of shape (batch_size, seq_len) with token IDs.
+                       Must be torch.long dtype with values in [0, vocab_size).
 
         Returns:
             Logits of shape (batch_size, num_classes).
+
+        Raises:
+            NativeModelError: If input validation fails.
         """
+        if not isinstance(token_ids, torch.Tensor):
+            raise NativeModelError("INVALID_INPUT", "token_ids must be a torch.Tensor")
+        if token_ids.dtype != torch.long:
+            raise NativeModelError(
+                "INVALID_INPUT", "token_ids must have dtype torch.long"
+            )
         if token_ids.dim() != 2:
-            raise NativeModelError("INVALID_INPUT", "token_ids must be 2D tensor")
-        if token_ids.size(1) > self.config.max_seq_len:
+            raise NativeModelError(
+                "INVALID_INPUT", "token_ids must be 2D tensor (batch, seq_len)"
+            )
+        batch_size, seq_len = token_ids.shape
+        if batch_size <= 0:
+            raise NativeModelError("INVALID_INPUT", "batch size must be positive")
+        if seq_len <= 0:
+            raise NativeModelError("INVALID_INPUT", "sequence length must be positive")
+        if seq_len > self.config.max_seq_len:
             raise NativeModelError("INVALID_INPUT", "sequence length exceeds maximum")
+        # Check token ID range
+        if (token_ids < 0).any() or (token_ids >= self.config.vocab_size).any():
+            raise NativeModelError("INVALID_INPUT", "token IDs out of vocabulary range")
 
         x = self.embeddings(token_ids)
         for layer in self.encoder_layers:
@@ -260,6 +296,8 @@ def initialize_model(config: NativeModelConfig | dict[str, Any]) -> NativeModel:
     Validates configuration before allocating parameters. Identical config
     and seed always produce identical initial parameter values.
 
+    Global RNG state is preserved so callers' random sequences are unaffected.
+
     Args:
         config: Model configuration (validated NativeModelConfig or dict).
 
@@ -279,7 +317,15 @@ def initialize_model(config: NativeModelConfig | dict[str, Any]) -> NativeModel:
             f"estimated parameter count {estimated} exceeds maximum {MAX_TOTAL_PARAMS}",
         )
 
-    model = NativeModel(validated)
+    # Preserve global RNG state around model construction (which may invoke
+    # default initializers). Use the recommended PyTorch pattern:
+    # get_rng_state() / set_rng_state() for CPU.
+    rng_state = torch.get_rng_state()
+    try:
+        model = NativeModel(validated)
+    finally:
+        torch.set_rng_state(rng_state)
+
     _initialize_parameters(model, validated)
     model.eval()
     return model
