@@ -21,7 +21,7 @@ from pydantic import (
 EVALUATION_CONTRACT_VERSION = "1"
 # The report now embeds the predeclared metric contract and validates all
 # derived per-label binary counts; configuration contracts remain at version 1.
-EVALUATION_REPORT_CONTRACT_VERSION = "4"
+EVALUATION_REPORT_CONTRACT_VERSION = "5"
 MAX_LABELS = 32
 MAX_EXAMPLES = 100000
 MAX_REASON_LENGTH = 500
@@ -66,7 +66,7 @@ class EvaluationSplit(StrEnum):
 class EvaluationManifestEntry(BaseModel):
     """One example bound to its canonical identifier, split and labels."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
     example_id: StrictStr = Field(min_length=1, max_length=200)
     split: EvaluationSplit
@@ -320,6 +320,8 @@ class EvaluationClassReport(BaseModel):
     true_negatives: StrictInt = Field(ge=0)
     precision: StrictFloat = Field(ge=0.0, le=1.0)
     recall: StrictFloat = Field(ge=0.0, le=1.0)
+    specificity: StrictFloat = Field(ge=0.0, le=1.0)
+    balanced_accuracy: StrictFloat = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _metrics_match_counts(self) -> EvaluationClassReport:
@@ -333,6 +335,13 @@ class EvaluationClassReport(BaseModel):
             )
         if not _metrics_close(self.recall, recall):
             raise ValueError("recall must match TP/(TP+FN); zero denominator means 0.0")
+        negatives = self.false_positives + self.true_negatives
+        specificity = self.true_negatives / negatives if negatives else 0.0
+        balanced_accuracy = (recall + specificity) / 2.0
+        if not _metrics_close(self.specificity, specificity):
+            raise ValueError("specificity must match TN/(TN+FP); zero denominator means 0.0")
+        if not _metrics_close(self.balanced_accuracy, balanced_accuracy):
+            raise ValueError("balanced_accuracy must average sensitivity and specificity")
         return self
 
 
@@ -437,13 +446,16 @@ class RunOutcomeSummary(BaseModel):
         if self.binary_confusion != expected_binary:
             raise ValueError("binary confusion counts must match per-class counts")
         f1_values = []
-        recalls = []
+        balanced_accuracies = []
         for r in self.per_class:
             denom = r.precision + r.recall
             f1_values.append(2 * r.precision * r.recall / denom if denom else 0.0)
-            recalls.append(r.recall)
+            balanced_accuracies.append(r.balanced_accuracy)
         macro_f1 = sum(f1_values) / len(f1_values) if f1_values else 0.0
-        balanced_accuracy = sum(recalls) / len(recalls) if recalls else 0.0
+        balanced_accuracy = (
+            sum(balanced_accuracies) / len(balanced_accuracies)
+            if balanced_accuracies else 0.0
+        )
         coverage = (
             (self.example_count - self.abstention_count) / self.example_count
             if self.example_count
@@ -576,7 +588,7 @@ class EvaluationComparisonReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    contract_version: Literal["4"]
+    contract_version: Literal["5"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
     task: EvaluationTaskDefinition
     run_configuration: EvaluationRunConfiguration
@@ -763,12 +775,18 @@ class EvaluationComparisonReport(BaseModel):
         # 5. Acceptance is the conjunction of its recorded parts, nothing else.
         if self.safety_failure and self.accepted:
             raise ValueError("a safety failure can never be accepted")
+        if self.accepted and configuration.evaluated_splits != (EvaluationSplit.TEST,):
+            raise ValueError("accepted reports require TEST-only held-out evaluation")
         if self.accepted and not self.candidate_improves_macro_f1:
             raise ValueError(
                 "acceptance requires the candidate to improve the predeclared metric"
             )
+        # Only TEST-only runs qualify as held-out acceptance evaluations.
+        # TRAIN, VALIDATION, and mixed-split reports remain diagnostic only.
+        held_out_only = configuration.evaluated_splits == (EvaluationSplit.TEST,)
         expected_accepted = (
-            not safety_failure
+            held_out_only
+            and not safety_failure
             and improves
             and all(gate.passed for gate in self.gate_results)
         )

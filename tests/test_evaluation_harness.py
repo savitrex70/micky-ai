@@ -1481,3 +1481,45 @@ def test_report_rejects_different_baseline_and_candidate_cohort_hashes() -> None
     payload["baseline"]["evaluated_cohort_hash"] = "a" * 64
     with pytest.raises(ValidationError, match="exact evaluated manifest"):
         EvaluationComparisonReport.model_validate(payload)
+
+
+def test_predicting_every_label_has_perfect_recall_but_not_balanced_accuracy() -> None:
+    outcome = evaluate_predictions(
+        manifest=_manifest(),
+        predictions=tuple(
+            _prediction(f"example-{i}", list(LABELS)) for i in range(1, 5)
+        ),
+        labels=LABELS,
+        system_id="always-positive",
+    )
+    assert all(row.recall == 1.0 for row in outcome.per_class)
+    assert all(row.specificity == 0.0 for row in outcome.per_class)
+    assert all(row.balanced_accuracy == 0.5 for row in outcome.per_class)
+    assert outcome.balanced_accuracy == 0.5
+
+@pytest.mark.parametrize(
+    ("splits", "should_accept"),
+    [
+        ((EvaluationSplit.TRAIN,), False),
+        ((EvaluationSplit.VALIDATION,), False),
+        ((EvaluationSplit.TEST,), True),
+        ((EvaluationSplit.TRAIN, EvaluationSplit.TEST), False),
+        ((EvaluationSplit.VALIDATION, EvaluationSplit.TEST), False),
+    ],
+)
+def test_only_test_only_run_can_be_accepted(splits, should_accept) -> None:
+    manifest = _split_manifest(
+        [(f"test-{i}", "TEST", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
+        + [(f"train-{i}", "TRAIN", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
+        + [(f"validation-{i}", "VALIDATION", [LABELS[(i - 1) % 2]]) for i in range(1, 5)]
+    )
+    configuration = _run_configuration(manifest, evaluated_splits=splits)
+    entries = tuple(entry for entry in manifest.entries if entry.split in splits)
+    baseline = tuple(_prediction(entry.example_id, []) for entry in entries)
+    candidate = tuple(_prediction(entry.example_id, list(entry.expected_labels)) for entry in entries)
+    report = compare_systems(
+        run_configuration=configuration,
+        baseline_predictions=baseline,
+        candidate_predictions=candidate,
+    )
+    assert report.accepted is should_accept

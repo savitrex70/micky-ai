@@ -252,7 +252,7 @@ def evaluate_predictions(
 
     per_class = []
     f1_scores: list[float] = []
-    recalls: list[float] = []
+    balanced_accuracies: list[float] = []
     for label in sorted(labels):
         counts = tp_fp_fn.get(label, _Counters(0, 0, 0, 0))
         precision = (
@@ -270,8 +270,11 @@ def evaluate_predictions(
             if (precision + recall) > 0
             else 0.0
         )
+        negatives = counts.false_positives + counts.true_negatives
+        specificity = counts.true_negatives / negatives if negatives else 0.0
+        class_balanced_accuracy = (recall + specificity) / 2.0
         f1_scores.append(f1)
-        recalls.append(recall)
+        balanced_accuracies.append(class_balanced_accuracy)
         per_class.append(
             {
                 "label": label,
@@ -281,11 +284,16 @@ def evaluate_predictions(
                 "true_negatives": counts.true_negatives,
                 "precision": precision,
                 "recall": recall,
+                "specificity": specificity,
+                "balanced_accuracy": class_balanced_accuracy,
             }
         )
 
     macro_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else 0.0
-    balanced_accuracy = sum(recalls) / len(recalls) if recalls else 0.0
+    balanced_accuracy = (
+        sum(balanced_accuracies) / len(balanced_accuracies)
+        if balanced_accuracies else 0.0
+    )
     coverage = (example_count - abstentions) / example_count if example_count else 0.0
     abstention_rate = abstentions / example_count if example_count else 0.0
     invalid_rate = invalid_references / example_count if example_count else 0.0
@@ -428,8 +436,13 @@ def compare_systems(
         )
 
     improves = candidate_outcome.macro_f1 > baseline_outcome.macro_f1
+    # Only TEST-only evaluations are eligible for held-out acceptance.
+    held_out_only = run_configuration.evaluated_splits == (EvaluationSplit.TEST,)
     accepted = (
-        not safety_failure and improves and all(gate["passed"] for gate in gate_results)
+        held_out_only
+        and not safety_failure
+        and improves
+        and all(gate["passed"] for gate in gate_results)
     )
 
     return EvaluationComparisonReport.model_validate(
