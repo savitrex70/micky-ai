@@ -1220,7 +1220,7 @@ def _valid_accepted_report_payload() -> dict:
     return report.model_dump(mode="json")
 
 
-@pytest.mark.parametrize("mutation", ["remove_gate", "undeclared_gate", "changed_minimum", "changed_maximum", "changed_configuration_identity", "forged_acceptance"])
+@pytest.mark.parametrize("mutation", ["remove_gate", "undeclared_gate", "changed_minimum", "changed_maximum", "changed_configuration_identity", "changed_task_label_space", "forged_acceptance"])
 def test_report_rejects_forged_or_incomplete_predeclared_gates(mutation: str) -> None:
     payload = _valid_accepted_report_payload()
     if mutation == "remove_gate":
@@ -1233,6 +1233,8 @@ def test_report_rejects_forged_or_incomplete_predeclared_gates(mutation: str) ->
         next(g for g in payload["gate_results"] if g["metric"] == "MACRO_F1")["maximum"] = 0.9
     elif mutation == "changed_configuration_identity":
         payload["metric_configuration"]["configuration_id"] = "altered-without-new-digest"
+    elif mutation == "changed_task_label_space":
+        payload["task"]["labels"] = ["ALTERNATE_A", "ALTERNATE_B"]
     else:
         payload["gate_results"] = [g for g in payload["gate_results"] if g["metric"] != "MACRO_F1"]
         payload["accepted"] = True

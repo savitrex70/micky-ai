@@ -19,9 +19,8 @@ from pydantic import (
 )
 
 EVALUATION_CONTRACT_VERSION = "1"
-# The comparison report's public shape changed (recorded gate results and
-# explicit baseline/candidate confusion totals), so it carries its own
-# contract version; configuration contracts remain at version 1.
+# The report now embeds the predeclared metric contract and validates all
+# derived per-label binary counts; configuration contracts remain at version 1.
 EVALUATION_REPORT_CONTRACT_VERSION = "3"
 MAX_LABELS = 32
 MAX_EXAMPLES = 100000
@@ -515,6 +514,7 @@ class EvaluationComparisonReport(BaseModel):
 
     contract_version: Literal["3"]
     run_id: StrictStr = Field(min_length=1, max_length=100)
+    task: EvaluationTaskDefinition
     run_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     metric_configuration: EvaluationMetricConfiguration
     metric_configuration_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -571,6 +571,10 @@ class EvaluationComparisonReport(BaseModel):
             raise ValueError("candidate co-occurrence total must equal its diagnostic cell sum")
         if self.metric_configuration_hash != canonical_metric_configuration_digest(self.metric_configuration):
             raise ValueError("metric configuration identity does not match canonical configuration")
+        if self.task.task_id != self.metric_configuration.task_id:
+            raise ValueError("task definition and metric configuration identities must match")
+        if self.baseline.labels != self.task.labels or self.candidate.labels != self.task.labels:
+            raise ValueError("outcome labels must exactly match the evaluated task label space")
         declared = {item.metric: item for item in self.metric_configuration.thresholds}
         recorded = {gate.metric: gate for gate in self.gate_results}
         if set(recorded) != set(declared) or len(recorded) != len(self.gate_results):

@@ -420,6 +420,7 @@ def compare_systems(
         {
             "contract_version": EVALUATION_REPORT_CONTRACT_VERSION,
             "run_id": run_configuration.run_id,
+            "task": run_configuration.task.model_dump(mode="json"),
             "run_configuration_hash": canonical_examples_digest(run_configuration),
             "metric_configuration": run_configuration.metric_configuration.model_dump(mode="json"),
             "metric_configuration_hash": canonical_metric_configuration_digest(run_configuration.metric_configuration),
