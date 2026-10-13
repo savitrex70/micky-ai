@@ -23,6 +23,8 @@ Tokenization and vocabulary construction are project-controlled and deterministi
 
 The initial randomly initialized native model is a compact encoder-style Transformer for a narrow synthetic classification task; see the [native model design](docs/stage-8-native-model.md).
 
+A bounded, deterministic training and validation loop runs only against the existing synthetic-test-only dataset scope and the Task 209 model, when explicitly invoked; see the [training loop design](docs/stage-8-training-loop.md).
+
 ## Stack
 
 - Python 3.12
