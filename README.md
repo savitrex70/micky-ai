@@ -21,6 +21,8 @@ Dataset preparation is synthetic-only until an authorized source exists; see the
 
 Tokenization and vocabulary construction are project-controlled and deterministic, fitted only on the synthetic-test-only training partition; see the [tokenizer and vocabulary design](docs/stage-8-tokenizer-vocabulary.md).
 
+The initial randomly initialized native model is a compact encoder-style Transformer for a narrow synthetic classification task; see the [native model design](docs/stage-8-native-model.md).
+
 ## Stack
 
 - Python 3.12

@@ -104,6 +104,19 @@ from rop.schemas.native_evidence import (
     NativeEvidenceRecord,
     compute_native_evidence_digest,
 )
+from rop.schemas.native_model import (
+    MAX_HIDDEN_DIM,
+    MAX_NUM_HEADS,
+    MAX_NUM_LAYERS,
+    MAX_SEQ_LEN,
+    MAX_TOTAL_PARAMS,
+    MAX_VOCAB_SIZE,
+    MODEL_ARCHITECTURE,
+    MODEL_VERSION,
+    NativeModelConfig,
+    NativeModelMetadata,
+    NativeModelSpec,
+)
 from rop.schemas.native_reasoning import (
     NATIVE_REASONING_ERROR_SOURCE_TASK_202,
     NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
@@ -636,4 +649,15 @@ __all__ = [
     "TokenizerConfig",
     "Vocabulary",
     "VocabularyMetadata",
+    "MAX_HIDDEN_DIM",
+    "MAX_NUM_HEADS",
+    "MAX_NUM_LAYERS",
+    "MAX_SEQ_LEN",
+    "MAX_TOTAL_PARAMS",
+    "MAX_VOCAB_SIZE",
+    "MODEL_ARCHITECTURE",
+    "MODEL_VERSION",
+    "NativeModelConfig",
+    "NativeModelMetadata",
+    "NativeModelSpec",
 ]
