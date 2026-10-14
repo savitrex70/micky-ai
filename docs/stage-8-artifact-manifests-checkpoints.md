@@ -89,10 +89,13 @@ touched:
 
 `apply_checkpoint_to_model()` parses and validates the full header,
 checks architecture, version, and the embedded fingerprint against
-the target model, decodes every tensor into temporary storage,
-checks finiteness, and only then copies state into the model. A
-failure leaves model parameters unchanged (tested by snapshot
-comparison).
+the target model, rejects non-float32 or non-CPU targets before any
+mutation, decodes every tensor into temporary storage, checks
+finiteness, and only then copies state into the model. Because the
+copy is an exact same-dtype, same-device transfer of validated
+finite tensors, no conversion failure is possible after mutation
+begins. A failure leaves model parameters unchanged (tested by
+snapshot comparison).
 
 Every failure raises `ArtifactError` with a stable code and a safe,
 generic message. Nothing is silently repaired or reinterpreted.
@@ -103,6 +106,13 @@ generic message. Nothing is silently repaired or reinterpreted.
   object graph** — only a JSON header and raw float32 bytes.
 - Loading never calls `torch.load`, `pickle`, `eval`, or `exec`.
 - Tensors are reconstructed with `torch.frombuffer(...).clone()`.
+- **Supported target policy**: `apply_checkpoint_to_model()` accepts
+  only float32 CPU targets (the Task 209 contract). Lower-precision
+  (e.g. float16) or non-CPU targets are rejected with `INVALID_INPUT`
+  before any mutation, so finite float32 values that would overflow a
+  narrower dtype are never converted and never applied. Application
+  is failure-atomic: every check capable of rejecting the checkpoint
+  runs before the first live parameter is modified.
 - `torch.save` output is explicitly rejected with
   `UNSUPPORTED_FORMAT`.
 - Files are read with size caps (`MAX_CHECKPOINT_BYTES`); paths are

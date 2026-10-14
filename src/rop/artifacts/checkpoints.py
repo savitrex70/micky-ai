@@ -372,11 +372,17 @@ def parse_checkpoint_header(data: bytes | bytearray) -> dict[str, Any]:
 def apply_checkpoint_to_model(model: NativeModel, data: bytes | bytearray) -> None:
     """Validate checkpoint bytes fully, then apply state to the model.
 
-    All structural validation (magic, version, header, shapes, payload
-    size, finiteness) happens before any model parameter is modified;
-    a failure leaves model parameters unchanged. The checkpoint
-    architecture, model version, and embedded configuration fingerprint
-    are checked against the target model before any state is decoded.
+    Supported target policy: every target parameter must be float32 on
+    CPU (the Task 209 contract). Any other dtype or device is rejected
+    before mutation. All structural validation (magic, version, header,
+    shapes, payload size), identity checks, target policy checks, and
+    decoded-tensor finiteness checks happen before any model parameter
+    is modified; a failure leaves model parameters unchanged. Because
+    the copy is an exact same-dtype, same-device transfer of already
+    validated finite tensors, no conversion failure is possible after
+    mutation begins. The checkpoint architecture, model version, and
+    embedded configuration fingerprint are checked against the target
+    model before any state is decoded.
     """
     if not isinstance(model, NativeModel) or not model._initialized:
         raise ArtifactError("INVALID_INPUT", "model is invalid")
@@ -407,6 +413,16 @@ def apply_checkpoint_to_model(model: NativeModel, data: bytes | bytearray) -> No
             raise ArtifactError(
                 "INCOMPATIBLE_MODEL", "checkpoint parameters do not match the model"
             )
+    # Target policy gate: only float32 CPU parameters are supported, so
+    # the subsequent copy is an exact transfer with no dtype conversion
+    # and no overflow risk. Anything else is rejected before mutation.
+    for _name, param in model.named_parameters():
+        if param.dtype != torch.float32:
+            raise ArtifactError(
+                "INVALID_INPUT", "target model parameters must be float32"
+            )
+        if param.device.type != "cpu":
+            raise ArtifactError("INVALID_INPUT", "target model must be on CPU")
     decoded: dict[str, torch.Tensor] = {}
     for name in sorted(header_params):
         entry = header_params[name]
@@ -420,9 +436,6 @@ def apply_checkpoint_to_model(model: NativeModel, data: bytes | bytearray) -> No
         live = dict(model.named_parameters())
         for name, tensor in decoded.items():
             live[name].copy_(tensor)
-    for param in model.parameters():
-        if not torch.all(torch.isfinite(param)).item():
-            raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint values are invalid")
 
 
 def _retained_records(result: PreparationResult) -> tuple[Any, ...]:

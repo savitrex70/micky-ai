@@ -819,3 +819,32 @@ def test_legacy_v1_header_rejected() -> None:
     with pytest.raises(ArtifactError) as exc:
         parse_checkpoint_header(legacy)
     assert exc.value.code == "UNSUPPORTED_VERSION"
+
+
+def test_apply_rejects_half_precision_target_atomically() -> None:
+    """A lower-precision target is rejected before any parameter changes."""
+    _, content, _ = _build_fixture()
+    target = _fresh_model().half()
+    assert next(target.parameters()).dtype == torch.float16
+    before = _snapshot(target)
+    with pytest.raises(ArtifactError) as exc:
+        apply_checkpoint_to_model(target, content)
+    assert exc.value.code == "INVALID_INPUT"
+    for name, value in before.items():
+        assert torch.equal(value, dict(target.named_parameters())[name].detach())
+
+
+def test_apply_rejects_overflow_under_conversion_atomically() -> None:
+    """Finite float32 values that would overflow float16 are never applied."""
+    source = _fresh_model()
+    with torch.no_grad():
+        for param in source.parameters():
+            param.fill_(1.0e10)
+    content = build_checkpoint_bytes(source)
+    target = _fresh_model().half()
+    before = _snapshot(target)
+    with pytest.raises(ArtifactError) as exc:
+        apply_checkpoint_to_model(target, content)
+    assert exc.value.code == "INVALID_INPUT"
+    for name, value in before.items():
+        assert torch.equal(value, dict(target.named_parameters())[name].detach())
