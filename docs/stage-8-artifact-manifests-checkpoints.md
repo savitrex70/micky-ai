@@ -11,7 +11,8 @@ model competence, no clinical validity, and no real-world accuracy.
 
 - Manifest schema: `ArtifactManifest`, version `1.0`.
 - Artifact type: `model-checkpoint` (the only supported type).
-- Checkpoint format: `rop-raw-tensor-v1`, format version `1.0`.
+- Checkpoint format: `rop-raw-tensor-v1`, format version `2.0`.
+  Format version `1.0` is unsupported and rejected.
 - Scope: `synthetic-test-only` (the only supported scope).
 
 ## Which bytes and metadata are hashed
