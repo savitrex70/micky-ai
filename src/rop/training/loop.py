@@ -290,6 +290,84 @@ def _verify_dataset_integrity(result: PreparationResult) -> str:
     return recomputed
 
 
+def _verify_partition_membership(
+    result: PreparationResult,
+) -> None:
+    """Verify actual partition-container membership against the verified split manifest.
+
+    After the independent Task 207 split integrity verification, this
+    function establishes that every retained record is stored in the
+    partition assigned to its group by the verified split manifest.
+    Rejects any record stored under a partition different from its
+    group's verified assignment, duplicate record IDs across containers,
+    missing or unexpected partition containers, and missing records.
+    """
+    # Build the expected group-to-partition mapping from the verified split manifest
+    group_to_partition = {
+        entry.group_id: entry.partition for entry in result.split_manifest.assignments
+    }
+
+    # Inspect actual containers and verify each record's membership
+    seen_record_ids: set[str] = set()
+    seen_partitions: set[str] = set()
+    expected_partitions = {"train", "validation", "test"}
+
+    for partition_entry in result.partitions:
+        partition_name = partition_entry.partition
+        if partition_name not in expected_partitions:
+            raise NativeTrainingError(
+                "SPLIT_INTEGRITY_FAILURE",
+                f"unexpected partition name: {partition_name}",
+            )
+        if partition_name in seen_partitions:
+            raise NativeTrainingError(
+                "SPLIT_INTEGRITY_FAILURE",
+                f"duplicate partition container: {partition_name}",
+            )
+        seen_partitions.add(partition_name)
+
+        for record in partition_entry.records:
+            # Check duplicate record IDs across all containers
+            if record.record_id in seen_record_ids:
+                raise NativeTrainingError(
+                    "SPLIT_INTEGRITY_FAILURE",
+                    f"duplicate record ID across containers: {record.record_id}",
+                )
+            seen_record_ids.add(record.record_id)
+
+            # Verify this record's group is assigned to this partition
+            expected_partition = group_to_partition.get(record.group_id)
+            if expected_partition is None:
+                raise NativeTrainingError(
+                    "SPLIT_INTEGRITY_FAILURE",
+                    f"record group {record.group_id} not found in split "
+                    f"manifest assignments",
+                )
+            if expected_partition != partition_name:
+                raise NativeTrainingError(
+                    "SPLIT_INTEGRITY_FAILURE",
+                    f"record {record.record_id} group {record.group_id} "
+                    f"stored in {partition_name} but manifest assigns it to "
+                    f"{expected_partition}",
+                )
+
+    # Check that all expected partitions are present
+    if seen_partitions != expected_partitions:
+        missing = expected_partitions - seen_partitions
+        raise NativeTrainingError(
+            "SPLIT_INTEGRITY_FAILURE",
+            f"missing partition containers: {', '.join(sorted(missing))}",
+        )
+
+    # Verify no records are missing by comparing against all retained records
+    all_records = _retained_records(result)
+    if len(seen_record_ids) != len(all_records):
+        raise NativeTrainingError(
+            "SPLIT_INTEGRITY_FAILURE",
+            "retained record count does not match sum of partition containers",
+        )
+
+
 def _validate_cross_artifacts(
     result: PreparationResult,
     model: NativeModel,
@@ -298,25 +376,37 @@ def _validate_cross_artifacts(
 ) -> None:
     """Verify artifact identity, integrity, and mutual compatibility.
 
-    Verification order: (1) independent Task 207 dataset and split
-    integrity verification over the complete retained record set,
-    (2) cross-artifact identity and hash agreement between the
-    recomputed hash and every recorded hash, then (3) model/vocabulary
-    compatibility. Nothing is encoded or fitted before all of these
-    checks succeed.
+    Verification order:
+    1. Expected data scope and operation.
+    2. Independent Task 207 dataset and split integrity verification over
+       the complete retained record set.
+    3. Actual partition-container membership against verified split
+       assignments.
+    4. Cross-artifact identity and hash agreement between the recomputed
+       hash and every recorded hash.
+    5. Model/vocabulary/tokenizer compatibility.
+
+    Nothing is encoded or fitted before all of these checks succeed.
     """
     manifest = result.dataset_manifest
     split = result.split_manifest
     metadata = vocabulary.metadata
-    # Expected data scope and operation first, then independent
-    # integrity verification over the complete retained record set.
+
+    # Expected data scope and operation first
     if manifest.authorization_kind != "synthetic-test-only":
         raise NativeTrainingError("UNSUPPORTED_SCOPE", "dataset scope is not supported")
     if manifest.operation != "training":
         raise NativeTrainingError(
             "OPERATION_NOT_PERMITTED", "dataset operation is not training"
         )
+
+    # 2. Independent dataset and split integrity verification
     recomputed_integrity = _verify_dataset_integrity(result)
+
+    # 3. Actual partition-container membership against verified assignments
+    _verify_partition_membership(result)
+
+    # 4. Cross-artifact identity and hash agreement
     if not (manifest.dataset_id == split.dataset_id == metadata.dataset_id):
         raise NativeTrainingError(
             "INCOMPATIBLE_DATASET", "dataset identity does not agree"
@@ -354,6 +444,8 @@ def _validate_cross_artifacts(
         raise NativeTrainingError(
             "SPLIT_INTEGRITY_FAILURE", "a leakage group spans partitions"
         )
+
+    # 5. Model/vocabulary/tokenizer compatibility
     if model.config.vocab_size != metadata.vocabulary_size:
         raise NativeTrainingError(
             "INCOMPATIBLE_VOCABULARY",
@@ -407,6 +499,21 @@ def run_training(
     initialization is verified before the first update. The caller's
     global CPU RNG state is preserved around the whole run whether
     it succeeds or fails.
+
+    Verification order before any optimizer construction or parameter
+    update:
+    1. Strict type checks on the preparation result, model, vocabulary,
+       tokenizer configuration, and training configuration.
+    2. Verification of the model's deterministic Task 209 initialization
+       (parameter count and init hash).
+    3. Independent Task 207 dataset and split integrity verification
+       over the complete retained record set.
+    4. Actual partition-container membership against verified split
+       assignments.
+    5. Cross-artifact identity and hash agreement.
+    6. Model/vocabulary/tokenizer compatibility.
+    7. Encoding of the train and validation partitions.
+    8. Optimizer construction and fitting.
 
     Returns a strictly validated ``TrainingReport`` only for a fully
     completed run; every failure raises ``NativeTrainingError`` (or

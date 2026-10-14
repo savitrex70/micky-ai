@@ -909,3 +909,148 @@ class TestFailureBehavior:
         error = exc.value
         assert error.code == "INCOMPATIBLE_MODEL"
         assert isinstance(str(error), str) and error.code in str(error)
+
+
+# --- Finding 1: Partition container membership verification ---
+
+
+def _move_record_between_partitions(
+    result: PreparationResult, from_partition: str, to_partition: str
+) -> PreparationResult:
+    """Move the first record from one partition to another
+    (schema-construction bypass).
+    """
+    from_entry = next(
+        entry for entry in result.partitions if entry.partition == from_partition
+    )
+    to_entry = next(
+        entry for entry in result.partitions if entry.partition == to_partition
+    )
+    record_to_move = from_entry.records[0]
+    new_from_records = from_entry.records[1:]
+    new_to_records = to_entry.records + (record_to_move,)
+    new_from = from_entry.model_copy(update={"records": new_from_records})
+    new_to = to_entry.model_copy(update={"records": new_to_records})
+    return result.model_copy(
+        update={
+            "partitions": tuple(
+                (
+                    new_from
+                    if entry.partition == from_partition
+                    else (new_to if entry.partition == to_partition else entry)
+                )
+                for entry in result.partitions
+            )
+        }
+    )
+
+
+class TestPartitionMembershipVerification:
+    def test_validation_record_moved_to_train_rejected(self) -> None:
+        """A record assigned to validation by the manifest cannot be moved to train."""
+        # Find a validation record
+        val_entry = next(e for e in _RESULT.partitions if e.partition == "validation")
+        val_record = val_entry.records[0]
+        val_group = val_record.group_id
+        # Verify manifest assigns it to validation
+        manifest_assign = next(
+            a for a in _RESULT.split_manifest.assignments if a.group_id == val_group
+        )
+        assert manifest_assign.partition == "validation"
+
+        # Move it to train
+        broken = _move_record_between_partitions(_RESULT, "validation", "train")
+        # The total retained record count stays the same, but partition counts change
+        # The key is that the manifest assignment is violated
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_train_record_moved_to_validation_rejected(self) -> None:
+        """A record assigned to training by the manifest cannot
+        be moved to validation.
+        """
+        train_entry = next(e for e in _RESULT.partitions if e.partition == "train")
+        train_record = train_entry.records[0]
+        train_group = train_record.group_id
+        manifest_assign = next(
+            a for a in _RESULT.split_manifest.assignments if a.group_id == train_group
+        )
+        assert manifest_assign.partition == "train"
+
+        broken = _move_record_between_partitions(_RESULT, "train", "validation")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_tampering_rejected_even_when_total_retained_unchanged(self) -> None:
+        """Partition membership tampering rejected even when total
+        retained records unchanged.
+        """
+        # The total retained record count stays the same, but partition
+        # assignment is violated
+        broken = _move_record_between_partitions(_RESULT, "validation", "train")
+        # Verify total retained records unchanged
+        all_records = sum(
+            len(partition_records(broken, p)) for p in ("train", "validation", "test")
+        )
+        orig_all = sum(
+            len(partition_records(_RESULT, p)) for p in ("train", "validation", "test")
+        )
+        assert all_records == orig_all
+
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_test_partition_membership_also_checked(self) -> None:
+        """The test partition is checked against manifest
+        assignment during preflight.
+        """
+        test_entry = next(e for e in _RESULT.partitions if e.partition == "test")
+        test_record = test_entry.records[0]
+        test_group = test_record.group_id
+        manifest_assign = next(
+            a for a in _RESULT.split_manifest.assignments if a.group_id == test_group
+        )
+        assert manifest_assign.partition == "test"
+
+        # Move test record to train
+        broken = _move_record_between_partitions(_RESULT, "test", "train")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+        # Move test record to validation
+        broken2 = _move_record_between_partitions(_RESULT, "test", "validation")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken2)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_legitimate_data_still_trains(self) -> None:
+        """Untampered synthetic data still trains successfully."""
+        report = _run(_fresh_model())
+        assert report.run_completed is True
+        assert report.epochs_completed > 0
+
+    def test_membership_violation_fails_before_optimizer(self, monkeypatch) -> None:
+        """Membership violation fails before optimizer creation
+        and leaves params unchanged.
+        """
+        real_cls = training_loop_module._OPTIMIZER_CLS
+        built: list[int] = []
+
+        class SpyOptimizer(real_cls):  # type: ignore[valid-type,misc]
+            def __init__(self, *args, **kwargs):
+                built.append(1)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(training_loop_module, "_OPTIMIZER_CLS", SpyOptimizer)
+        model = _fresh_model()
+        before = _snapshot(model)
+        broken = _move_record_between_partitions(_RESULT, "validation", "train")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(model, result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+        assert built == [], "optimizer was constructed before membership check"
+        _assert_equal_snapshots(before, _snapshot(model))

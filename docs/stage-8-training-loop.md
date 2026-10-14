@@ -102,7 +102,17 @@ plus delegated Task 207 codes.
   training or validation metrics from them, uses them for model
   selection, stopping, or hyperparameters (none exist), or emits
   them in logging or in `TrainingReport`. Every other code path
-  requests only the train and validation partitions.
+  requests only the train and validation partitions. The preflight
+  checks both:
+  - **Integrity of the complete retained record set and the split
+    manifest**: every record's canonical integrity representation is
+    recomputed, the deterministic group-hash assignment is replayed,
+    and every Task 207 invariant is checked.
+  - **Agreement between each record's actual partition container and
+    the verified assignment for its group**: every record is confirmed
+    to be stored in the partition assigned to its leakage group by the
+    verified split manifest; mismatches, duplicates, or missing records
+    fail the preflight.
 
 ## Verification order before fitting
 
@@ -121,13 +131,19 @@ any model parameter is updated:
    policy, checking membership, uniqueness, group confinement,
    partition coverage, counts, and byte-identical reproducibility.
    Nothing is trusted from the recorded hashes alone.
-4. Cross-artifact identity and hash agreement: the recomputed dataset
+4. **Actual partition-container membership verification**: every
+   retained record's actual partition container is compared against its
+   group's verified assignment in the split manifest. Records stored
+   under a partition different from their group's verified assignment
+   are rejected, as are duplicate record IDs across containers, missing
+   or unexpected partition containers, and missing records.
+5. Cross-artifact identity and hash agreement: the recomputed dataset
    integrity hash must equal the recorded hashes in the dataset
    manifest, the split manifest, and the vocabulary metadata; dataset
    ids and split/vocabulary assignment hashes must agree; the split
    counts must match the encoded partition sizes; and leakage groups
    must not span partitions.
-5. Model/vocabulary compatibility (vocabulary size, class count,
+6. Model/vocabulary compatibility (vocabulary size, class count,
    sequence-length bound), then vocabulary integrity verification and
    encoding of the train and validation partitions.
 
