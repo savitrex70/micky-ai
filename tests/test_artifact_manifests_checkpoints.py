@@ -614,7 +614,11 @@ def test_jointly_forged_lineage_rejected_by_authoritative_source() -> None:
 def test_apply_checkpoint_roundtrip_and_failure_atomicity() -> None:
     source = _fresh_model()
     content = build_checkpoint_bytes(source)
-    target = initialize_model(_MODEL_CONFIG.model_copy(update={"init_seed": 7}))
+    # Same authoritative configuration in a fresh instance: perturb it so
+    # the copy is observable, then restore via the checkpoint.
+    target = _fresh_model()
+    with torch.no_grad():
+        next(target.parameters()).add_(1.0)
     before_target = _snapshot(target)
     assert any(
         not torch.equal(before_target[n], p.detach())
@@ -624,6 +628,14 @@ def test_apply_checkpoint_roundtrip_and_failure_atomicity() -> None:
     live = dict(target.named_parameters())
     for name, param in source.named_parameters():
         assert torch.equal(param.detach(), live[name].detach())
+    # A foreign configuration is rejected even though the layout matches.
+    foreign = initialize_model(_MODEL_CONFIG.model_copy(update={"init_seed": 7}))
+    foreign_before = _snapshot(foreign)
+    with pytest.raises(ArtifactError) as exc:
+        apply_checkpoint_to_model(foreign, content)
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+    for name, value in foreign_before.items():
+        assert torch.equal(value, dict(foreign.named_parameters())[name].detach())
     # Corrupt bytes must leave the model untouched.
     bad = bytearray(content)
     bad[12] ^= 0xFF
@@ -655,3 +667,155 @@ def test_file_roundtrip_in_tmp_path(tmp_path) -> None:
     assert header["parameter_count"] == manifest.parameter_count
     with pytest.raises(ArtifactError):
         load_artifact_files(tmp_path / "missing.ckpt", manifest_path)
+
+
+# --- Correction: checkpoint identity bound to model configuration ---
+
+
+def _reheader(content: bytes, mutate) -> bytes:
+    """Re-serialize checkpoint bytes with a mutated header (test helper)."""
+    header_len = struct.unpack(">I", content[8:12])[0]
+    header = json.loads(content[12 : 12 + header_len].decode("utf-8"))
+    mutate(header)
+    header_bytes = json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
+    return (
+        b"ROPCHK01"
+        + struct.pack(">I", len(header_bytes))
+        + header_bytes
+        + content[12 + header_len :]
+    )
+
+
+def _manifest_for(content: bytes, artifact_id: str = "synthetic-ckpt-001"):
+    return build_artifact_manifest(
+        artifact_id=artifact_id,
+        content=content,
+        model_config=_MODEL_CONFIG,
+        training_config=_TRAINING_CONFIG,
+        result=_RESULT,
+        vocabulary=_VOCABULARY,
+        tokenizer_config=_TOKENIZER_CONFIG,
+    )
+
+
+def _verify_base(content: bytes, manifest) -> None:
+    verify_artifact(
+        content=content,
+        manifest=manifest,
+        model_config=_MODEL_CONFIG,
+        training_config=_TRAINING_CONFIG,
+        result=_RESULT,
+        vocabulary=_VOCABULARY,
+        tokenizer_config=_TOKENIZER_CONFIG,
+    )
+
+
+def test_same_param_count_incompatible_config_rejected() -> None:
+    """Equal parameter counts do not imply configuration compatibility."""
+    from rop.native_model.native_model import count_parameters
+
+    alt_config = _MODEL_CONFIG.model_copy(update={"num_heads": 8})
+    alt_model = initialize_model(alt_config)
+    alt_content = build_checkpoint_bytes(alt_model)
+    base_model = _fresh_model()
+    assert count_parameters(alt_model) == count_parameters(base_model)
+    manifest = _manifest_for(alt_content)
+    with pytest.raises(ArtifactError) as exc:
+        _verify_base(alt_content, manifest)
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+
+
+def test_architecture_and_version_mismatch_rejected() -> None:
+    """Checkpoints with forged architecture/version are rejected with valid digests."""
+    _, content, _ = _build_fixture()
+    tampered_arch = _reheader(content, lambda h: h.update({"architecture": "other"}))
+    with pytest.raises(ArtifactError) as exc:
+        _verify_base(tampered_arch, _manifest_for(tampered_arch))
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+    tampered_ver = _reheader(content, lambda h: h.update({"model_version": "9.9"}))
+    with pytest.raises(ArtifactError) as exc:
+        _verify_base(tampered_ver, _manifest_for(tampered_ver))
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+
+
+def test_correct_hashes_incompatible_layout_rejected() -> None:
+    """A valid fingerprint with a forged tensor layout is still rejected."""
+
+    def _reshape_bias(header: dict) -> None:
+        params = header["parameters"]
+        name = next(
+            n for n, e in params.items() if e["shape"] == [2] and e["nbytes"] == 8
+        )
+        params[name]["shape"] = [2, 1]
+
+    _, content, _ = _build_fixture()
+    tampered = _reheader(content, _reshape_bias)
+    with pytest.raises(ArtifactError) as exc:
+        _verify_base(tampered, _manifest_for(tampered))
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+
+
+def test_apply_rejects_incompatible_before_mutation() -> None:
+    """apply_checkpoint_to_model rejects foreign configs atomically."""
+    alt_config = _MODEL_CONFIG.model_copy(update={"num_heads": 8})
+    alt_content = build_checkpoint_bytes(initialize_model(alt_config))
+    target = _fresh_model()
+    before = _snapshot(target)
+    with pytest.raises(ArtifactError) as exc:
+        apply_checkpoint_to_model(target, alt_content)
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+    for name, value in before.items():
+        assert torch.equal(value, dict(target.named_parameters())[name].detach())
+
+    _, content, _ = _build_fixture()
+    tampered = _reheader(content, lambda h: h.update({"architecture": "other"}))
+    before = _snapshot(target)
+    with pytest.raises(ArtifactError) as exc:
+        apply_checkpoint_to_model(target, tampered)
+    assert exc.value.code == "INCOMPATIBLE_MODEL"
+    for name, value in before.items():
+        assert torch.equal(value, dict(target.named_parameters())[name].detach())
+
+
+def test_malformed_header_types_rejected() -> None:
+    """Boolean/novel/missing header fields fail structural parsing."""
+    _, content, _ = _build_fixture()
+
+    def _first_param(header: dict) -> dict:
+        name = sorted(header["parameters"])[0]
+        return header["parameters"][name]
+
+    cases = [
+        lambda h: h.update({"unexpected": 1}),
+        lambda h: h.update({"parameter_count": True}),
+        lambda h: _first_param(h).update({"offset": "0"}),
+        lambda h: _first_param(h).update({"nbytes": True}),
+        lambda h: _first_param(h).update({"shape": [True]}),
+        lambda h: _first_param(h).update({"extra": 0}),
+        lambda h: h.pop("model_config_hash"),
+        lambda h: h.update({"model_config_hash": "zz"}),
+        lambda h: h.update({"architecture": ""}),
+    ]
+    for mutate in cases:
+        with pytest.raises(ArtifactError) as exc:
+            parse_checkpoint_header(_reheader(content, mutate))
+        assert exc.value.code in ("CORRUPT_CHECKPOINT", "UNSUPPORTED_VERSION")
+
+
+def test_legacy_v1_header_rejected() -> None:
+    """Format 1.0 bytes without a fingerprint are rejected, not reinterpreted."""
+    _, content, _ = _build_fixture()
+    header_len = struct.unpack(">I", content[8:12])[0]
+    header = json.loads(content[12 : 12 + header_len].decode("utf-8"))
+    del header["model_config_hash"]
+    header["checkpoint_format_version"] = "1.0"
+    header_bytes = json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
+    legacy = (
+        b"ROPCHK01"
+        + struct.pack(">I", len(header_bytes))
+        + header_bytes
+        + content[12 + header_len :]
+    )
+    with pytest.raises(ArtifactError) as exc:
+        parse_checkpoint_header(legacy)
+    assert exc.value.code == "UNSUPPORTED_VERSION"

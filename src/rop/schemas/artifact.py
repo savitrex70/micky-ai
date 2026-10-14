@@ -19,7 +19,7 @@ ARTIFACT_MANIFEST_VERSION = "1.0"
 CHECKPOINT_FORMAT = "rop-raw-tensor-v1"
 """Checkpoint serialization format identifier (pickle-free raw tensors)."""
 
-CHECKPOINT_FORMAT_VERSION = "1.0"
+CHECKPOINT_FORMAT_VERSION = "2.0"
 """Checkpoint format version. Any layout change requires a version change."""
 
 ARTIFACT_TYPE_MODEL_CHECKPOINT = "model-checkpoint"
@@ -60,7 +60,7 @@ class ArtifactManifest(BaseModel):
     artifact_id: str = Field(min_length=1, max_length=MAX_ARTIFACT_ID_LENGTH)
     content_digest: str = Field(min_length=64, max_length=64)
     checkpoint_format: Literal["rop-raw-tensor-v1"]
-    checkpoint_format_version: Literal["1.0"]
+    checkpoint_format_version: Literal["2.0"]
     model_version: Literal["1.0"]
     architecture: Literal["tiny-encoder-v1"]
     model_config_hash: str = Field(min_length=64, max_length=64)

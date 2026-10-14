@@ -36,7 +36,7 @@ lineage. There is no circular hashing.
 ## Checkpoint layout
 
 `build_checkpoint_bytes()` serializes an initialized model without
-pickling:
+pickling (format version `2.0`):
 
 ```
 8-byte magic "ROPCHK01"
@@ -47,9 +47,16 @@ pickling:
 
 The JSON header records `checkpoint_format`,
 `checkpoint_format_version`, `architecture`, `model_version`,
-`parameter_count`, and per-parameter `dtype`/`shape`/`offset`/`nbytes`.
-Only `float32` parameters are supported. Total size is bounded by
+`model_config_hash` (the canonical Task 209 configuration
+fingerprint), `parameter_count`, and per-parameter
+`dtype`/`shape`/`offset`/`nbytes`. Only `float32` parameters are
+supported. The header accepts exactly these fields; unexpected
+fields, non-integer numerics (booleans included), empty names, and
+non-contiguous offsets are rejected. Total size is bounded by
 `MAX_CHECKPOINT_BYTES` (4 MB); headers by `MAX_HEADER_BYTES`.
+
+Format `1.0` bytes (no embedded fingerprint) are rejected with
+`UNSUPPORTED_VERSION`, never reinterpreted.
 
 ## Verification order and failure behavior
 
@@ -70,16 +77,22 @@ touched:
    (`torch.save` output) and random bytes are rejected here without
    any deserialization.
 6. Lineage cross-checks against the authoritative objects passed by
-   the caller — model config, training config, preparation result
+   the caller — model config (hash, seed, estimated count, plus the
+   checkpoint's embedded fingerprint, architecture, version, and
+   complete parameter layout derived from the config via the Task 209
+   construction contract), training config, preparation result
    (including an independent `verify_split` replay), vocabulary, and
    tokenizer config (`INCOMPATIBLE_MODEL`, `INCOMPATIBLE_TRAINING`,
    `INCOMPATIBLE_DATASET`, `INCOMPATIBLE_VOCABULARY`,
-   `INCOMPATIBLE_TOKENIZER`, `SPLIT_INTEGRITY_FAILURE`).
+   `INCOMPATIBLE_TOKENIZER`, `SPLIT_INTEGRITY_FAILURE`). Parameter
+   count alone is never accepted as proof of compatibility.
 
 `apply_checkpoint_to_model()` parses and validates the full header,
-decodes every tensor into temporary storage, checks finiteness, and
-only then copies state into the model. A failure leaves model
-parameters unchanged (tested by snapshot comparison).
+checks architecture, version, and the embedded fingerprint against
+the target model, decodes every tensor into temporary storage,
+checks finiteness, and only then copies state into the model. A
+failure leaves model parameters unchanged (tested by snapshot
+comparison).
 
 Every failure raises `ArtifactError` with a stable code and a safe,
 generic message. Nothing is silently repaired or reinterpreted.

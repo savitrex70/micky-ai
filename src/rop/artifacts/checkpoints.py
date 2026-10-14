@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import struct
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,25 @@ _MAGIC = b"ROPCHK01"
 _MAGIC_LEN = 8
 _HEADER_LEN_SIZE = 4
 _SUPPORTED_DTYPE = "float32"
+_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+
+_HEADER_ALLOWED_FIELDS = frozenset(
+    {
+        "checkpoint_format",
+        "checkpoint_format_version",
+        "architecture",
+        "model_version",
+        "model_config_hash",
+        "parameter_count",
+        "parameters",
+    }
+)
+_ENTRY_ALLOWED_FIELDS = frozenset({"dtype", "shape", "offset", "nbytes"})
+
+
+def _strict_int(value: object) -> bool:
+    """True only for genuine ints; booleans are rejected."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 class ArtifactError(Exception):
@@ -180,12 +200,35 @@ def _model_shapes(model: NativeModel) -> dict[str, list[int]]:
     return {name: list(p.shape) for name, p in model.named_parameters()}
 
 
+def _expected_layout(model_cfg: NativeModelConfig) -> dict[str, list[int]]:
+    """Derive the expected parameter layout from the authoritative config.
+
+    Constructs a reference model via the existing Task 209 construction
+    contract (with global RNG state preserved) so the layout never
+    drifts from the real architecture. Used to bind checkpoint headers
+    to the full configuration, not merely the parameter count.
+    """
+    rng_state = torch.get_rng_state()
+    try:
+        reference = NativeModel(model_cfg)
+    finally:
+        torch.set_rng_state(rng_state)
+    return _model_shapes(reference)
+
+
+def _model_fingerprint(model_cfg: NativeModelConfig) -> str:
+    """Canonical model-configuration fingerprint (Task 209 scheme)."""
+    return _canonical_hash_fn(_model_canonical_dict(model_cfg))
+
+
 def build_checkpoint_bytes(model: NativeModel) -> bytes:
     """Serialize an initialized model to pickle-free checkpoint bytes.
 
-    Layout (v1.0): 8-byte magic ``ROPCHK01`` + 4-byte big-endian header
+    Layout (v2.0): 8-byte magic ``ROPCHK01`` + 4-byte big-endian header
     length + sorted-key compact JSON header + concatenated little-endian
-    float32 payload in sorted parameter-name order.
+    float32 payload in sorted parameter-name order. The header embeds
+    the canonical model-configuration fingerprint so the bytes are
+    bound to the complete authoritative configuration.
     """
     if not isinstance(model, NativeModel) or not model._initialized:
         raise ArtifactError("INVALID_INPUT", "model is invalid")
@@ -219,6 +262,7 @@ def build_checkpoint_bytes(model: NativeModel) -> bytes:
         "checkpoint_format_version": CHECKPOINT_FORMAT_VERSION,
         "architecture": model.config.architecture,
         "model_version": model.config.model_version,
+        "model_config_hash": _model_fingerprint(model.config),
         "parameter_count": sum(v["nbytes"] // 4 for v in entries.values()),
         "parameters": entries,
     }
@@ -275,13 +319,26 @@ def parse_checkpoint_header(data: bytes | bytearray) -> dict[str, Any]:
         raise ArtifactError(
             "UNSUPPORTED_VERSION", "checkpoint format version is not supported"
         )
+    if set(header) != set(_HEADER_ALLOWED_FIELDS):
+        raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
+    if not isinstance(header.get("architecture"), str) or not header["architecture"]:
+        raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
+    if not isinstance(header.get("model_version"), str) or not header["model_version"]:
+        raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
+    fingerprint = header.get("model_config_hash")
+    if not isinstance(fingerprint, str) or not _FINGERPRINT_RE.fullmatch(fingerprint):
+        raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
+    if not _strict_int(header.get("parameter_count")):
+        raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
     parameters = header.get("parameters")
     if not isinstance(parameters, dict) or not parameters:
         raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
     total = 0
     for name in sorted(parameters):
+        if not isinstance(name, str) or not name:
+            raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
         entry = parameters[name]
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or set(entry) != set(_ENTRY_ALLOWED_FIELDS):
             raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
         if entry.get("dtype") != _SUPPORTED_DTYPE:
             raise ArtifactError(
@@ -291,15 +348,15 @@ def parse_checkpoint_header(data: bytes | bytearray) -> dict[str, Any]:
         if (
             not isinstance(shape, list)
             or not shape
-            or any(not isinstance(d, int) or d <= 0 for d in shape)
+            or any(not _strict_int(d) or d <= 0 for d in shape)
         ):
             raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
         count = 1
         for dim in shape:
             count *= dim
-        if entry.get("nbytes") != count * 4:
+        if not _strict_int(entry.get("nbytes")) or entry["nbytes"] != count * 4:
             raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
-        if entry.get("offset") != total:
+        if not _strict_int(entry.get("offset")) or entry["offset"] != total:
             raise ArtifactError("CORRUPT_CHECKPOINT", "checkpoint header is invalid")
         total += count * 4
     if header.get("parameter_count") != total // 4:
@@ -317,11 +374,25 @@ def apply_checkpoint_to_model(model: NativeModel, data: bytes | bytearray) -> No
 
     All structural validation (magic, version, header, shapes, payload
     size, finiteness) happens before any model parameter is modified;
-    a failure leaves model parameters unchanged.
+    a failure leaves model parameters unchanged. The checkpoint
+    architecture, model version, and embedded configuration fingerprint
+    are checked against the target model before any state is decoded.
     """
     if not isinstance(model, NativeModel) or not model._initialized:
         raise ArtifactError("INVALID_INPUT", "model is invalid")
     header = parse_checkpoint_header(data)
+    if header["architecture"] != model.config.architecture:
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint architecture does not match the model"
+        )
+    if header["model_version"] != model.config.model_version:
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint model version does not match the model"
+        )
+    if header["model_config_hash"] != _model_fingerprint(model.config):
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint configuration does not match the model"
+        )
     raw = bytes(data)
     header_len = struct.unpack(">I", raw[_MAGIC_LEN : _MAGIC_LEN + 4])[0]
     payload = raw[_MAGIC_LEN + _HEADER_LEN_SIZE + header_len :]
@@ -497,6 +568,30 @@ def verify_artifact(
 
     # 3. Checkpoint structure before lineage: rejects pickle/foreign bytes.
     header = parse_checkpoint_header(raw)
+
+    # 3b. Bind the checkpoint to the authoritative model configuration:
+    # architecture, version, embedded fingerprint, and complete
+    # parameter layout derived from the config — not merely the count.
+    if header["architecture"] != model_cfg.architecture:
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint architecture does not match"
+        )
+    if header["model_version"] != model_cfg.model_version:
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint model version does not match"
+        )
+    if header["model_config_hash"] != _model_fingerprint(model_cfg):
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint configuration does not match"
+        )
+    expected_layout = _expected_layout(model_cfg)
+    header_layout = {
+        name: list(entry["shape"]) for name, entry in header["parameters"].items()
+    }
+    if header_layout != expected_layout:
+        raise ArtifactError(
+            "INCOMPATIBLE_MODEL", "checkpoint layout does not match the configuration"
+        )
 
     # 4. Lineage cross-checks against authoritative objects.
     if _canonical_hash_fn(_model_canonical_dict(model_cfg)) != (
