@@ -308,6 +308,14 @@ def _validate_cross_artifacts(
     manifest = result.dataset_manifest
     split = result.split_manifest
     metadata = vocabulary.metadata
+    # Expected data scope and operation first, then independent
+    # integrity verification over the complete retained record set.
+    if manifest.authorization_kind != "synthetic-test-only":
+        raise NativeTrainingError("UNSUPPORTED_SCOPE", "dataset scope is not supported")
+    if manifest.operation != "training":
+        raise NativeTrainingError(
+            "OPERATION_NOT_PERMITTED", "dataset operation is not training"
+        )
     recomputed_integrity = _verify_dataset_integrity(result)
     if not (manifest.dataset_id == split.dataset_id == metadata.dataset_id):
         raise NativeTrainingError(
