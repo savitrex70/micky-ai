@@ -87,6 +87,55 @@ def _checked_selection(selection: InferenceSelection) -> InferenceSelection:
         raise InferenceError("INVALID_INPUT", "artifact selection is invalid") from exc
 
 
+def _checked_output(
+    logits: object, *, batch_size: int, num_classes: int
+) -> list[list[float]]:
+    """Validate raw model output before touching tensor properties.
+
+    Requires a dense strided float32 CPU tensor of shape
+    ``(batch_size, num_classes)`` with finite values. Anything else —
+    including ``None``, non-tensor objects, unsupported dtypes or
+    layouts, wrong rank or dimensions, and NaN or infinity — is
+    rejected with ``INVALID_OUTPUT``. Invalid output is never cast,
+    reshaped, clamped, or repaired.
+    """
+    if not isinstance(logits, torch.Tensor):
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    if logits.dtype != torch.float32:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    if logits.layout != torch.strided:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    if logits.dim() != 2:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    if logits.shape[0] != batch_size or logits.shape[1] != num_classes:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    try:
+        finite = bool(torch.all(torch.isfinite(logits)).item())
+    except Exception:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid") from None
+    if not finite:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    try:
+        values = logits.detach().cpu().tolist()
+    except Exception:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid") from None
+    if not isinstance(values, list) or len(values) != batch_size:
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    checked: list[list[float]] = []
+    for row in values:
+        if not isinstance(row, list) or len(row) != num_classes:
+            raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+        checked_row: list[float] = []
+        for value in row:
+            if isinstance(value, bool) or not isinstance(value, float):
+                raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+            if not math.isfinite(value):
+                raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+            checked_row.append(value)
+        checked.append(checked_row)
+    return checked
+
+
 def _checked_request(request: InferenceRequest | Mapping[str, Any]) -> InferenceRequest:
     try:
         if isinstance(request, InferenceRequest):
@@ -230,30 +279,24 @@ def run_inference(
     model = session.model
     was_training = model.training
     model.eval()
-    was_grad_enabled = torch.is_grad_enabled()
-    torch.set_grad_enabled(False)
     try:
-        try:
-            logits = model(token_ids)
-        except NativeModelError:
-            raise InferenceError(
-                "INVALID_REQUEST", "inference request is invalid"
-            ) from None
+        with torch.no_grad():
+            try:
+                raw_output = model(token_ids)
+            except NativeModelError:
+                raise InferenceError(
+                    "INVALID_REQUEST", "inference request is invalid"
+                ) from None
+            except Exception:
+                raise InferenceError(
+                    "INVALID_OUTPUT", "inference output is invalid"
+                ) from None
     finally:
-        torch.set_grad_enabled(was_grad_enabled)
         if was_training:
             model.train()
-    if logits.dim() != 2 or logits.shape[0] != len(sequences):
-        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
-    if logits.shape[1] != session.num_classes:
-        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
-    if not torch.all(torch.isfinite(logits)).item():
-        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
-    values = logits.detach().cpu().tolist()
-    if not all(
-        isinstance(v, float) and math.isfinite(v) for row in values for v in row
-    ):
-        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    values = _checked_output(
+        raw_output, batch_size=len(sequences), num_classes=session.num_classes
+    )
     try:
         return InferenceResult(
             artifact_id=session.artifact_id,

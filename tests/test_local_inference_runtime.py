@@ -447,6 +447,123 @@ def test_non_finite_output_rejected(tmp_path, monkeypatch) -> None:
         run_inference(session, {"token_id_sequences": [[2, 3]]})
     assert exc.value.code == "INVALID_OUTPUT"
 
+    def _inf_forward(token_ids):
+        return torch.full((token_ids.shape[0], 2), float("inf"))
+
+    monkeypatch.setattr(session.model, "forward", _inf_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+    def _neg_inf_forward(token_ids):
+        return torch.full((token_ids.shape[0], 2), float("-inf"))
+
+    monkeypatch.setattr(session.model, "forward", _neg_inf_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+
+def test_non_tensor_output_rejected(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: None)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: [[0.1, 0.2]])
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: "logits")
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+
+def test_unsupported_output_dtype_rejected(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+
+    def _float64_forward(token_ids):
+        return torch.zeros((token_ids.shape[0], 2), dtype=torch.float64)
+
+    monkeypatch.setattr(session.model, "forward", _float64_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+    def _complex_forward(token_ids):
+        return torch.zeros((token_ids.shape[0], 2), dtype=torch.complex64)
+
+    monkeypatch.setattr(session.model, "forward", _complex_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+    def _long_forward(token_ids):
+        return torch.zeros((token_ids.shape[0], 2), dtype=torch.long)
+
+    monkeypatch.setattr(session.model, "forward", _long_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+
+def test_wrong_output_dimensions_rejected(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: torch.zeros(2))
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    monkeypatch.setattr(
+        session.model, "forward", lambda token_ids: torch.zeros((1, 2, 2))
+    )
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: torch.zeros((2, 2)))
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: torch.zeros((1, 5)))
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+
+
+def test_unexpected_forward_exception_controlled(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+    before = _snapshot(session.model)
+
+    def _boom_forward(token_ids):
+        raise RuntimeError("boom-secret-detail")
+
+    monkeypatch.setattr(session.model, "forward", _boom_forward)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    assert str(exc.value) == "[INVALID_OUTPUT] inference output is invalid"
+    assert "boom-secret-detail" not in str(exc.value)
+    for name, value in before.items():
+        assert torch.equal(value, dict(session.model.named_parameters())[name].detach())
+
+
+def test_state_restored_after_failed_forward(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+    assert torch.is_grad_enabled() is True
+    assert session.model.training is False
+    before = _snapshot(session.model)
+
+    def _boom_forward(token_ids):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(session.model, "forward", _boom_forward)
+    with pytest.raises(InferenceError):
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert torch.is_grad_enabled() is True
+    assert session.model.training is False
+    for name, value in before.items():
+        assert torch.equal(value, dict(session.model.named_parameters())[name].detach())
+
 
 def test_inference_does_not_update_parameters(tmp_path) -> None:
     session = _fresh_session(tmp_path)
