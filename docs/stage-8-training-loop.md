@@ -91,13 +91,73 @@ plus delegated Task 207 codes.
   used for gradients, updates, epoch selection, stopping (none is
   implemented), hyperparameter choice (none is learned), or logging
   beyond the per-epoch metrics in the report.
-- **The test partition is never accessed.** No code path in
-  `rop/training/loop.py` requests, decodes, fits on, evaluates on,
-  selects, or logs the test partition. Tests prove this three ways:
-  a spy on `partition_records` records the partitions actually
-  requested, a tampered `PreparationResult` whose test records carry a
-  poison label still trains successfully (touching them would raise),
-  and the encoded dataset's ids are exactly train ∪ validation ids.
+- **The test partition is excluded from learning, never from all
+  reading.** One narrow, pre-training integrity preflight inspects
+  the complete retained record set (train, validation, and test
+  records) to independently establish dataset and split integrity
+  with the Task 207 verification contract. This preflight reads test
+  records structurally only — identity, grouping, content digest,
+  and hash recomputation — and never encodes them with the
+  tokenizer/vocabulary path, constructs batches from them, computes
+  training or validation metrics from them, uses them for model
+  selection, stopping, or hyperparameters (none exist), or emits
+  them in logging or in `TrainingReport`. Every other code path
+  requests only the train and validation partitions.
+
+## Verification order before fitting
+
+`run_training` performs, in order, before any optimizer is created or
+any model parameter is updated:
+
+1. Strict type checks on the preparation result, model, vocabulary,
+   tokenizer configuration, and training configuration.
+2. Verification of the model's deterministic Task 209 initialization
+   (parameter count and init hash).
+3. **Independent dataset and split integrity verification** by reusing
+   the Task 207 contract unchanged: the complete retained record set
+   is collected from the `PreparationResult` schema itself, every
+   record's canonical integrity representation is recomputed, and
+   `verify_split` replays the deterministic group-hash assignment
+   policy, checking membership, uniqueness, group confinement,
+   partition coverage, counts, and byte-identical reproducibility.
+   Nothing is trusted from the recorded hashes alone.
+4. Cross-artifact identity and hash agreement: the recomputed dataset
+   integrity hash must equal the recorded hashes in the dataset
+   manifest, the split manifest, and the vocabulary metadata; dataset
+   ids and split/vocabulary assignment hashes must agree; the split
+   counts must match the encoded partition sizes; and leakage groups
+   must not span partitions.
+5. Model/vocabulary compatibility (vocabulary size, class count,
+   sequence-length bound), then vocabulary integrity verification and
+   encoding of the train and validation partitions.
+
+Any failure at any step raises a stable `NativeTrainingError` code
+(with delegated Task 207 failures converted, preserving the
+`SPLIT_INTEGRITY_FAILURE` and `HASH_MISMATCH` semantics); no optimizer
+is constructed and no parameter changes when the preflight fails,
+verified by a spy-optimizer test.
+
+## What each partition is used for
+
+- **Complete retained records**: only the step-3 integrity preflight
+  above.
+- **Training partition**: gradient-based fitting (`loss.backward()`
+  and `optimizer.step()` on its batches) and the per-epoch
+  `train_loss` metric.
+- **Validation partition**: per-epoch no-gradient, no-update
+  evaluation producing `validation_loss` and `validation_accuracy`.
+- **Test partition**: nothing else — not encoding, not fitting, not
+  metrics, not selection or stopping (neither is implemented), not
+  logging, and not the report.
+
+Spy tests prove the per-call partition surface: a wrapped
+`partition_records` records only `train` and `validation` requests in
+the encode/fit/evaluate path, and the encoded dataset's ids are
+exactly train ∪ validation ids, disjoint from test ids. The spy tests
+do not (and cannot) prove that the integrity preflight ignores test
+records — instead they prove that no other code path requests the test
+partition and that a tampered test partition fails the preflight
+before fitting.
 
 ## Per-epoch behavior
 

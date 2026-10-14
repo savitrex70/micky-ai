@@ -14,11 +14,7 @@ from pydantic import ValidationError
 from rop.dataset_preparation import compose_test_registry, prepare_dataset
 from rop.dataset_preparation.pipeline import partition_records
 from rop.native_model import initialize_model
-from rop.schemas.dataset_manifest import (
-    DatasetRecord,
-    PartitionRecords,
-    PreparationResult,
-)
+from rop.schemas.dataset_manifest import GroupAssignment, PreparationResult
 from rop.schemas.native_model import NativeModelConfig
 from rop.schemas.tokenizer import TokenizerConfig, Vocabulary
 from rop.schemas.training import (
@@ -253,7 +249,7 @@ class TestDeterminism:
         reference = torch.rand(3)
         torch.manual_seed(12345)
         state_before = torch.get_rng_state()
-        tampered = _tamper_record(_RESULT, "train")
+        tampered = _tamper_field(_RESULT, "train", "label", "zeta-unknown")
         with pytest.raises(NativeTrainingError):
             _run(_fresh_model(), tampered)
         assert torch.equal(state_before, torch.get_rng_state())
@@ -276,12 +272,18 @@ class TestPartitionIsolation:
         real_partition_names = [entry.partition for entry in _RESULT.partitions]
         assert real_partition_names == ["train", "validation", "test"]
 
-    def test_poisoned_test_partition_is_untouched(self) -> None:
-        poisoned = _poison_test_partition(_RESULT)
-        # Control: the loop succeeds; a loop reading the poisoned test
-        # partition would fail on its unknown label mapping.
-        report = _run(_fresh_model(), poisoned)
-        assert report.run_completed is True
+    def test_tampered_test_partition_fails_integrity_preflight(self) -> None:
+        """The pre-fit integrity preflight covers the complete record set.
+
+        A corrupted test partition fails dataset integrity verification
+        before any fitting; this is the one narrow, structural reason
+        the loop reads test records (never encoding, fitting, evaluate,
+        selecting, logging, or reporting them).
+        """
+        tampered = _tamper_field(_RESULT, "test", "label", "zeta-poison")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=tampered)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
 
     def test_dataset_view_excludes_test_examples(self) -> None:
         dataset = training_loop_module.build_training_dataset(
@@ -381,40 +383,21 @@ class TestPartitionIsolation:
 # --- Input and integrity validation ---------------------------------------------
 
 
-def _poison_test_partition(result: PreparationResult) -> PreparationResult:
-    """Tamper test records so touching them raises on unknown labels."""
-    test_partition = next(
-        entry for entry in result.partitions if entry.partition == "test"
-    )
-    poisoned_records = []
-    for record in test_partition.records:
-        poisoned = record.model_copy(update={"label": "zeta-unknown"})
-        assert isinstance(poisoned, DatasetRecord)
-        poisoned_records.append(poisoned)
-    poisoned_partition = test_partition.model_copy(
-        update={"records": tuple(poisoned_records)}
-    )
-    return result.model_copy(
+def _tamper_field(
+    result: PreparationResult, partition: str, field: str, value: object
+) -> PreparationResult:
+    """Tamper one record field inside one partition (schema-construction bypass)."""
+    target = next(entry for entry in result.partitions if entry.partition == partition)
+    first = target.records[0]
+    tampered = first.model_copy(update={field: value})
+    new_partition = target.model_copy(
         update={
-            "partitions": tuple(
-                poisoned_partition if entry.partition == "test" else entry
-                for entry in result.partitions
+            "records": tuple(
+                tampered if record.record_id == first.record_id else record
+                for record in target.records
             )
         }
     )
-
-
-def _tamper_record(result: PreparationResult, partition: str) -> PreparationResult:
-    target = next(entry for entry in result.partitions if entry.partition == partition)
-    first = target.records[0]
-    tampered = first.model_copy(update={"label": "zeta-unknown"})
-    new_partition = PartitionRecords(
-        partition=partition,
-        records=tuple(
-            tampered if record.record_id == first.record_id else record
-            for record in target.records
-        ),
-    )  # type: ignore[arg-type]
     return result.model_copy(
         update={
             "partitions": tuple(
@@ -423,6 +406,25 @@ def _tamper_record(result: PreparationResult, partition: str) -> PreparationResu
             )
         }
     )
+
+
+def _swap_assignments(result: PreparationResult) -> PreparationResult:
+    """Swap the first two split assignments, leaving the recorded hash alone."""
+    assignments = list(result.split_manifest.assignments)
+    assert len(assignments) >= 2
+    first, second = assignments[0], assignments[1]
+    swapped = [
+        GroupAssignment(group_id=first.group_id, partition=second.partition),
+        GroupAssignment(group_id=second.group_id, partition=first.partition),
+        *assignments[2:],
+    ]
+    split = result.split_manifest.model_copy(update={"assignments": tuple(swapped)})
+    return result.model_copy(update={"split_manifest": split})
+
+
+def _current_record_label(result: PreparationResult, partition: str) -> str:
+    target = next(entry for entry in result.partitions if entry.partition == partition)
+    return target.records[0].label
 
 
 class TestInputAndIntegrityValidation:
@@ -467,20 +469,117 @@ class TestInputAndIntegrityValidation:
         with pytest.raises(ValidationError):
             TokenizerConfig.model_validate(tokenizer_fields)
 
-    def test_cross_artifact_identity_mismatch_rejected(self) -> None:
+    def test_split_assignment_hash_tamper_rejected(self) -> None:
+        """A forged assignment hash fails the Task 207 replay check first."""
         changed_split = _RESULT.split_manifest.model_copy(
             update={"assignment_hash": "0" * 64}
         )
         broken = _RESULT.model_copy(update={"split_manifest": changed_split})
         with pytest.raises(NativeTrainingError) as exc:
             _run(_fresh_model(), result=broken)
-        assert exc.value.code == "HASH_MISMATCH"
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
 
     def test_tampered_train_record_label_rejected(self) -> None:
-        broken = _tamper_record(_RESULT, "train")
+        """A permitted-label change with unchanged content closes the gap.
+
+        Flipping a train record from alpha to beta (both labels are
+        permitted) leaves the content digest untouched, so only the
+        independent Task 207 record-integrity verification catches it:
+        the canonical integrity representation binds the label.
+        """
+        old_label = _current_record_label(_RESULT, "train")
+        other = "beta" if old_label == "alpha" else "alpha"
+        broken = _tamper_field(_RESULT, "train", "label", other)
         with pytest.raises(NativeTrainingError) as exc:
             _run(_fresh_model(), result=broken)
-        assert exc.value.code == "LABEL_UNKNOWN"
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_tampered_group_id_rejected(self) -> None:
+        broken = _tamper_field(_RESULT, "train", "group_id", "g-tampered")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_tampered_source_id_rejected(self) -> None:
+        broken = _tamper_field(_RESULT, "train", "source_id", "synthetic-other")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_tampered_record_id_rejected(self) -> None:
+        broken = _tamper_field(_RESULT, "train", "record_id", "r-tampered")
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_tampered_provenance_rejected(self) -> None:
+        broken = _tamper_field(
+            _RESULT, "train", "provenance_ref", "synthetic-forged-ref"
+        )
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_split_assignment_tamper_with_stale_hash_rejected(self) -> None:
+        """Swapped assignments with an unchanged recorded hash fail."""
+        broken = _swap_assignments(_RESULT)
+        assert (
+            broken.split_manifest.assignment_hash
+            == _RESULT.split_manifest.assignment_hash
+        )
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_split_seed_violating_split_contract_rejected(self) -> None:
+        """Split metadata that no longer matches the deterministic
+        assignment policy fails replay verification.
+        """
+        changed_split = _RESULT.split_manifest.model_copy(
+            update={"seed": _RESULT.split_manifest.seed + 1}
+        )
+        broken = _RESULT.model_copy(update={"split_manifest": changed_split})
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+
+    def test_manifest_hash_diverges_from_recomputed_integrity_rejected(
+        self,
+    ) -> None:
+        """Cross-artifact agreement is checked against the recomputed
+        integrity hash, not only among recorded values.
+        """
+        changed_manifest = _RESULT.dataset_manifest.model_copy(
+            update={"record_integrity_hash": "0" * 64}
+        )
+        broken = _RESULT.model_copy(update={"dataset_manifest": changed_manifest})
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "HASH_MISMATCH"
+
+    def test_preflight_failure_never_creates_optimizer_or_updates_params(
+        self, monkeypatch
+    ) -> None:
+        """A pre-training integrity failure precedes optimizer creation."""
+        real_cls = training_loop_module._OPTIMIZER_CLS
+        built: list[int] = []
+
+        class SpyOptimizer(real_cls):  # type: ignore[valid-type,misc]
+            def __init__(self, *args, **kwargs):
+                built.append(1)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(training_loop_module, "_OPTIMIZER_CLS", SpyOptimizer)
+        model = _fresh_model()
+        before = _snapshot(model)
+        old_label = _current_record_label(_RESULT, "train")
+        other = "beta" if old_label == "alpha" else "alpha"
+        broken = _tamper_field(_RESULT, "train", "label", other)
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(model, broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+        assert built == []
+        _assert_equal_snapshots(before, _snapshot(model))
 
     def test_model_class_mismatch_rejected(self) -> None:
         mismatched = NativeModelConfig(
@@ -784,7 +883,7 @@ class TestFailureBehavior:
     def test_failure_does_not_return_report_or_leave_rng_changed(self) -> None:
         torch.manual_seed(12345)
         state_before = torch.get_rng_state()
-        broken = _tamper_record(_RESULT, "train")
+        broken = _tamper_field(_RESULT, "train", "label", "zeta-unknown")
         with pytest.raises(NativeTrainingError):
             _run(_fresh_model(), broken)
         assert torch.equal(state_before, torch.get_rng_state())

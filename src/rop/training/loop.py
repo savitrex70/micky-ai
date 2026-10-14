@@ -8,13 +8,17 @@ never trains, and there is no background loop, network call,
 telemetry, download, checkpoint, or inference-service integration
 here (Tasks 211-215 are explicitly out of scope).
 
-Data boundary: the loop reads the validated ``PreparationResult``
-through ``partition_records(result, "train")`` and
-``partition_records(result, "validation")`` only. No code path
-requests, encodes, fits on, evaluates on, computes metrics from, or
-logs the test partition. Train and validation records are never
-combined for fitting: fitting reads only the training examples and
-validation is a no-gradient, no-optimizer evaluation.
+Data boundary: fitting reads the validated ``PreparationResult``
+through ``partition_records(result, "train")`` only, and validation
+metrics are computed only from ``partition_records(result,
+"validation")`` during no-gradient evaluation. Before any fitting,
+the loop runs one narrow pre-training integrity preflight over the
+complete retained record set to establish dataset and split integrity
+with the Task 207 verification contract; this preflight inspects test
+records structurally (identity, grouping, and hash recomputation)
+but never encodes them, fits on them, evaluates on them, selects on
+them, logs them, or reports them. Train and validation records are
+never combined for fitting.
 
 Determinism: training preserves the caller's global CPU RNG state
 around the whole run; the loop seeds the global RNG from
@@ -43,13 +47,18 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from rop.dataset_preparation.pipeline import partition_records
+from rop.dataset_preparation.pipeline import (
+    DatasetPreparationError,
+    dataset_integrity_hash,
+    partition_records,
+    verify_split,
+)
 from rop.native_model.native_model import (
     NativeModel,
     NativeModelError,
     verify_model,
 )
-from rop.schemas.dataset_manifest import PreparationResult
+from rop.schemas.dataset_manifest import DatasetRecord, PreparationResult
 from rop.schemas.native_model import MODEL_ARCHITECTURE, MODEL_VERSION
 from rop.schemas.tokenizer import (
     MAX_SEQUENCE_LENGTH_LIMIT,
@@ -236,16 +245,70 @@ def hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _retained_records(result: PreparationResult) -> tuple[DatasetRecord, ...]:
+    """Collect the complete retained record set from the schema itself.
+
+    Used only by the pre-training integrity preflight. This path never
+    calls ``partition_records(result, "test")`` and never feeds these
+    records to encoding, fitting, evaluation, selection, or logging;
+    the spy tests assert that partition remains true.
+    """
+    return tuple(
+        record for partition in result.partitions for record in partition.records
+    )
+
+
+def _verify_dataset_integrity(result: PreparationResult) -> str:
+    """Independently verify dataset and split integrity (Task 207).
+
+    Reuses the Task 207 verification contract as-is: every retained
+    record's canonical integrity representation is recomputed, the
+    split assignments are replayed through the deterministic
+    group-hash policy, and every Task 207 invariant is checked via
+    ``verify_split``. Delegated failures are converted to the
+    established ``NativeTrainingError`` contract with the meaningful
+    stable code preserved. Returns the independently recomputed
+    dataset integrity hash for cross-artifact comparison.
+    """
+    records = _retained_records(result)
+    try:
+        verify_split(result.split_manifest, records)
+    except DatasetPreparationError as exc:
+        raise NativeTrainingError(
+            "SPLIT_INTEGRITY_FAILURE",
+            "Task 207 split integrity verification failed",
+        ) from exc
+    hashes = {
+        result.dataset_manifest.record_integrity_hash,
+        result.split_manifest.dataset_integrity_hash,
+    }
+    if len(hashes) != 1 or hashes.pop() == "":
+        raise NativeTrainingError(
+            "HASH_MISMATCH", "recorded dataset integrity hashes disagree"
+        )
+    recomputed = dataset_integrity_hash(records)
+    return recomputed
+
+
 def _validate_cross_artifacts(
     result: PreparationResult,
     model: NativeModel,
     vocabulary: Vocabulary,
     tokenizer_config: TokenizerConfig,
 ) -> None:
-    """Verify artifact identity, integrity, and mutual compatibility."""
+    """Verify artifact identity, integrity, and mutual compatibility.
+
+    Verification order: (1) independent Task 207 dataset and split
+    integrity verification over the complete retained record set,
+    (2) cross-artifact identity and hash agreement between the
+    recomputed hash and every recorded hash, then (3) model/vocabulary
+    compatibility. Nothing is encoded or fitted before all of these
+    checks succeed.
+    """
     manifest = result.dataset_manifest
     split = result.split_manifest
     metadata = vocabulary.metadata
+    recomputed_integrity = _verify_dataset_integrity(result)
     if not (manifest.dataset_id == split.dataset_id == metadata.dataset_id):
         raise NativeTrainingError(
             "INCOMPATIBLE_DATASET", "dataset identity does not agree"
@@ -254,6 +317,7 @@ def _validate_cross_artifacts(
         manifest.record_integrity_hash
         == split.dataset_integrity_hash
         == metadata.dataset_integrity_hash
+        == recomputed_integrity
     ):
         raise NativeTrainingError(
             "HASH_MISMATCH", "recorded dataset integrity hashes disagree"
@@ -323,8 +387,12 @@ def run_training(
     update, gradient computation, and training metric comes from
     training batches built via ``build_training_dataset``. The
     validation partition is evaluated once per epoch with no
-    gradients and no optimizer updates. The test partition is never
-    requested by any code path in this module.
+    gradients and no optimizer updates. Before any fitting, one
+    integrity preflight independently verifies the dataset and split
+    over the complete retained record set (a structural check that
+    touches test records but never encodes, fits, evaluates, selects,
+    logs, or reports them); the encoding path still requests only the
+    train and validation partitions.
 
     The model is trained in place and is left in its original
     ``training``/``eval`` mode; its deterministic Task 209
