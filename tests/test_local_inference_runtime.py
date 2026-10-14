@@ -508,6 +508,21 @@ def test_unsupported_output_dtype_rejected(tmp_path, monkeypatch) -> None:
     assert exc.value.code == "INVALID_OUTPUT"
 
 
+def test_non_cpu_output_rejected(tmp_path, monkeypatch) -> None:
+    session = _load_session(tmp_path)
+    try:
+        off_cpu = torch.zeros((1, 2), dtype=torch.float32, device="meta")
+    except Exception:
+        pytest.skip("test environment cannot construct a non-CPU tensor")
+    before = _snapshot(session.model)
+    monkeypatch.setattr(session.model, "forward", lambda token_ids: off_cpu)
+    with pytest.raises(InferenceError) as exc:
+        run_inference(session, {"token_id_sequences": [[2, 3]]})
+    assert exc.value.code == "INVALID_OUTPUT"
+    for name, value in before.items():
+        assert torch.equal(value, dict(session.model.named_parameters())[name].detach())
+
+
 def test_wrong_output_dimensions_rejected(tmp_path, monkeypatch) -> None:
     session = _load_session(tmp_path)
     monkeypatch.setattr(session.model, "forward", lambda token_ids: torch.zeros(2))

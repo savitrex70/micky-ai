@@ -105,6 +105,8 @@ def _checked_output(
         raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
     if logits.layout != torch.strided:
         raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
+    if logits.device.type != "cpu":
+        raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
     if logits.dim() != 2:
         raise InferenceError("INVALID_OUTPUT", "inference output is invalid")
     if logits.shape[0] != batch_size or logits.shape[1] != num_classes:
