@@ -79,6 +79,14 @@ from rop.schemas.extraction import (
 )
 from rop.schemas.hypothesis import HypothesisCreate, HypothesisRead, HypothesisUpdate
 from rop.schemas.hypothesis_score import HypothesisScoreRead
+from rop.schemas.inference import (
+    MAX_INFERENCE_BATCH_SIZE,
+    MAX_INFERENCE_SEQUENCE_LENGTH,
+    InferenceErrorCode,
+    InferenceRequest,
+    InferenceResult,
+    InferenceSelection,
+)
 from rop.schemas.llm_output_validation import (
     LLM_OUTPUT_VALIDATION_SOURCE_TASK_105,
 )
@@ -680,4 +688,10 @@ __all__ = [
     "MAX_HEADER_BYTES",
     "ArtifactErrorCode",
     "ArtifactManifest",
+    "MAX_INFERENCE_BATCH_SIZE",
+    "MAX_INFERENCE_SEQUENCE_LENGTH",
+    "InferenceErrorCode",
+    "InferenceRequest",
+    "InferenceResult",
+    "InferenceSelection",
 ]
