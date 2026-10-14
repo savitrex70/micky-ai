@@ -245,6 +245,22 @@ def hash_content(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _verify_scope_and_operation(result: PreparationResult) -> None:
+    """Verify the dataset's permitted scope and operation before any other preflight.
+
+    Rejects unsupported scope or non-training operation with the existing
+    stable error codes. Called in ``run_training`` immediately after input
+    type validation and before model initialization verification.
+    """
+    manifest = result.dataset_manifest
+    if manifest.authorization_kind != "synthetic-test-only":
+        raise NativeTrainingError("UNSUPPORTED_SCOPE", "dataset scope is not supported")
+    if manifest.operation != "training":
+        raise NativeTrainingError(
+            "OPERATION_NOT_PERMITTED", "dataset operation is not training"
+        )
+
+
 def _retained_records(result: PreparationResult) -> tuple[DatasetRecord, ...]:
     """Collect the complete retained record set from the schema itself.
 
@@ -376,15 +392,16 @@ def _validate_cross_artifacts(
 ) -> None:
     """Verify artifact identity, integrity, and mutual compatibility.
 
-    Verification order:
-    1. Expected data scope and operation.
-    2. Independent Task 207 dataset and split integrity verification over
+    The caller must have verified the dataset scope and operation via
+    ``_verify_scope_and_operation`` before invoking this helper. Within
+    this helper the order is:
+    1. Independent Task 207 dataset and split integrity verification over
        the complete retained record set.
-    3. Actual partition-container membership against verified split
+    2. Actual partition-container membership against verified split
        assignments.
-    4. Cross-artifact identity and hash agreement between the recomputed
+    3. Cross-artifact identity and hash agreement between the recomputed
        hash and every recorded hash.
-    5. Model/vocabulary/tokenizer compatibility.
+    4. Model/vocabulary/tokenizer compatibility.
 
     Nothing is encoded or fitted before all of these checks succeed.
     """
@@ -392,21 +409,13 @@ def _validate_cross_artifacts(
     split = result.split_manifest
     metadata = vocabulary.metadata
 
-    # Expected data scope and operation first
-    if manifest.authorization_kind != "synthetic-test-only":
-        raise NativeTrainingError("UNSUPPORTED_SCOPE", "dataset scope is not supported")
-    if manifest.operation != "training":
-        raise NativeTrainingError(
-            "OPERATION_NOT_PERMITTED", "dataset operation is not training"
-        )
-
-    # 2. Independent dataset and split integrity verification
+    # 1. Independent dataset and split integrity verification
     recomputed_integrity = _verify_dataset_integrity(result)
 
-    # 3. Actual partition-container membership against verified assignments
+    # 2. Actual partition-container membership against verified assignments
     _verify_partition_membership(result)
 
-    # 4. Cross-artifact identity and hash agreement
+    # 3. Cross-artifact identity and hash agreement
     if not (manifest.dataset_id == split.dataset_id == metadata.dataset_id):
         raise NativeTrainingError(
             "INCOMPATIBLE_DATASET", "dataset identity does not agree"
@@ -445,7 +454,7 @@ def _validate_cross_artifacts(
             "SPLIT_INTEGRITY_FAILURE", "a leakage group spans partitions"
         )
 
-    # 5. Model/vocabulary/tokenizer compatibility
+    # 4. Model/vocabulary/tokenizer compatibility
     if model.config.vocab_size != metadata.vocabulary_size:
         raise NativeTrainingError(
             "INCOMPATIBLE_VOCABULARY",
@@ -502,18 +511,20 @@ def run_training(
 
     Verification order before any optimizer construction or parameter
     update:
-    1. Strict type checks on the preparation result, model, vocabulary,
-       tokenizer configuration, and training configuration.
-    2. Verification of the model's deterministic Task 209 initialization
+    1. Validate the training configuration and strictly validate the
+       input types and preparation result.
+    2. Validate the dataset's permitted scope (synthetic-test-only)
+       and operation (training).
+    3. Verify the model's deterministic Task 209 initialization
        (parameter count and init hash).
-    3. Independent Task 207 dataset and split integrity verification
+    4. Independently verify Task 207 dataset and split integrity
        over the complete retained record set.
-    4. Actual partition-container membership against verified split
-       assignments.
-    5. Cross-artifact identity and hash agreement.
-    6. Model/vocabulary/tokenizer compatibility.
-    7. Encoding of the train and validation partitions.
-    8. Optimizer construction and fitting.
+    5. Verify actual partition-container membership against verified
+       split assignments.
+    6. Verify cross-artifact identity and hash agreement.
+    7. Verify model, vocabulary, and tokenizer compatibility.
+    8. Encode only training and validation records.
+    9. Construct the optimizer and begin fitting.
 
     Returns a strictly validated ``TrainingReport`` only for a fully
     completed run; every failure raises ``NativeTrainingError`` (or
@@ -527,6 +538,7 @@ def run_training(
     if not isinstance(vocabulary, Vocabulary):
         raise NativeTrainingError("INVALID_INPUT", "vocabulary is invalid")
     checked_tokenizer_config = _checked_tokenizer_config(tokenizer_config)
+    _verify_scope_and_operation(result)
     try:
         verify_model(model, config=model.config)
     except NativeModelError:

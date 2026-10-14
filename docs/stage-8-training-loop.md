@@ -119,11 +119,13 @@ plus delegated Task 207 codes.
 `run_training` performs, in order, before any optimizer is created or
 any model parameter is updated:
 
-1. Strict type checks on the preparation result, model, vocabulary,
-   tokenizer configuration, and training configuration.
-2. Verification of the model's deterministic Task 209 initialization
+1. Validate the training configuration and strictly validate the
+   input types and preparation result.
+2. Validate the dataset's permitted scope (`synthetic-test-only`)
+   and operation (`training`).
+3. Verify the model's deterministic Task 209 initialization
    (parameter count and init hash).
-3. **Independent dataset and split integrity verification** by reusing
+4. **Independent dataset and split integrity verification** by reusing
    the Task 207 contract unchanged: the complete retained record set
    is collected from the `PreparationResult` schema itself, every
    record's canonical integrity representation is recomputed, and
@@ -131,21 +133,23 @@ any model parameter is updated:
    policy, checking membership, uniqueness, group confinement,
    partition coverage, counts, and byte-identical reproducibility.
    Nothing is trusted from the recorded hashes alone.
-4. **Actual partition-container membership verification**: every
+5. **Actual partition-container membership verification**: every
    retained record's actual partition container is compared against its
    group's verified assignment in the split manifest. Records stored
    under a partition different from their group's verified assignment
    are rejected, as are duplicate record IDs across containers, missing
    or unexpected partition containers, and missing records.
-5. Cross-artifact identity and hash agreement: the recomputed dataset
+6. Cross-artifact identity and hash agreement: the recomputed dataset
    integrity hash must equal the recorded hashes in the dataset
    manifest, the split manifest, and the vocabulary metadata; dataset
    ids and split/vocabulary assignment hashes must agree; the split
    counts must match the encoded partition sizes; and leakage groups
    must not span partitions.
-6. Model/vocabulary compatibility (vocabulary size, class count,
-   sequence-length bound), then vocabulary integrity verification and
-   encoding of the train and validation partitions.
+7. Model, vocabulary, and tokenizer compatibility (vocabulary size,
+   class count, sequence-length bound), then vocabulary integrity
+   verification and encoding of the train and validation partitions.
+8. Encode only training and validation records.
+9. Construct the optimizer and begin fitting.
 
 Any failure at any step raises a stable `NativeTrainingError` code
 (with delegated Task 207 failures converted, preserving the

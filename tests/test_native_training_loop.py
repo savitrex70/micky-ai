@@ -1054,3 +1054,113 @@ class TestPartitionMembershipVerification:
         assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
         assert built == [], "optimizer was constructed before membership check"
         _assert_equal_snapshots(before, _snapshot(model))
+
+    def test_swap_train_validation_records_count_preserved_rejected(
+        self, monkeypatch
+    ) -> None:
+        """Swapping train/validation records is rejected even though counts match."""
+        train_entry = next(e for e in _RESULT.partitions if e.partition == "train")
+        val_entry = next(e for e in _RESULT.partitions if e.partition == "validation")
+        train_record = train_entry.records[0]
+        val_record = val_entry.records[0]
+        assert train_record.group_id != val_record.group_id
+
+        new_train_records = tuple(
+            val_record if r.record_id == train_record.record_id else r
+            for r in train_entry.records
+        )
+        # Replace the moved-in val record with the train record in validation:
+        # swap, not one-way move, so counts are preserved.
+        new_val_records = tuple(
+            train_record if r.record_id == val_record.record_id else r
+            for r in val_entry.records
+        )
+        new_train = train_entry.model_copy(update={"records": new_train_records})
+        new_val = val_entry.model_copy(update={"records": new_val_records})
+        broken = _RESULT.model_copy(
+            update={
+                "partitions": tuple(
+                    (
+                        new_train
+                        if e.partition == "train"
+                        else (new_val if e.partition == "validation" else e)
+                    )
+                    for e in _RESULT.partitions
+                )
+            }
+        )
+
+        assert len(partition_records(broken, "train")) == len(
+            partition_records(_RESULT, "train")
+        )
+        assert len(partition_records(broken, "validation")) == len(
+            partition_records(_RESULT, "validation")
+        )
+        total_broken = sum(
+            len(partition_records(broken, p)) for p in ("train", "validation", "test")
+        )
+        total_orig = sum(
+            len(partition_records(_RESULT, p)) for p in ("train", "validation", "test")
+        )
+        assert total_broken == total_orig
+
+        real_cls = training_loop_module._OPTIMIZER_CLS
+        built: list[int] = []
+
+        class SpyOptimizer(real_cls):  # type: ignore[valid-type,misc]
+            def __init__(self, *args, **kwargs):
+                built.append(1)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(training_loop_module, "_OPTIMIZER_CLS", SpyOptimizer)
+        model = _fresh_model()
+        before = _snapshot(model)
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(model, result=broken)
+        assert exc.value.code == "SPLIT_INTEGRITY_FAILURE"
+        assert built == [], "optimizer was constructed before membership check"
+        _assert_equal_snapshots(before, _snapshot(model))
+
+
+class TestScopeOperationOrdering:
+    def test_unsupported_operation_rejected_before_model_verification(
+        self, monkeypatch
+    ) -> None:
+        """Non-training operation is rejected before model init verification."""
+        calls: list[int] = []
+        real_verify = training_loop_module.verify_model
+
+        def spy_verify(*args, **kwargs):
+            calls.append(1)
+            return real_verify(*args, **kwargs)
+
+        monkeypatch.setattr(training_loop_module, "verify_model", spy_verify)
+        bad_manifest = _RESULT.dataset_manifest.model_copy(
+            update={"operation": "evaluation"}
+        )
+        broken = _RESULT.model_copy(update={"dataset_manifest": bad_manifest})
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "OPERATION_NOT_PERMITTED"
+        assert calls == [], "verify_model was called before scope/operation check"
+
+    def test_unsupported_scope_rejected_before_model_verification(
+        self, monkeypatch
+    ) -> None:
+        """Unsupported scope is rejected before model init verification."""
+        calls: list[int] = []
+        real_verify = training_loop_module.verify_model
+
+        def spy_verify(*args, **kwargs):
+            calls.append(1)
+            return real_verify(*args, **kwargs)
+
+        monkeypatch.setattr(training_loop_module, "verify_model", spy_verify)
+        bad_manifest = _RESULT.dataset_manifest.model_copy(
+            update={"authorization_kind": "production"}
+        )
+        broken = _RESULT.model_copy(update={"dataset_manifest": bad_manifest})
+        with pytest.raises(NativeTrainingError) as exc:
+            _run(_fresh_model(), result=broken)
+        assert exc.value.code == "UNSUPPORTED_SCOPE"
+        assert calls == [], "verify_model was called before scope/operation check"
