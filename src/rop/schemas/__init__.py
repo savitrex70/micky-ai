@@ -1,5 +1,16 @@
 """Pydantic schemas."""
 
+from rop.schemas.artifact import (
+    ARTIFACT_MANIFEST_VERSION,
+    ARTIFACT_TYPE_MODEL_CHECKPOINT,
+    CHECKPOINT_FORMAT,
+    CHECKPOINT_FORMAT_VERSION,
+    MAX_ARTIFACT_ID_LENGTH,
+    MAX_CHECKPOINT_BYTES,
+    MAX_HEADER_BYTES,
+    ArtifactErrorCode,
+    ArtifactManifest,
+)
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.dataset_authorization import (
     DATASET_AUTHORIZATION_VERSION,
@@ -660,4 +671,13 @@ __all__ = [
     "NativeModelConfig",
     "NativeModelMetadata",
     "NativeModelSpec",
+    "ARTIFACT_MANIFEST_VERSION",
+    "ARTIFACT_TYPE_MODEL_CHECKPOINT",
+    "CHECKPOINT_FORMAT",
+    "CHECKPOINT_FORMAT_VERSION",
+    "MAX_ARTIFACT_ID_LENGTH",
+    "MAX_CHECKPOINT_BYTES",
+    "MAX_HEADER_BYTES",
+    "ArtifactErrorCode",
+    "ArtifactManifest",
 ]

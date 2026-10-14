@@ -25,6 +25,8 @@ The initial randomly initialized native model is a compact encoder-style Transfo
 
 A bounded, deterministic training and validation loop runs only against the existing synthetic-test-only dataset scope and the Task 209 model, when explicitly invoked; see the [training loop design](docs/stage-8-training-loop.md).
 
+Model checkpoints and artifact manifests are pickle-free, content-hashed, and lineage-bound to the synthetic-test-only workflow; see the [artifact manifests and checkpoints](docs/stage-8-artifact-manifests-checkpoints.md).
+
 ## Stack
 
 - Python 3.12
