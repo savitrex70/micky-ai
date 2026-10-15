@@ -43,8 +43,13 @@ Definitions and proposed targets live only in
   target values (For `model-accuracy-vs-baseline`: strict measurable
   improvement over the baseline, ties fail; the minimum margin and
   the uncertainty/evidence bar are review-predeclared numbers) → a
-  reviewed protocol version bump → and only then, an authorized
-  dataset per §A.
+  reviewed protocol version bump. This track is independent of, and
+  must never be conflated with, dataset authorization or acquisition
+  (§A): approval of the thresholds authorizes evaluation
+  methodology, not data acquisition. Threshold approval and the
+  protocol bump must both be complete and approved **before final
+  held-out results are inspected** (§D); they are not preconditions
+  for a dataset to be acquired, which is governed by §A's sequence.
 
 ## C. Evaluation design evidence to predeclare (before any held-out inspection)
 
@@ -82,15 +87,39 @@ must respect this order in all future steps.
 
 ## F. Decision summary (project-owner items; not exercisable here)
 
-1. Approve/define the reviewed real-data authorization contract and
-   designate authorized source(s) + lawful basis (§A).
-2. Approve or reject each proposed threshold definition/target; set
-   the accuracy margin and uncertainty bar; approve a protocol
-   version bump (§B, §C).
-3. Provide the final review sign-off record after a legitimate
-   held-out evaluation (§E).
+The authoritative sequencing, reconciled from `stage-8-dataset-governance.md` ("Decision required before real-data work"; "Before real data can be admitted") and the protocol's ordering rules (§D below):
 
-The next authorized action after these decisions is stated in the
-governance doc; it is not real-data evaluation and it is not Stage 9.
-This document itself creates no acceptance: **Stage 8 remains NOT
-accepted.**
+1. **Owner decision (authorization track):** define and approve the
+   reviewed real-data authorization contract inside the existing
+   Task 207 design and designate the permitted source scope with the
+   lawful basis per source (§A). This decision alone does NOT
+   authorize data acquisition.
+2. **Authorization prerequisites verified (authorization track):**
+   the governance requirements of `stage-8-dataset-governance.md` —
+   authenticated registry composition, documented lawful basis,
+   retention/deletion owner, privacy review with leakage scans,
+   split-manifest versioning for the approved partitions — are
+   satisfied and recorded through approved evidence. Acquisition of
+   an authorized dataset is permitted only after steps 1 and 2 are
+   both satisfied (per the governance doc's "before any dataset is
+   acquired" rule).
+3. **Independent threshold track:** approve or reject the seven
+   proposed threshold definitions/targets; set the accuracy margin
+   and uncertainty bar; approve the reviewed protocol version bump
+   (§B, §C). This track neither substitutes for, nor triggers, steps
+   1–2, and its approval must exist before final held-out results
+   are inspected.
+4. **Acquisition and preparation:** acquire and prepare the
+   authorized dataset through the Task 207 governance path.
+5. **Held-out evaluation:** run only after every applicable
+   authorization prerequisite (steps 1–2) and protocol prerequisite
+   (step 3) is satisfied; results are not inspected before the
+   approved protocol version exists.
+6. **Final sign-off:** the project owner records the review and
+   sign-off of legitimate evaluation evidence (§E). No sign-off may
+   be recorded on incomplete or blocked evidence.
+
+The next authorized action after the owner decisions above is stated
+in the governance doc; it is not real-data evaluation and it is not
+Stage 9. This document itself creates no acceptance: **Stage 8
+remains NOT accepted.**
