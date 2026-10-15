@@ -24,8 +24,11 @@ data, or dataset pipeline is evaluated here.
   real-world verification, or semantic understanding. The harness
   evaluates exactly these bounded semantics and must not present
   them as anything broader.
-- `src/rop/evaluation/` exists but is empty; there is no prior
-  evaluation utility to reuse. Conventions reused: Pydantic strict
+- When Task 206 began, `src/rop/evaluation/` contained no
+  evaluation utility to reuse; the harness is the first. The
+  directory now also carries the Task 215 acceptance gate
+  (`acceptance.py`), which consumes this harness's report plus the
+  Task 214 benchmark report. Conventions reused: Pydantic strict
   schemas (`extra="forbid"`, frozen, tuples), generic error
   messages, deterministic JSON, UUID5 identifiers, argparse CLIs
   (`python -m rop.cli`), pytest + Ruff + Black gates.

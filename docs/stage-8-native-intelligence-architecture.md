@@ -1,8 +1,10 @@
 # Stage 8: First-Party Native Intelligence Architecture
 
-**Status:** Proposed architecture for review; documentation only  
+**Status:** Approved architecture; Tasks 201–215 implemented on main  
 **Applies to:** Stage 8 planning, Tasks 201–215  
-**Baseline:** Stage 7 integration through Task 200 is on main, together with the Stage 7 post-validation fixes merged through PR #15 that corrected the Task 200 checkpoint's two integration-test failures and Black failure. The project owner reports that the final local pytest, Ruff, and Black gates passed on that remediated Stage 7 tree. This document does not independently reproduce that run and does not claim any Stage 8 capability has been implemented.
+**Baseline:** Stage 7 integration through Task 200 is on main, together with the Stage 7 post-validation fixes merged through PR #15 that corrected the Task 200 checkpoint's two integration-test failures and Black failure (historical record; this document does not independently reproduce that run).
+
+**Implementation status:** Tasks 202–215 exist as individually reviewed commits on `main`: native reasoning contracts, evidence/provenance records, binding, deterministic composition with contradiction/missing-information/abstention semantics (Tasks 202–205); the baseline evaluation harness with predeclared thresholds (Task 206); dataset governance, tokenizer/vocabulary, native model, training loop, artifact manifests/checkpoints, local CPU inference runtime, advisory adapter, inference benchmark, and acceptance gate (Tasks 207–215). Every documented capability has been demonstrated only through synthetic fixtures, tests, and synthetic-scope evidence. No authorized real dataset exists; the model-specific acceptance thresholds remain `pending`; and Stage 8 acceptance (§9) is not complete. A passing integrity gate is not a successful model evaluation.
 
 ## 1. Architectural decision
 
@@ -37,10 +39,10 @@ The deterministic engine must be buildable, testable, and usable while no model 
 ## 3. Distinguish the system layers
 
 1. **Existing deterministic ROP infrastructure.** Current production code contains deterministic session/context handling, rule-based recognition and missing-information logic, and reasoning/evidence/certification boundaries. The current behavior and its tests remain the baseline; this task does not rewrite it.
-2. **First-party deterministic reasoning engine (to be developed).** A project-owned orchestration and algorithm layer for structured inputs, evidence evaluation, candidate comparison, conflict reporting, and explicit abstention. It must have explicit dependencies and no implicit provider selection.
-3. **ROP-trained neural model (future, conditional).** A model architecture and weights selected for a measured task, with parameters initialized from a documented random seed and trained by the project from authorized training data. There is no such Stage 8 model implementation claimed by this specification.
-4. **Training and evaluation infrastructure (future).** An offline pipeline for authorized data, deterministic preprocessing, dataset splits, training, held-out evaluation, artifact manifests, and integrity checks. It is not part of normal application request processing.
-5. **Local inference runtime (future).** A local execution boundary that loads a specifically selected, integrity-checked ROP-trained artifact. It must work on CPU where practical and may offer explicitly optional GPU acceleration.
+2. **First-party deterministic reasoning engine (implemented, Tasks 202–205).** A project-owned orchestration and algorithm layer for structured inputs, evidence evaluation, candidate comparison, conflict reporting, and explicit abstention, with explicit dependencies and no implicit provider selection. Demonstrated through synthetic fixtures and tests.
+3. **ROP-trained neural model (implemented on synthetic data only, Tasks 208–209).** A compact project-owned architecture with parameters initialized from a documented random seed, trained by the project through the Task 210 loop on the synthetic-test-only dataset scope. No authorized real training data exists and no real-world capability claim is made.
+4. **Training and evaluation infrastructure (implemented on synthetic data only, Tasks 206–211, 214–215).** An offline pipeline for the synthetic-test-only dataset scope, deterministic preprocessing, dataset splits, training, held-out evaluation, artifact manifests, and integrity checks. It is not part of normal application request processing, and any future authorized-data evaluation is still blocked pending dataset authorization.
+5. **Local inference runtime (implemented, Task 212).** A local in-process CPU execution boundary that loads a specifically selected, integrity-checked checkpoint artifact produced by this project's own synthetic-scope workflow.
 6. **Stage 7 evidence, audit, consistency, and handoff chain.** Existing services consume and validate published records when called by their caller. They do not automatically orchestrate predecessor/successor services, select a model, authorize inference, or execute a release. Stage 8 must preserve their contracts and truthful statuses.
 
 ## 4. Proposed component boundaries and contracts
@@ -221,7 +223,7 @@ Stage 7 remains an externally composed evidence/audit/consistency chain. Callers
 
 ## 8. Architecture flow
 
-The runtime path and training path are separate. The diagram is a target design, not a representation of code already implemented. The caller explicitly composes services; Stage 7 does not invoke the model.
+The runtime path and training path are separate. The diagram was a target design when Task 201 proposed it; Tasks 202–215 now implement its components on `main` within the synthetic-test-only scope described in the implementation-status note at the top of this document. The caller explicitly composes services; Stage 7 does not invoke the model.
 
 ```mermaid
 flowchart TD
@@ -314,6 +316,8 @@ The task sequence is dependency-aware but provisional. Each task must receive it
 
 The order is intentional: define contracts and deterministic semantics first; establish data rights and baseline evaluation before training; build vocabulary and random-initialized model only after the dataset and task are justified; secure artifacts before inference; validate model outputs before integration; and make end-to-end evaluation the final gate. Tasks may be re-scoped or halted if the model adds no measurable value.
 
+**Roadmap status as of the current `main`:** Tasks 201–215 have each been implemented with their own reviewed commit, focused tests, and local gates. Tasks 202–207 cover the deterministic reasoning contracts, evidence semantics, baseline evaluation harness, and dataset governance; Tasks 208–211 cover the project-controlled tokenizer/vocabulary, native model, training loop, and artifact manifests/checkpoints; Tasks 212–214 cover the local CPU inference runtime, strict advisory adapter, and offline benchmark; Task 215 is the acceptance gate. Every task was demonstrated on synthetic fixtures and synthetic-scope evidence only. The Task 215 acceptance gate currently evaluates the Task 214 benchmark report and the Task 206 baseline-integrity report under pinned identity hashes; the model-specific pending thresholds (`model-valid-contract-rate`, `model-fabricated-refs-zero`, `model-false-contradiction-rate`, `model-abstention-respect`, `model-accuracy-vs-baseline`, `model-repeatability-offline`, `model-resource-limits`) remain `pending` and block any model acceptance. No authorized real dataset exists, so Stage 8 acceptance criteria that depend on authorized data or model-specific evidence (§9) are not satisfied, and Stage 8 is not complete.
+
 ## 12. Change control
 
-This document describes a target, not a claim of current implementation. Each future task must state which part of the architecture it changes, preserve unrelated contracts, and include tests appropriate to its boundary. No later task may silently relax the third-party model, pretrained-weight, privacy, offline, uncertainty, or Stage 7 safeguards. Any proposed exception must be treated as a separately reviewed architectural change and must not contradict the first-party ownership requirements stated here.
+This document's Task 201 sections are the original approved design; the implementation-status notes above describe the current repository state without changing that design. Each future task must state which part of the architecture it changes, preserve unrelated contracts, and include tests appropriate to its boundary. No later task may silently relax the third-party model, pretrained-weight, privacy, offline, uncertainty, or Stage 7 safeguards. Any proposed exception must be treated as a separately reviewed architectural change and must not contradict the first-party ownership requirements stated here.

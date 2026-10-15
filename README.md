@@ -2,9 +2,9 @@
 
 The Reasoning Operating Platform (ROP) is being built incrementally. Its deterministic reasoning infrastructure includes rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 implementation and integration coverage through Task 200 has been completed. The Task 200 checkpoint itself was not fully gate-green: its targeted run had two Task 200 integration-test failures and a Black failure. Those gate failures were corrected in the Stage 7 post-validation fixes merged through PR #15, which are now part of main; the project owner reported that the final local pytest, Ruff, and Black gates passed on that remediated Stage 7 tree. ROP has no concrete third-party model integration and performs no network inference.
 
-## Stage 8: native intelligence plan
+## Stage 8: native intelligence
 
-Stage 8 is planned work, not an implemented model. The direction is a project-owned deterministic reasoning engine and, only if experiments justify it, a model with randomly initialized weights trained by ROP on authorized data. The plan excludes commercial models, third-party pretrained models or checkpoints, Ollama and other external model-serving products, hosted inference APIs, and remote inference. General-purpose numerical/training libraries may be considered as engineering tools, but their pretrained models and automatic download paths are not permitted.
+The Stage 8 architecture (Task 201) defines a project-owned deterministic reasoning engine and, only if experiments justify it, a model with randomly initialized weights trained by ROP on authorized data. Tasks 202–215 are implemented on main with individually reviewed commits: the deterministic reasoning contracts and composition semantics, baseline evaluation harness, synthetic-only dataset governance, tokenizer/vocabulary, native model, training loop, artifact manifests/checkpoints, local CPU inference runtime, advisory adapter, benchmark, and acceptance gate. These components are demonstrated only through synthetic fixtures and synthetic-scope evidence: no authorized real dataset exists, the model-specific acceptance thresholds remain pending, and Stage 8 acceptance is therefore not complete. The plan excludes commercial models, third-party pretrained models or checkpoints, Ollama and other external model-serving products, hosted inference APIs, and remote inference. General-purpose numerical/training libraries may be considered as engineering tools, but their pretrained models and automatic download paths are not permitted.
 
 The deterministic system must remain useful when no trained model is available. Model suggestions must pass strict schema, identity, provenance, privacy, uncertainty, and evidence-reference checks and must not override supported evidence, readable contradictions, or Stage 7 audit contracts. Passing software tests does not validate a model for clinical use or authorize autonomous clinical decisions.
 
@@ -202,7 +202,7 @@ The API's persistence endpoints:
 | `GET` | `/sessions/{session_id}/observations` | List observations for a session |
 | `POST` | `/sessions/{session_id}/extract-observations` | Extract and store observations from free text |
 
-Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The current production pipeline performs no diagnosis, model inference, or clinical interpretation; current reasoning paths are deterministic and rule-based. Stage 8 native-model work is planned only and has not been implemented.
+Interactive OpenAPI documentation is generated at `/docs`; the raw schema is available at `/openapi.json`. The current production pipeline performs no diagnosis, model inference, or clinical interpretation; current reasoning paths are deterministic and rule-based. The Stage 8 native-model components exist only in their synthetic-only training/evaluation workflow and are not wired into API request handling; no authorized real-data capability is implemented.
 
 ### Observation extraction pipeline
 
