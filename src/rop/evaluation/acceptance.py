@@ -33,6 +33,7 @@ from rop.evaluation.harness import (
 )
 from rop.schemas.acceptance import (
     MANDATORY_CRITERIA,
+    MANDATORY_EVALUATION_THRESHOLD_IDS,
     AcceptanceCriterionId,
     AcceptanceDecision,
     AcceptanceErrorCode,
@@ -268,18 +269,37 @@ def _evaluate(
         )
     )
     by_id = {item.threshold_id: item.status for item in evaluation.thresholds}
+    # A dictionary lookup here would silently let a later duplicate
+    # threshold record overwrite an earlier one, so duplicate ids are
+    # rejected outright: threshold evidence must be unambiguous before
+    # it can decide acceptance. Uniqueness is enforced inside Task 215
+    # because the approved Task 206 report schema permits repeated ids
+    # and its public contract was not changed for this gate.
+    threshold_ids = [item.threshold_id for item in evaluation.thresholds]
+    if len(threshold_ids) != len(set(threshold_ids)):
+        raise AcceptanceError(
+            AcceptanceErrorCode.EVIDENCE_INVALID,
+            "evaluation threshold identifiers are not unique",
+        )
+    # Baseline integrity requirements are not policy-replaceable: the
+    # mandatory Task 206 gates must always have passed, and
+    # caller-supplied threshold requirements are strictly additive.
+    required_ids = sorted(
+        set(MANDATORY_EVALUATION_THRESHOLD_IDS) | set(policy.required_threshold_ids)
+    )
     thresholds_pass = all(
-        by_id.get(threshold_id) == "passed"
-        for threshold_id in policy.required_threshold_ids
+        by_id.get(threshold_id) == "passed" for threshold_id in required_ids
     )
     outcomes.append(
         _outcome(
             "evaluation-thresholds",
             thresholds_pass,
             (
-                "every required evaluation threshold passed"
+                "every mandatory baseline integrity gate and required "
+                "threshold passed"
                 if thresholds_pass
-                else "a required evaluation threshold is missing or not passed"
+                else "a mandatory baseline integrity gate or required "
+                "threshold is missing or not passed"
             ),
         )
     )

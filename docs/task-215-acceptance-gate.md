@@ -22,7 +22,14 @@ supplied evidence:
 - evaluation contract supported, revalidated, and pinned;
 - evaluation case set matches the policy;
 - evaluation run completed cleanly (`run_valid`, no errors);
-- every required threshold passed (missing counts as failure);
+- every required threshold passed (missing counts as failure).
+  Five Task 206 baseline integrity gates are mandatory regardless of
+  what the policy lists — `unsupported-references-zero`,
+  `invalid-input-all-pass`, `run-valid`, `baseline-self-consistency`,
+  and `determinism` — each must be present with status `passed`.
+  Caller-supplied required thresholds are strictly additive and can
+  never replace or omit these. Pending model-evaluation thresholds
+  are never required and never fabricated as passed;
 - determinism repeat evidence complete with no divergence;
 - no input claims clinical utility or prior acceptance;
 - evidence acknowledged as synthetic-scope with a stated disclaimer.
@@ -40,6 +47,17 @@ not process RSS, offline mode describes the exercised code path, the
 benchmark's deterministic contexts are measurement scaffolding rather
 than reasoning evidence, and the evaluation evidence is synthetic-scope
 only.
+
+## Threshold evidence must be unambiguous
+
+Every threshold ID in the evaluation report must be unique. Duplicate
+IDs are rejected before any decision (`EVIDENCE_INVALID`: evaluation
+threshold identifiers are not unique), because a dictionary lookup
+would otherwise silently let a later duplicate record win regardless
+of status or order. The uniqueness check lives in Task 215 because
+the approved Task 206 report schema permits repeated IDs and its
+public contract was not modified for this gate; list ordering is
+never trusted.
 
 ## Identity and auditability
 

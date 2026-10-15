@@ -132,6 +132,19 @@ def _metric(numerator: int, denominator: int) -> dict[str, object]:
     }
 
 
+_MANDATORY_BASIS = (
+    "unsupported-references-zero",
+    "invalid-input-all-pass",
+    "run-valid",
+    "baseline-self-consistency",
+    "determinism",
+)
+
+
+def _threshold(threshold_id: str, status: str) -> dict[str, object]:
+    return {"threshold_id": threshold_id, "status": status, "detail": "synthetic"}
+
+
 def _evaluation(**overrides: object) -> EvaluationReport:
     payload: dict[str, object] = {
         "report_schema_version": "1.1",
@@ -173,7 +186,8 @@ def _evaluation(**overrides: object) -> EvaluationReport:
             "diverged": 0,
         },
         "thresholds": [
-            {"threshold_id": "t-agreement", "status": "passed", "detail": "met"}
+            *(_threshold(tid, "passed") for tid in _MANDATORY_BASIS),
+            _threshold("t-agreement", "passed"),
         ],
         "model_acceptance": {
             "evaluated": False,
@@ -386,6 +400,104 @@ def test_missing_threshold_evidence_prevents_acceptance() -> None:
     )
     report = _evaluate(evaluation=evaluation, policy=_policy(_benchmark(), evaluation))
     assert report.decision == "FAIL"
+
+
+def test_policy_with_only_caller_threshold_cannot_bypass_mandatory_gates() -> None:
+    # A caller policy naming only an additional threshold must not
+    # allow acceptance while the baseline integrity gates are absent.
+    benchmark = _benchmark()
+    evaluation = _evaluation(thresholds=[_threshold("t-agreement", "passed")])
+    report = _evaluate(
+        benchmark=benchmark,
+        evaluation=evaluation,
+        policy=_policy(benchmark, evaluation),
+    )
+    assert report.decision == "FAIL"
+    failed = [o for o in report.criteria if not o.passed]
+    assert [o.criterion_id for o in failed] == ["evaluation-thresholds"]
+
+
+def test_failed_mandatory_baseline_threshold_prevents_acceptance() -> None:
+    # The policy intentionally omits the failed gate: the gate must
+    # still refuse acceptance because the requirement is not
+    # policy-replaceable.
+    evaluation = _evaluation(
+        thresholds=[
+            *(
+                _threshold(tid, "failed" if tid == "run-valid" else "passed")
+                for tid in _MANDATORY_BASIS
+            ),
+            _threshold("t-agreement", "passed"),
+        ]
+    )
+    benchmark = _benchmark()
+    report = _evaluate(
+        benchmark=benchmark,
+        evaluation=evaluation,
+        policy=_policy(benchmark, evaluation),
+    )
+    assert report.decision == "FAIL"
+    failed = [o for o in report.criteria if not o.passed]
+    assert [o.criterion_id for o in failed] == ["evaluation-thresholds"]
+
+
+def test_pending_mandatory_baseline_threshold_prevents_acceptance() -> None:
+    # Schema-valid evidence whose mandatory gate is still pending is a
+    # rejection, never a pass; pending model gates are never
+    # fabricated as satisfied.
+    evaluation = _evaluation(
+        thresholds=[
+            *(
+                _threshold(tid, "pending" if tid == "run-valid" else "passed")
+                for tid in _MANDATORY_BASIS
+            ),
+            _threshold("t-agreement", "passed"),
+        ]
+    )
+    benchmark = _benchmark()
+    report = _evaluate(
+        benchmark=benchmark,
+        evaluation=evaluation,
+        policy=_policy(benchmark, evaluation),
+    )
+    assert report.decision == "FAIL"
+
+
+def test_duplicate_threshold_ids_are_rejected_for_every_order() -> None:
+    # Duplicate ids make threshold evidence ambiguous: a lookup would
+    # silently let the later record win, so the gate rejects the
+    # evidence structurally, regardless of record order, and can
+    # never be turned into a PASS by reordering.
+    duplicated = [
+        _threshold("t-agreement", "passed"),
+        _threshold("t-agreement", "failed"),
+        *(_threshold(tid, "passed") for tid in _MANDATORY_BASIS),
+    ]
+    for thresholds in (duplicated, list(reversed(duplicated))):
+        benchmark = _benchmark()
+        evaluation = _evaluation(thresholds=thresholds)
+        with pytest.raises(AcceptanceError) as raised:
+            _evaluate(
+                benchmark=benchmark,
+                evaluation=evaluation,
+                policy=_policy(benchmark, evaluation),
+            )
+        assert raised.value.code == AcceptanceErrorCode.EVIDENCE_INVALID
+        assert "evaluation threshold identifiers are not unique" in str(raised.value)
+
+
+def test_caller_required_additional_thresholds_still_enforced() -> None:
+    benchmark = _benchmark()
+    evaluation = _evaluation(
+        thresholds=[*(_threshold(tid, "passed") for tid in _MANDATORY_BASIS)]
+    )
+    policy = _policy(benchmark, evaluation, required_threshold_ids=["t-agreement"])
+    report = evaluate_acceptance(
+        benchmark=benchmark, evaluation=evaluation, policy=policy
+    )
+    assert report.decision == "FAIL"
+    failed = [o for o in report.criteria if not o.passed]
+    assert [o.criterion_id for o in failed] == ["evaluation-thresholds"]
 
 
 def test_unverifiable_determinism_prevents_acceptance() -> None:

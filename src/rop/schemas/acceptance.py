@@ -6,10 +6,15 @@ Task 206 baseline evaluation report. No inference, no model, no
 network, and no clinical logic live here.
 
 Acceptance means every mandatory criterion evaluated to pass on the
-supplied validated evidence. It is not a claim of model accuracy,
-safety, clinical utility, or readiness: the underlying evidence is
-synthetic-scope, resource measurements describe only the exercised
-code path, and traced Python memory is not process RSS.
+supplied validated evidence. The ``evaluation-thresholds`` criterion
+always includes the Task 206 baseline integrity gates named in
+``MANDATORY_EVALUATION_THRESHOLD_IDS``; a policy can only add
+requirements to that set, never replace or omit it. Acceptance is not
+a claim of model accuracy, safety, clinical utility, or readiness: the
+underlying evidence is synthetic-scope, resource measurements describe
+only the exercised code path, and traced Python memory is not process
+RSS. Model-evaluation thresholds legitimately remain ``pending`` and
+are never required to pass here.
 """
 
 from __future__ import annotations
@@ -68,6 +73,25 @@ MANDATORY_CRITERIA: tuple[str, ...] = (
 )
 
 AcceptanceDecision = Literal["PASS", "FAIL"]
+
+MANDATORY_EVALUATION_THRESHOLD_IDS: tuple[str, ...] = (
+    "determinism",
+    "invalid-input-all-pass",
+    "run-valid",
+    "baseline-self-consistency",
+    "unsupported-references-zero",
+)
+"""Task 206 baseline gates the gate always requires to have ``passed``.
+
+These are the versioned, non-model baseline integrity thresholds the
+Task 206 harness actually emits with a real ``passed``/``failed``
+status. Requiring them at the gate level keeps an acceptance policy
+from weakening the baseline by omitting them from its own
+``required_threshold_ids``; caller-supplied threshold requirements
+are only ever additive. The pending model thresholds are deliberately
+excluded: they have no passable status yet and must never be
+fabricated as satisfied for synthetic evidence.
+"""
 
 
 class AcceptanceErrorCode(StrEnum):
@@ -170,6 +194,7 @@ class AcceptanceReport(BaseModel):
 __all__ = [
     "ACCEPTANCE_CONTRACT_VERSION",
     "MANDATORY_CRITERIA",
+    "MANDATORY_EVALUATION_THRESHOLD_IDS",
     "AcceptanceCriterionId",
     "AcceptanceDecision",
     "AcceptanceErrorCode",
