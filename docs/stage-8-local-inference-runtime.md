@@ -80,3 +80,27 @@ output validation and advisory integration belong to Task 213.
 
 Run the focused tests with
 `pytest tests/test_local_inference_runtime.py -q`.
+
+## Dynamic offline boundary enforcement
+
+In addition to the static source-scan test
+(`tests/test_local_inference_runtime.py::test_no_network_provider_or_fetching_in_runtime_source`),
+`tests/test_native_offline_boundary.py` enforces the §7.1
+"fail-on-attempted-call" requirement dynamically at the real
+Python-level dependency seams: `socket.socket`,
+`socket.create_connection`, `socket.getaddrinfo`,
+`urllib.request.urlopen`, `urllib.request.build_opener`,
+`http.client.HTTPConnection`/`HTTPSConnection`, plus the checkpoint
+file-read seam (`Path.read_bytes`) and `torch.load`. The guards raise
+on any attempted call, and a guard self-check test proves they fail
+such calls directly. A network-location artifact selection is proven
+to fail closed at the runtime's own revalidation before any file
+read or network I/O, and a complete load-plus-inference flow is
+proven to attempt zero prohibited calls.
+
+Honest limitation: interception covers Python-callable seams. It does
+not mechanically watch hypothetical socket creation inside compiled
+third-party internals that never pass through a Python object; the
+native path contains no such call sites (static scans plus these
+runtime guards), but the guarantee is scoped to Python-visible calls
+rather than claimed as a full runtime sandbox.

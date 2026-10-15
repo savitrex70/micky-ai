@@ -139,3 +139,19 @@ procedure with an enforcing owner; privacy review with leakage
 scans; Task 207 split-manifest versioning for the approved
 partitions; and Task 208+ readiness. None exists today: all
 preparation remains synthetic-only.
+
+## Decision required before real-data work (audit record)
+
+The current contract expresses exactly one trust scope:
+`authorization_kind: Literal["synthetic-test-only"]`
+(`src/rop/schemas/dataset_manifest.py`). This restriction is
+deliberate, and closing it for real data is not an engineering task
+this repository can decide alone. The pending decision is the
+project-owner approval to (a) define a reviewed, versioned
+real-data authorization contract inside the existing Task 207
+design — meeting every requirement listed in the previous section —
+and (b) designate the specific authorized source(s) and legal
+basis, before any dataset is acquired. Until that decision is made
+and recorded, this contract must stay unchanged: no relabeled
+synthetic data, no invented approvals, and no new authorization
+scheme outside the reviewed design.
