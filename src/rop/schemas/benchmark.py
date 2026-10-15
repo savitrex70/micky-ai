@@ -6,12 +6,15 @@ No runtime, no model, no network, and no clinical logic live here.
 
 A benchmark case is an ordered tuple of token IDs. The report carries
 only digests, statistics, budgets, and identity bindings — never raw
-case content, predictions, prompts, or secrets.
+case content, predictions, prompts, secrets, or key material. The
+case-set digest is a keyed HMAC, not a plain hash: unkeyed hashing
+would leave low-entropy case content guessable.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from enum import StrEnum
 from typing import Literal
@@ -36,8 +39,11 @@ MIN_MEMORY_BUDGET_BYTES = 1024
 MAX_MEMORY_BUDGET_BYTES = 2**31
 
 _CONFIG_HASH_DOMAIN = "rop.benchmark.config.v1"
-_CASE_SET_DOMAIN = "rop.benchmark.case_set.v1"
+_CASE_SET_DOMAIN = "rop.benchmark.case_set.v2"
 _OUTPUT_DOMAIN = "rop.benchmark.output.v1"
+
+MIN_CASE_SET_KEY_BYTES = 16
+MAX_CASE_SET_KEY_BYTES = 256
 
 
 class BenchmarkErrorCode(StrEnum):
@@ -68,21 +74,30 @@ def _domain_hash(domain: str, payload: object) -> str:
     return hashlib.sha256(f"{domain}\n{body}".encode()).hexdigest()
 
 
-def case_set_digest(cases: tuple[list[int], ...]) -> str:
-    """Privacy-preserving digest of the ordered benchmark case set.
+def case_set_digest(cases: tuple[list[int], ...], *, key: bytes) -> str:
+    """Keyed, privacy-preserving digest of the ordered benchmark case set.
 
-    Each case contributes only its own SHA-256 over canonical JSON;
-    the report therefore cannot reveal case content. Public so an
-    independent party can recompute the digest from its own held-out
-    inputs and compare it against a report.
+    A plain hash of each low-entropy case would be guessable, so this is
+    an HMAC-SHA-256 keyed by a caller-supplied secret over the domain
+    prefix plus the canonical JSON of the entire ordered case set. The
+    key is never included in any report, log, or error. Authorized
+    verification recomputes this function over the same ordered cases
+    with the same key, which the caller distributes out of band.
     """
-    per_case = [
-        hashlib.sha256(
-            json.dumps(case, separators=(",", ":"), allow_nan=False).encode("utf-8")
-        ).hexdigest()
-        for case in cases
-    ]
-    return _domain_hash(_CASE_SET_DOMAIN, per_case)
+    if (
+        not isinstance(key, bytes)
+        or isinstance(key, bool)
+        or not MIN_CASE_SET_KEY_BYTES <= len(key) <= MAX_CASE_SET_KEY_BYTES
+    ):
+        raise ValueError("case-set digest key is invalid")
+    body = json.dumps(
+        [list(case) for case in cases],
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hmac.new(
+        key, f"{_CASE_SET_DOMAIN}\n{body}".encode(), hashlib.sha256
+    ).hexdigest()
 
 
 def output_digest(output_hashes: list[str]) -> str:
@@ -212,8 +227,10 @@ class BenchmarkReport(BaseModel):
 __all__ = [
     "BENCHMARK_CONTRACT_VERSION",
     "MAX_BENCHMARK_CASES",
+    "MAX_CASE_SET_KEY_BYTES",
     "MAX_MEASURED_ITERATIONS",
     "MAX_WARMUP_ITERATIONS",
+    "MIN_CASE_SET_KEY_BYTES",
     "BenchmarkConfig",
     "BenchmarkErrorCode",
     "BenchmarkReport",

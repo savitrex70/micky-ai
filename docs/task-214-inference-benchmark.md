@@ -76,12 +76,19 @@ synthetic SUPPORTED scaffolding bound to each case's request identity
 path executes for real; they are not reasoning outcomes.
 
 The report carries digests only: a domain-separated SHA-256
-configuration hash, an ordered case-set digest, a policy hash, and an
-output digest over the validated outputs. Canonical serialization is
-sorted-key compact JSON; Python's `hash()` is never used for
-persistent identities. No prompts, case content, predictions, secrets,
-or machine details are retained, and `clinical_utility_established`
-is the literal `False`.
+configuration hash, a keyed case-set digest, a policy hash, and an
+output digest over the validated outputs. The case-set digest is an
+HMAC-SHA-256 over the domain prefix plus the canonical JSON of the
+entire ordered case set, keyed by a caller-supplied 16–256 byte
+secret. A plain hash would leave low-entropy case content guessable;
+the keyed digest resists guessing only while the key stays secret. The
+key is caller-managed and distributed out of band, and it never appears
+in the report, logs, or errors — authorized verification recomputes
+`case_set_digest` over the same ordered cases with the same key.
+Canonical serialization is sorted-key compact JSON; Python's `hash()`
+is never used for persistent identities. No prompts, case content,
+predictions, secrets, or machine details are retained, and
+`clinical_utility_established` is the literal `False`.
 
 ## Tests
 

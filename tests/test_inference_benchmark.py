@@ -40,6 +40,7 @@ ARTIFACT_ID = "artifact-synthetic"
 VOCAB_HASH = "c" * 64
 VOCAB_SIZE = 8
 APPROVED_LABELS = ("alpha", "beta", "gamma")
+CASE_SET_KEY = b"0123456789abcdef"
 
 
 class _StubModel:
@@ -166,6 +167,7 @@ def _run(**overrides: object) -> BenchmarkReport:
         "config": _config(),
         "expected_artifact_id": ARTIFACT_ID,
         "expected_vocabulary_hash": VOCAB_HASH,
+        "case_set_key": CASE_SET_KEY,
     }
     payload.update(overrides)
     return run_inference_benchmark(**payload)  # type: ignore[arg-type]
@@ -262,9 +264,44 @@ def test_report_identity_and_coverage() -> None:
     config = _config()
     report = _run(config=config)
     assert report.benchmark_config_hash == config.config_hash()
-    assert report.case_set_digest == case_set_digest(((2, 3), (4, 5, 6)))
+    assert report.case_set_digest == case_set_digest(
+        ((2, 3), (4, 5, 6)), key=CASE_SET_KEY
+    )
     assert report.cases_measured == report.case_count == 2
     assert report.declared_latency_budget_ms == 60000.0
+
+
+def test_case_set_digest_is_keyed_and_deterministic() -> None:
+    cases = ([2, 3], [4, 5, 6])
+    assert case_set_digest(cases, key=CASE_SET_KEY) == case_set_digest(
+        cases, key=CASE_SET_KEY
+    )
+    assert case_set_digest(cases, key=CASE_SET_KEY) != case_set_digest(
+        cases, key=b"fedcba9876543210"
+    )
+    assert case_set_digest(cases, key=CASE_SET_KEY) != case_set_digest(
+        ([4, 5, 6], [2, 3]), key=CASE_SET_KEY
+    )
+
+
+def test_case_set_digest_rejects_invalid_keys() -> None:
+    for bad_key in (b"", b"short", "0123456789abcdef", None, True, b"x" * 257):
+        with pytest.raises(ValueError):
+            case_set_digest(([2, 3],), key=bad_key)  # type: ignore[arg-type]
+
+
+def test_runner_rejects_invalid_case_set_keys_without_disclosure() -> None:
+    secret = b"z" * 16
+    with pytest.raises(BenchmarkError) as raised:
+        _run(case_set_key=b"")
+    assert raised.value.code == BenchmarkErrorCode.INVALID_CONFIG
+    assert "z" not in str(raised.value)
+    with pytest.raises(BenchmarkError) as raised:
+        _run(case_set_key="0123456789abcdef")
+    assert raised.value.code == BenchmarkErrorCode.INVALID_CONFIG
+    keyed = _run(case_set_key=secret)
+    assert keyed.case_set_digest != _run().case_set_digest
+    assert secret.decode() not in keyed.model_dump_json()
 
 
 def test_digests_are_deterministic_for_equivalent_inputs() -> None:

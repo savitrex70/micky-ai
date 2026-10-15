@@ -46,6 +46,8 @@ from rop.inference.runtime import InferenceError, InferenceSession, run_inferenc
 from rop.schemas.advisory import AdvisoryAdapterResult
 from rop.schemas.benchmark import (
     MAX_BENCHMARK_CASES,
+    MAX_CASE_SET_KEY_BYTES,
+    MIN_CASE_SET_KEY_BYTES,
     BenchmarkConfig,
     BenchmarkErrorCode,
     BenchmarkReport,
@@ -175,6 +177,19 @@ def _checked_expected_vocabulary_hash(value: object) -> str:
     return value
 
 
+def _checked_case_set_key(value: object) -> bytes:
+    if (
+        not isinstance(value, bytes)
+        or isinstance(value, bool)
+        or not MIN_CASE_SET_KEY_BYTES <= len(value) <= MAX_CASE_SET_KEY_BYTES
+    ):
+        # Never echo key material: the message carries no key content.
+        raise BenchmarkError(
+            BenchmarkErrorCode.INVALID_CONFIG, "benchmark case-set key is invalid"
+        )
+    return value
+
+
 def _checked_cases(
     value: object, *, vocab_size: int, max_seq_len: int
 ) -> tuple[list[int], ...]:
@@ -297,6 +312,7 @@ def run_inference_benchmark(
     config: BenchmarkConfig,
     expected_artifact_id: str,
     expected_vocabulary_hash: str,
+    case_set_key: bytes,
 ) -> BenchmarkReport:
     """Measure local inference plus strict validation and report auditable results.
 
@@ -305,6 +321,11 @@ def run_inference_benchmark(
     caller's expectations must agree, and every measured output must
     pass the strict validation boundary. The returned report binds the
     actual identities and carries only digests — never case content.
+
+    ``case_set_key`` is the caller-managed HMAC secret for the
+    case-set digest: it must be 16–256 bytes, is never written to the
+    report, logs, or errors, and authorized verification recomputes
+    the digest with the same key obtained out of band.
     """
     checked_session = _checked_session(session)
     checked_vocabulary = _checked_vocabulary(vocabulary)
@@ -312,6 +333,7 @@ def run_inference_benchmark(
     checked_config = _checked_config(config)
     wanted_artifact = _checked_expected_artifact(expected_artifact_id)
     wanted_vocabulary_hash = _checked_expected_vocabulary_hash(expected_vocabulary_hash)
+    checked_key = _checked_case_set_key(case_set_key)
     checked_cases = _checked_cases(
         cases,
         vocab_size=checked_session.vocab_size,
@@ -393,7 +415,7 @@ def run_inference_benchmark(
             vocabulary_hash=checked_vocabulary.metadata.vocabulary_hash,
             policy_hash=bound_policy_hash,
             benchmark_config_hash=checked_config.config_hash(),
-            case_set_digest=case_set_digest(canonical_cases),
+            case_set_digest=case_set_digest(canonical_cases, key=checked_key),
             declared_latency_budget_ms=checked_config.latency_budget_ms,
             declared_peak_memory_budget_bytes=checked_config.peak_memory_budget_bytes,
             case_count=len(checked_cases),
