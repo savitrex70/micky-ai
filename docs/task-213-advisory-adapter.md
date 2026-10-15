@@ -28,9 +28,9 @@ identity (`request_id`, `session_id`, `context_fingerprint`, plus the
 - `admissible=False` with an explicit `AdvisoryRejectionReason`.
 
 Structural problems (wrong types, forged records, wrong class count,
-multi-row batches, detached deterministic identity) raise a sanitized,
-typed `AdvisoryAdapterError`; they are never repaired, clamped, or
-reinterpreted.
+multi-row batches, detached deterministic identity, unbound deterministic
+evidence) raise a sanitized, typed `AdvisoryAdapterError`; they are never
+repaired, clamped, or reinterpreted.
 
 ## Class-index to label mapping
 
@@ -57,7 +57,7 @@ and only accepted field is `softmax_score`; the legacy name
 validation (`extra="forbid"`). The value remains a relative model-output
 score rather than a real probability.
 
-## Identity binding
+## Identity and evidence binding
 
 `InferenceResult` carries no identity fields. The published result binds to
 the validated `NativeReasoningRequest` supplied by the caller: this is
@@ -67,6 +67,30 @@ the request (different session, fingerprint, or request) is rejected as
 detached, so a result from one case/session cannot be associated with another.
 Model output can never overwrite context, session, source, or provenance
 identity — the advisory contracts contain no fields that could carry them.
+
+Beyond identity, the adapter enforces evidence-reference binding: every
+supporting and contradicting evidence ID in the deterministic result must be
+a subset of the trusted request's `evidence_ids` set. The request set is the
+authoritative allowed set at this boundary — Task 204's
+`NativeEvidenceBinding` enforces exact set equality between those references
+and the supplied Task 203 records, and Task 205's composition builds result
+evidence references from the bound records. A caller-supplied result object
+passes Pydantic validation without that pipeline, so the adapter re-checks
+the subset relationship itself; a structurally valid result citing foreign
+evidence is rejected with a sanitized `INVALID_REQUEST` error that never
+discloses the rejected payload. Statuses that carry no evidence satisfy the
+check vacuously, and an invalid binding can never yield `admissible=True`.
+
+## Adapter configuration immutability
+
+The adapter's validated mapping, class count, and index-to-label lookup are
+structurally immutable after construction: the lookup is an immutable mapping
+view and instance attribute reassignment or deletion is rejected, so
+straightforward post-construction mutation cannot bypass the validated,
+approved-label mapping. A failed mutation attempt leaves the adapter
+unmodified. This guards against accidental or casual mutation; it is not a
+claim of protection against hostile in-process reflection, which ordinary
+Python objects cannot provide.
 
 ## Evidence references and provenance
 
@@ -103,9 +127,10 @@ deterministic path remains authoritative and fully usable without a model.
 ## Tests
 
 `tests/test_advisory_adapter.py` covers supported and rejected deterministic
-statuses, missing/unavailable/invalid contexts, identity and fingerprint
-binding, explicit mapping bounds and validation, unmapped classes,
-single-row/class-count requirements, finite and extreme logits, stable score
-semantics and tie-breaking, strict immutable schemas, evidence/provenance
-fabrication attempts, non-mutation of inputs, and sanitized failures. No
-trained artifact, network, or external dataset is required.
+statuses, missing/unavailable/invalid contexts, identity, fingerprint, and
+evidence-reference binding, explicit mapping bounds and validation, adapter
+configuration immutability, unmapped classes, single-row/class-count
+requirements, finite and extreme logits, stable score semantics and
+tie-breaking, strict immutable schemas, evidence/provenance fabrication
+attempts, non-mutation of inputs, and sanitized failures. No trained
+artifact, network, or external dataset is required.

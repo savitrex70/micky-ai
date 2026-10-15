@@ -65,17 +65,24 @@ def _adapter() -> AdvisoryAdapter:
     )
 
 
-def _request() -> NativeReasoningRequest:
+def _request(
+    evidence_ids: tuple[UUID, ...] = (UUID(int=1),),
+) -> NativeReasoningRequest:
     return NativeReasoningRequest.model_validate(
         {
             "request_id": REQUEST_ID,
             "session_id": SESSION_ID,
             "context_fingerprint": FINGERPRINT,
             "task_id": "advisory-suggestion-v1",
-            "evidence_ids": [UUID(int=1)],
+            "evidence_ids": list(evidence_ids),
             "request_source": NATIVE_REASONING_REQUEST_SOURCE_TASK_202,
         }
     )
+
+
+# Requests whose evidence set covers every ID the deterministic helper
+# may cite, so status-gating tests exercise gating rather than binding.
+_FULL_EVIDENCE_REQUEST_IDS = (UUID(int=1), UUID(int=2))
 
 
 def _inference_result(
@@ -213,7 +220,7 @@ def test_all_deterministic_rejection_statuses_are_non_admissible() -> None:
     for status, reason in cases:
         outcome = _adapter().propose(
             inference_result=_inference_result((9.0, 0.1, 0.1)),
-            request=_request(),
+            request=_request(_FULL_EVIDENCE_REQUEST_IDS),
             deterministic_result=_deterministic(status),
         )
         assert outcome.admissible is False
@@ -235,7 +242,7 @@ def test_non_supportive_deterministic_context_is_non_admissible(
 ) -> None:
     outcome = _adapter().propose(
         inference_result=_inference_result((9.0, 0.1, 0.1)),
-        request=_request(),
+        request=_request(_FULL_EVIDENCE_REQUEST_IDS),
         deterministic_result=_deterministic(status),
     )
     assert outcome.admissible is False
@@ -371,7 +378,7 @@ def test_unmapped_winning_class_is_rejected() -> None:
 def test_deterministic_rejection_takes_precedence_over_unmapped_model_output() -> None:
     outcome = _adapter().propose(
         inference_result=_inference_result((0.0, 5.0, 0.0)),
-        request=_request(),
+        request=_request(_FULL_EVIDENCE_REQUEST_IDS),
         deterministic_result=_deterministic("CONTRADICTED"),
     )
     assert outcome.admissible is False
@@ -589,3 +596,176 @@ def test_adapter_error_messages_are_sanitized() -> None:
     message = str(raised.value)
     assert "1.0" not in message
     assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+
+
+def test_adapter_lookup_state_cannot_be_mutated() -> None:
+    adapter = _adapter()
+    with pytest.raises(TypeError):
+        adapter._label_by_index[0] = "injected"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del adapter._label_by_index[0]  # type: ignore[arg-type]
+    # The validated lookup still resolves the approved label.
+    outcome = adapter.propose(
+        inference_result=_inference_result((2.0, 0.5, 1.0)),
+        request=_request(),
+        deterministic_result=_deterministic("SUPPORTED"),
+    )
+    assert outcome.admissible is True
+    assert outcome.suggestion is not None
+    assert outcome.suggestion.candidate_label == "alpha"
+
+
+def test_adapter_configuration_cannot_be_reassigned() -> None:
+    adapter = _adapter()
+    replacement = AdvisoryClassLabelMapping.model_validate(
+        {
+            "contract_version": "1",
+            "mapping_id": "task-213-synthetic-mapping",
+            "num_classes": 3,
+            "entries": [{"class_index": 0, "label": "gamma"}],
+        }
+    )
+    with pytest.raises(AdvisoryAdapterError) as raised:
+        adapter._mapping = replacement  # type: ignore[assignment]
+    assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+    with pytest.raises(AdvisoryAdapterError):
+        adapter._num_classes = 99  # type: ignore[assignment]
+    with pytest.raises(AdvisoryAdapterError):
+        adapter._label_by_index = {0: "gamma"}  # type: ignore[assignment]
+    with pytest.raises(AdvisoryAdapterError):
+        del adapter._mapping  # type: ignore[attr-defined]
+    # A failed mutation attempt leaves the adapter unmodified: the
+    # approved mapping still governs output, and the injected label
+    # can never appear.
+    outcome = adapter.propose(
+        inference_result=_inference_result((2.0, 0.5, 1.0)),
+        request=_request(),
+        deterministic_result=_deterministic("SUPPORTED"),
+    )
+    assert outcome.admissible is True
+    assert outcome.suggestion is not None
+    assert outcome.suggestion.candidate_label == "alpha"
+
+
+def _deterministic_with_evidence(
+    status: str,
+    *,
+    supporting: tuple[UUID, ...],
+    contradicting: tuple[UUID, ...] = (),
+) -> NativeReasoningResult:
+    if status == "SUPPORTED":
+        return NativeReasoningResult.model_validate(
+            {
+                "result_id": UUID(int=901),
+                "request_id": REQUEST_ID,
+                "session_id": SESSION_ID,
+                "context_fingerprint": FINGERPRINT,
+                "status": "SUPPORTED",
+                "reason_code": "RULE_MATCH",
+                "uncertainty": 0.1,
+                "supporting_evidence_ids": list(supporting),
+                "contradicting_evidence_ids": [],
+                "missing_information_ids": [],
+                "rule_id": "rule-match-v1",
+                "suggestion_text": None,
+                "result_source": NATIVE_REASONING_RESULT_SOURCE_TASK_202,
+            }
+        )
+    assert status == "CONTRADICTED"
+    return NativeReasoningResult.model_validate(
+        {
+            "result_id": UUID(int=902),
+            "request_id": REQUEST_ID,
+            "session_id": SESSION_ID,
+            "context_fingerprint": FINGERPRINT,
+            "status": "CONTRADICTED",
+            "reason_code": "RULE_CONTRADICTION_FOUND",
+            "uncertainty": 0.2,
+            "supporting_evidence_ids": list(supporting),
+            "contradicting_evidence_ids": list(contradicting),
+            "missing_information_ids": [],
+            "rule_id": "rule-conflict-v1",
+            "suggestion_text": None,
+            "result_source": NATIVE_REASONING_RESULT_SOURCE_TASK_202,
+        }
+    )
+
+
+def test_supported_result_with_bound_evidence_is_admissible() -> None:
+    outcome = _adapter().propose(
+        inference_result=_inference_result((2.0, 0.5, 1.0)),
+        request=_request((UUID(int=1), UUID(int=2))),
+        deterministic_result=_deterministic_with_evidence(
+            "SUPPORTED", supporting=(UUID(int=2),)
+        ),
+    )
+    assert outcome.admissible is True
+    assert outcome.suggestion is not None
+
+
+def test_supported_result_with_foreign_evidence_is_rejected() -> None:
+    with pytest.raises(AdvisoryAdapterError) as raised:
+        _adapter().propose(
+            inference_result=_inference_result((9.0, 0.1, 0.1)),
+            request=_request(),
+            deterministic_result=_deterministic_with_evidence(
+                "SUPPORTED", supporting=(UUID(int=999),)
+            ),
+        )
+    assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+    assert str(UUID(int=999)) not in str(raised.value)
+
+
+def test_contradicted_result_with_foreign_evidence_is_rejected() -> None:
+    with pytest.raises(AdvisoryAdapterError) as raised:
+        _adapter().propose(
+            inference_result=_inference_result((9.0, 0.1, 0.1)),
+            request=_request(_FULL_EVIDENCE_REQUEST_IDS),
+            deterministic_result=_deterministic_with_evidence(
+                "CONTRADICTED",
+                supporting=(UUID(int=1),),
+                contradicting=(UUID(int=999),),
+            ),
+        )
+    assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+    with pytest.raises(AdvisoryAdapterError) as raised:
+        _adapter().propose(
+            inference_result=_inference_result((9.0, 0.1, 0.1)),
+            request=_request(_FULL_EVIDENCE_REQUEST_IDS),
+            deterministic_result=_deterministic_with_evidence(
+                "CONTRADICTED",
+                supporting=(UUID(int=999),),
+                contradicting=(UUID(int=2),),
+            ),
+        )
+    assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+
+
+def test_matching_identity_with_mismatched_evidence_is_rejected() -> None:
+    # Identities match exactly; only the evidence reference is foreign.
+    # The binding check — not the identity check — must reject this.
+    with pytest.raises(AdvisoryAdapterError) as raised:
+        _adapter().propose(
+            inference_result=_inference_result((2.0, 0.5, 1.0)),
+            request=_request(),
+            deterministic_result=_deterministic_with_evidence(
+                "SUPPORTED", supporting=(UUID(int=2),)
+            ),
+        )
+    assert raised.value.code == AdvisoryErrorCode.INVALID_REQUEST
+    assert "detached" not in str(raised.value)
+
+
+def test_evidence_free_statuses_remain_non_admissible() -> None:
+    for status, reason in (
+        ("INSUFFICIENT", AdvisoryRejectionReason.CONTEXT_INSUFFICIENT),
+        ("ABSTAINED", AdvisoryRejectionReason.CONTEXT_ABSTAINED),
+        ("UNAVAILABLE", AdvisoryRejectionReason.CONTEXT_UNAVAILABLE),
+    ):
+        outcome = _adapter().propose(
+            inference_result=_inference_result((9.0, 0.1, 0.1)),
+            request=_request(),
+            deterministic_result=_deterministic(status),
+        )
+        assert outcome.admissible is False
+        assert outcome.rejection_reason == reason

@@ -17,7 +17,8 @@ schema records, so its unit tests need no trained artifact.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 
 from pydantic import ValidationError
 
@@ -163,6 +164,15 @@ class AdvisoryAdapter:
     at construction. A class index the mapping does not declare never
     produces a label: unmapped output fails closed instead of being
     repaired, clamped, or reinterpreted.
+
+    Configuration immutability is structural, not nominal: the
+    index-to-label lookup is an immutable mapping view and instance
+    attribute reassignment or deletion is rejected after construction,
+    so straightforward post-construction mutation cannot bypass the
+    validated mapping. This guards against accidental or casual
+    mutation; it is not a claim of protection against hostile
+    in-process reflection, which ordinary Python objects cannot
+    provide.
     """
 
     def __init__(
@@ -216,11 +226,45 @@ class AdvisoryAdapter:
                 AdvisoryErrorCode.INVALID_REQUEST,
                 "class-label mapping cites labels outside the approved space",
             )
-        self._mapping = mapping
-        self._label_by_index = {
-            entry.class_index: entry.label for entry in mapping.entries
-        }
-        self._num_classes = mapping.num_classes
+        object.__setattr__(self, "_mapping", mapping)
+        object.__setattr__(
+            self,
+            "_label_by_index",
+            MappingProxyType(
+                {entry.class_index: entry.label for entry in mapping.entries}
+            ),
+        )
+        object.__setattr__(self, "_num_classes", mapping.num_classes)
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AdvisoryAdapterError(
+                AdvisoryErrorCode.INVALID_REQUEST,
+                "advisory adapter configuration is immutable",
+            )
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        raise AdvisoryAdapterError(
+            AdvisoryErrorCode.INVALID_REQUEST,
+            "advisory adapter configuration is immutable",
+        )
+
+    @property
+    def mapping(self) -> AdvisoryClassLabelMapping:
+        """The validated class-label mapping (read-only)."""
+        return self._mapping
+
+    @property
+    def label_by_index(self) -> Mapping[int, str]:
+        """Immutable index-to-label lookup view (read-only)."""
+        return self._label_by_index
+
+    @property
+    def num_classes(self) -> int:
+        """The configured model class count (read-only)."""
+        return self._num_classes
 
     def propose(
         self,
@@ -236,8 +280,9 @@ class AdvisoryAdapter:
         when supplied, gates admissibility: a contradicted, insufficient,
         unavailable, abstained, or unknown deterministic context makes
         the suggestion non-admissible regardless of model output, and a
-        detached deterministic result (different identity) is rejected.
-        The adapter never mutates any of its inputs.
+        detached deterministic result (different identity, or evidence
+        references outside the request's ``evidence_ids`` set) is
+        rejected. The adapter never mutates any of its inputs.
         """
         result = _checked_inference_result(inference_result)
         checked_request = _checked_request(request)
@@ -306,6 +351,27 @@ class AdvisoryAdapter:
                 AdvisoryErrorCode.INVALID_REQUEST,
                 "deterministic context is detached from the request identity",
             )
+        # Evidence binding (Task 202 + Task 204): the request's
+        # ``evidence_ids`` is the authoritative allowed reference set for
+        # this boundary — Task 204's ``NativeEvidenceBinding`` enforces
+        # exact set equality between those references and the supplied
+        # Task 203 records, and Task 205's composition builds result
+        # evidence references from the bound records. A caller-supplied
+        # result object passes Pydantic validation without that pipeline,
+        # so the adapter requires every supporting and contradicting
+        # evidence ID to be a subset of the trusted request set. Statuses
+        # that carry no evidence satisfy this vacuously. The rejected
+        # payload is never disclosed.
+        allowed = {str(value) for value in request.evidence_ids}
+        for evidence_id in (
+            *deterministic.supporting_evidence_ids,
+            *deterministic.contradicting_evidence_ids,
+        ):
+            if str(evidence_id) not in allowed:
+                raise AdvisoryAdapterError(
+                    AdvisoryErrorCode.INVALID_REQUEST,
+                    "deterministic evidence is not bound to the request",
+                )
 
     @staticmethod
     def _result(
