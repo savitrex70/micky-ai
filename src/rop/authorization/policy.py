@@ -9,23 +9,35 @@ call a model, and it never mints a confirmation.
 The evaluator is deterministic: the same policy, operation, and supplied
 authorization always produce an equal decision.
 
+Identifier handling
+-------------------
+An operation identifier is an exact machine name resolved by the
+deterministic capability registry, never user text. The evaluator does
+not trim, lowercase, split, or otherwise canonicalize it, and it does not
+fall back to a normalized form when the exact match fails. ``"help\n"``,
+``" help"``, and ``"Help"`` are therefore not the registered ``help``
+operation: an identifier that violates the identifier contract is
+rejected as unusable input (``AuthorizationErrorCode.INVALID_OPERATION``)
+before any decision exists, and a well-formed but unregistered identifier
+is denied as unsupported. User-facing targets, scopes, and parameter
+values keep the normalization their own contracts define.
+
 Fail-closed ordering
 --------------------
 Rules are applied in a fixed order, and the most restrictive applicable
 answer wins:
 
-1. an unusable proposal is denied (``OPERATION_INVALID``);
-2. an unregistered operation is denied (``OPERATION_UNSUPPORTED``);
-3. a prohibited operation is denied (``OPERATION_PROHIBITED``), even when
+1. an unregistered operation is denied (``OPERATION_UNSUPPORTED``);
+2. a prohibited operation is denied (``OPERATION_PROHIBITED``), even when
    a matching authorization is supplied;
-4. an unclassified operation is denied (``RISK_UNCLASSIFIED``), so
+3. an unclassified operation is denied (``RISK_UNCLASSIFIED``), so
    missing risk information can never grant permission;
-5. an under-specified operation requires clarification
+4. an under-specified operation requires clarification
    (``TARGET_MISSING`` / ``PARAMETER_MISSING``), and confirmation of an
    under-specified operation is not valid authorization, so this check
    precedes any confirmation decision;
-6. a ``LOW``-risk operation is allowed (``ALLOWED_LOW_RISK``);
-7. a ``CONSEQUENTIAL`` operation is allowed only against a supplied scope
+5. a ``LOW``-risk operation is allowed (``ALLOWED_LOW_RISK``);
+6. a ``CONSEQUENTIAL`` operation is allowed only against a supplied scope
    that covers it exactly (``ALLOWED_BY_AUTHORIZATION``); otherwise it
    requires a fresh authorization decision (``AUTHORIZATION_REQUIRED``
    when none is supplied, ``AUTHORIZATION_SCOPE_MISMATCH`` when the
@@ -116,9 +128,12 @@ def _checked_operation(
 ) -> ProposedOperation:
     """Re-validate a proposal, chaining nothing so no value can leak.
 
-    Validation errors quote the offending input. A target, scope, or
-    parameter value is private user information, so the cause is dropped
-    rather than chained onto the raised error.
+    This is also the gate for the identifier contract: a malformed or
+    blank operation identifier is unusable input and is rejected here,
+    before a decision can describe it as an operation. Validation errors
+    quote the offending input. A target, scope, or parameter value is
+    private user information, so the cause is dropped rather than chained
+    onto the raised error.
     """
     try:
         if isinstance(operation, ProposedOperation):
@@ -186,14 +201,7 @@ def evaluate_authorization(
     checked_operation = _checked_operation(operation)
     checked_authorized = _checked_authorization(authorized)
 
-    operation_id = checked_operation.operation_id.strip()
-    if not operation_id:
-        return _decision(
-            checked_policy,
-            operation_id,
-            AuthorizationReason.OPERATION_INVALID,
-        )
-
+    operation_id = checked_operation.operation_id
     rule = checked_policy.rule(operation_id)
     if rule is None:
         return _decision(

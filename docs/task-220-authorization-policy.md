@@ -20,35 +20,58 @@ Four outcomes, each with exactly one stable reason code:
 | `ALLOW` | Supported, sufficiently specified, and permitted by an explicit policy rule without additional confirmation. |
 | `CLARIFY` | The operation could not be selected safely: the target or a required parameter is absent, so there is nothing to confirm. |
 | `REQUIRE_CONFIRMATION` | Sufficiently specified, but explicit user permission for this exact operation is required first. |
-| `DENY` | Unsupported, prohibited, unclassified, or unusable under the applicable policy. |
+| `DENY` | Unsupported, prohibited, or unclassified under the applicable policy. |
 
 An outcome is a statement about what may happen next. It performs
 nothing: no execution, no persistence, no logging, no model, no network.
 Returning `ALLOW` does not carry out an operation, and returning
 `REQUIRE_CONFIRMATION` does not raise a prompt.
 
+## Identifiers
+
+An operation identifier is a machine name resolved by the deterministic
+capability registry, not user text. It is matched exactly: the evaluator
+never trims, lowercases, splits, or otherwise canonicalizes an identifier,
+and it does not fall back to a normalized form when an exact match fails.
+`help\n`, ` help`, `Help`, and `hel p` are therefore not the registered
+`help` operation.
+
+An identifier that violates the identifier contract (`^[a-z][a-z0-9_-]*$`,
+the same contract `OperationRule` already used) is not an operation at all,
+so it is rejected as invalid input before any decision exists: the caller
+receives the sanitized `INVALID_OPERATION` error - not `ALLOW`, not `DENY` -
+and no decision is built that names it. `ProposedOperation`,
+`AuthorizedScope`, and `AuthorizationDecision` all enforce the contract, so
+a decision can only ever name a well-formed identifier.
+
+User-facing values keep their normalization: targets, scopes, and parameter
+values are still stripped, and a blank target is still an absent target.
+
 ## Fail-closed ordering
 
 Rules are applied in a fixed order, and the most restrictive applicable
 answer wins:
 
-1. an unusable proposal is denied (`OPERATION_INVALID`);
-2. an unregistered operation is denied (`OPERATION_UNSUPPORTED`);
-3. a prohibited operation is denied (`OPERATION_PROHIBITED`), even when a
+1. an unregistered operation is denied (`OPERATION_UNSUPPORTED`);
+2. a prohibited operation is denied (`OPERATION_PROHIBITED`), even when a
    matching authorization is supplied;
-4. an operation whose rule carries no risk level is denied
+3. an operation whose rule carries no risk level is denied
    (`RISK_UNCLASSIFIED`), so missing risk information can never grant
    permission;
-5. an under-specified operation requires clarification
+4. an under-specified operation requires clarification
    (`TARGET_MISSING`, `PARAMETER_MISSING`). This check precedes any
    confirmation decision, because confirming an operation that has not
    been specified is not valid authorization;
-6. a `LOW`-risk operation is allowed (`ALLOWED_LOW_RISK`);
-7. a `CONSEQUENTIAL` operation is allowed only against a supplied scope
+5. a `LOW`-risk operation is allowed (`ALLOWED_LOW_RISK`);
+6. a `CONSEQUENTIAL` operation is allowed only against a supplied scope
    that covers it exactly (`ALLOWED_BY_AUTHORIZATION`); otherwise it
    requires a fresh decision (`AUTHORIZATION_REQUIRED` when nothing is
    supplied, `AUTHORIZATION_SCOPE_MISMATCH` when what is supplied is for
    something materially different).
+
+Every reason code in the contract is reachable. There is deliberately no
+reason code for a malformed identifier, because unusable input is rejected
+before a decision exists rather than reported as a decision.
 
 Risk is never inferred. A rule's classification is either explicit or
 the operation is denied.
@@ -61,7 +84,10 @@ the caller that the boundary owning the real permission interaction has
 obtained authorization for precisely those material values. Coverage is
 exact on operation, target, scope, and parameter set; nothing is
 inferred, extended, or inherited. Comparing a parameter map ignores
-order, and surrounding whitespace is not a material difference.
+order, and surrounding whitespace in a target, scope, or parameter value
+is not a material difference. The operation identifier is different: it
+is compared exactly, so padding or a trailing newline is a malformed
+identifier rather than the same operation.
 
 ## Deliberate absences
 
@@ -93,13 +119,16 @@ authorization. Both are re-validated on entry so a mutated instance
 cannot pass as valid, and unknown fields are rejected.
 
 A structurally broken policy, operation, or authorization raises
-`AuthorizationPolicyError` with a stable `AuthorizationErrorCode`. Invalid
-policy or operation *content* - a blank operation identifier, an
-unclassified rule - is not an exception: it is a decision, so the caller
-receives `DENY` or `CLARIFY` and never a silent success. Failure messages
-carry only stable codes and never a target, parameter, or message value;
-validation causes are suppressed rather than chained, so private input
-cannot surface in a traceback.
+`AuthorizationPolicyError` with a stable `AuthorizationErrorCode`. A
+malformed or blank operation identifier also raises, as unusable input
+(`INVALID_OPERATION`) rather than as a decision, so a value that is not a
+machine operation name can never be described as one. Invalid operation
+*content* that is still a well-formed operation - an unclassified rule, an
+absent target, a missing required parameter - is not an exception: it is a
+decision, so the caller receives `DENY` or `CLARIFY` and never a silent
+success. Failure messages carry only stable codes and never a target,
+parameter, or message value; validation causes are suppressed rather than
+chained, so private input cannot surface in a traceback.
 
 An outcome that contradicts its own reason is unrepresentable: a decision
 is constructed from its reason code, and the model validator rejects any
@@ -122,7 +151,11 @@ missing required parameters; confirmation of an under-specified operation
 offering no authorization; an unclassified rule denied with and without a
 supplied scope; unsupported and prohibited operations denied even with a
 matching authorization; prohibition outranking missing specification;
-case-sensitive identifier lookup; one-action scope across operation,
+exact identifier matching, with malformed, blank, whitespace-padded,
+tab-padded, newline- or carriage-return-suffixed, miscapitalized, and
+otherwise invalid identifiers rejected rather than normalized into a
+registered operation, and a validation-bypassing mutated instance still
+failing closed; one-action scope across operation,
 target, scope, and parameter set; `covers` failing closed for unusable
 input; invalid policy, operation, and authorization input raising
 sanitized errors without leaking values; contradictory decisions

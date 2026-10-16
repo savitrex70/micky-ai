@@ -13,6 +13,14 @@ asserts is already authorized for exactly one operation; creating that
 assertion, and the interaction behind it, are outside this module and are
 not implemented.
 
+Operation identifiers are machine-facing names, not user text. They are
+matched exactly: surrounding whitespace, case, and embedded spacing are
+never trimmed, lowercased, or otherwise canonicalized, so a malformed
+identifier such as ``"help\n"`` cannot resolve to the registered ``help``
+operation. An identifier that violates the contract is not an operation
+at all and is rejected as invalid input rather than described in a
+decision.
+
 Every reason code maps to exactly one outcome, and a decision pairing a
 reason with the wrong outcome cannot be constructed. Failure always fails
 closed: an unregistered, prohibited, unclassified, or unresolvable
@@ -94,9 +102,15 @@ class AuthorizationOutcome(StrEnum):
 
 
 class AuthorizationReason(StrEnum):
-    """Why an outcome was reached. Exactly one outcome per reason."""
+    """Why an outcome was reached. Exactly one outcome per reason.
 
-    OPERATION_INVALID = "OPERATION_INVALID"
+    There is deliberately no reason code for a malformed identifier. A
+    malformed identifier is not a registered or unregistered operation but
+    an unusable input, so it is rejected before a decision exists rather
+    than being reported as a decision about an operation that was never
+    valid. Consequently every reason here is reachable.
+    """
+
     OPERATION_UNSUPPORTED = "OPERATION_UNSUPPORTED"
     OPERATION_PROHIBITED = "OPERATION_PROHIBITED"
     RISK_UNCLASSIFIED = "RISK_UNCLASSIFIED"
@@ -110,7 +124,6 @@ class AuthorizationReason(StrEnum):
 
 REASON_OUTCOMES: Mapping[AuthorizationReason, AuthorizationOutcome] = MappingProxyType(
     {
-        AuthorizationReason.OPERATION_INVALID: AuthorizationOutcome.DENY,
         AuthorizationReason.OPERATION_UNSUPPORTED: AuthorizationOutcome.DENY,
         AuthorizationReason.OPERATION_PROHIBITED: AuthorizationOutcome.DENY,
         AuthorizationReason.RISK_UNCLASSIFIED: AuthorizationOutcome.DENY,
@@ -135,6 +148,18 @@ its reason is unrepresentable rather than merely discouraged.
 
 def _is_printable_text(value: str) -> bool:
     return value.isprintable()
+
+
+def _validate_operation_identifier(value: str) -> str:
+    """Enforce the exact identifier contract for a machine operation name.
+
+    The value is returned unchanged. It is never trimmed, lowercased, or
+    otherwise canonicalized: an identifier is either exactly one of the
+    names the deterministic registry can resolve, or it is malformed.
+    """
+    if not isinstance(value, str) or not _IDENTIFIER_PATTERN.fullmatch(value):
+        raise ValueError("invalid operation identifier")
+    return value
 
 
 def _normalize_optional_text(value: str | None) -> str | None:
@@ -186,10 +211,11 @@ def _validate_parameters(value: dict[str, str]) -> dict[str, str]:
 class ProposedOperation(BaseModel):
     """One proposed assistant operation and its material parameters.
 
-    ``target`` and ``scope`` identify what would be acted upon; when a
-    rule requires a target, an absent or blank target cannot be confirmed
-    into existence and resolves to ``CLARIFY``. Values are stripped and
-    blank becomes ``None``.
+    ``operation_id`` is an exact machine identifier and is never
+    normalized. ``target`` and ``scope`` identify what would be acted
+    upon; when a rule requires a target, an absent or blank target cannot
+    be confirmed into existence and resolves to ``CLARIFY``. Those user
+    values are stripped and blank becomes ``None``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -198,6 +224,11 @@ class ProposedOperation(BaseModel):
     target: str | None = Field(default=None, max_length=MAX_TARGET_LENGTH)
     scope: str | None = Field(default=None, max_length=MAX_SCOPE_LENGTH)
     parameters: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("operation_id")
+    @classmethod
+    def check_operation_id(cls, value: str) -> str:
+        return _validate_operation_identifier(value)
 
     @field_validator("target", "scope")
     @classmethod
@@ -219,6 +250,10 @@ class AuthorizedScope(BaseModel):
     has obtained authorization for precisely these material values. The
     evaluator never mints, extends, or infers one, and it has no way to
     tell whether such authorization genuinely exists.
+
+    ``operation_id`` carries the same exact identifier contract as
+    ``ProposedOperation``, so a malformed identifier cannot be used to
+    make an unusable operation look authorized by comparison.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -227,6 +262,11 @@ class AuthorizedScope(BaseModel):
     target: str | None = Field(default=None, max_length=MAX_TARGET_LENGTH)
     scope: str | None = Field(default=None, max_length=MAX_SCOPE_LENGTH)
     parameters: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("operation_id")
+    @classmethod
+    def check_operation_id(cls, value: str) -> str:
+        return _validate_operation_identifier(value)
 
     @field_validator("target", "scope")
     @classmethod
@@ -267,9 +307,14 @@ def _material_key(
     scope: str | None,
     parameters: dict[str, str],
 ) -> tuple[str, str | None, str | None, tuple[tuple[str, str], ...]]:
-    """A comparable, order-insensitive identity for material values."""
+    """A comparable, order-insensitive identity for material values.
+
+    Operation identifiers are compared exactly. Only user-facing targets,
+    scopes, and parameter values are normalized, and only because their
+    normalization is part of the contract that accepted them.
+    """
     return (
-        operation_id.strip(),
+        operation_id,
         target,
         scope,
         tuple(sorted((str(k), str(v)) for k, v in parameters.items())),
@@ -297,9 +342,7 @@ class OperationRule(BaseModel):
     @field_validator("operation_id")
     @classmethod
     def check_operation_id(cls, value: str) -> str:
-        if not _IDENTIFIER_PATTERN.fullmatch(value):
-            raise ValueError("invalid operation identifier")
-        return value
+        return _validate_operation_identifier(value)
 
     @field_validator("description")
     @classmethod
@@ -361,15 +404,22 @@ class AuthorizationDecision(BaseModel):
 
     The decision carries no target, parameter, or message content, and it
     records no execution. ``outcome`` is always the outcome its ``reason``
-    implies, so a contradictory decision cannot be built.
+    implies, so a contradictory decision cannot be built. ``operation_id``
+    carries the same exact identifier contract as the proposal it decides,
+    so a decision can never name a malformed identifier.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     policy_version: Literal["1"] = AUTHORIZATION_CONTRACT_VERSION
-    operation_id: str
+    operation_id: str = Field(min_length=1, max_length=MAX_OPERATION_ID_LENGTH)
     outcome: AuthorizationOutcome
     reason: AuthorizationReason
+
+    @field_validator("operation_id")
+    @classmethod
+    def check_operation_id(cls, value: str) -> str:
+        return _validate_operation_identifier(value)
 
     @model_validator(mode="after")
     def check_pairing(self) -> AuthorizationDecision:

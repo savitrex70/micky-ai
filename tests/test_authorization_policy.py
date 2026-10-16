@@ -3,7 +3,9 @@
 These tests assert safety behaviour, not the existence of a class: which
 outcome a proposal receives, that no outcome other than ``ALLOW`` permits
 execution, that one action's authorization never extends to a materially
-different one, and that every failure mode fails closed.
+different one, that a machine operation identifier is matched exactly
+rather than normalized into something valid, and that every failure mode
+fails closed.
 """
 
 import pytest
@@ -248,15 +250,163 @@ def test_confirmation_of_an_underspecified_operation_is_not_authorization() -> N
     assert decision.permits_execution is False
 
 
-def test_unresolvable_operation_identifier_is_denied() -> None:
+# --- 4b. machine operation identifiers are exact, never normalized --------
+
+MALFORMED_OPERATION_IDENTIFIERS = (
+    " help",
+    "help ",
+    "  help  ",
+    "\thelp",
+    "help\t",
+    "help\n",
+    "help\r",
+    "help\r\n",
+    "\r\nhelp\n",
+    "help\ncap",
+    "Help",
+    "HELP",
+    "hElp",
+    "hel p",
+    "help cap",
+    "help\tcap",
+    "1help",
+    "_help",
+    "-help",
+    "help!",
+    "help.",
+    "help/cap",
+    "help\\cap",
+    "help:caf\u00e9",
+    "help\u00a0",
+)
+
+BLANK_OPERATION_IDENTIFIERS = ("", " ", "   ", "\t", "\n", "\r\n")
+
+
+def test_malformed_operation_identifier_is_not_an_operation() -> None:
+    """A malformed identifier cannot be represented at all, anywhere."""
+    for identifier in MALFORMED_OPERATION_IDENTIFIERS:
+        with pytest.raises(ValidationError):
+            ProposedOperation(operation_id=identifier)
+        with pytest.raises(ValidationError):
+            AuthorizedScope(operation_id=identifier)
+        with pytest.raises(ValidationError):
+            _rule(identifier)
+        with pytest.raises(ValidationError):
+            AuthorizationDecision(
+                operation_id=identifier,
+                outcome=AuthorizationOutcome.ALLOW,
+                reason=AuthorizationReason.ALLOWED_LOW_RISK,
+            )
+
+
+def test_blank_operation_identifier_is_not_an_operation() -> None:
+    for identifier in BLANK_OPERATION_IDENTIFIERS:
+        with pytest.raises(ValidationError):
+            ProposedOperation(operation_id=identifier)
+        with pytest.raises(ValidationError):
+            AuthorizedScope(operation_id=identifier)
+
+
+def test_no_malformed_identifier_can_obtain_any_decision() -> None:
+    """Fails closed as unusable input: not allowed, not even denied."""
+    policy = _demo_policy()
+
+    for identifier in (*MALFORMED_OPERATION_IDENTIFIERS, *BLANK_OPERATION_IDENTIFIERS):
+        with pytest.raises(AuthorizationPolicyError) as excinfo:
+            evaluate_authorization({"operation_id": identifier}, policy=policy)
+        assert excinfo.value.code is AuthorizationErrorCode.INVALID_OPERATION
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__suppress_context__ is True
+
+
+def test_malformed_variant_of_a_registered_operation_cannot_be_authorized() -> None:
+    """A scope that looks like it matches cannot make `help\n` executable."""
+    policy = _demo_policy()
+    scope = AuthorizedScope(operation_id=HELP_OPERATION_ID)
+
+    for identifier in ("help\n", "help\r", "help\r\n", " help", "Help"):
+        with pytest.raises(AuthorizationPolicyError) as excinfo:
+            evaluate_authorization(
+                {"operation_id": identifier}, policy=policy, authorized=scope
+            )
+        assert excinfo.value.code is AuthorizationErrorCode.INVALID_OPERATION
+        assert excinfo.value.code is not AuthorizationErrorCode.INVALID_AUTHORIZATION
+
+
+def test_identifier_validation_cannot_be_bypassed_by_a_mutated_instance() -> None:
+    """`model_copy` skips validation, so the evaluator re-checks on entry."""
+    policy = build_default_policy()
+
+    forged_operation = ProposedOperation(operation_id=HELP_OPERATION_ID).model_copy(
+        update={"operation_id": "help\n"}
+    )
+    assert forged_operation.operation_id == "help\n"
+
+    with pytest.raises(AuthorizationPolicyError) as excinfo:
+        evaluate_authorization(forged_operation, policy=policy)
+    assert excinfo.value.code is AuthorizationErrorCode.INVALID_OPERATION
+
+    forged_scope = AuthorizedScope(operation_id=HELP_OPERATION_ID).model_copy(
+        update={"operation_id": "help\n"}
+    )
+    assert forged_scope.operation_id == "help\n"
+    # Exact comparison: a padded or newline-suffixed identifier is not `help`.
+    assert (
+        forged_scope.covers(ProposedOperation(operation_id=HELP_OPERATION_ID)) is False
+    )
+    with pytest.raises(AuthorizationPolicyError) as excinfo:
+        evaluate_authorization(
+            ProposedOperation(operation_id=HELP_OPERATION_ID),
+            policy=policy,
+            authorized=forged_scope,
+        )
+    assert excinfo.value.code is AuthorizationErrorCode.INVALID_AUTHORIZATION
+
+
+def test_malformed_identifier_failure_does_not_echo_the_input() -> None:
+    marker = "help\nPRIVATE_MARKER_4C1D"
+
+    with pytest.raises(AuthorizationPolicyError) as excinfo:
+        evaluate_authorization({"operation_id": marker}, policy=build_default_policy())
+
+    message = str(excinfo.value)
+    assert excinfo.value.code is AuthorizationErrorCode.INVALID_OPERATION
+    assert marker not in message
+    assert "PRIVATE_MARKER_4C1D" not in message
+    assert "help" not in message
+
+
+def test_valid_identifiers_still_behave_as_before() -> None:
+    policy = build_default_policy()
+
     decision = evaluate_authorization(
-        ProposedOperation(operation_id="   "),
-        policy=_demo_policy(),
+        ProposedOperation(operation_id=HELP_OPERATION_ID), policy=policy
+    )
+    assert decision.outcome is AuthorizationOutcome.ALLOW
+    assert decision.operation_id == HELP_OPERATION_ID
+
+    for identifier in ("a", "h1", "help-1", "help_1", "help-cap"):
+        assert ProposedOperation(operation_id=identifier).operation_id == identifier
+        assert AuthorizedScope(operation_id=identifier).operation_id == identifier
+
+
+def test_lookup_uses_exact_equality_for_well_formed_identifiers() -> None:
+    policy = _policy(
+        _rule(HELP_OPERATION_ID), _rule("help-2", risk=RiskLevel.CONSEQUENTIAL)
     )
 
-    assert decision.outcome is AuthorizationOutcome.DENY
-    assert decision.reason is AuthorizationReason.OPERATION_INVALID
-    assert decision.permits_execution is False
+    exact = evaluate_authorization(
+        ProposedOperation(operation_id=HELP_OPERATION_ID), policy=policy
+    )
+    assert exact.reason is AuthorizationReason.ALLOWED_LOW_RISK
+    assert exact.operation_id == HELP_OPERATION_ID
+
+    similar = evaluate_authorization(
+        ProposedOperation(operation_id="help-2"), policy=policy
+    )
+    assert similar.reason is AuthorizationReason.AUTHORIZATION_REQUIRED
+    assert similar.operation_id == "help-2"
 
 
 # --- 5. unclassified or missing risk information never grants permission ---
@@ -344,13 +494,17 @@ def test_prohibition_outranks_missing_specification() -> None:
     assert decision.reason is AuthorizationReason.OPERATION_PROHIBITED
 
 
-def test_operation_identifier_lookup_is_case_sensitive() -> None:
-    decision = evaluate_authorization(
-        ProposedOperation(operation_id=HELP_OPERATION_ID.upper()),
-        policy=build_default_policy(),
-    )
-    assert decision.outcome is AuthorizationOutcome.DENY
-    assert decision.reason is AuthorizationReason.OPERATION_UNSUPPORTED
+def test_operation_identifier_is_not_case_folded_into_a_match() -> None:
+    """Uppercase is malformed, not an alias for the lowercase operation."""
+    with pytest.raises(ValidationError):
+        ProposedOperation(operation_id=HELP_OPERATION_ID.upper())
+
+    with pytest.raises(AuthorizationPolicyError) as excinfo:
+        evaluate_authorization(
+            {"operation_id": HELP_OPERATION_ID.upper()},
+            policy=build_default_policy(),
+        )
+    assert excinfo.value.code is AuthorizationErrorCode.INVALID_OPERATION
 
 
 # --- 7. one-action authorization scope ------------------------------------
@@ -533,7 +687,23 @@ def test_policy_rejects_duplicate_operation_identifiers() -> None:
 
 
 def test_policy_rejects_invalid_operation_identifier() -> None:
-    for identifier in ("Help", "help cap", "1help", "_help", "help!"):
+    invalid = (
+        "Help",
+        "help cap",
+        "1help",
+        "_help",
+        "-help",
+        "help!",
+        "help\n",
+        "help\r",
+        "help\r\n",
+        " help",
+        "help ",
+        "\thelp",
+        "",
+        "   ",
+    )
+    for identifier in invalid:
         with pytest.raises(ValidationError):
             _rule(identifier)
 
@@ -650,7 +820,6 @@ def test_no_outcome_other_than_allow_permits_execution() -> None:
         ProposedOperation(operation_id=PROHIBITED_OPERATION_ID),
         ProposedOperation(operation_id=UNCLASSIFIED_OPERATION_ID),
         ProposedOperation(operation_id="demo-not-registered"),
-        ProposedOperation(operation_id="   "),
     ]
 
     for operation in proposals:

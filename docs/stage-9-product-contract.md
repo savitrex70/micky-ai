@@ -320,11 +320,13 @@ section E.1 applies to every entry below.
    - Implemented: `src/rop/authorization/policy.py` evaluates one proposed
      operation under a versioned rule table and returns `ALLOW`,
      `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` with a stable reason
-     code. It evaluates only: it does not execute, persist, record, or
-     log anything, it does not call a model or the network, and it does
-     not obtain, verify, or invent a user's confirmation. No assistant
-     code path is gated by it, because the only registered capability
-     changes no state.
+     code. Operation identifiers are matched exactly and are never
+     normalized, so a malformed identifier is refused as unusable input
+     instead of resolving to a registered operation. It evaluates only:
+     it does not execute, persist, record, or log anything, it does not
+     call a model or the network, and it does not obtain, verify, or
+     invent a user's confirmation. No assistant code path is gated by
+     it, because the only registered capability changes no state.
    - Acceptance (after the mechanism is wired to an execution path):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
@@ -434,7 +436,8 @@ already exists end to end.
   was established.
 - **Fail safely:** invalid or missing policy information, unclassified
   consequential actions, and uncertainty that cannot be resolved must
-  never default to permission.
+  never default to permission. A malformed machine identifier is not
+  normalized into a registered operation; it is refused.
 
 Pending, and not resolved by this decision:
 

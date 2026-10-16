@@ -147,9 +147,11 @@ step, not a finished assistant):
 - A deterministic, fail-closed authorization policy is implemented as an
   isolated evaluator (`src/rop/authorization/policy.py`): it decides
   `ALLOW`, `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for a proposed
-  operation. It evaluates only. It executes nothing, records nothing, and
-  obtains no confirmation, and no assistant code path is gated by it yet.
-  See [the authorization policy](docs/task-220-authorization-policy.md).
+  operation, whose machine identifier is matched exactly and never
+  normalized, so a malformed identifier is refused rather than resolved.
+  It evaluates only. It executes nothing, records nothing, and obtains no
+  confirmation, and no assistant code path is gated by it yet. See
+  [the authorization policy](docs/task-220-authorization-policy.md).
 - The interface does not access the database, model providers, or the
   network beyond the local server.
 
