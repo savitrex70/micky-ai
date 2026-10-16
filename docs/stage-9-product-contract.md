@@ -164,7 +164,8 @@ Implemented foundation:
     `docs/task-221-authorization-dispatch.md`.
   - Absent: no confirmation interaction, no recording of a decision or a
     confirmation, and no authorization check outside that one dispatch
-    path.
+    path. The proposed interaction is specified, but not built, in
+    `docs/task-222-confirmation-flow-design.md`.
 
 Planned capabilities (Stage 9 target):
 
@@ -578,7 +579,10 @@ commitments:
   and no confirmation can be obtained, recorded, or asserted through it.
   The deterministic evaluator and the dispatch boundary are independently
   tested; the end-to-end permission flow does not exist and is not
-  claimed.
+  claimed. A reviewable design for the interaction exists in
+  `docs/task-222-confirmation-flow-design.md`; it is a proposal that
+  decides nothing on its own, and the recording and retention choice
+  remains an owner decision.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
 - No owner decision in sections H.1, H.3, or H.4 is resolved by this one,

@@ -167,6 +167,9 @@ step, not a finished assistant):
   state-changing capability is registered. See
   [the authorization policy](docs/task-220-authorization-policy.md) and
   [the dispatch boundary](docs/task-221-authorization-dispatch.md).
+  The confirmation interaction that would change that is specified, but
+  not implemented, in
+  [the confirmation flow design](docs/task-222-confirmation-flow-design.md).
 - The interface does not access the database, model providers, or the
   network beyond the local server.
 
