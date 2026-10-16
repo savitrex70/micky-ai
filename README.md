@@ -1,14 +1,14 @@
-# Reasoning Operating Platform
+﻿# Reasoning Operating Platform
 
 The Reasoning Operating Platform (ROP) is being built incrementally. Its deterministic reasoning infrastructure includes rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 implementation and integration coverage through Task 200 has been completed. The Task 200 checkpoint itself was not fully gate-green: its targeted run had two Task 200 integration-test failures and a Black failure. Those gate failures were corrected in the Stage 7 post-validation fixes merged through PR #15, which are now part of main; the project owner reported that the final local pytest, Ruff, and Black gates passed on that remediated Stage 7 tree. ROP has no concrete third-party model integration and performs no network inference.
 
 ## Stage 8: native intelligence
 
-The Stage 8 architecture (Task 201) defines a project-owned deterministic reasoning engine and, only if experiments justify it, a model with randomly initialized weights trained by ROP on authorized data. Tasks 202–215 are implemented on main with individually reviewed commits: the deterministic reasoning contracts and composition semantics, baseline evaluation harness, synthetic-only dataset governance, tokenizer/vocabulary, native model, training loop, artifact manifests/checkpoints, local CPU inference runtime, advisory adapter, benchmark, and acceptance gate. These components are demonstrated only through synthetic fixtures and synthetic-scope evidence: no authorized real dataset exists, the model-specific acceptance thresholds remain pending, and Stage 8 acceptance is therefore not complete. The plan excludes commercial models, third-party pretrained models or checkpoints, Ollama and other external model-serving products, hosted inference APIs, and remote inference. General-purpose numerical/training libraries may be considered as engineering tools, but their pretrained models and automatic download paths are not permitted.
+The Stage 8 architecture (Task 201) defines a project-owned deterministic reasoning engine and, only if experiments justify it, a model with randomly initialized weights trained by ROP on authorized data. Tasks 202â€“215 are implemented on main with individually reviewed commits: the deterministic reasoning contracts and composition semantics, baseline evaluation harness, synthetic-only dataset governance, tokenizer/vocabulary, native model, training loop, artifact manifests/checkpoints, local CPU inference runtime, advisory adapter, benchmark, and acceptance gate. These components are demonstrated only through synthetic fixtures and synthetic-scope evidence: no authorized real dataset exists, the model-specific acceptance thresholds remain pending, and Stage 8 acceptance is therefore not complete. The plan excludes commercial models, third-party pretrained models or checkpoints, Ollama and other external model-serving products, hosted inference APIs, and remote inference. General-purpose numerical/training libraries may be considered as engineering tools, but their pretrained models and automatic download paths are not permitted.
 
 The deterministic system must remain useful when no trained model is available. Model suggestions must pass strict schema, identity, provenance, privacy, uncertainty, and evidence-reference checks and must not override supported evidence, readable contradictions, or Stage 7 audit contracts. Passing software tests does not validate a model for clinical use or authorize autonomous clinical decisions.
 
-See the [Stage 8 native-intelligence architecture](docs/stage-8-native-intelligence-architecture.md) for component boundaries, data governance, offline safeguards, acceptance criteria, and the provisional Task 201–215 roadmap.
+See the [Stage 8 native-intelligence architecture](docs/stage-8-native-intelligence-architecture.md) for component boundaries, data governance, offline safeguards, acceptance criteria, and the provisional Task 201â€“215 roadmap.
 
 The deterministic baseline is evaluated by a model-free harness over a synthetic case set (contract/behavior tests only, no real-world accuracy claim). See the [baseline evaluation protocol](docs/stage-8-baseline-evaluation-protocol.md) for metrics, predeclared thresholds, and held-out policy:
 
@@ -43,23 +43,23 @@ An optional, explicitly invoked CPU runtime can execute the Task 209 model from 
 
 ```text
 .
-├── alembic/              # Migration environment and schema revisions
-├── src/rop/
-│   ├── config.py         # Environment-backed application settings
-│   ├── database.py       # SQLAlchemy engine, sessions, and ORM base
-│   ├── logging_config.py # Central logging setup
-│   ├── models/           # SQLAlchemy persistence models
-│   ├── repositories/     # Database access operations
-│   ├── recognition/      # Rule-based medical entity recognition
-│   ├── missing_information/ # Configurable missing-information detection
-│   ├── schemas/          # Pydantic input/output schemas
-│   ├── services/         # Thin CRUD application services
-│   └── main.py           # FastAPI application and system endpoint
-├── tests/                # Automated tests
-├── .env.example          # Safe configuration template
-├── Dockerfile
-├── docker-compose.yml
-└── pyproject.toml        # Dependencies and tool configuration
+â”œâ”€â”€ alembic/              # Migration environment and schema revisions
+â”œâ”€â”€ src/rop/
+â”‚   â”œâ”€â”€ config.py         # Environment-backed application settings
+â”‚   â”œâ”€â”€ database.py       # SQLAlchemy engine, sessions, and ORM base
+â”‚   â”œâ”€â”€ logging_config.py # Central logging setup
+â”‚   â”œâ”€â”€ models/           # SQLAlchemy persistence models
+â”‚   â”œâ”€â”€ repositories/     # Database access operations
+â”‚   â”œâ”€â”€ recognition/      # Rule-based medical entity recognition
+â”‚   â”œâ”€â”€ missing_information/ # Configurable missing-information detection
+â”‚   â”œâ”€â”€ schemas/          # Pydantic input/output schemas
+â”‚   â”œâ”€â”€ services/         # Thin CRUD application services
+â”‚   â””â”€â”€ main.py           # FastAPI application and system endpoint
+â”œâ”€â”€ tests/                # Automated tests
+â”œâ”€â”€ .env.example          # Safe configuration template
+â”œâ”€â”€ Dockerfile
+â”œâ”€â”€ docker-compose.yml
+â””â”€â”€ pyproject.toml        # Dependencies and tool configuration
 ```
 
 ## Development setup
@@ -84,7 +84,7 @@ The API is available at `http://localhost:8000`. The health check is `GET /healt
 
 ### Stage 7 release-readiness evidence chain
 
-Tasks 174–188 form an externally composed, read-only evidence chain. Callers
+Tasks 174â€“188 form an externally composed, read-only evidence chain. Callers
 invoke each service in order and pass its validated result to the next
 boundary; an individual service does not orchestrate predecessor or successor
 services.
@@ -92,19 +92,19 @@ services.
 | Task | Boundary | Responsibility |
 | --- | --- | --- |
 | 174 | `release_readiness_projection` | Projects readiness from the Task 171 attestation, Task 172 audit, and Task 173 consistency result. |
-| 175 | `release_readiness_audit` | Independently derives and audits the Task 174 projection from Tasks 171–173. |
+| 175 | `release_readiness_audit` | Independently derives and audits the Task 174 projection from Tasks 171â€“173. |
 | 176 | `release_readiness_audit_consistency` | Checks the binding between the Task 174 projection and Task 175 audit. |
-| 177 | `release_readiness_evidence_bundle` | Preserves the Task 174–176 records in one validated evidence bundle. |
-| 178 | `release_readiness_evidence_bundle_audit` | Independently audits the Task 177 bundle against Tasks 174–176. |
+| 177 | `release_readiness_evidence_bundle` | Preserves the Task 174â€“176 records in one validated evidence bundle. |
+| 178 | `release_readiness_evidence_bundle_audit` | Independently audits the Task 177 bundle against Tasks 174â€“176. |
 | 179 | `release_readiness_evidence_bundle_audit_consistency` | Checks the binding between the Task 177 bundle and Task 178 audit. |
-| 180 | `release_readiness_final_attestation` | Attests to the Task 177–179 evidence; `CERTIFIED` is distinct from a readiness projection. |
-| 181 | `release_readiness_final_attestation_audit` | Independently audits the Task 180 attestation against Tasks 177–179. |
+| 180 | `release_readiness_final_attestation` | Attests to the Task 177â€“179 evidence; `CERTIFIED` is distinct from a readiness projection. |
+| 181 | `release_readiness_final_attestation_audit` | Independently audits the Task 180 attestation against Tasks 177â€“179. |
 | 182 | `release_readiness_final_attestation_consistency` | Checks the binding between the Task 180 attestation and Task 181 audit. |
-| 183 | `final_release_gate_projection` | Projects a final gate status from the Task 180–182 records. |
-| 184 | `final_release_gate_audit` | Independently audits the Task 183 projection against Tasks 180–182. |
+| 183 | `final_release_gate_projection` | Projects a final gate status from the Task 180â€“182 records. |
+| 184 | `final_release_gate_audit` | Independently audits the Task 183 projection against Tasks 180â€“182. |
 | 185 | `final_release_gate_audit_consistency` | Checks the binding between the Task 183 projection and Task 184 audit. |
-| 186 | `release_handoff_evidence_package` | Packages the Task 183–185 gate evidence as a handoff snapshot. |
-| 187 | `release_handoff_evidence_package_audit` | Independently derives the expected package state from Tasks 183–185 and audits Task 186. |
+| 186 | `release_handoff_evidence_package` | Packages the Task 183â€“185 gate evidence as a handoff snapshot. |
+| 187 | `release_handoff_evidence_package_audit` | Independently derives the expected package state from Tasks 183â€“185 and audits Task 186. |
 | 188 | `release_handoff_evidence_package_audit_consistency` | Checks the binding between the Task 186 package and Task 187 audit. |
 
 The boundary names above are the shared filename stems under both
@@ -137,22 +137,22 @@ or transmit a handoff.
 #### Integration coverage and boundaries
 
 Task 189's `tests/test_reasoning_run_stage_7_release_readiness_chain_integration.py`
-composes the real Task 174–188 services. Its Task 171–173 attestation, audit,
+composes the real Task 174â€“188 services. Its Task 171â€“173 attestation, audit,
 and consistency inputs are constructed as validated boundary records; that
 test does not invoke those three upstream services itself.
 
 The Task 191 integration coverage in
 `tests/test_reasoning_run_stage_7_release_handoff_full_chain_integration.py`
-builds upstream evidence using the real Task 154–164 services, then invokes the
-real Task 165–188 services in dependency order. This includes executing the
+builds upstream evidence using the real Task 154â€“164 services, then invokes the
+real Task 165â€“188 services in dependency order. This includes executing the
 real Task 171 attestation, Task 172 audit, and Task 173 consistency services
 from validated upstream results. Stage 6 certification and the provider
 response are the genuine external boundaries replaced with test doubles; no
 real model provider or network inference is used.
 
 Task 200 adds a dedicated whole-path integration test that invokes the
-real Task 153 entry service, then the actual Task 154–164 services, and
-reuses the Task 191 composition helper for the real Task 165–188 chain. It
+real Task 153 entry service, then the actual Task 154â€“164 services, and
+reuses the Task 191 composition helper for the real Task 165â€“188 chain. It
 covers valid, blocked, unavailable, readable-contradiction, and detached-
 identity paths while inspecting the resulting service records. The Stage 6
 certification handoff and the explicit provider-response boundary are the
@@ -160,7 +160,7 @@ only test doubles; the tests do not call a real model provider or perform
 network inference. Test fixtures use the existing in-memory SQLite setup for
 session and domain-record preparation.
 
-This gives integration coverage across the Task 153–188 service boundaries,
+This gives integration coverage across the Task 153â€“188 service boundaries,
 but it is not a claim that every surrounding API lifecycle or external
 dependency is exercised in production conditions. The Stage 6 and provider
 boundaries remain substituted. At the Task 200 checkpoint, the targeted run
@@ -328,6 +328,9 @@ stance, and measurable definition of done for the stage:
 - [Stage 9 product contract](docs/stage-9-product-contract.md)
 
 The contract does **not** imply that the personal-assistant features
-described within it have already been implemented. No browser UI,
-conversational workflow, capability routing, notes/tasks/reminders,
-local retrieval, or user-facing persistence controls currently exist.
+described within it have already been implemented. No dedicated
+end-user personal-assistant interface exists. No conversational
+workflow, capability routing, notes/tasks/reminders, local retrieval,
+or user-facing persistence controls currently exist. The FastAPI-
+generated `/docs` developer interface is not a personal-assistant
+product.
