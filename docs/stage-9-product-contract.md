@@ -45,8 +45,8 @@ API endpoint is not an end-user feature merely because it exists.
 - **Capability:** Persistence layer (SQLAlchemy 2 + Alembic +
   PostgreSQL).
   - Status: `IMPLEMENTED`
-  - Paths: `src/rop/database.py`, `alembic/env.py`,
-    `alembic/versions/20260910_0001..20261002_0016_*`
+  - Paths: `src/rop/database.py`, `alembic/env.py`, and the migration
+    chain under `alembic/versions/` (15 revisions).
   - Establishes: declarative ORM base, session lifecycle, migration
     chain covering sessions, observations, entities, hypotheses,
     evidence, missing information, template matches, reasoning steps,
@@ -107,7 +107,9 @@ API endpoint is not an end-user feature merely because it exists.
     `src/rop/training/`, `src/rop/artifacts/`, `src/rop/inference/`
   - Establishes: the Stage 8 native stack, demonstrated only through
     synthetic fixtures and synthetic-scope tests.
-  - Absent: no authorized real dataset exists; model-specific acceptance
+  - Absent: no authorized real dataset or authorization/provenance
+    record was identified in the repository evidence reviewed; external
+    existence has not been verified. Model-specific acceptance
     thresholds remain `pending`; Stage 8 acceptance is not complete;
     the native model is not wired into API request handling.
 
@@ -140,8 +142,11 @@ API endpoint is not an end-user feature merely because it exists.
     `docs/stage-8-dataset-governance.md`
   - Establishes: the Stage 8 acceptance process is documented, but
     mandatory inputs are missing.
-  - Absent: authorized real dataset, model-specific acceptance
-    thresholds, and sign-off. Stage 8 acceptance is not complete.
+  - Absent: no authorized real dataset or authorization/provenance
+    record was identified in the repository evidence reviewed; external
+    existence has not been verified. Model-specific acceptance
+    thresholds and sign-off are also outstanding. Stage 8 acceptance
+    is not complete.
 
 #### B.1.7 Not established
 
