@@ -1,7 +1,7 @@
-import pytest
+﻿import pytest
 from pydantic import ValidationError
 
-from rop.config import Settings
+from rop.config import Settings, SettingsError, get_settings
 
 VALID_SETTINGS = {
     "app_name": "Reasoning Operating Platform",
@@ -81,3 +81,66 @@ def test_settings_reject_non_postgresql_database_url() -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **values)
+
+
+def test_get_settings_raises_settings_error_for_invalid_config(monkeypatch) -> None:
+    for variable in (
+        "ROP_APP_NAME",
+        "ROP_ENVIRONMENT",
+        "ROP_LOG_LEVEL",
+        "ROP_DATABASE_URL",
+    ):
+        monkeypatch.delenv(variable, raising=False)
+
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(SettingsError):
+            get_settings()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_get_settings_error_does_not_leak_secret_sentinel(monkeypatch) -> None:
+    sentinel = "SENTINEL_PASSWORD_VALUE_4A7B"
+    monkeypatch.setenv("ROP_APP_NAME", "Test")
+    monkeypatch.setenv("ROP_ENVIRONMENT", "testing")
+    monkeypatch.setenv("ROP_LOG_LEVEL", "INFO")
+    monkeypatch.setenv(
+        "ROP_DATABASE_URL",
+        f"mysql+pymysql://user:{sentinel}@localhost:3306/rop",
+    )
+
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(SettingsError) as excinfo:
+            get_settings()
+    finally:
+        get_settings.cache_clear()
+
+    message = str(excinfo.value)
+    assert sentinel not in message
+    assert "database_url" in message
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
+
+
+def test_get_settings_error_names_only_invalid_fields(monkeypatch) -> None:
+    sentinel = "ANOTHER_SENTINEL_5C2D"
+    monkeypatch.setenv("ROP_APP_NAME", "Test")
+    monkeypatch.setenv("ROP_ENVIRONMENT", "not-a-real-environment")
+    monkeypatch.setenv("ROP_LOG_LEVEL", "INFO")
+    monkeypatch.setenv(
+        "ROP_DATABASE_URL",
+        f"postgresql+psycopg://user:{sentinel}@localhost:5432/rop",
+    )
+
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(SettingsError) as excinfo:
+            get_settings()
+    finally:
+        get_settings.cache_clear()
+
+    message = str(excinfo.value)
+    assert sentinel not in message
+    assert "environment" in message

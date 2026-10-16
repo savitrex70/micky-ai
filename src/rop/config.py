@@ -1,11 +1,20 @@
-from functools import lru_cache
+﻿from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "testing", "production"]
 LogLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+
+
+class SettingsError(RuntimeError):
+    """Raised when required application configuration is missing or invalid.
+
+    The message names the failing fields and never includes their values, so
+    secrets from the environment or the ``.env`` file cannot leak through
+    startup errors or logs.
+    """
 
 
 class Settings(BaseSettings):
@@ -29,6 +38,35 @@ class Settings(BaseSettings):
     )
 
 
+def _format_settings_error(error: ValidationError) -> SettingsError:
+    """Translate a raw ``ValidationError`` into a value-free ``SettingsError``."""
+    fields: list[str] = []
+    for issue in error.errors():
+        location = issue.get("loc") or ()
+        name = ".".join(str(part) for part in location) if location else "unknown"
+        if name not in fields:
+            fields.append(name)
+    if not fields:
+        return SettingsError(
+            "Invalid application configuration. "
+            "Check the ROP_* environment variables or the .env file."
+        )
+    joined = ", ".join(fields)
+    return SettingsError(
+        f"Invalid application configuration for: {joined}. "
+        "Check the corresponding ROP_* environment variables or the .env file."
+    )
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """Return the cached application settings.
+
+    Raises:
+        SettingsError: If required configuration is missing or invalid. The
+            raised error names the failing fields but never includes values.
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        raise _format_settings_error(exc) from None

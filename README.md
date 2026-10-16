@@ -68,20 +68,38 @@ Prerequisites: Python 3.12, Git, Docker Desktop, and Docker Compose.
 
 ### Local Python workflow
 
+Runs the FastAPI app on the host and PostgreSQL in the Compose database
+container. Requires Python 3.12, Git, and Docker Desktop with Docker Compose.
+
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
-pytest
-ruff check .
-black --check .
-uvicorn rop.main:app --reload
+
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+
+docker compose up -d db
+alembic upgrade head
+
+uvicorn rop.main:app --host 127.0.0.1 --port 8000
 ```
 
-The API is available at `http://localhost:8000`. The health check is `GET /health`, and the OpenAPI UI is at `/docs`.
+Alembic and the application read the same `ROP_DATABASE_URL` from `.env`.
+The host-side URL must use `localhost:5432`; the Compose-only hostname `db`
+is not reachable from the host shell.
 
+Verify the running service from a second terminal:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+Start-Process  http://127.0.0.1:8000/docs
+```
+
+Stop the API with `Ctrl+C`. Stop and restart the database with
+`docker compose stop db` and `docker compose up -d db`. The `.env` file and
+the named PostgreSQL volume preserve configuration and data between runs.
 ### Stage 7 release-readiness evidence chain
 
 Tasks 174â€“188 form an externally composed, read-only evidence chain. Callers
@@ -232,13 +250,81 @@ Unsupported observation types are ignored. Recognition performs no diagnosis, hy
 
 ### Docker workflow
 
+Builds and runs PostgreSQL and the API as local containers.
+
 ```powershell
-Copy-Item .env.example .env
-docker compose up --build
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose up --build -d db
+docker compose run --rm api alembic upgrade head
+docker compose up --build -d api
 ```
 
-The API runs on `127.0.0.1:8000` and PostgreSQL runs on `127.0.0.1:5432`; both ports are intentionally limited to the local machine for development. The API waits for PostgreSQL's health check before starting. The named volume preserves PostgreSQL data between container restarts.
+`docker compose up --build` does not apply database migrations
+automatically. Run `alembic upgrade head` explicitly as shown above before
+starting the API. Alembic is the sole owner of schema changes; the
+application never calls `create_all` on startup.
 
+Verify:
+
+```powershell
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+docker compose logs --tail=100 api
+docker compose logs --tail=100 db
+```
+
+Both services bind to `127.0.0.1` only. The `postgres_data` named volume
+preserves database state across container restarts. Stop and restart:
+
+```powershell
+docker compose stop
+docker compose start
+```
+
+### Troubleshooting local startup
+
+Process liveness, dependency readiness, and schema migration state are three
+separate conditions. Check them in this order:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+alembic current
+```
+
+**Invalid or missing `.env` values.** Startup fails fast with an error that
+names the invalid fields but never prints their values. Compare `.env`
+against `.env.example` and correct the named `ROP_*` variables. Do not paste
+`.env` contents into logs, issues, or chat.
+
+**PostgreSQL not running or not ready.** `/health/ready` returns HTTP 503.
+Start the database with `docker compose up -d db` and confirm with
+`docker compose ps` that the `db` container reports `healthy`.
+
+**Database connection failures.** Confirm that `ROP_DATABASE_URL` in `.env`
+uses the host-accessible address (`localhost:5432`) when the API runs on the
+host, and that only Compose uses the `db` service hostname. Do not print or
+share the full URL or credentials.
+
+**Missing or unapplied migrations.** `alembic current` reports the applied
+revision. Apply pending revisions with `alembic upgrade head` on the host or
+`docker compose run --rm api alembic upgrade head` under Compose.
+
+**API port conflicts.** If `127.0.0.1:8000` is already in use, stop the
+process bound to it or start `uvicorn` with `--port 8001`. For Compose,
+change the host-side port mapping in `docker-compose.yml`.
+
+**Container health failures.** Inspect state with
+`docker inspect --format "{{.State.Health.Status}}" <container>`. The API
+container reports unhealthy when its readiness check returns 503, meaning
+PostgreSQL is unreachable from the API container. `docker compose logs
+--tail=100 api` and `docker compose logs --tail=100 db` show the reason.
+
+**Safe restart and recovery.** `docker compose restart api` restarts only
+the API. `docker compose down` followed by `docker compose up --build`
+recreates containers without deleting `postgres_data`. Do not run
+`docker compose down -v` unless you intend to delete the database volume.
 ## Configuration
 
 Runtime settings are defined in `src/rop/config.py` and loaded from `.env` or the process environment. Application settings use the `ROP_` prefix; Compose-specific PostgreSQL settings use the standard `POSTGRES_` variables. Compose overrides only the API container's database URL so local Python uses `localhost` while containers use the `db` service name. `.env` is ignored by Git so credentials remain local.

@@ -1,8 +1,9 @@
-from collections.abc import AsyncIterator
+﻿from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from rop.api.health import router as health_router
 from rop.api.sessions import router as sessions_router
 from rop.config import get_settings
 from rop.logging_config import configure_logging
@@ -21,6 +22,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(health_router)
 app.include_router(sessions_router)
 
 
