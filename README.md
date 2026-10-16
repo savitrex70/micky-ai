@@ -79,15 +79,19 @@ python -m pip install -e ".[dev]"
 
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
-docker compose up -d db
+# Start PostgreSQL and wait until its health check reports healthy.
+docker compose up -d --wait db
+
 alembic upgrade head
 
 uvicorn rop.main:app --host 127.0.0.1 --port 8000
 ```
 
-Alembic and the application read the same `ROP_DATABASE_URL` from `.env`.
-The host-side URL must use `localhost:5432`; the Compose-only hostname `db`
-is not reachable from the host shell.
+`docker compose up -d --wait db` returns only after the `db` container
+reports `healthy`; run `alembic upgrade head` after it returns. Alembic and
+the application read the same `ROP_DATABASE_URL` from `.env`. The host-side
+URL must use `localhost:5432`; the Compose-only hostname `db` is not
+reachable from the host shell.
 
 Verify the running service from a second terminal:
 
@@ -98,8 +102,9 @@ Start-Process  http://127.0.0.1:8000/docs
 ```
 
 Stop the API with `Ctrl+C`. Stop and restart the database with
-`docker compose stop db` and `docker compose up -d db`. The `.env` file and
-the named PostgreSQL volume preserve configuration and data between runs.
+`docker compose stop db` and `docker compose up -d --wait db`. The `.env`
+file and the named PostgreSQL volume preserve configuration and data
+between runs.
 ### Stage 7 release-readiness evidence chain
 
 Tasks 174â€“188 form an externally composed, read-only evidence chain. Callers
@@ -254,9 +259,16 @@ Builds and runs PostgreSQL and the API as local containers.
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-docker compose up --build -d db
+
+# Build the API image from the repository Dockerfile.
+docker compose build api
+
+# Start PostgreSQL and wait until its health check reports healthy.
+docker compose up -d --wait db
+
+# Apply the schema through the API image, then start the API service.
 docker compose run --rm api alembic upgrade head
-docker compose up --build -d api
+docker compose up -d api
 ```
 
 `docker compose up --build` does not apply database migrations
@@ -281,7 +293,6 @@ preserves database state across container restarts. Stop and restart:
 docker compose stop
 docker compose start
 ```
-
 ### Troubleshooting local startup
 
 Process liveness, dependency readiness, and schema migration state are three
