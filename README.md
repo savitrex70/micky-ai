@@ -126,18 +126,23 @@ Docker workflow below, then open <http://127.0.0.1:8000/> in a browser.
 The `/docs` page is the OpenAPI schema for developers. It is not the
 assistant interface and does not represent a completed personal assistant.
 
-**Current limitations** (this task establishes the UI foundation, not the
-finished assistant):
+**Current capabilities and limitations** (this is a working incremental
+step, not a finished assistant):
 
-- The only implemented API route the page talks to is
-  `POST /api/assistant/requests`. Its response is always the honest
-  `unsupported-capability` envelope; the request is not executed and is
-  not stored.
-- Conversation history is kept in the current browser tab only. Reloading
-  or closing the page clears it. There is no persistence, no conversation
-  or message table, and no user memory.
-- Notes, tasks, reminders, capability routing, permissions, and local
-  retrieval are not implemented in this version.
+- The Help capability is the first implemented user-facing capability.
+  It responds to a small, explicitly registered set of phrases:
+  `help`, `what can you do`, `show capabilities`, `list capabilities`,
+  and `list available capabilities`. Matching is deterministic and exact
+  after normalizing case, surrounding whitespace, and trailing
+  punctuation. Help returns a deterministic description of what the
+  assistant can and cannot do right now.
+- Any other request returns `unsupported-capability`. Unregistered phrases
+  are not guessed into a capability.
+- Requests and conversation history are not persisted. History lives in
+  the current browser tab only; reloading or closing the page clears it.
+  There is no conversation or message table and no user memory.
+- Notes, tasks, reminders, permissions, and local-file retrieval are not
+  implemented in this version.
 - The interface does not access the database, model providers, or the
   network beyond the local server.
 

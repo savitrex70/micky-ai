@@ -26,7 +26,12 @@ class AssistantRequest(BaseModel):
 
 
 class AssistantResponse(BaseModel):
-    """Honest envelope returned until capability routing is implemented."""
+    """Response envelope for the local assistant request endpoint.
 
-    status: Literal["unsupported-capability"]
+    ``success`` means a registered capability produced its predefined
+    deterministic response. ``unsupported-capability`` means no registered
+    capability matched the request and no action was taken.
+    """
+
+    status: Literal["success", "unsupported-capability"]
     message: str

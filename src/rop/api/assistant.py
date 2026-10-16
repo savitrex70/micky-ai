@@ -1,19 +1,23 @@
-﻿"""Honest placeholder endpoint for the local assistant web interface.
+﻿"""Honest capability-routed endpoint for the local assistant interface.
 
-Capability routing has not been implemented. Every well-formed request
-receives an explicit ``unsupported-capability`` envelope. The endpoint does
-not access the database, does not persist anything, and does not echo the
-user's message back in the response.
+Requests are matched against a small deterministic registry of registered
+capabilities. If exactly one capability matches, its predefined response is
+returned. Otherwise the endpoint returns an explicit unsupported-capability
+envelope. The endpoint does not access the database, does not persist
+anything, does not call a model, and never echoes the user's message.
 """
 
 from fastapi import APIRouter
 
+from rop.capabilities.registry import CapabilityRegistry, build_default_registry
 from rop.schemas.assistant import AssistantRequest, AssistantResponse
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
+_REGISTRY: CapabilityRegistry = build_default_registry()
+
 _UNSUPPORTED_MESSAGE = (
-    "No assistant capability is currently connected. "
+    "No matching capability is currently available. "
     "This request was not executed and was not saved."
 )
 
@@ -30,14 +34,20 @@ _UNSUPPORTED_MESSAGE = (
         },
     },
 )
-def submit_request(_: AssistantRequest) -> AssistantResponse:
-    """Return the honest unsupported-capability envelope.
+def submit_request(request: AssistantRequest) -> AssistantResponse:
+    """Match ``request.message`` to a registered capability.
 
-    The parsed request is intentionally ignored: the endpoint never reads
-    ``request.message`` so it cannot echo the user's text into the response,
-    logs, or exception details.
+    The user's message is used only to select a capability and is not echoed
+    into the response. Invalid, ambiguous, or unregistered requests resolve
+    to the explicit unsupported-capability envelope.
     """
+    capability = _REGISTRY.match(request.message)
+    if capability is None:
+        return AssistantResponse(
+            status="unsupported-capability",
+            message=_UNSUPPORTED_MESSAGE,
+        )
     return AssistantResponse(
-        status="unsupported-capability",
-        message=_UNSUPPORTED_MESSAGE,
+        status="success",
+        message=capability.response,
     )

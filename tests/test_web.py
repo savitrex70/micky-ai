@@ -92,3 +92,27 @@ def test_history_region_announces_new_entries_accessibly() -> None:
     assert 'aria-live="polite"' in history_block
     assert 'aria-relevant="additions"' in history_block
     assert 'aria-atomic="false"' in history_block
+
+
+def test_page_javascript_distinguishes_success_and_unsupported() -> None:
+    """The page's JS must branch on both assistant statuses.
+
+    This is a contract test on the served JS text: the browser must not
+    claim a successful execution for an unsupported-capability response,
+    and must not describe a success as unexecuted.
+    """
+    with TestClient(app) as client:
+        js = client.get("/static/app.js")
+
+    assert js.status_code == 200
+    body = js.text
+
+    # Success branch present and truthful.
+    assert '"success"' in body or "'success'" in body
+    assert "Capability responded" in body
+
+    # Non-success branch present and truthful.
+    assert "No capability matched" in body
+
+    # The old blanket wording must be gone.
+    assert "This request was not executed." not in body

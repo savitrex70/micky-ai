@@ -99,7 +99,14 @@
     try {
       const payload = await sendRequest(text);
       addHistory(text, payload.message, payload.status);
-      setStatus("Response received. This request was not executed.", "info");
+      if (payload.status === "success") {
+        setStatus("Capability responded. See the reply below.", "info");
+      } else {
+        setStatus(
+          "No capability matched. The request was not executed.",
+          "info"
+        );
+      }
       input.value = "";
     } catch (err) {
       const message =
