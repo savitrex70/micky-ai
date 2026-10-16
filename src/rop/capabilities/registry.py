@@ -63,7 +63,9 @@ class CapabilityRegistry:
     def register(self, capability: Capability) -> None:
         if not capability.identifier:
             raise RegistryError("capability identifier must be non-empty")
-        if not _IDENTIFIER_PATTERN.match(capability.identifier):
+        # ``fullmatch`` enforces a complete-string match. Using ``$`` alone
+        # would accept a single trailing newline (``"help\n"``).
+        if not _IDENTIFIER_PATTERN.fullmatch(capability.identifier):
             raise RegistryError(
                 f"invalid capability identifier: {capability.identifier!r}; "
                 "expected lowercase ASCII matching ^[a-z][a-z0-9_-]*$"

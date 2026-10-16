@@ -342,3 +342,93 @@ def test_rejected_identifier_does_not_reserve_identifier() -> None:
         )
     )
     assert registry.capabilities()[0].identifier == "upper"
+
+
+# --- complete-string identifier matching ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "help\n",
+        "help\r",
+        "help\r\n",
+        "help\n\n",
+        "help\r\r",
+        "help \n",
+        "\nhelp",
+        "help\t",
+    ],
+)
+def test_identifier_with_trailing_or_leading_whitespace_is_rejected(
+    identifier: str,
+) -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier=identifier,
+                description="x",
+                aliases=("some-alias",),
+                response="x",
+            )
+        )
+
+
+def test_identifier_with_trailing_newline_does_not_reserve_identifier() -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier="help\n",
+                description="bad",
+                aliases=("some-alias",),
+                response="bad",
+            )
+        )
+    # "help" itself must still be free after the rejected registration.
+    registry.register(
+        Capability(
+            identifier="help",
+            description="ok",
+            aliases=("some-alias",),
+            response="ok",
+        )
+    )
+    assert registry.capabilities()[0].identifier == "help"
+
+
+def test_identifier_with_trailing_newline_does_not_reserve_alias() -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier="help\n",
+                description="bad",
+                aliases=("brand-new-alias",),
+                response="bad",
+            )
+        )
+    registry.register(
+        Capability(
+            identifier="other",
+            description="ok",
+            aliases=("brand-new-alias",),
+            response="ok",
+        )
+    )
+    assert registry.match("brand-new-alias") is not None
+
+
+def test_valid_identifier_still_accepted_after_fullmatch_change() -> None:
+    for identifier in ("help", "help2", "list-capabilities", "list_capabilities"):
+        local = CapabilityRegistry()
+        local.register(
+            Capability(
+                identifier=identifier,
+                description="x",
+                aliases=(f"alias-{identifier}",),
+                response="ok",
+            )
+        )
+        assert local.capabilities()[0].identifier == identifier
