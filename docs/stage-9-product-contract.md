@@ -121,13 +121,51 @@ API endpoint is not an end-user feature merely because it exists.
   - Absent: no live provider is registered, no external inference path
     exists, and no production endpoint invokes any of these services.
 
-#### B.1.5 Planned user-facing personal-assistant capabilities (Stage 9 target)
+#### B.1.5 Stage 9 assistant foundation (implemented) and planned capabilities
 
-- **Capability:** Local browser UI for the assistant, conversational
-  requests and session continuity, deterministic capability routing,
-  notes, tasks, reminders, local retrieval from user-selected data,
+Implemented foundation:
+
+- **Capability:** Local browser interface and a single capability-routed
+  request endpoint, with honest success and unsupported-capability
+  responses.
+  - Status: `IMPLEMENTED`
+  - Paths: `src/rop/web/`, `src/rop/api/assistant.py`,
+    `src/rop/schemas/assistant.py`
+  - Establishes: a locally served page at `GET /`, one request endpoint,
+    and a truthful `success` / `unsupported-capability` envelope.
+  - Absent: no conversation or message persistence; history lives in the
+    current browser tab only and is cleared on reload.
+
+- **Capability:** Deterministic capability routing with `help` as the
+  only registered capability.
+  - Status: `IMPLEMENTED` for routing and the single `help` capability.
+  - Paths: `src/rop/capabilities/registry.py`
+  - Establishes: exact matching after normalizing case, whitespace, and
+    trailing punctuation to one registered capability; anything else is
+    `unsupported-capability` and is never guessed into a capability.
+  - Absent: no conversational requests, no session continuity, no notes,
+    tasks, reminders, or retrieval.
+
+- **Capability:** Risk-based authorization policy for proposed
+  operations.
+  - Status: `IMPLEMENTED` as an isolated evaluator; not wired to any
+    execution path and not enforcing anything.
+  - Paths: `src/rop/authorization/policy.py`,
+    `src/rop/schemas/authorization.py`
+  - Establishes: a deterministic, fail-closed decision of `ALLOW`,
+    `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for one proposed
+    operation, plus exact one-action authorization-scope matching.
+    See `docs/task-220-authorization-policy.md`.
+  - Absent: no confirmation interaction, no recording of a decision or a
+    confirmation, no enforcement, and no assistant code path gated by it.
+
+Planned capabilities (Stage 9 target):
+
+- **Capability:** Conversational requests and session continuity, notes,
+  tasks, reminders, local retrieval from user-selected data,
   user-controlled persistence UI, uniform error/refusal/unsupported
-  experience, and a permission boundary for data-modifying operations.
+  experience, and gating of data-modifying operations by the
+  authorization policy.
   - Status: `PLANNED`
   - Paths: none - no such components exist on `main`
   - Absent: all of the above. Target scope, boundaries, and acceptance
@@ -269,22 +307,33 @@ section E.1 applies to every entry below.
    - Acceptance: tests covering each status.
 
 9. **Permission boundary for data-modifying operations**
-   - Status: Planned
+   - Status: Partially implemented - deterministic policy evaluation only;
+     no execution path is gated by it, and nothing is enforced yet.
    - Outcome: any operation classified as protected by the agreed
      security policy requires effective authorization before it may
      execute. No protected state-changing operation may run silently.
    - Dependencies: a thin permission check layer in the conversation /
      capability layer. Existing ROP services remain unchanged.
-   - Owner decision pending: the authorization interaction mechanism
-     (per-operation confirmation vs session-scoped authorization). See
-     section H.2. This decision must be resolved before the permission
-     layer is implemented.
-   - Acceptance (after the mechanism is chosen):
+   - Owner decision recorded (section H.2, principles in section E.2):
+     risk-based per-operation confirmation. Session-scoped authorization
+     was not chosen.
+   - Implemented: `src/rop/authorization/policy.py` evaluates one proposed
+     operation under a versioned rule table and returns `ALLOW`,
+     `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` with a stable reason
+     code. It evaluates only: it does not execute, persist, record, or
+     log anything, it does not call a model or the network, and it does
+     not obtain, verify, or invent a user's confirmation. No assistant
+     code path is gated by it, because the only registered capability
+     changes no state.
+   - Acceptance (after the mechanism is wired to an execution path):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
        (b) an authorized call to a protected operation completes;
        (c) no protected state-changing operation executes when
            authorization is absent, empty, or invalid.
+   - Not yet met: (a) and (b) need the confirmation interaction and its
+     recording, neither of which exists. (c) is currently vacuous, since
+     no protected state-changing operation is registered at all.
 
 ## C. Architecture and intelligence boundaries
 
@@ -346,15 +395,57 @@ figures must be measured in a later Stage 9 task.
   Stage 9 implies validated autonomous diagnosis, treatment decisions,
   or clinical use of the Stage 8 model.
 
-### E.2 Authorization interaction mechanism (owner decision pending)
+### E.2 Authorization interaction mechanism (owner decision recorded)
 
 - The security invariant in section E.1 is not negotiable.
-- The concrete interaction that grants authorization - per-operation
-  confirmation, session-scoped authorization, or another mechanism - is
-  a project-owner decision recorded in section H.2. It must be resolved
-  before the permission layer and its acceptance tests are implemented.
-- This contract does not pre-commit to either mechanism and does not
-  weaken the invariant while the mechanism is undecided.
+- **Owner decision (recorded here and in section H.2):** authorization
+  is risk-based and **per operation**. Micky AI must ask for permission
+  before executing an action that could cause harm, and must stop to
+  clarify whenever it is unsure about the user's intent, the target, the
+  scope, or the likely consequences. Session-scoped authorization was
+  not chosen.
+
+The following principles are the agreed policy. They are the standard the
+implementation is measured against, not a description of behaviour that
+already exists end to end.
+
+- **Clear, supported, low-risk operations** may proceed without an
+  additional confirmation when they are explicitly allowed by the
+  applicable policy. Permission is granted by an explicit policy rule,
+  never by the absence of one.
+- **Potentially harmful or consequential operations** require explicit
+  user confirmation before execution. This includes deleting or
+  overwriting data, sensitive changes, external side effects, disclosure
+  or sharing of private information, incurring cost, and actions that
+  are difficult to reverse.
+- **Unclear requests** require clarification before an operation is
+  selected or executed. An insufficiently specified operation cannot be
+  confirmed into existence, and confirmation of such an operation is not
+  valid authorization.
+- **Unsupported or prohibited operations** must not become executable
+  merely because the user requests them or confirms them.
+- **One-action scope:** a confirmation applies only to the specific
+  proposed action and its material parameters - operation, target,
+  scope, and parameter values. A materially changed target, scope, or
+  operation requires a new authorization decision.
+- **Honest outcomes:** asking for permission is not execution. A policy
+  decision is not execution. The assistant must not report an operation
+  as completed unless the operation was actually carried out and success
+  was established.
+- **Fail safely:** invalid or missing policy information, unclassified
+  consequential actions, and uncertainty that cannot be resolved must
+  never default to permission.
+
+Pending, and not resolved by this decision:
+
+- The interaction that obtains a confirmation (prompt, scope of
+  question, and how a refusal is represented).
+- Whether a confirmation is recorded, and in what form, and whether it is
+  bound to the policy version that produced the requirement.
+- The code path that enforces a policy decision before an operation
+  executes. None exists today, so no protected operation can execute on
+  policy approval alone: the deterministic evaluator is the only part
+  implemented.
 
 ## F. Non-goals
 
@@ -457,10 +548,20 @@ commitments:
 - Conversation vs reasoning-session separation approach.
 
 ### H.2 Authorization and permissions
-- Authorization interaction mechanism: per-operation confirmation vs
-  session-scoped authorization (see sections B.2 entry 9 and E.2).
+- RESOLVED - Authorization interaction mechanism: **risk-based
+  per-operation confirmation**. A confirmation applies only to the
+  specific proposed operation and its material parameters; a materially
+  changed operation, target, or scope needs a new decision. Session-scoped
+  authorization was not chosen. Principles are recorded in section E.2.
+- STILL PENDING - the interaction that obtains and records a confirmation,
+  and the enforcement path that applies a decision before an operation
+  executes. The deterministic evaluator exists and is independently
+  tested; the end-to-end permission flow does not exist and is not
+  claimed.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
+- No owner decision in sections H.1, H.3, or H.4 is resolved by this one,
+  and the contract as a whole remains a draft.
 
 ### H.3 Reminders (see section B.2 entry 4)
 - Due-time and timezone interpretation, including ambiguous local

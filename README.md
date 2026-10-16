@@ -109,9 +109,10 @@ between runs.
 ### Local assistant web interface
 
 Micky AI has a local browser interface served by the existing FastAPI
-application at `GET /`. It is intentionally minimal: capability routing
-has not been implemented, so every well-formed request receives an
-explicit `unsupported-capability` response and nothing is saved.
+application at `GET /`. It is intentionally minimal: routing is
+deterministic and only the `help` capability is registered, so any other
+well-formed request receives an explicit `unsupported-capability`
+response and nothing is saved.
 
 The page uses only local HTML, CSS, and vanilla JavaScript. No frontend
 framework, external CDN, remote font, analytics, or telemetry is loaded.
@@ -141,8 +142,14 @@ step, not a finished assistant):
 - Requests and conversation history are not persisted. History lives in
   the current browser tab only; reloading or closing the page clears it.
   There is no conversation or message table and no user memory.
-- Notes, tasks, reminders, permissions, and local-file retrieval are not
-  implemented in this version.
+- Notes, tasks, reminders, and local-file retrieval are not implemented
+  in this version.
+- A deterministic, fail-closed authorization policy is implemented as an
+  isolated evaluator (`src/rop/authorization/policy.py`): it decides
+  `ALLOW`, `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for a proposed
+  operation. It evaluates only. It executes nothing, records nothing, and
+  obtains no confirmation, and no assistant code path is gated by it yet.
+  See [the authorization policy](docs/task-220-authorization-policy.md).
 - The interface does not access the database, model providers, or the
   network beyond the local server.
 
@@ -466,9 +473,11 @@ stance, and measurable definition of done for the stage:
 - [Stage 9 product contract](docs/stage-9-product-contract.md)
 
 The contract does **not** imply that the personal-assistant features
-described within it have already been implemented. No dedicated
-end-user personal-assistant interface exists. No conversational
-workflow, capability routing, notes/tasks/reminders, local retrieval,
-or user-facing persistence controls currently exist. The FastAPI-
+described within it have already been implemented. The local assistant
+interface, deterministic capability routing, and the single `help`
+capability exist, together with an isolated authorization-policy
+evaluator. The conversational workflow, notes/tasks/reminders, local
+retrieval, and user-facing persistence controls do not exist, and no
+assistant code path is gated by the authorization policy. The FastAPI-
 generated `/docs` developer interface is not a personal-assistant
 product.
