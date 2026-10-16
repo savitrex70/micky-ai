@@ -193,3 +193,152 @@ def test_help_response_is_truthful() -> None:
     assert "not yet available" in lower or "not yet" in lower
     assert "reminders" in lower
     assert "notes" in lower or "tasks" in lower
+
+
+# --- identifier format validation -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "",
+        "   ",
+        "\t",
+        "\n",
+        "help ",
+        " help",
+    ],
+)
+def test_blank_identifier_is_rejected(identifier: str) -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier=identifier,
+                description="x",
+                aliases=("some-alias",),
+                response="x",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "Help",
+        "HELP",
+        "HelpCap",
+        "help cap",
+        "help.cap",
+        "help/cap",
+        "help:cap",
+        "help!",
+        "help?",
+        "1help",
+        "_help",
+        "-help",
+        "help\u00e9",
+        "help@home",
+    ],
+)
+def test_invalid_identifier_format_is_rejected(identifier: str) -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier=identifier,
+                description="x",
+                aliases=("some-alias",),
+                response="x",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    [
+        "help",
+        "help2",
+        "a",
+        "abc",
+        "list-capabilities",
+        "list_capabilities",
+        "x1-y2_z3",
+        "a-b-c",
+        "a_b_c",
+    ],
+)
+def test_valid_identifier_format_is_accepted(identifier: str) -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            identifier=identifier,
+            description="x",
+            aliases=(f"alias-{identifier}",),
+            response="ok",
+        )
+    )
+    assert registry.capabilities()[0].identifier == identifier
+
+
+def test_rejected_identifier_leaves_registry_unchanged() -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            identifier="alpha",
+            description="first",
+            aliases=("alpha-alias",),
+            response="alpha",
+        )
+    )
+    before_ids = {c.identifier for c in registry.capabilities()}
+    before_len = len(registry)
+
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier="Bad-Identifier",
+                description="bad",
+                aliases=("brand-new-alias",),
+                response="bad",
+            )
+        )
+
+    after_ids = {c.identifier for c in registry.capabilities()}
+    assert after_ids == before_ids
+    assert len(registry) == before_len
+
+    # The rejected capability's alias must not be reserved: it can be
+    # registered later by a capability with a valid identifier.
+    registry.register(
+        Capability(
+            identifier="beta",
+            description="second",
+            aliases=("brand-new-alias",),
+            response="beta",
+        )
+    )
+    assert registry.match("brand-new-alias") is not None
+
+
+def test_rejected_identifier_does_not_reserve_identifier() -> None:
+    registry = CapabilityRegistry()
+    with pytest.raises(RegistryError):
+        registry.register(
+            Capability(
+                identifier="UPPER",
+                description="bad",
+                aliases=("some-alias",),
+                response="bad",
+            )
+        )
+    # The uppercase identifier was rejected, so a valid variant is free.
+    registry.register(
+        Capability(
+            identifier="upper",
+            description="ok",
+            aliases=("some-alias",),
+            response="ok",
+        )
+    )
+    assert registry.capabilities()[0].identifier == "upper"

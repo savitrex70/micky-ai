@@ -35,6 +35,7 @@ HELP_RESPONSE = (
 
 _WHITESPACE_RUN = re.compile(r"\s+")
 _TRAILING_PUNCTUATION = ".!?"
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 class RegistryError(ValueError):
@@ -62,6 +63,11 @@ class CapabilityRegistry:
     def register(self, capability: Capability) -> None:
         if not capability.identifier:
             raise RegistryError("capability identifier must be non-empty")
+        if not _IDENTIFIER_PATTERN.match(capability.identifier):
+            raise RegistryError(
+                f"invalid capability identifier: {capability.identifier!r}; "
+                "expected lowercase ASCII matching ^[a-z][a-z0-9_-]*$"
+            )
         if capability.identifier in self._identifiers:
             raise RegistryError(
                 f"duplicate capability identifier: {capability.identifier}"
