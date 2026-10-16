@@ -112,7 +112,10 @@ Micky AI has a local browser interface served by the existing FastAPI
 application at `GET /`. It is intentionally minimal: routing is
 deterministic and only the `help` capability is registered, so any other
 well-formed request receives an explicit `unsupported-capability`
-response and nothing is saved.
+response and nothing is saved. A matched capability is not answered
+until the authorization policy allows it, so a request that would need
+clarification or confirmation, or that is not permitted, is stopped
+instead of run.
 
 The page uses only local HTML, CSS, and vanilla JavaScript. No frontend
 framework, external CDN, remote font, analytics, or telemetry is loaded.
@@ -139,19 +142,31 @@ step, not a finished assistant):
   assistant can and cannot do right now.
 - Any other request returns `unsupported-capability`. Unregistered phrases
   are not guessed into a capability.
+- A matched capability is not automatically answered. The request endpoint
+  evaluates the resolved capability against the authorization policy
+  before returning anything, and only `ALLOW` dispatches the capability's
+  predefined response. `clarification-required`, `confirmation-required`,
+  and `refused` all mean that nothing was dispatched, and the page reports
+  those outcomes distinctly instead of presenting them as an unmatched
+  request or a success.
 - Requests and conversation history are not persisted. History lives in
   the current browser tab only; reloading or closing the page clears it.
   There is no conversation or message table and no user memory.
 - Notes, tasks, reminders, and local-file retrieval are not implemented
   in this version.
 - A deterministic, fail-closed authorization policy is implemented as an
-  isolated evaluator (`src/rop/authorization/policy.py`): it decides
-  `ALLOW`, `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for a proposed
-  operation, whose machine identifier is matched exactly and never
-  normalized, so a malformed identifier is refused rather than resolved.
-  It evaluates only. It executes nothing, records nothing, and obtains no
-  confirmation, and no assistant code path is gated by it yet. See
-  [the authorization policy](docs/task-220-authorization-policy.md).
+  evaluator (`src/rop/authorization/policy.py`) that decides `ALLOW`,
+  `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for a proposed operation,
+  whose machine identifier is matched exactly and never normalized, so a
+  malformed identifier is refused rather than resolved. The assistant
+  request endpoint gates capability dispatch on it
+  (`src/rop/authorization/dispatch.py`), so registering a capability does
+  not authorize it: a capability with no policy rule is refused. The
+  end-user confirmation workflow is not implemented, so a consequential
+  capability could not be approved through the interface yet, and no
+  state-changing capability is registered. See
+  [the authorization policy](docs/task-220-authorization-policy.md) and
+  [the dispatch boundary](docs/task-221-authorization-dispatch.md).
 - The interface does not access the database, model providers, or the
   network beyond the local server.
 
@@ -476,10 +491,10 @@ stance, and measurable definition of done for the stage:
 
 The contract does **not** imply that the personal-assistant features
 described within it have already been implemented. The local assistant
-interface, deterministic capability routing, and the single `help`
-capability exist, together with an isolated authorization-policy
-evaluator. The conversational workflow, notes/tasks/reminders, local
-retrieval, and user-facing persistence controls do not exist, and no
-assistant code path is gated by the authorization policy. The FastAPI-
+interface, deterministic capability routing, the single `help`
+capability, and a policy-enforced authorization check on capability
+dispatch exist. The conversational workflow, notes/tasks/reminders,
+local retrieval, and user-facing persistence controls do not exist, and
+the end-user confirmation workflow is not implemented. The FastAPI-
 generated `/docs` developer interface is not a personal-assistant
 product.

@@ -16,9 +16,11 @@
   <section class="notice" aria-labelledby="notice-heading">
     <h2 id="notice-heading">Early preview</h2>
     <p>
-      Assistant capabilities are not yet connected. Every request currently
-      returns an explicit <code>unsupported-capability</code> response, and
-      nothing is saved.
+      Only the <code>help</code> capability is connected, and it changes
+      nothing. Every request is checked against a local authorization policy
+      before a capability may answer, so a request that is unclear, needs
+      confirmation, or is not permitted is stopped instead of run. Nothing
+      is saved.
     </p>
   </section>
 

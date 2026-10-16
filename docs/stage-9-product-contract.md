@@ -132,7 +132,9 @@ Implemented foundation:
   - Paths: `src/rop/web/`, `src/rop/api/assistant.py`,
     `src/rop/schemas/assistant.py`
   - Establishes: a locally served page at `GET /`, one request endpoint,
-    and a truthful `success` / `unsupported-capability` envelope.
+    and a truthful envelope of `success`, `unsupported-capability`,
+    `clarification-required`, `confirmation-required`, or `refused`.
+    Only `success` means a capability answered.
   - Absent: no conversation or message persistence; history lives in the
     current browser tab only and is cleared on reload.
 
@@ -148,16 +150,21 @@ Implemented foundation:
 
 - **Capability:** Risk-based authorization policy for proposed
   operations.
-  - Status: `IMPLEMENTED` as an isolated evaluator; not wired to any
-    execution path and not enforcing anything.
+  - Status: `IMPLEMENTED` as an evaluator plus a dispatch boundary at the
+    assistant request endpoint; the end-to-end confirmation flow is not
+    implemented.
   - Paths: `src/rop/authorization/policy.py`,
-    `src/rop/schemas/authorization.py`
+    `src/rop/schemas/authorization.py`,
+    `src/rop/authorization/dispatch.py`
   - Establishes: a deterministic, fail-closed decision of `ALLOW`,
     `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for one proposed
-    operation, plus exact one-action authorization-scope matching.
-    See `docs/task-220-authorization-policy.md`.
+    operation, exact one-action authorization-scope matching, and a
+    dispatch boundary that returns a matched capability's response only
+    on `ALLOW`. See `docs/task-220-authorization-policy.md` and
+    `docs/task-221-authorization-dispatch.md`.
   - Absent: no confirmation interaction, no recording of a decision or a
-    confirmation, no enforcement, and no assistant code path gated by it.
+    confirmation, and no authorization check outside that one dispatch
+    path.
 
 Planned capabilities (Stage 9 target):
 
@@ -322,20 +329,26 @@ section E.1 applies to every entry below.
      `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` with a stable reason
      code. Operation identifiers are matched exactly and are never
      normalized, so a malformed identifier is refused as unusable input
-     instead of resolving to a registered operation. It evaluates only:
-     it does not execute, persist, record, or log anything, it does not
-     call a model or the network, and it does not obtain, verify, or
-     invent a user's confirmation. No assistant code path is gated by
-     it, because the only registered capability changes no state.
-   - Acceptance (after the mechanism is wired to an execution path):
+     instead of resolving to a registered operation. The assistant
+     request endpoint consults this policy through
+     `src/rop/authorization/dispatch.py` before returning a matched
+     capability's response: only `ALLOW` dispatches it, and every other
+     outcome, a capability with no policy rule, and any evaluation
+     failure stop dispatch with an explicit non-success status. The
+     evaluator and the boundary execute, persist, record, and log
+     nothing, call no model or network, and neither obtain, verify,
+     record, nor invent a user's confirmation.
+   - Acceptance (for the complete mechanism):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
        (b) an authorized call to a protected operation completes;
        (c) no protected state-changing operation executes when
            authorization is absent, empty, or invalid.
-   - Not yet met: (a) and (b) need the confirmation interaction and its
-     recording, neither of which exists. (c) is currently vacuous, since
-     no protected state-changing operation is registered at all.
+   - Partly met: dispatch of a registered capability is now refused unless
+     the policy returns `ALLOW`, which is the dispatch half of (c). It is
+     still vacuous for state-changing operations, because none is
+     registered; the refusal is not recorded; and (a) and (b) need the
+     confirmation interaction and its recording, neither of which exists.
 
 ## C. Architecture and intelligence boundaries
 
@@ -446,9 +459,10 @@ Pending, and not resolved by this decision:
 - Whether a confirmation is recorded, and in what form, and whether it is
   bound to the policy version that produced the requirement.
 - The code path that enforces a policy decision before an operation
-  executes. None exists today, so no protected operation can execute on
-  policy approval alone: the deterministic evaluator is the only part
-  implemented.
+  executes, beyond the assistant capability-dispatch boundary added by
+  Task 221. No state-changing operation is reachable through that
+  boundary, and no other path consults the policy, so no protected
+  operation can execute on policy approval alone.
 
 ## F. Non-goals
 
@@ -556,9 +570,13 @@ commitments:
   specific proposed operation and its material parameters; a materially
   changed operation, target, or scope needs a new decision. Session-scoped
   authorization was not chosen. Principles are recorded in section E.2.
-- STILL PENDING - the interaction that obtains and records a confirmation,
-  and the enforcement path that applies a decision before an operation
-  executes. The deterministic evaluator exists and is independently
+- STILL PENDING - the interaction that obtains and records a confirmation.
+  Task 221 added enforcement at the assistant capability-dispatch
+  boundary: a matched capability is answered only on `ALLOW`, and every
+  other outcome returns an explicit non-success status. That boundary
+  cannot reach a state-changing operation, because none is registered,
+  and no confirmation can be obtained, recorded, or asserted through it.
+  The deterministic evaluator and the dispatch boundary are independently
   tested; the end-to-end permission flow does not exist and is not
   claimed.
 - The security invariant in section E.1 is not part of this decision;

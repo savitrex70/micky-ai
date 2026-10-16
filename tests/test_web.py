@@ -1,8 +1,32 @@
 ﻿"""Tests for the local Micky AI web interface."""
 
+import re
+
 from fastapi.testclient import TestClient
 
 from rop.main import app
+
+_STATUS_MAP_START = "const STATUS_TEXT = {"
+
+_STATUS_ENTRY = re.compile(
+    r'"([a-z0-9-]+)":(.*?)(?=\n\s*"[a-z0-9-]+":|\Z)',
+    re.DOTALL,
+)
+
+EXPECTED_STATUS_TEXT = {
+    "success": "Capability responded",
+    "unsupported-capability": "No capability matched",
+    "clarification-required": "More detail is needed",
+    "confirmation-required": "needs your explicit confirmation",
+    "refused": "did not permit this operation",
+}
+
+
+def _status_entries(js: str) -> dict[str, str]:
+    """Extract the page's status-to-text map from the served JavaScript."""
+    start = js.index(_STATUS_MAP_START)
+    block = js[start : js.index("};", start)]
+    return {key: value for key, value in _STATUS_ENTRY.findall(block)}
 
 
 def test_root_serves_micky_ai_interface() -> None:
@@ -116,3 +140,40 @@ def test_page_javascript_distinguishes_success_and_unsupported() -> None:
 
     # The old blanket wording must be gone.
     assert "This request was not executed." not in body
+
+
+def test_page_javascript_maps_every_status_to_its_own_truthful_text() -> None:
+    """Every status has its own wording, and every non-success says nothing ran.
+
+    The interface must not display a clarification requirement, a
+    confirmation requirement, or a refusal as an unmatched capability or as
+    a success.
+    """
+    with TestClient(app) as client:
+        js = client.get("/static/app.js")
+
+    assert js.status_code == 200
+    entries = _status_entries(js.text)
+
+    assert set(entries) == set(EXPECTED_STATUS_TEXT)
+
+    for status, fragment in EXPECTED_STATUS_TEXT.items():
+        assert fragment in entries[status], status
+
+    # No status may reuse another status's wording.
+    assert len(set(entries.values())) == len(entries)
+
+    for status, text in entries.items():
+        if status == "success":
+            continue
+        assert "not executed" in text.lower(), status
+
+
+def test_page_javascript_renders_replies_without_html_injection() -> None:
+    with TestClient(app) as client:
+        js = client.get("/static/app.js")
+
+    body = js.text
+    assert "innerHTML" not in body
+    assert "insertAdjacentHTML" not in body
+    assert "textContent" in body

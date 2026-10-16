@@ -10,6 +10,36 @@
   const MAX = 2000;
   let inFlight = false;
 
+  // Every status the server can report, with text that describes what
+  // actually happened. Only "success" means a capability answered; the
+  // other four all state that nothing ran.
+  const STATUS_TEXT = {
+    "success": "Capability responded. See the reply below.",
+    "unsupported-capability":
+      "No capability matched. The request was not executed.",
+    "clarification-required":
+      "More detail is needed before an operation can be selected, so nothing " +
+      "was run. The request was not executed.",
+    "confirmation-required":
+      "This operation needs your explicit confirmation for this exact " +
+      "action, and confirmation is not available through this interface " +
+      "yet. The request was not executed.",
+    "refused":
+      "The authorization policy did not permit this operation. The request " +
+      "was not executed.",
+  };
+
+  function describeStatus(value) {
+    const text = STATUS_TEXT[value];
+    if (typeof text === "string") {
+      return text;
+    }
+    return (
+      "The server returned an unrecognised status. The request was not " +
+      "executed."
+    );
+  }
+
   function setStatus(text, kind) {
     status.textContent = text;
     if (kind) {
@@ -99,14 +129,7 @@
     try {
       const payload = await sendRequest(text);
       addHistory(text, payload.message, payload.status);
-      if (payload.status === "success") {
-        setStatus("Capability responded. See the reply below.", "info");
-      } else {
-        setStatus(
-          "No capability matched. The request was not executed.",
-          "info"
-        );
-      }
+      setStatus(describeStatus(payload.status), "info");
       input.value = "";
     } catch (err) {
       const message =

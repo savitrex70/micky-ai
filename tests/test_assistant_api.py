@@ -3,9 +3,14 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from rop.capabilities.registry import HELP_RESPONSE
+from rop.capabilities.registry import (
+    HELP_RESPONSE,
+    Capability,
+    CapabilityRegistry,
+)
 from rop.database import SessionLocal
 from rop.main import app
+from rop.schemas.authorization import AuthorizationPolicy, OperationRule, RiskLevel
 
 ENDPOINT = "/api/assistant/requests"
 UNSUPPORTED_MESSAGE = (
@@ -197,3 +202,139 @@ def test_sessions_routes_still_registered() -> None:
     paths = set(app.openapi()["paths"].keys())
     assert "/sessions" in paths
     assert "/sessions/{session_id}" in paths
+
+
+# --- authorization dispatch boundary ----------------------------------------
+
+
+def _unclassified_help_policy() -> AuthorizationPolicy:
+    """A policy that provides no usable classification for ``help``."""
+    return AuthorizationPolicy(
+        rules=(
+            OperationRule(
+                operation_id="help",
+                description="Deliberately unclassified for this test.",
+                risk=None,
+            ),
+        )
+    )
+
+
+def _state_changing_registry() -> CapabilityRegistry:
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            identifier="demo-write",
+            description="Test capability that would change state.",
+            aliases=("demo write",),
+            response="DEMO WRITE REPLY",
+        )
+    )
+    return registry
+
+
+def _state_changing_policy(*, requires_target: bool = False) -> AuthorizationPolicy:
+    return AuthorizationPolicy(
+        rules=(
+            OperationRule(
+                operation_id="demo-write",
+                description="Deliberately consequential for this test.",
+                risk=RiskLevel.CONSEQUENTIAL,
+                requires_target=requires_target,
+            ),
+        )
+    )
+
+
+def test_endpoint_refuses_a_capability_the_policy_does_not_permit(monkeypatch) -> None:
+    monkeypatch.setattr("rop.api.assistant._POLICY", _unclassified_help_policy())
+
+    response = _post("help")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "refused"
+    assert HELP_RESPONSE not in response.text
+    assert "not executed" in body["message"]
+
+
+def test_endpoint_requires_confirmation_for_a_consequential_capability(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("rop.api.assistant._REGISTRY", _state_changing_registry())
+    monkeypatch.setattr("rop.api.assistant._POLICY", _state_changing_policy())
+
+    response = _post("demo write")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "confirmation-required"
+    assert "DEMO WRITE REPLY" not in response.text
+    assert "not executed" in body["message"]
+
+
+def test_endpoint_requires_clarification_for_an_underspecified_capability(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("rop.api.assistant._REGISTRY", _state_changing_registry())
+    monkeypatch.setattr(
+        "rop.api.assistant._POLICY", _state_changing_policy(requires_target=True)
+    )
+
+    response = _post("demo write")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "clarification-required"
+    assert "DEMO WRITE REPLY" not in response.text
+    assert "not executed" in body["message"]
+
+
+def test_refusal_does_not_echo_the_matched_user_text(monkeypatch) -> None:
+    marker = "zz9_marker"
+    registry = CapabilityRegistry()
+    registry.register(
+        Capability(
+            identifier="demo-purge",
+            description="Test capability that would change state.",
+            aliases=(f"purge note {marker}",),
+            response="DEMO PURGE REPLY",
+        )
+    )
+    monkeypatch.setattr("rop.api.assistant._REGISTRY", registry)
+    monkeypatch.setattr(
+        "rop.api.assistant._POLICY",
+        AuthorizationPolicy(
+            rules=(
+                OperationRule(
+                    operation_id="demo-purge",
+                    description="Deliberately unclassified for this test.",
+                    risk=None,
+                ),
+            )
+        ),
+    )
+
+    response = _post(f"purge note {marker}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "refused"
+    assert marker not in response.text
+    assert "DEMO PURGE REPLY" not in response.text
+
+
+def test_authorization_assertions_cannot_be_supplied_by_the_client() -> None:
+    """There is no request field through which permission could be asserted."""
+    marker = "AUTH_MARKER_5B7"
+
+    with TestClient(app) as client:
+        for payload in (
+            {"message": "help", "authorized": {"operation_id": marker}},
+            {"message": "help", "authorization": marker},
+            {"message": "help", "confirmed": True},
+            {"message": "help", "scope": marker},
+            {"message": "help", "permission": marker},
+        ):
+            response = client.post(ENDPOINT, json=payload)
+            assert response.status_code == 422, payload
+            assert marker not in response.text
