@@ -315,3 +315,19 @@ git init
 git add .
 git commit -m "Initialize ROP project foundation"
 ```
+
+## Stage 9: Micky AI product contract
+
+Stage 9 begins the move from ROP's technical components to a single,
+local-first personal assistant product, Micky AI.
+
+The Stage 9 product contract is a **draft pending project-owner review**
+and defines the intended scope, boundaries, offline target, privacy
+stance, and measurable definition of done for the stage:
+
+- [Stage 9 product contract](docs/stage-9-product-contract.md)
+
+The contract does **not** imply that the personal-assistant features
+described within it have already been implemented. No browser UI,
+conversational workflow, capability routing, notes/tasks/reminders,
+local retrieval, or user-facing persistence controls currently exist.
