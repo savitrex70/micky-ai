@@ -105,6 +105,42 @@ Stop the API with `Ctrl+C`. Stop and restart the database with
 `docker compose stop db` and `docker compose up -d --wait db`. The `.env`
 file and the named PostgreSQL volume preserve configuration and data
 between runs.
+
+### Local assistant web interface
+
+Micky AI has a local browser interface served by the existing FastAPI
+application at `GET /`. It is intentionally minimal: capability routing
+has not been implemented, so every well-formed request receives an
+explicit `unsupported-capability` response and nothing is saved.
+
+The page uses only local HTML, CSS, and vanilla JavaScript. No frontend
+framework, external CDN, remote font, analytics, or telemetry is loaded.
+
+**Host-Python workflow.** Start the API as described in the Local Python
+workflow above, then open <http://127.0.0.1:8000/> in a browser.
+
+**Docker Compose workflow.** Start the API container as described in the
+Docker workflow below, then open <http://127.0.0.1:8000/> in a browser.
+
+**Developer API documentation remains at <http://127.0.0.1:8000/docs>.**
+The `/docs` page is the OpenAPI schema for developers. It is not the
+assistant interface and does not represent a completed personal assistant.
+
+**Current limitations** (this task establishes the UI foundation, not the
+finished assistant):
+
+- The only implemented API route the page talks to is
+  `POST /api/assistant/requests`. Its response is always the honest
+  `unsupported-capability` envelope; the request is not executed and is
+  not stored.
+- Conversation history is kept in the current browser tab only. Reloading
+  or closing the page clears it. There is no persistence, no conversation
+  or message table, and no user memory.
+- Notes, tasks, reminders, capability routing, permissions, and local
+  retrieval are not implemented in this version.
+- The interface does not access the database, model providers, or the
+  network beyond the local server.
+
 ### Stage 7 release-readiness evidence chain
 
 Tasks 174â€“188 form an externally composed, read-only evidence chain. Callers

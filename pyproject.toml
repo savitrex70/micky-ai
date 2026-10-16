@@ -30,6 +30,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"rop.web" = ["static/*"]
+
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
