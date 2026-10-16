@@ -8,8 +8,7 @@ wheel/Docker install (needs the ``package-data`` entry in ``pyproject.toml``).
 
 from pathlib import Path
 
-from fastapi import APIRouter
-from fastapi import Response
+from fastapi import APIRouter, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
