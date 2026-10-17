@@ -480,17 +480,27 @@ confirmation to the user.
   never default to permission. A malformed machine identifier is not
   normalized into a registered operation; it is refused.
 
-Pending, and not resolved by this decision:
+Server-side status (Task 224) and remaining gaps:
 
-- The interaction that obtains a confirmation (prompt, scope of
-  question, and how a refusal is represented).
-- Whether a confirmation is recorded, and in what form, and whether it is
-  bound to the policy version that produced the requirement.
-- The code path that enforces a policy decision before an operation
-  executes, beyond the assistant capability-dispatch boundary added by
-  Task 221. No state-changing operation is reachable through that
-  boundary, and no other path consults the policy, so no protected
-  operation can execute on policy approval alone.
+- **Implemented:** the durable confirmation record (Task 223), and the
+  server-side interaction that obtains and consumes a confirmation (Task
+  224). This covers challenge issuance, decision handling, policy-identity
+  revalidation against the effective policy fingerprint, atomic once-only
+  consumption, bounded startup recovery of unestablished outcomes and
+  overdue challenges, and the executor boundary. A confirmation is bound to
+  the effective policy identity, not to the fixed `"1"` version label.
+- **Remaining gap - browser confirmation UI:** the pending-confirmation
+  card and its Confirm/Cancel controls are not implemented. A user cannot
+  yet decide a challenge through the interface; the API contract exposes
+  the display values for a later UI task to consume.
+- **Remaining gap - production execution:** no production executor and no
+  production state-changing capability is registered. The default executor
+  registry (`src/rop/authorization/executors.py`) is empty, so a
+  `REQUIRE_CONFIRMATION` operation cannot execute in this build.
+- **Remaining gap - user control over records:** no HTTP or UI surface for
+  inspecting, exporting, or deleting confirmation records exists yet. That
+  surface is required by E.1 but is not part of this decision or of the
+  implementation shipped so far.
 
 ## F. Non-goals
 

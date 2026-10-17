@@ -782,8 +782,12 @@ exact identifier matching, one-action scope matching, no outcome other than
 ## 11. Recommended defaults
 
 These were proposals. Items 5 and 6 were approved by the owner and
-implemented in Task 223 (noted inline); the rest remain proposals, because
-nothing mints, displays, or verifies a challenge yet.
+implemented in Task 223 (noted inline). Item 7 (loopback-only,
+same-origin enforcement), item 11 (atomic failed-code counter with
+lockout), and item 12 (policy-content fingerprint binding) were
+implemented as part of the server-side workflow in Task 224. The browser
+confirmation card described by the remaining items is not implemented,
+and no production executor is registered.
 
 1. **Challenge lifetime: 5 minutes**, configurable, evaluated inside the
    atomic transition. Long enough to read a summary, short enough that a
@@ -818,19 +822,27 @@ nothing mints, displays, or verifies a challenge yet.
     label, and the fingerprint is recomputed and compared at consumption.
 
 Items 11 and 12 add one side-effect-free helper to Task 220's policy module
-(`authorization_policy_identity`) and two columns (the stored identity and the
-attempt counter). Task 223 implemented both at the storage layer. Neither
-changes an authorization decision, and neither makes a confirmation
-obtainable: no challenge can be minted, consumed, or validated through any
-HTTP route yet.
+(`authorization_policy_identity`) and two columns (the stored identity and
+the attempt counter). Task 223 implemented both at the storage layer. Task
+224 implemented the server-side workflow that consults them: challenge
+issuance and decision handling at `src/rop/services/confirmation.py` and
+`POST /api/assistant/confirmations/{id}/decision`, including policy
+revalidation against the fingerprint at consumption. The browser
+confirmation card that would present a pending challenge to the user is
+not implemented, and no production executor is registered, so a
+`REQUIRE_CONFIRMATION` operation cannot execute in this build.
 
 ## 12. Decisions requiring owner approval
 
 1. **Confirmation recording and retention (H.2 pending item).** **RESOLVED
    (owner, Task 223):** durable records in the existing local database, with
    the thirty-day terminal retention and redaction described above. The
-   recording choice is decided; the interaction that obtains a confirmation is
-   not, and no confirmation can be obtained through the application today.
+   recording choice is decided. The server-side interaction that obtains
+   and consumes a confirmation was implemented in Task 224
+   (`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`).
+   The browser confirmation card that would let a user actually complete
+   one is not implemented, and no production executor is registered, so a
+   consequential operation cannot execute in this build.
 2. **Identity and session binding assumption.** The design assumes a single
    local user on loopback with no authentication, and therefore binds an
    approval to the challenge alone. Any move to multiple users, remote
