@@ -379,7 +379,7 @@ class AssistantConfirmationRepository:
             "display_code_salt": None,
         }
         if to_status is ConfirmationStatus.CONSUMED:
-            values["consumed_at"] = now
+            values["consumed_at"] = instant
             values.pop("decided_at")
         statement = (
             update(AssistantConfirmation)

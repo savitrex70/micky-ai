@@ -1413,6 +1413,10 @@ def test_end_to_end_flow_executes_through_the_api(
     assert body["status"] == ConfirmationDecisionStatus.EXECUTED.value
     assert body["executed"] is True
     assert executor.call_count == 1
+    stored = _fetch(pg_engine, challenge["challenge_id"])
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.CONSUMED.value
+    assert stored.consumed_at is not None
 
 
 def test_default_help_endpoint_is_unchanged() -> None:
