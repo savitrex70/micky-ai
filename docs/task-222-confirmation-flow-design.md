@@ -30,6 +30,12 @@ Two properties of the current code are load-bearing for this design:
   policy cannot tell whether the assertion is true.
 - The dispatch boundary takes **no authorization input at all**: it accepts a
   registry-resolved capability and a policy, and nothing else.
+- `policy_version` on `AuthorizationPolicy` is the **fixed literal `"1"`**
+  (`AUTHORIZATION_CONTRACT_VERSION`). It is not a change detector: a rule's
+  risk level, prohibited flag, required-target rule, or required-parameter set
+  can change while the version still reads `"1"`. Comparing only that label
+  would let a stale approval look valid after the rules changed, which is the
+  first gap this revision closes (section 5.9).
 
 The confirmation flow's whole job is to make that assertion true for exactly
 one operation, once, and then get out of the way.
@@ -70,6 +76,11 @@ are referenced by the later sections.
 | 8 | Truthful result reported | Response envelope + UI | 9 |
 | 9 | Expired, cancelled, rejected, or invalidated | Server sweep / explicit action | terminal |
 
+Lockout after repeated wrong display codes (section 5.10) is a terminal state of
+category 9, recorded as `LOCKED` rather than folded into `INVALIDATED`, so an
+audit distinguishes "the policy or binding changed" from "the attempt budget was
+exhausted". The nine states themselves are unchanged.
+
 ### Walkthrough
 
 1. The user's message resolves to exactly one registered capability, and the
@@ -80,14 +91,16 @@ are referenced by the later sections.
    `AUTHORIZATION_REQUIRED`).
 3. The boundary mints a pending confirmation: a high-entropy challenge
    identifier, the canonical operation it is bound to (identifier, target,
-   scope, material parameters), the policy version, a creation and expiry
-   time, and a short human-checkable code. The response is
-   `confirmation-required` with a display summary and no capability response.
+   scope, material parameters), the **effective policy identity** that
+   produced the requirement (section 5.9), a creation and expiry time, and a
+   short human-checkable code. The response is `confirmation-required` with a
+   display summary and no capability response.
 4. The human sees exactly what would run and chooses Confirm, Cancel, or
    nothing. Rejection and cancellation are first-class outcomes, not errors.
 5. On Confirm, the server re-reads the stored pending record — not the
-   request body — and checks identity, status, expiry, code, and the current
-   policy.
+   request body — and checks identity, status, expiry, code, the remaining
+   attempt budget (section 5.10), and the current effective policy identity
+   (section 5.9).
 6. Consumption is a single atomic `PENDING -> CONSUMED` transition. One
    approval yields at most one execution.
 7. Execution happens immediately after consumption, in the same request, and
@@ -138,9 +151,10 @@ and this design does not pretend it does.
 | A browser request asserting its own permission (`confirmed: true`, a supplied operation identifier, a hand-built scope) | The strict request schema rejects unknown fields, the confirm endpoint accepts only a challenge id plus a decision, and the dispatch path never reads client-supplied authorization. |
 | A cross-site page silently submitting a confirm POST to the loopback server | Same-origin enforcement: `Origin`/`Host` must match the configured local origin; state-changing requests require `Content-Type: application/json` (no simple-form submission) and a server-issued challenge id. |
 | A blind confirm: an automated or scripted click that never showed a human the action | The challenge is created by the server for a specific stored operation, and confirmation requires the short code displayed with that summary, so a request that only knows the id cannot complete the approval. |
+| Guessing the short display code after obtaining a challenge identifier | The code is compared against a stored hash inside an atomically counted attempt budget; the challenge locks at the limit, and every failure looks identical (section 5.10). |
 | Replay of a previously valid approval | One-time consumption with an atomic compare-and-set; a second attempt is refused. |
 | Approval of action A used for action B (target, scope, or parameter change) | Binding to the canonical operation; the executed values come from the stored record, never from the confirming request. |
-| A stale approval used after the rules changed | Policy version and expiry are part of the record and are re-checked at consumption; mismatch invalidates. |
+| A stale approval used after the rules changed | A deterministic fingerprint of the effective policy contents, plus expiry, are part of the record and re-checked at consumption; any material content change invalidates, even when the `policy_version` label is unchanged (section 5.9). |
 | Approval of an operation that was never specified | `CLARIFY` never mints a challenge, and challenges are minted only from `REQUIRE_CONFIRMATION`. |
 | Use of a pending challenge as if it were authorization | A pending challenge is not an `AuthorizedScope`; only a verified, unexpired, exactly-matching, unconsumed record can produce one, and only inside the trusted boundary. |
 | Silent execution | No executor runs on `CLARIFY`, `DENY`, rejection, cancellation, expiry, validation failure, or missing executor; every such path reports "not executed". |
@@ -193,7 +207,9 @@ exactly:
 - `scope` (normalized per the existing contract),
 - material `parameters` (names validated by the existing identifier contract,
   values normalized, order-insensitive),
-- `policy_version` of the policy that produced the requirement, and
+- the **effective policy identity** — a deterministic fingerprint of the
+  policy contents that can change an authorization decision — of the policy
+  that produced the requirement (section 5.9), and
 - the risk classification and reason code that required confirmation.
 
 Binding is verified by constructing `AuthorizedScope` **from the stored
@@ -208,16 +224,18 @@ approval does not apply.
   enforced inside the same atomic transition that consumes it, so a challenge
   that expires during the click cannot be consumed.
 - **Explicit cancellation.** A cancel action moves the record to `CANCELLED`.
-  Cancelling an already-decided challenge is a no-op that reports the current
-  state rather than an error.
+  Cancelling an already-decided challenge is a no-op: it reports that nothing
+  ran and does not revive, extend, or unlock the record.
 - **Rejection.** A reject action moves the record to `REJECTED` and is treated
   as a legitimate user outcome: the operation is not executed and no retry is
   attempted.
-- **Invalidation triggers.** Policy version change; a superseding request that
-  produces a different operation requiring confirmation (the new request gets
-  its own challenge); a malformed stored record (fail closed: refuse and mark
-  invalid); server restart when pendings are not durable; and any validation
-  failure at consumption time.
+- **Invalidation triggers.** Any change to the effective policy identity
+  (section 5.9), even when the human-readable `policy_version` label is
+  unchanged; reaching the failed-code-attempt limit (section 5.10); a
+  superseding request that produces a different operation requiring
+  confirmation (the new request gets its own challenge); a malformed stored
+  record (fail closed: refuse and mark invalid); server restart when pendings
+  are not durable; and any validation failure at consumption time.
 - **Sweeping.** Expired pendings are swept lazily on access and by a bounded
   startup sweep. A sweep never resurrects or extends anything.
 
@@ -279,10 +297,110 @@ user; that is stated in section 4 and must not be softened in the UI.
 ### 5.8 Fail closed
 
 Every path that cannot establish all of "valid challenge, matching binding,
-not expired, not consumed, current policy version, current policy still
-permits, executor available" results in **no execution** and an honest
-non-success status. Nothing defaults to permission, and no exception during
-validation is allowed to fall through to an executor.
+within the attempt budget, not expired, not consumed, current effective policy
+identity, current policy still permits, executor available" results in **no
+execution** and an honest non-success status. Nothing defaults to permission,
+and no exception during validation is allowed to fall through to an executor.
+
+### 5.9 Effective policy identity (content fingerprint)
+
+The stored `policy_version` is **not** a change detector: Task 220 defines it
+as the fixed literal `"1"` (`AUTHORIZATION_CONTRACT_VERSION`). A rule's risk
+level, prohibited flag, required-target rule, or required-parameter set can
+change while the version still reads `"1"`, so a pending confirmation checked
+against the label alone would look valid after the rules changed. The design
+therefore binds challenges to a deterministic **identity of the effective
+policy contents**, and keeps the label only as human-readable metadata.
+
+**What affects validity.** Exactly the fields that can change an authorization
+decision:
+
+- the set of operation identifiers that have rules;
+- each rule's `risk` (including "no risk level recorded", which denies);
+- each rule's `prohibited` flag (which outranks every other field);
+- each rule's `requires_target` flag;
+- each rule's `required_parameters` set;
+- the `policy_version` label itself.
+
+**What does not.** A rule's `description` is documentation and cannot change
+any decision, so editing it does not invalidate a pending confirmation.
+Saying so explicitly matters: a fingerprint that changed on a comment edit
+would train people to ignore invalidations.
+
+**Canonicalization.** Rules are ordered by `operation_id` and serialized in a
+fixed shape: sorted keys, no insignificant whitespace, `required_parameters`
+sorted (order is irrelevant to the policy, which compares them as a set),
+`risk` as its enum value or null, booleans as booleans. Two policies that
+authorize identically therefore produce the same identity regardless of rule
+order or parameter order in the source.
+
+**Digest.** SHA-256 over the canonical bytes, hex-encoded — `hashlib` is in
+the standard library, so no dependency is added. The plan is a side-effect-free
+helper on Task 220's policy module (for example
+`authorization_policy_identity(policy) -> str`) that changes no decision,
+returns the same value for two equal policies, and is testable on its own.
+
+**Binding and re-check.** The identity is stored with the pending record
+(`policy_identity`) and recomputed from the currently loaded policy at
+consumption time. A mismatch invalidates the challenge before any
+authorization is consumed and before any executor is called. The comparison
+uses the recomputed identity of the *effective* policy — the object the
+boundary is actually about to evaluate against — not a cached copy taken at
+mint time.
+
+**Failure is refusal.** If loading, canonicalization, digest calculation, or
+the comparison itself fails, the challenge is invalidated when the store is
+reachable, the response is the generic non-success message of section 5.10,
+and **no executor runs**.
+
+**Limits, stated honestly.** The identity is a change *detector*, not proof of
+authenticity: it is computed from whatever policy the process holds, so it
+cannot detect that the policy itself was replaced deliberately by someone able
+to modify the deployment, and it is not a signature or a trust anchor. What it
+buys is precise: a consequential approval cannot survive a change to the rules
+that governed it.
+
+### 5.10 Bounded confirmation-code attempts
+
+The display code is a second check on top of the 128-bit challenge identifier,
+and it is only worth having if guessing it is bounded. **Proposed default:
+five failed code attempts per challenge**, after which the challenge locks.
+
+- **Atomic counting.** A confirm request locks the record and performs the
+  comparison and the counter in the same atomic unit (for example
+  `SELECT ... FOR UPDATE` followed by the update, or a conditional update that
+  increments `failed_code_attempts` and returns the row). Concurrent wrong
+  guesses therefore cannot exceed the budget by racing, and a correct code
+  cannot slip past a failure that was recorded before it.
+- **Terminal behaviour at the limit.** The budget counts *failures*, not
+  attempts: the challenge stays `PENDING` after failures one to four, a
+  correct code on the fifth attempt still succeeds, and the fifth **failure**
+  sets `LOCKED`. Every later attempt is refused, nothing is consumed, and no
+  executor runs. The user must re-propose the request, which produces a new
+  challenge; a locked challenge is never unlocked or extended.
+- **No consumption on failure.** Failed attempts are evaluated strictly before
+  the consume transition, so a wrong code cannot burn, trigger, or dispatch
+  anything.
+- **Generic responses.** Unknown, malformed, expired, locked, already-used,
+  and wrong-code all return the same non-success wording, with no attempt
+  count, no remaining-budget disclosure, and no hint about how close a guess
+  was. The caller learns only that nothing ran. The pending card keeps its own
+  client-side context from the mint response, so a legitimate user can still
+  retry; the server never confirms whether a given challenge exists.
+- **No leakage.** Challenge identifiers and display codes never appear in
+  application logs or error bodies; an attempt count may be recorded as a
+  number without any identifier.
+- **Budget arithmetic, for honesty about what this defends.** With the
+  proposed six-character code over a 32-symbol unambiguous alphabet there are
+  roughly 1.07e9 possibilities; five failures leave a per-challenge success
+  probability near 1e-8 for someone who already holds a challenge identifier.
+  That is why the identifier must stay secret, and why this is a guard against
+  guessing rather than against an attacker who can read the store.
+- **Out of scope, again.** This does not defend against malicious code running
+  with the same local user's privileges: such code can read the database, call
+  the confirm endpoint itself, and click Confirm. Bounded attempts raise the
+  cost of guessing; they do not create a boundary the threat model in
+  section 4 does not claim.
 
 ## 6. Recording and privacy
 
@@ -328,9 +446,11 @@ model conventions):
 | `operation_id` | Exact machine identifier | Never normalized. |
 | `target`, `scope` | Canonical target/scope, or null | Personal data; redact after the window. |
 | `parameters` | Canonical parameter map, or empty | Personal data; redact after the window. |
-| `policy_version` | Policy version that required confirmation | Detects a changed rule set. |
+| `policy_identity` | Deterministic fingerprint of the effective policy contents (section 5.9) | The real change detector. |
+| `policy_version` | Human-readable version label that required confirmation | Metadata only; the current value is always `"1"`, so it cannot detect a rule change. |
+| `failed_code_attempts` | Wrong display codes seen so far | Integer only; never stores a submitted code. |
 | `required_risk`, `required_reason` | Why confirmation was required | Makes the record self-explaining. |
-| `status` | `PENDING`, `CONFIRMED`, `REJECTED`, `CANCELLED`, `EXPIRED`, `CONSUMED`, `INVALIDATED` | Terminal states are explicit. |
+| `status` | `PENDING`, `CONFIRMED`, `REJECTED`, `CANCELLED`, `EXPIRED`, `CONSUMED`, `INVALIDATED`, `LOCKED` | Terminal states are explicit; `LOCKED` means the attempt budget was exhausted. |
 | `created_at`, `expires_at`, `decided_at`, `consumed_at` | Timing | Server clock only. |
 | `outcome` | Result of the execution attempt, if any | `NOT_RUN`, `FAILED`, `SUCCEEDED`, `UNKNOWN_AFTER_CONSUME`. |
 
@@ -343,15 +463,17 @@ operation. The record must not become a conversation store.
 - Material parameter values are stored only because binding and execution
   require them, and are **redacted to a salted digest** once the record is
   terminal and past the retention window; the identifier, decision, timing,
-  policy version, and reason survive so the audit trail still shows *that*
-  an exactly-specified action was approved.
+  policy identity, and reason survive so the audit trail still shows *that*
+  an exactly-specified action was approved, and under which rules it was
+  approved.
 - Confirmation records, material values, and display codes are never written
   to application logs. Log lines may reference the internal id and status
   only.
 - Display codes and challenge identifiers must not appear in error messages
   returned to the client (the existing 422 handler already strips `input`
   values for `/api/assistant/`; the confirm endpoint must be covered by the
-  same treatment).
+  same treatment). Failed-attempt counts are never disclosed to the client,
+  and a submitted code is never stored in plaintext or logged.
 - User control: the eventual inspect/export/delete surface for assistant data
   (H.3 territory) must include confirmation records, otherwise option B
   conflicts with E.1. This is flagged as an owner decision in section 11.
@@ -415,10 +537,12 @@ server verifies every confirmation on its own before anything executes:
 1. the challenge exists and is `PENDING`;
 2. it is not expired, compared with the server clock inside the atomic
    transition;
-3. the display code matches its stored hash;
+3. the display code matches its stored hash, inside the remaining attempt
+   budget of section 5.10, with the comparison and the counter in the same
+   atomic update;
 4. the request's `Origin`/`Host` match the configured local origin;
-5. the bound operation, policy version, and reason are intact and the record
-   has not been invalidated;
+5. the bound operation, effective policy identity, and reason are intact, and
+   the record is neither invalidated nor locked;
 6. the *current* policy still yields `REQUIRE_CONFIRMATION` for the bound
    operation, and re-evaluating with an `AuthorizedScope` built from the
    stored record yields `ALLOW`;
@@ -427,7 +551,9 @@ server verifies every confirmation on its own before anything executes:
 
 Failure at any step returns a non-success status, executes nothing, and
 records the failure (when durable records are approved) without personal
-content.
+content. Every challenge-related refusal — unknown, malformed, expired,
+locked, already used, or wrong code — returns the same generic wording, so a
+caller cannot learn whether a challenge exists or how close a guess was.
 
 ## 8. Execution boundary
 
@@ -473,9 +599,13 @@ boundary rather than adding a parallel path:
 
 Because conditions can change between minting a challenge and consuming it:
 
-- the **policy version** is re-read; if the effective policy that governs the
-  operation changed, the challenge is invalidated and the user must ask
-  again;
+- the **effective policy identity** is recomputed from the currently loaded
+  policy and compared with the stored identity; any difference — a changed
+  risk classification, a prohibited-flag flip, a changed required-target or
+  required-parameter rule, an added or removed rule — invalidates the
+  challenge even when `policy_version` still reads `"1"`, and the user must
+  ask again (section 5.9); if loading or comparing the policy fails, the
+  challenge is invalidated and nothing executes;
 - the **operation** is re-evaluated with the stored canonical values; if the
   decision is no longer `REQUIRE_CONFIRMATION` (now `DENY` or `CLARIFY`),
   nothing executes;
@@ -495,7 +625,9 @@ Because conditions can change between minting a challenge and consuming it:
 | Confirm and cancel together | Same transition decides; the loser is refused; a consumed record is never revived. |
 | Confirm as the deadline passes | Expiry is part of the transition predicate; an expired challenge executes nothing. |
 | Same operation re-proposed during a pending approval | A separate challenge is created; approving the older one executes only the older, approved values. |
-| Policy changed between mint and confirm | Re-evaluated at consumption; mismatch invalidates and refuses. |
+| Policy contents changed between mint and confirm | The recomputed policy identity is compared at consumption; any mismatch invalidates and refuses, even when the `policy_version` label is unchanged. |
+| Two wrong codes submitted concurrently | The comparison and the counter increment happen in the same locked update, so the budget is spent, not raced past. |
+| A correct code arriving after lockout | Refused; the challenge is terminal, nothing is consumed, and a new request is required. |
 | Crash after consume, before execution | No automatic execution on restart; the record shows unknown outcome; the user is told the result was not established. |
 | Duplicate HTTP submit (double-click, retry) | Same as two confirms: the second is refused; the UI reflects the first decision. |
 
@@ -510,17 +642,45 @@ behaviour per test, no assertion that merely checks a symbol exists):
 - a challenge is created only for `REQUIRE_CONFIRMATION`, and it exposes only
   the challenge id, a display summary, the display code, and expiry;
 - the stored record is bound to the exact operation identifier, target,
-  scope, parameter set, policy version, and reason;
+  scope, parameter set, effective policy identity, and reason;
+- the policy identity is deterministic: equivalent policies (reordered rules,
+  reordered `required_parameters`) produce the same identity, and a rule's
+  `description` edit alone does not change it;
 - confirming with an unknown, blank, or malformed challenge id executes
   nothing and reveals nothing;
 - confirming with a wrong display code executes nothing;
+- repeated wrong codes are bounded: the budget counts failures, so a correct
+  code on the fifth permitted attempt succeeds, while the fifth failure locks
+  the challenge and every later attempt — including one with the correct code
+  — is refused and executes nothing;
+- concurrent wrong-code submissions cannot exceed the budget, because the
+  comparison and the increment share one atomic update;
+- attempts against an already invalidated, expired, locked, or consumed
+  challenge are refused and execute nothing;
+- unknown, malformed, expired, locked, already-used, and wrong-code responses
+  are indistinguishable in wording, disclose no attempt count, and contain
+  neither the challenge identifier nor the display code;
 - confirming an expired challenge executes nothing, including when it expires
   during the request;
 - replaying a consumed challenge executes nothing the second time;
 - two concurrent confirms produce exactly one execution;
 - confirm and cancel racing produce at most one execution and never revive a
   consumed record;
-- a policy-version change between mint and confirm invalidates the challenge;
+- a change to the effective policy contents between mint and confirm
+  invalidates the pending challenge in every case below, while the
+  human-readable `policy_version` still reads `"1"`:
+  - a rule's `risk` changes, including becoming unclassified;
+  - a rule becomes `prohibited`, or stops being;
+  - a rule's `requires_target` changes;
+  - a rule's `required_parameters` set changes;
+  - a rule is added, removed, or renamed;
+  - the `policy_version` label itself changes;
+- the identity is stable when nothing material changed: reordering rules,
+  reordering `required_parameters`, or editing only a rule's `description`
+  leaves the identity unchanged and does **not** invalidate a pending
+  challenge;
+- a failure while loading, canonicalizing, digesting, or comparing the policy
+  identity refuses the confirmation and executes nothing;
 - a decision that becomes `DENY` or `CLARIFY` before consumption executes
   nothing;
 - approving action A cannot execute action B with a changed target, scope, or
@@ -607,6 +767,17 @@ These are proposals, not approved decisions.
 10. **The pending card states "not run yet"; every terminal state except
     confirmed-and-succeeded states that nothing ran or that the outcome is
     unknown.**
+11. **Five failed display-code attempts lock the challenge** (section 5.10),
+    counted atomically with the comparison, with one generic response for
+    every failure and no disclosure of the remaining budget.
+12. **Pending confirmations are bound to a SHA-256 fingerprint of the
+    canonical policy contents** (section 5.9), not to the fixed `"1"` version
+    label, and the fingerprint is recomputed and compared at consumption.
+
+Implementing items 11 and 12 adds one side-effect-free helper to Task 220's
+policy module and two columns (the stored identity and the attempt counter) to
+the proposed record. Neither changes an authorization decision, and neither is
+implemented by this document.
 
 ## 12. Decisions requiring owner approval
 
@@ -646,8 +817,14 @@ The design is complete when a reviewer can confirm:
 - [ ] the nine lifecycle states and their allowed transitions are explicit;
 - [ ] clarification can never be turned into authorization, and the code path
       that mints challenges is restricted to `REQUIRE_CONFIRMATION`;
-- [ ] forged, mismatched, expired, replayed, and racing confirmations all fail
-      closed, each with a stated mechanism;
+- [ ] forged, mismatched, expired, replayed, locked, and racing confirmations
+      all fail closed, each with a stated mechanism;
+- [ ] the identity gating a pending confirmation is a content fingerprint, not
+      the fixed `"1"` label, and every material rule change invalidates the
+      challenge;
+- [ ] failed display-code attempts are bounded, counted atomically, land in
+      the terminal `LOCKED` state at the limit, and produce indistinguishable
+      failure responses;
 - [ ] the threat model states what is *not* defended against, without
       over-claiming origin checks or opaque identifiers;
 - [ ] recording, privacy, retention, and clinical separation are specified,
