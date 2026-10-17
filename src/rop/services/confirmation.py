@@ -365,13 +365,14 @@ def decide(
     """
     repository = repository or AssistantConfirmationRepository()
     current = _checked_now(now)
+    transition_time = None if now is None else current
     if decision is ConfirmationDecision.CANCEL:
         return _decide_terminal(
-            db, repository, challenge_id, ConfirmationDecision.CANCEL, current
+            db, repository, challenge_id, ConfirmationDecision.CANCEL, transition_time
         )
     if decision is ConfirmationDecision.REJECT:
         return _decide_terminal(
-            db, repository, challenge_id, ConfirmationDecision.REJECT, current
+            db, repository, challenge_id, ConfirmationDecision.REJECT, transition_time
         )
     if decision is not ConfirmationDecision.CONFIRM:
         return DecisionResult(
@@ -385,6 +386,7 @@ def decide(
         executors=executors,
         repository=repository,
         now=current,
+        transition_time=transition_time,
     )
 
 
@@ -399,14 +401,14 @@ def _decide_terminal(
     repository: AssistantConfirmationRepository,
     challenge_id: str,
     decision: ConfirmationDecision,
-    current: datetime,
+    transition_time: datetime | None,
 ) -> DecisionResult:
     cancelling = decision is ConfirmationDecision.CANCEL
     try:
         if cancelling:
-            won = repository.cancel(db, challenge_id, now=current)
+            won = repository.cancel(db, challenge_id, now=transition_time)
         else:
-            won = repository.reject(db, challenge_id, now=current)
+            won = repository.reject(db, challenge_id, now=transition_time)
         db.commit()
     except Exception:
         db.rollback()
@@ -424,7 +426,7 @@ def _safe_invalidate(
     db: Session,
     repository: AssistantConfirmationRepository,
     challenge_id: str,
-    current: datetime,
+    current: datetime | None,
 ) -> None:
     try:
         repository.invalidate(db, challenge_id, now=current)
@@ -442,6 +444,7 @@ def _confirm(
     executors: ExecutorRegistry,
     repository: AssistantConfirmationRepository,
     now: datetime,
+    transition_time: datetime | None,
 ) -> DecisionResult:
     try:
         record = repository.lock_pending_for_update(db, challenge_id)
@@ -453,9 +456,18 @@ def _confirm(
         db.rollback()
         return _refusal()
 
-    if record.expires_at <= now:
-        repository.expire_if_overdue(db, challenge_id, now=now)
-        db.commit()
+    try:
+        if transition_time is None:
+            expired = repository.expire_if_overdue(db, challenge_id, now=None)
+        else:
+            expired = record.expires_at <= transition_time
+            if expired:
+                repository.expire_if_overdue(db, challenge_id, now=transition_time)
+        if expired:
+            db.commit()
+            return _refusal()
+    except Exception:
+        db.rollback()
         return _refusal()
 
     try:
@@ -466,12 +478,12 @@ def _confirm(
             parameters=dict(record.parameters or {}),
         )
     except Exception:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if not verify_display_code(record, display_code):
         try:
-            repository.record_failed_code_attempt(db, challenge_id, now=now)
+            repository.record_failed_code_attempt(db, challenge_id, now=transition_time)
             db.commit()
         except Exception:
             db.rollback()
@@ -490,20 +502,20 @@ def _confirm(
             stored_operation, policy=policy, authorized=scope
         )
     except Exception:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if identity != record.policy_identity:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if decision_without_scope.outcome is not AuthorizationOutcome.REQUIRE_CONFIRMATION:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if decision_with_scope.outcome is not AuthorizationOutcome.ALLOW:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if not scope.covers(stored_operation):
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if executors.get(stored_operation.operation_id) is None:
@@ -515,7 +527,10 @@ def _confirm(
     executor = executors.get(stored_operation.operation_id)
     try:
         consumed = repository.consume(
-            db, challenge_id, expected_policy_identity=identity, now=now
+            db,
+            challenge_id,
+            expected_policy_identity=identity,
+            now=transition_time,
         )
         if not consumed:
             db.commit()

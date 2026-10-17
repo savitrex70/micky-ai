@@ -1496,3 +1496,150 @@ def test_confirmation_flow_does_not_touch_reasoning_sessions(
         after = session.scalar(text("select count(*) from reasoning_sessions"))
 
     assert before == after
+
+
+# ============================================================================
+# Transition-time expiry races (production path uses PostgreSQL clock_timestamp)
+# ============================================================================
+
+
+def test_challenge_expiring_during_policy_validation_cannot_be_consumed(
+    db, pg_engine, repository, monkeypatch
+) -> None:
+    executor = RecordingExecutor()
+    issued = _issue(
+        db,
+        now=_live_now(),
+        executors=_registry(WRITE_ID, executor=executor),
+    )
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+    real_evaluate = confirmation_module.evaluate_authorization
+
+    def expire_before_final_validation(operation, *, policy, authorized=None):
+        decision = real_evaluate(operation, policy=policy, authorized=authorized)
+        if authorized is not None:
+            db.execute(
+                update(AssistantConfirmation)
+                .where(AssistantConfirmation.challenge_id == challenge_id)
+                .values(
+                    expires_at=func.clock_timestamp() - text("interval '1 second'")
+                )
+            )
+        return decision
+
+    monkeypatch.setattr(
+        confirmation_module, "evaluate_authorization", expire_before_final_validation
+    )
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code=issued.challenge.display_code,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.consumed_at is None
+
+
+def test_code_failure_after_deadline_expires_instead_of_counting_failure(
+    db, pg_engine, repository, monkeypatch
+) -> None:
+    executor = RecordingExecutor()
+    issued = _issue(
+        db,
+        now=_live_now(),
+        executors=_registry(WRITE_ID, executor=executor),
+    )
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+
+    def expire_before_code_check(record, display_code):
+        db.execute(
+            update(AssistantConfirmation)
+            .where(AssistantConfirmation.challenge_id == challenge_id)
+            .values(
+                expires_at=func.clock_timestamp() - text("interval '1 second'")
+            )
+        )
+        return False
+
+    monkeypatch.setattr(
+        confirmation_module, "verify_display_code", expire_before_code_check
+    )
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code="WRONG1",
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.failed_code_attempts == 0
+    assert stored.display_code_hash is None
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [ConfirmationDecision.CANCEL, ConfirmationDecision.REJECT],
+)
+def test_cancel_or_reject_that_reaches_deadline_expires_not_decides(
+    db, pg_engine, decision
+) -> None:
+    issued = _issue(db, now=_live_now())
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+
+    class DeadlineRaceRepository(AssistantConfirmationRepository):
+        def _expire_before_transition(self, session, target_id):
+            session.execute(
+                update(AssistantConfirmation)
+                .where(AssistantConfirmation.challenge_id == target_id)
+                .values(
+                    expires_at=func.clock_timestamp() - text("interval '1 second'")
+                )
+            )
+
+        def cancel(self, session, target_id, *, now=None):
+            self._expire_before_transition(session, target_id)
+            return super().cancel(session, target_id, now=now)
+
+        def reject(self, session, target_id, *, now=None):
+            self._expire_before_transition(session, target_id)
+            return super().reject(session, target_id, now=now)
+
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=decision,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID),
+        repository=DeadlineRaceRepository(),
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.display_code_hash is None
+    assert stored.consumed_at is None

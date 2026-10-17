@@ -108,11 +108,22 @@ class ConfirmationRecordError(ValueError):
 
 
 def _checked_now(now: datetime | None) -> datetime:
-    """Return a trusted, timezone-aware instant for every stored timestamp."""
+    """Return a trusted, timezone-aware instant for application-level work."""
     current = now or datetime.now(UTC)
     if current.tzinfo is None or current.utcoffset() is None:
         raise ConfirmationRecordError("a timezone-aware timestamp is required")
     return current.astimezone(UTC)
+
+
+def _transition_instant(now: datetime | None):
+    """Use a test instant when injected; otherwise PostgreSQL wall-clock time.
+
+    PostgreSQL transaction timestamps can become stale while a confirmation
+    is being checked. Production transitions therefore use clock_timestamp()
+    in their guarded SQL predicates and terminal timestamps. Explicit test
+    instants remain supported for deterministic tests.
+    """
+    return func.clock_timestamp() if now is None else _checked_now(now)
 
 
 def _checked_identity(policy_identity: str) -> str:
@@ -332,7 +343,7 @@ class AssistantConfirmationRepository:
         challenge_id: str,
         *,
         to_status: ConfirmationStatus,
-        now: datetime,
+        now: datetime | None,
         expected_policy_identity: str | None = None,
     ) -> bool:
         """Apply one guarded transition; return True only if it won.
@@ -348,10 +359,11 @@ class AssistantConfirmationRepository:
         ``EXPIRED`` atomically (see ``_expire_if_overdue``) and still
         reports that the requested transition did not happen.
         """
+        instant = _transition_instant(now)
         conditions = [
             AssistantConfirmation.challenge_id == challenge_id,
             AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-            AssistantConfirmation.expires_at > now,
+            AssistantConfirmation.expires_at > instant,
         ]
         if expected_policy_identity is not None:
             conditions.append(
@@ -359,8 +371,8 @@ class AssistantConfirmationRepository:
             )
         values: dict[str, object] = {
             "status": to_status.value,
-            "decided_at": now,
-            "terminal_at": now,
+            "decided_at": instant,
+            "terminal_at": instant,
             # A decided record can never be confirmed again, so its code
             # verifier is no longer needed and is dropped rather than kept.
             "display_code_hash": None,
@@ -380,27 +392,22 @@ class AssistantConfirmationRepository:
         self._expire_if_overdue(db, challenge_id, now)
         return False
 
-    def _expire_if_overdue(self, db: Session, challenge_id: str, now: datetime) -> bool:
-        """Expire one overdue ``PENDING`` record atomically, if still due.
-
-        The update only matches a record that is still ``PENDING`` and
-        genuinely past ``expires_at``, so it can never overwrite a
-        terminal state another caller already established and can never
-        revive, renew, extend, consume, or execute a challenge. It sets
-        both decision and terminal timestamps and drops the code
-        verifier; ``terminal_at`` starts the retention window.
-        """
+    def _expire_if_overdue(
+        self, db: Session, challenge_id: str, now: datetime | None
+    ) -> bool:
+        """Expire an overdue pending challenge using the transition-time clock."""
+        instant = _transition_instant(now)
         statement = (
             update(AssistantConfirmation)
             .where(
                 AssistantConfirmation.challenge_id == challenge_id,
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-                AssistantConfirmation.expires_at <= now,
+                AssistantConfirmation.expires_at <= instant,
             )
             .values(
                 status=ConfirmationStatus.EXPIRED.value,
-                decided_at=now,
-                terminal_at=now,
+                decided_at=instant,
+                terminal_at=instant,
                 display_code_hash=None,
                 display_code_salt=None,
             )
@@ -419,7 +426,7 @@ class AssistantConfirmationRepository:
         overwrite a terminal state, revive a challenge, or execute
         anything.
         """
-        return self._expire_if_overdue(db, challenge_id, _checked_now(now))
+        return self._expire_if_overdue(db, challenge_id, now)
 
     def consume(
         self,
@@ -429,27 +436,23 @@ class AssistantConfirmationRepository:
         expected_policy_identity: str,
         now: datetime | None = None,
     ) -> bool:
-        """Spend one pending approval, exactly once, at the current policy.
-
-        ``expected_policy_identity`` must be the fingerprint the caller
-        recomputed from the effective policy it is about to evaluate
-        against, not a value supplied by a client. When it differs from
-        the stored identity the record is invalidated instead of
-        consumed, so a rule change cannot leave an old approval usable.
-        """
-        current = _checked_now(now)
+        """Spend one pending approval at the effective policy, exactly once."""
+        transition_time = None if now is None else _checked_now(now)
         identity = _checked_identity(expected_policy_identity)
         consumed = self._transition(
             db,
             challenge_id,
             to_status=ConfirmationStatus.CONSUMED,
-            now=current,
+            now=transition_time,
             expected_policy_identity=identity,
         )
         if consumed:
             return True
         self._invalidate_on_policy_change(
-            db, challenge_id, expected_policy_identity=identity, now=current
+            db,
+            challenge_id,
+            expected_policy_identity=identity,
+            now=transition_time,
         )
         return False
 
@@ -459,26 +462,31 @@ class AssistantConfirmationRepository:
         challenge_id: str,
         *,
         expected_policy_identity: str,
-        now: datetime,
+        now: datetime | None,
     ) -> bool:
-        """Invalidate a still-pending record whose policy identity moved."""
+        """Invalidate a changed-policy challenge only while it remains live."""
+        instant = _transition_instant(now)
         statement = (
             update(AssistantConfirmation)
             .where(
                 AssistantConfirmation.challenge_id == challenge_id,
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
+                AssistantConfirmation.expires_at > instant,
                 AssistantConfirmation.policy_identity != expected_policy_identity,
             )
             .values(
                 status=ConfirmationStatus.INVALIDATED.value,
-                decided_at=now,
-                terminal_at=now,
+                decided_at=instant,
+                terminal_at=instant,
                 display_code_hash=None,
                 display_code_salt=None,
             )
             .returning(AssistantConfirmation.id)
         )
-        return db.execute(statement).first() is not None
+        changed = db.execute(statement).first() is not None
+        if not changed:
+            self._expire_if_overdue(db, challenge_id, now)
+        return changed
 
     def reject(
         self,
@@ -492,7 +500,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.REJECTED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def cancel(
@@ -511,7 +519,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.CANCELLED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def invalidate(
@@ -526,7 +534,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.INVALIDATED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def record_failed_code_attempt(
@@ -536,17 +544,15 @@ class AssistantConfirmationRepository:
         *,
         now: datetime | None = None,
     ) -> int | None:
-        """Count one wrong display code atomically and return the total.
+        """Count one wrong code atomically against the actual transition time.
 
-        The increment and the lockout decision are one statement, so
-        concurrent wrong guesses serialize and can never exceed the
-        budget. The counter counts failures: reaching the limit sets
-        ``LOCKED``, and a correct code entered before that still wins.
-        Returns ``None`` when no attempt could be counted (unknown,
-        expired, locked, or already decided), which is exactly the
-        indistinguishable outcome a guessing caller must see.
+        The caller holds the challenge row lock while verifying the code.
+        This update independently rechecks PENDING, expiry, and the attempt
+        budget. If the deadline passed during verification, the attempt is
+        not counted and the overdue record is settled to EXPIRED.
         """
-        current = _checked_now(now)
+        transition_time = None if now is None else _checked_now(now)
+        current = _transition_instant(transition_time)
         next_attempt = AssistantConfirmation.failed_code_attempts + 1
         locked = next_attempt >= MAX_FAILED_CODE_ATTEMPTS
         statement = (
@@ -584,9 +590,7 @@ class AssistantConfirmationRepository:
         )
         row = db.execute(statement).first()
         if row is None:
-            # An overdue pending challenge must not stay looking live just
-            # because someone guessed a code at it after it expired.
-            self._expire_if_overdue(db, challenge_id, current)
+            self._expire_if_overdue(db, challenge_id, transition_time)
             return None
         return row[0]
 
@@ -683,7 +687,7 @@ class AssistantConfirmationRepository:
         """
         if limit <= 0 or limit > MAX_EXPIRY_SWEEP_LIMIT:
             raise ConfirmationRecordError("invalid expiry sweep limit")
-        current = _checked_now(now)
+        current = _transition_instant(now)
         candidate_ids = (
             select(AssistantConfirmation.id)
             .where(

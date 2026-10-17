@@ -1,4 +1,5 @@
-﻿from collections.abc import AsyncIterator
+﻿import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -13,15 +14,22 @@ from rop.api.health import router as health_router
 from rop.api.sessions import router as sessions_router
 from rop.config import get_settings
 from rop.logging_config import configure_logging
+from rop.services.confirmation_recovery import recover_confirmation_state
 from rop.web.routes import mount_static
 from rop.web.routes import router as web_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
+    if not recover_confirmation_state():
+        logger.warning(
+            "Assistant confirmation startup recovery did not complete; "
+            "it will be retried on the next startup."
+        )
     yield
 
 
