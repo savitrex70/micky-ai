@@ -156,3 +156,15 @@ endpoints, browser controls, a state-changing capability, an executor or any
 simulated action, an alternate risk table, session-wide permissions, or model
 inference. `REQUIRE_CONFIRMATION` remains unreachable because nothing mints a
 challenge, and the Task 221 dispatch boundary is unchanged.
+
+
+## Startup recovery (Task 224 correction)
+
+Application startup invokes one bounded recovery transaction through
+src/rop/services/confirmation_recovery.py. It marks a bounded batch of
+consumed records without an established outcome as UNKNOWN_AFTER_CONSUME,
+and expires a bounded batch of overdue pending challenges. It never executes
+or retries an operation. A database connection, query, or commit failure
+rolls back when possible, emits only a static warning, and does not prevent
+the local application from starting; the next startup can continue with
+records beyond the previous batch.

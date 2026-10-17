@@ -43,10 +43,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import logging
 import re
 import secrets
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -82,8 +80,6 @@ from rop.schemas.authorization import (
     RiskLevel,
 )
 from rop.schemas.confirmation import ConfirmationDecision, ConfirmationDecisionStatus
-
-logger = logging.getLogger(__name__)
 
 CHALLENGE_LIFETIME = timedelta(minutes=5)
 """How long a challenge stays confirmable. Evaluated with the server clock."""
@@ -368,21 +364,15 @@ def decide(
     executes nothing.
     """
     repository = repository or AssistantConfirmationRepository()
-    # Validate the caller-supplied test clock if present, but never use it
-    # as the authority on whether the challenge is expired at the moment
-    # of a state transition: the repository evaluates the expiry predicate
-    # against PostgreSQL ``clock_timestamp()`` in production so a challenge
-    # that expires during this request cannot be consumed by a stale
-    # request-start timestamp.
-    if now is not None:
-        _checked_now(now)
+    current = _checked_now(now)
+    transition_time = None if now is None else current
     if decision is ConfirmationDecision.CANCEL:
         return _decide_terminal(
-            db, repository, challenge_id, ConfirmationDecision.CANCEL, now
+            db, repository, challenge_id, ConfirmationDecision.CANCEL, transition_time
         )
     if decision is ConfirmationDecision.REJECT:
         return _decide_terminal(
-            db, repository, challenge_id, ConfirmationDecision.REJECT, now
+            db, repository, challenge_id, ConfirmationDecision.REJECT, transition_time
         )
     if decision is not ConfirmationDecision.CONFIRM:
         return DecisionResult(
@@ -395,7 +385,8 @@ def decide(
         policy=policy,
         executors=executors,
         repository=repository,
-        now=now,
+        now=current,
+        transition_time=transition_time,
     )
 
 
@@ -410,14 +401,14 @@ def _decide_terminal(
     repository: AssistantConfirmationRepository,
     challenge_id: str,
     decision: ConfirmationDecision,
-    current: datetime | None,
+    transition_time: datetime | None,
 ) -> DecisionResult:
     cancelling = decision is ConfirmationDecision.CANCEL
     try:
         if cancelling:
-            won = repository.cancel(db, challenge_id, now=current)
+            won = repository.cancel(db, challenge_id, now=transition_time)
         else:
-            won = repository.reject(db, challenge_id, now=current)
+            won = repository.reject(db, challenge_id, now=transition_time)
         db.commit()
     except Exception:
         db.rollback()
@@ -452,7 +443,8 @@ def _confirm(
     policy: AuthorizationPolicy,
     executors: ExecutorRegistry,
     repository: AssistantConfirmationRepository,
-    now: datetime | None,
+    now: datetime,
+    transition_time: datetime | None,
 ) -> DecisionResult:
     try:
         record = repository.lock_pending_for_update(db, challenge_id)
@@ -464,10 +456,18 @@ def _confirm(
         db.rollback()
         return _refusal()
 
-    observed_now = _checked_now(now)
-    if record.expires_at <= observed_now:
-        repository.expire_if_overdue(db, challenge_id, now=now)
-        db.commit()
+    try:
+        if transition_time is None:
+            expired = repository.expire_if_overdue(db, challenge_id, now=None)
+        else:
+            expired = record.expires_at <= transition_time
+            if expired:
+                repository.expire_if_overdue(db, challenge_id, now=transition_time)
+        if expired:
+            db.commit()
+            return _refusal()
+    except Exception:
+        db.rollback()
         return _refusal()
 
     try:
@@ -478,12 +478,12 @@ def _confirm(
             parameters=dict(record.parameters or {}),
         )
     except Exception:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if not verify_display_code(record, display_code):
         try:
-            repository.record_failed_code_attempt(db, challenge_id, now=now)
+            repository.record_failed_code_attempt(db, challenge_id, now=transition_time)
             db.commit()
         except Exception:
             db.rollback()
@@ -502,20 +502,20 @@ def _confirm(
             stored_operation, policy=policy, authorized=scope
         )
     except Exception:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if identity != record.policy_identity:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if decision_without_scope.outcome is not AuthorizationOutcome.REQUIRE_CONFIRMATION:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if decision_with_scope.outcome is not AuthorizationOutcome.ALLOW:
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
     if not scope.covers(stored_operation):
-        _safe_invalidate(db, repository, challenge_id, now)
+        _safe_invalidate(db, repository, challenge_id, transition_time)
         return _refusal()
 
     if executors.get(stored_operation.operation_id) is None:
@@ -527,7 +527,10 @@ def _confirm(
     executor = executors.get(stored_operation.operation_id)
     try:
         consumed = repository.consume(
-            db, challenge_id, expected_policy_identity=identity, now=now
+            db,
+            challenge_id,
+            expected_policy_identity=identity,
+            now=transition_time,
         )
         if not consumed:
             db.commit()
@@ -597,62 +600,6 @@ def _result_for_outcome(outcome: ConfirmationOutcome, recorded: bool) -> Decisio
     return DecisionResult(ConfirmationDecisionStatus.UNKNOWN, _UNKNOWN_MESSAGE, True)
 
 
-def run_startup_recovery(
-    session_factory: Callable[[], Session],
-    *,
-    limit: int | None = None,
-) -> tuple[int, int]:
-    """Run one bounded, fail-closed recovery sweep at application start.
-
-    Marks a bounded batch of ``CONSUMED`` records with no established
-    execution outcome as ``UNKNOWN_AFTER_CONSUME`` and expires a bounded
-    batch of overdue ``PENDING`` challenges. Uses the existing repository
-    methods and their transaction conventions; does not duplicate SQL,
-    does not execute, retry, renew, re-enable, or expose material values
-    in logs. On failure (for example, the database is temporarily
-    unavailable) rolls back and returns ``(0, 0)`` rather than raising,
-    so a database outage never becomes fabricated recovery success or a
-    startup failure. Successive invocations continue to advance through
-    remaining records because the repository methods are bounded and
-    ordered deterministically.
-
-    Returns:
-        ``(marked, expired)``: counts actually applied by this sweep.
-    """
-    session: Session | None = None
-    try:
-        session = session_factory()
-    except Exception:
-        logger.warning("startup recovery skipped: could not open a session")
-        return (0, 0)
-    repository = AssistantConfirmationRepository()
-    marked = 0
-    expired = 0
-    try:
-        kwargs = {} if limit is None else {"limit": limit}
-        marked = repository.mark_unestablished_outcomes(session, **kwargs)
-        expired = repository.expire_overdue(session, **kwargs)
-        session.commit()
-        logger.info(
-            "startup recovery: marked %d unknown, expired %d overdue",
-            marked,
-            expired,
-        )
-    except Exception:
-        try:
-            session.rollback()
-        except Exception:
-            pass
-        logger.warning("startup recovery aborted: transaction rolled back")
-        return (0, 0)
-    finally:
-        try:
-            session.close()
-        except Exception:
-            pass
-    return (marked, expired)
-
-
 __all__ = [
     "CHALLENGE_ID_BYTES",
     "CHALLENGE_LIFETIME",
@@ -671,6 +618,5 @@ __all__ = [
     "is_well_formed_display_code",
     "issue_challenge",
     "normalize_display_code",
-    "run_startup_recovery",
     "verify_display_code",
 ]

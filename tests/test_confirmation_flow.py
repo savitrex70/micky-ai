@@ -23,7 +23,7 @@ from threading import Barrier, Lock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -1413,6 +1413,10 @@ def test_end_to_end_flow_executes_through_the_api(
     assert body["status"] == ConfirmationDecisionStatus.EXECUTED.value
     assert body["executed"] is True
     assert executor.call_count == 1
+    stored = _fetch(pg_engine, challenge["challenge_id"])
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.CONSUMED.value
+    assert stored.consumed_at is not None
 
 
 def test_default_help_endpoint_is_unchanged() -> None:
@@ -1496,3 +1500,313 @@ def test_confirmation_flow_does_not_touch_reasoning_sessions(
         after = session.scalar(text("select count(*) from reasoning_sessions"))
 
     assert before == after
+
+
+# ============================================================================
+# Transition-time expiry races (production path uses PostgreSQL clock_timestamp)
+# ============================================================================
+
+
+def test_challenge_expiring_during_policy_validation_cannot_be_consumed(
+    db, pg_engine, repository, monkeypatch
+) -> None:
+    executor = RecordingExecutor()
+    issued = _issue(
+        db,
+        now=_live_now(),
+        executors=_registry(WRITE_ID, executor=executor),
+    )
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+    real_evaluate = confirmation_module.evaluate_authorization
+
+    def expire_before_final_validation(operation, *, policy, authorized=None):
+        decision = real_evaluate(operation, policy=policy, authorized=authorized)
+        if authorized is not None:
+            db.execute(
+                update(AssistantConfirmation)
+                .where(AssistantConfirmation.challenge_id == challenge_id)
+                .values(expires_at=func.clock_timestamp() - text("interval '1 second'"))
+            )
+        return decision
+
+    monkeypatch.setattr(
+        confirmation_module, "evaluate_authorization", expire_before_final_validation
+    )
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code=issued.challenge.display_code,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.consumed_at is None
+
+
+def test_code_failure_after_deadline_expires_instead_of_counting_failure(
+    db, pg_engine, repository, monkeypatch
+) -> None:
+    executor = RecordingExecutor()
+    issued = _issue(
+        db,
+        now=_live_now(),
+        executors=_registry(WRITE_ID, executor=executor),
+    )
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+
+    def expire_before_code_check(record, display_code):
+        db.execute(
+            update(AssistantConfirmation)
+            .where(AssistantConfirmation.challenge_id == challenge_id)
+            .values(expires_at=func.clock_timestamp() - text("interval '1 second'"))
+        )
+        return False
+
+    monkeypatch.setattr(
+        confirmation_module, "verify_display_code", expire_before_code_check
+    )
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code="WRONG1",
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.failed_code_attempts == 0
+    assert stored.display_code_hash is None
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [ConfirmationDecision.CANCEL, ConfirmationDecision.REJECT],
+)
+def test_cancel_or_reject_that_reaches_deadline_expires_not_decides(
+    db, pg_engine, decision
+) -> None:
+    issued = _issue(db, now=_live_now())
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+
+    class DeadlineRaceRepository(AssistantConfirmationRepository):
+        def _expire_before_transition(self, session, target_id):
+            session.execute(
+                update(AssistantConfirmation)
+                .where(AssistantConfirmation.challenge_id == target_id)
+                .values(expires_at=func.clock_timestamp() - text("interval '1 second'"))
+            )
+
+        def cancel(self, session, target_id, *, now=None):
+            self._expire_before_transition(session, target_id)
+            return super().cancel(session, target_id, now=now)
+
+        def reject(self, session, target_id, *, now=None):
+            self._expire_before_transition(session, target_id)
+            return super().reject(session, target_id, now=now)
+
+    result = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=decision,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID),
+        repository=DeadlineRaceRepository(),
+        now=None,
+    )
+
+    assert result.outcome is ConfirmationDecisionStatus.REFUSED
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.display_code_hash is None
+    assert stored.consumed_at is None
+
+
+# ============================================================================
+# Task 224 merge reconciliation: replay-after-expiry + recovery progression
+# ============================================================================
+
+
+def test_replay_after_expired_transition_is_refused(
+    db, pg_engine, repository, monkeypatch
+) -> None:
+    """After the deadline passes, confirmation is refused and no execution occurs.
+
+    Complements ``test_challenge_expiring_during_policy_validation_cannot_be_consumed``
+    by asserting the refusal is durable: a second attempt on the now-terminal
+    record is also refused, and the executor is never invoked.
+    """
+    executor = RecordingExecutor()
+    issued = _issue(
+        db, now=_live_now(), executors=_registry(WRITE_ID, executor=executor)
+    )
+    db.commit()
+    assert issued.challenge is not None
+    challenge_id = issued.challenge.challenge_id
+
+    # Move the deadline into the past right before confirmation, simulating
+    # expiry during request processing.
+    db.execute(
+        update(AssistantConfirmation)
+        .where(AssistantConfirmation.challenge_id == challenge_id)
+        .values(expires_at=func.clock_timestamp() - text("interval '1 second'"))
+    )
+    db.commit()
+
+    first = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code=issued.challenge.display_code,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+    db.commit()
+    assert first.executed is False
+    assert first.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+
+    second = confirmation_module.decide(
+        db,
+        challenge_id,
+        decision=ConfirmationDecision.CONFIRM,
+        display_code=issued.challenge.display_code,
+        policy=_demo_policy(),
+        executors=_registry(WRITE_ID, executor=executor),
+        repository=repository,
+        now=None,
+    )
+    db.commit()
+    assert second.executed is False
+    assert second.outcome is ConfirmationDecisionStatus.REFUSED
+    assert executor.call_count == 0
+
+    stored = _fetch(pg_engine, challenge_id)
+    assert stored is not None
+    assert stored.status == ConfirmationStatus.EXPIRED.value
+    assert stored.consumed_at is None
+    assert stored.display_code_hash is None
+
+
+def test_recovery_progresses_through_remaining_records(db, pg_engine) -> None:
+    """Each bounded recovery invocation advances past the previous batch."""
+    from rop.authorization.policy import authorization_policy_identity
+    from rop.services.confirmation_recovery import recover_confirmation_state
+
+    identity = authorization_policy_identity(_demo_policy())
+    repository = AssistantConfirmationRepository()
+    for _ in range(3):
+        issued = _issue(db)
+        assert issued.challenge is not None
+        consumed = repository.consume(
+            db,
+            issued.challenge.challenge_id,
+            expected_policy_identity=identity,
+            now=NOW,
+        )
+        assert consumed
+    db.commit()
+
+    def session_factory():
+        return Session(pg_engine)
+
+    assert (
+        recover_confirmation_state(session_factory=session_factory, batch_limit=2)
+        is True
+    )
+    with Session(pg_engine) as check:
+        marked_after_first = check.scalar(
+            select(func.count())
+            .select_from(AssistantConfirmation)
+            .where(
+                AssistantConfirmation.outcome
+                == ConfirmationOutcome.UNKNOWN_AFTER_CONSUME.value
+            )
+        )
+    assert marked_after_first == 2
+
+    assert (
+        recover_confirmation_state(session_factory=session_factory, batch_limit=2)
+        is True
+    )
+    with Session(pg_engine) as check:
+        marked_after_second = check.scalar(
+            select(func.count())
+            .select_from(AssistantConfirmation)
+            .where(
+                AssistantConfirmation.outcome
+                == ConfirmationOutcome.UNKNOWN_AFTER_CONSUME.value
+            )
+        )
+    assert marked_after_second == 3
+
+
+def test_recovery_preserves_unrelated_terminal_states(db, pg_engine) -> None:
+    """Recovery only touches CONSUMED-with-null-outcome and overdue PENDING."""
+    from rop.authorization.policy import authorization_policy_identity
+    from rop.services.confirmation_recovery import recover_confirmation_state
+
+    identity = authorization_policy_identity(_demo_policy())
+    repository = AssistantConfirmationRepository()
+
+    cancelled = _issue(db)
+    assert cancelled.challenge is not None
+    cancelled_id = cancelled.challenge.challenge_id
+    repository.cancel(db, cancelled_id, now=NOW)
+
+    consumed = _issue(db)
+    assert consumed.challenge is not None
+    consumed_id = consumed.challenge.challenge_id
+    assert repository.consume(
+        db,
+        consumed_id,
+        expected_policy_identity=identity,
+        now=NOW,
+    )
+    db.commit()
+
+    def session_factory():
+        return Session(pg_engine)
+
+    assert recover_confirmation_state(session_factory=session_factory) is True
+
+    with Session(pg_engine) as check:
+        cancelled_record = check.scalars(
+            select(AssistantConfirmation).where(
+                AssistantConfirmation.challenge_id == cancelled_id
+            )
+        ).first()
+        consumed_record = check.scalars(
+            select(AssistantConfirmation).where(
+                AssistantConfirmation.challenge_id == consumed_id
+            )
+        ).first()
+    assert cancelled_record is not None
+    assert cancelled_record.status == ConfirmationStatus.CANCELLED.value
+    assert cancelled_record.outcome is None
+    assert consumed_record is not None
+    assert consumed_record.status == ConfirmationStatus.CONSUMED.value
+    assert consumed_record.outcome == ConfirmationOutcome.UNKNOWN_AFTER_CONSUME.value

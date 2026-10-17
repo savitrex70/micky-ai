@@ -1,4 +1,5 @@
-﻿from collections.abc import AsyncIterator
+﻿import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -7,31 +8,32 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from rop import database as database_module
 from rop.api.assistant import router as assistant_router
 from rop.api.confirmations import router as confirmations_router
 from rop.api.health import router as health_router
 from rop.api.sessions import router as sessions_router
 from rop.config import get_settings
 from rop.logging_config import configure_logging
-from rop.services.confirmation import run_startup_recovery
+from rop.services.confirmation_recovery import recover_confirmation_state
 from rop.web.routes import mount_static
 from rop.web.routes import router as web_router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
-    # Bounded, fail-closed crash recovery: marks consumed records whose
-    # execution outcome was never established as unknown, and expires
-    # overdue pending challenges. It never executes, retries, or renews
-    # anything, and it tolerates a temporarily unavailable database.
-    # Gated so tests that drive the confirmation clock with a fixed
-    # instant are not swept against the real wall clock.
+    # Bounded, fail-closed crash recovery. Gated so test environments that
+    # drive the confirmation clock with a fixed instant are not swept
+    # against the real wall clock. Production leaves the setting enabled.
     if settings.startup_recovery_enabled:
-        run_startup_recovery(database_module.SessionLocal)
+        if not recover_confirmation_state():
+            logger.warning(
+                "Assistant confirmation startup recovery did not complete; "
+                "it will be retried on the next startup."
+            )
     yield
 
 
