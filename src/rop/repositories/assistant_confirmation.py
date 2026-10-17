@@ -234,6 +234,27 @@ class AssistantConfirmationRepository:
         record = self.get_by_challenge_id(db, challenge_id)
         return None if record is None else to_view(record)
 
+    def lock_pending_for_update(
+        self, db: Session, challenge_id: str
+    ) -> AssistantConfirmation | None:
+        """Lock the one pending record for ``challenge_id``, if any.
+
+        ``SELECT ... FOR UPDATE`` serializes every decision that races for
+        the same challenge, so a code comparison, a failure increment, and
+        a consumption cannot interleave. A record another caller already
+        made terminal is not returned, so at most one caller can proceed to
+        consume. The lock is held until the caller's transaction ends.
+        """
+        statement = (
+            select(AssistantConfirmation)
+            .where(
+                AssistantConfirmation.challenge_id == challenge_id,
+                AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
+            )
+            .with_for_update()
+        )
+        return db.scalars(statement).first()
+
     # --- inspection and export -------------------------------------------
 
     def list_records(
@@ -386,6 +407,19 @@ class AssistantConfirmationRepository:
             .returning(AssistantConfirmation.id)
         )
         return db.execute(statement).first() is not None
+
+    def expire_if_overdue(
+        self, db: Session, challenge_id: str, *, now: datetime | None = None
+    ) -> bool:
+        """Settle one overdue pending record to ``EXPIRED`` atomically.
+
+        This is the public form of the guarded expiry used inside the
+        lifecycle transitions: it only ever matches a record that is still
+        ``PENDING`` and genuinely past ``expires_at``, so it can never
+        overwrite a terminal state, revive a challenge, or execute
+        anything.
+        """
+        return self._expire_if_overdue(db, challenge_id, _checked_now(now))
 
     def consume(
         self,
@@ -580,6 +614,52 @@ class AssistantConfirmationRepository:
             .returning(AssistantConfirmation.id)
         )
         return db.execute(statement).first() is not None
+
+    def mark_unestablished_outcomes(
+        self,
+        db: Session,
+        *,
+        limit: int = DEFAULT_EXPIRY_SWEEP_LIMIT,
+    ) -> int:
+        """Label consumed records with no established outcome as unknown.
+
+        This is the bounded recovery sweep for the crash window between
+        committing consumption and recording an execution result. It only
+        *labels* records that already exist as ``UNKNOWN_AFTER_CONSUME``;
+        it never executes, retries, reverts, or re-enables anything, so a
+        consumed approval whose outcome was never established can never
+        trigger an automatic re-execution. Ordered by consumption time then
+        identifier so repeated bounded sweeps advance deterministically.
+        """
+        if limit <= 0 or limit > MAX_EXPIRY_SWEEP_LIMIT:
+            raise ConfirmationRecordError("invalid recovery limit")
+        candidate_ids = (
+            select(AssistantConfirmation.id)
+            .where(
+                AssistantConfirmation.status == ConfirmationStatus.CONSUMED.value,
+                AssistantConfirmation.outcome.is_(None),
+            )
+            .order_by(
+                AssistantConfirmation.consumed_at.asc(),
+                AssistantConfirmation.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        ids = list(db.scalars(candidate_ids).all())
+        if not ids:
+            return 0
+        statement = (
+            update(AssistantConfirmation)
+            .where(
+                AssistantConfirmation.id.in_(ids),
+                AssistantConfirmation.status == ConfirmationStatus.CONSUMED.value,
+                AssistantConfirmation.outcome.is_(None),
+            )
+            .values(outcome=ConfirmationOutcome.UNKNOWN_AFTER_CONSUME.value)
+            .returning(AssistantConfirmation.id)
+        )
+        return len(db.execute(statement).all())
 
     def expire_overdue(
         self,

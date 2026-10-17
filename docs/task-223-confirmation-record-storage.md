@@ -2,7 +2,11 @@
 
 Implementation note for the storage and data-lifecycle half of the approved
 per-operation confirmation design ([task-222](task-222-confirmation-flow-design.md)).
-The confirmation interaction itself is **not** implemented.
+The store described here is implemented. The confirmation interaction that
+uses it (challenge creation, decision, consumption, and the at-most-once
+executor boundary) was implemented on top of this store by Task 224
+(`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`). The
+browser confirmation UI remains unimplemented.
 
 ## What exists
 

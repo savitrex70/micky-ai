@@ -50,8 +50,8 @@ _CLARIFY_MESSAGE = (
 )
 _CONFIRMATION_MESSAGE = (
     "This operation needs your explicit confirmation for this exact action "
-    "before it may run, and confirmation is not available through this "
-    f"interface yet. {NOT_EXECUTED_NOTE}"
+    "before it may run, and no executor for it is available in this build, "
+    f"so it was not run and cannot be completed here. {NOT_EXECUTED_NOTE}"
 )
 _REFUSED_MESSAGE = (
     "This operation is not permitted by the current authorization policy. "

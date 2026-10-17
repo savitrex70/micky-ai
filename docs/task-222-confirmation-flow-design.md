@@ -1,10 +1,18 @@
 # Task 222 — Per-Operation Confirmation Flow (design proposal)
 
-**Status: design proposal for review. Nothing described here is implemented.**
-No endpoint, request field, database table, migration, UI control, token,
-executor, or state-changing capability was added by this task. The document
-exists so the mechanism can be reviewed and approved before any of it is
-built.
+**Status: implemented server-side (Task 224). Browser confirmation UI is not
+implemented.**
+This document was written as a design proposal and its mechanism has since
+been built in two follow-on tasks. Task 223 added the durable confirmation
+record (`assistant_confirmations`, migration `20261017_0017`,
+`src/rop/repositories/assistant_confirmation.py`). Task 224 added the
+server-side lifecycle (`src/rop/services/confirmation.py`,
+`src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`) and
+wired challenge creation into the assistant request endpoint. The browser
+confirmation card and its Confirm/Cancel controls, described in section 7.1,
+remain unimplemented. No production state-changing capability and no
+production executor are registered, so a consequential operation cannot run
+in this build.
 
 ## 1. What exists today
 

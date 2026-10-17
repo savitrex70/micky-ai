@@ -1,11 +1,14 @@
 ﻿from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "testing", "production"]
 LogLevel = Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class SettingsError(RuntimeError):
@@ -22,12 +25,34 @@ class Settings(BaseSettings):
     environment: Environment
     log_level: LogLevel
     database_url: str = Field(min_length=1)
+    assistant_local_origin: str = "http://127.0.0.1:8000"
+    """The trusted loopback origin for state-changing confirmation requests.
+
+    Read from configuration and validated as a loopback ``http`` origin, so
+    it can never be pointed at a remote host through the environment or an
+    incoming request. It is the origin the browser uses to load the local
+    application.
+    """
 
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, value: str) -> str:
         if not value.startswith("postgresql+psycopg://"):
             raise ValueError("database_url must use the postgresql+psycopg scheme")
+        return value
+
+    @field_validator("assistant_local_origin")
+    @classmethod
+    def validate_assistant_local_origin(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme != "http":
+            raise ValueError("assistant_local_origin must use the http scheme")
+        if parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("assistant_local_origin must be a loopback origin")
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise ValueError("assistant_local_origin must be a bare origin")
+        if parsed.username or parsed.password:
+            raise ValueError("assistant_local_origin must not carry credentials")
         return value
 
     model_config = SettingsConfigDict(

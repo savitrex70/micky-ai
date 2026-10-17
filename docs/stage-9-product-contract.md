@@ -148,24 +148,38 @@ Implemented foundation:
   - Absent: no conversational requests, no session continuity, no notes,
     tasks, reminders, or retrieval.
 
-- **Capability:** Risk-based authorization policy for proposed
-  operations.
-  - Status: `IMPLEMENTED` as an evaluator plus a dispatch boundary at the
-    assistant request endpoint; the end-to-end confirmation flow is not
-    implemented.
+- **Capability:** Risk-based authorization policy, per-operation
+  confirmation lifecycle, and the at-most-once executor boundary.
+  - Status: `IMPLEMENTED` for the evaluator, the dispatch boundary, the
+    durable confirmation record (Task 223), and the server-side
+    confirmation lifecycle (Task 224). The browser confirmation UI is
+    not implemented.
   - Paths: `src/rop/authorization/policy.py`,
     `src/rop/schemas/authorization.py`,
-    `src/rop/authorization/dispatch.py`
+    `src/rop/authorization/dispatch.py`,
+    `src/rop/authorization/executors.py`,
+    `src/rop/api/confirmations.py`,
+    `src/rop/services/confirmation.py`,
+    `src/rop/repositories/assistant_confirmation.py`
   - Establishes: a deterministic, fail-closed decision of `ALLOW`,
     `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for one proposed
-    operation, exact one-action authorization-scope matching, and a
-    dispatch boundary that returns a matched capability's response only
-    on `ALLOW`. See `docs/task-220-authorization-policy.md` and
-    `docs/task-221-authorization-dispatch.md`.
-  - Absent: no confirmation interaction, no recording of a decision or a
-    confirmation, and no authorization check outside that one dispatch
-    path. The proposed interaction is specified, but not built, in
-    `docs/task-222-confirmation-flow-design.md`.
+    operation; exact one-action authorization-scope matching; a durable
+    challenge record bound to the exact stored operation and to the
+    effective policy identity, with constant-time display-code
+    verification and a bounded failed-attempt budget; an atomic once-only
+    consumption committed before an executor may run; and a server-side
+    executor registry that is empty in this build. A
+    `REQUIRE_CONFIRMATION` operation therefore cannot execute without a
+    registered server-side executor, and none is registered. See
+    `docs/task-220-authorization-policy.md`,
+    `docs/task-221-authorization-dispatch.md`,
+    `docs/task-222-confirmation-flow-design.md`, and
+    `docs/task-223-confirmation-record-storage.md`.
+  - Absent: the browser confirmation card and its Confirm/Cancel
+    controls, and any HTTP surface for inspection, export, or deletion
+    of confirmation records. No production state-changing capability and
+    no production executor are registered; consequential operations
+    remain non-executable in this build.
 
 Planned capabilities (Stage 9 target):
 

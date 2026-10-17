@@ -1,5 +1,6 @@
 ﻿"""Request and response envelopes for the local assistant web interface."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -48,6 +49,25 @@ class AssistantRequest(BaseModel):
         return value
 
 
+class AssistantConfirmationChallenge(BaseModel):
+    """The display values for one newly created pending confirmation.
+
+    These are the only challenge-related values the interface receives: the
+    opaque identifier, a human-readable summary built from the stored
+    operation, the short display code, and the server-issued expiry. The
+    stored display-code hash, its salt, the internal database identifier,
+    the stored policy fingerprint, and unrelated operation data are never
+    part of this contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    challenge_id: str = Field(min_length=16, max_length=128)
+    summary: str = Field(min_length=1, max_length=2000)
+    display_code: str = Field(min_length=1, max_length=64)
+    expires_at: datetime
+
+
 class AssistantResponse(BaseModel):
     """Response envelope for the local assistant request endpoint.
 
@@ -58,7 +78,14 @@ class AssistantResponse(BaseModel):
     capability that the policy stopped: the request was understood, but it
     was not executed. A non-``success`` status is never evidence that
     anything ran.
+
+    ``challenge`` is present only when a pending confirmation was genuinely
+    created for a consequential operation. It carries the server-owned
+    challenge values so the interface can display them; it is ``None`` for
+    every other status, and the endpoint omits it rather than emitting a
+    null field.
     """
 
     status: AssistantStatus
     message: str
+    challenge: AssistantConfirmationChallenge | None = None
