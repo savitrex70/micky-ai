@@ -20,13 +20,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import create_engine, func, inspect, select, text, update
+from sqlalchemy import create_engine, func, insert, inspect, select, text, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -40,7 +40,10 @@ from rop.config import get_settings
 from rop.database import Base
 from rop.models import AssistantConfirmation, ReasoningSession
 from rop.repositories.assistant_confirmation import (
+    DEFAULT_EXPIRY_SWEEP_LIMIT,
     MATERIAL_DIGEST_CONTEXT,
+    MAX_EXPIRY_SWEEP_LIMIT,
+    MAX_INSPECTION_LIMIT,
     AssistantConfirmationRepository,
     ConfirmationRecordError,
 )
@@ -189,6 +192,36 @@ def _consumed(
 
 def _count(db: Session) -> int:
     return db.scalar(select(func.count()).select_from(AssistantConfirmation)) or 0
+
+
+def _bulk_create(db: Session, count: int, *, created_at: datetime = NOW) -> list[UUID]:
+    """Insert many pending records directly, for export-pagination tests."""
+    rows = [
+        {
+            "id": uuid4(),
+            "challenge_id": f"challenge-bulk-{index:06d}-token",
+            "display_code_hash": "c" * 64,
+            "display_code_salt": "d" * 64,
+            "operation_id": "demo-write",
+            "target": f"note-{index}",
+            "scope": None,
+            "parameters": {"recipient": "self"},
+            "policy_identity": POLICY_IDENTITY,
+            "policy_version": "1",
+            "required_risk": RiskLevel.CONSEQUENTIAL.value,
+            "required_reason": AuthorizationReason.AUTHORIZATION_REQUIRED.value,
+            "failed_code_attempts": 0,
+            "status": ConfirmationStatus.PENDING.value,
+            "outcome": None,
+            "material_redacted": False,
+            "created_at": created_at,
+            "expires_at": created_at + DEFAULT_LIFETIME,
+        }
+        for index in range(count)
+    ]
+    db.execute(insert(AssistantConfirmation), rows)
+    db.flush()
+    return [row["id"] for row in rows]
 
 
 def _raw_row(db: Session, record_id: UUID):
@@ -614,6 +647,191 @@ def test_expiry_is_bounded_to_pending_records(db, repository) -> None:
     assert consumed.status == ConfirmationStatus.CONSUMED.value
 
 
+def test_an_overdue_challenge_is_settled_on_any_transition(db, repository) -> None:
+    record = _create(db, repository, target="note-overdue")
+    db.commit()
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+
+    assert repository.cancel(db, record.challenge_id, now=after) is False
+
+    db.refresh(record)
+    assert record.status == ConfirmationStatus.EXPIRED.value
+    assert record.decided_at is not None
+    assert record.terminal_at is not None
+    assert record.consumed_at is None
+    # The verifier is dropped, so an expired challenge retains no code.
+    assert record.display_code_hash is None
+    assert record.display_code_salt is None
+
+
+@pytest.mark.parametrize("action", ["consume", "reject", "cancel", "invalidate"])
+def test_expired_challenge_never_transitions_but_settles_expired(
+    db, repository, action: str
+) -> None:
+    record = _create(db, repository, expires_at=NOW + DEFAULT_LIFETIME)
+    db.commit()
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+
+    if action == "consume":
+        result = repository.consume(
+            db,
+            record.challenge_id,
+            expected_policy_identity=POLICY_IDENTITY,
+            now=after,
+        )
+    else:
+        result = getattr(repository, action)(db, record.challenge_id, now=after)
+
+    assert result is False
+    db.refresh(record)
+    assert record.status == ConfirmationStatus.EXPIRED.value
+    assert record.consumed_at is None
+    assert record.outcome is None
+    assert record.terminal_at is not None
+
+
+def test_an_expired_record_cannot_execute_or_be_revived(db, repository) -> None:
+    record = _create(db, repository, expires_at=NOW + DEFAULT_LIFETIME)
+    db.commit()
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+
+    # A code guessed after expiry neither counts nor revives the record.
+    assert (
+        repository.record_failed_code_attempt(db, record.challenge_id, now=after)
+        is None
+    )
+    db.refresh(record)
+    assert record.status == ConfirmationStatus.EXPIRED.value
+
+    assert (
+        repository.consume(
+            db, record.challenge_id, expected_policy_identity=POLICY_IDENTITY, now=after
+        )
+        is False
+    )
+    assert (
+        repository.record_outcome(
+            db, record.challenge_id, ConfirmationOutcome.UNKNOWN_AFTER_CONSUME
+        )
+        is False
+    )
+    db.refresh(record)
+    assert record.status == ConfirmationStatus.EXPIRED.value
+    assert record.consumed_at is None
+    assert record.outcome is None
+
+
+def test_expiry_starts_the_retention_window(db, repository) -> None:
+    record = _create(db, repository, target="note-expiry-window")
+    db.commit()
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+    assert repository.cancel(db, record.challenge_id, now=after) is False
+    db.commit()
+
+    db.refresh(record)
+    terminal_at = record.terminal_at
+    assert terminal_at is not None
+
+    assert (
+        repository.redact_terminal_records(
+            db,
+            now=terminal_at
+            + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+            - timedelta(seconds=1),
+        ).redacted_count
+        == 0
+    )
+    assert (
+        repository.redact_terminal_records(
+            db, now=terminal_at + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+        ).redacted_count
+        == 1
+    )
+
+
+def test_overdue_sweep_is_bounded_and_covers_everything_across_batches(
+    db, repository
+) -> None:
+    for index in range(5):
+        _create(db, repository, challenge_id=_challenge_id(f"03{index:02d}"))
+    db.commit()
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+
+    assert repository.expire_overdue(db, now=after, limit=2) == 2
+    db.commit()
+    assert repository.expire_overdue(db, now=after, limit=2) == 2
+    db.commit()
+    assert repository.expire_overdue(db, now=after, limit=2) == 1
+    db.commit()
+    # Nothing is left; a repeated sweep changes nothing.
+    assert repository.expire_overdue(db, now=after, limit=2) == 0
+    db.commit()
+
+    remaining = db.scalars(
+        select(AssistantConfirmation).where(
+            AssistantConfirmation.status == ConfirmationStatus.PENDING.value
+        )
+    ).all()
+    assert list(remaining) == []
+
+
+def test_overdue_sweep_rejects_a_non_positive_or_unbounded_limit(
+    db, repository
+) -> None:
+    with pytest.raises(ConfirmationRecordError):
+        repository.expire_overdue(db, now=NOW, limit=0)
+    with pytest.raises(ConfirmationRecordError):
+        repository.expire_overdue(db, now=NOW, limit=MAX_EXPIRY_SWEEP_LIMIT + 1)
+
+
+def test_overdue_sweep_defaults_to_its_configured_batch(db, repository) -> None:
+    assert DEFAULT_EXPIRY_SWEEP_LIMIT > 0
+    _create(db, repository, challenge_id=_challenge_id("0399"))
+    db.commit()
+    assert repository.expire_overdue(db, now=NOW + DEFAULT_LIFETIME) == 1
+
+
+def test_concurrent_expiry_attempts_settle_a_single_terminal_state(
+    db, repository, pg_engine
+) -> None:
+    with Session(pg_engine) as setup:
+        record = repository.create_pending(setup, _draft(), now=NOW)
+        setup.commit()
+        challenge_id = record.challenge_id
+
+    after = NOW + DEFAULT_LIFETIME + timedelta(seconds=1)
+    barrier = Barrier(2)
+
+    def attempt(consume_it: bool) -> bool:
+        with Session(pg_engine) as session:
+            barrier.wait(timeout=10)
+            if consume_it:
+                won = repository.consume(
+                    session,
+                    challenge_id,
+                    expected_policy_identity=POLICY_IDENTITY,
+                    now=after,
+                )
+            else:
+                won = repository.cancel(session, challenge_id, now=after)
+            session.commit()
+            return won
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result(timeout=20)
+            for future in [pool.submit(attempt, True), pool.submit(attempt, False)]
+        ]
+
+    assert results == [False, False]
+    with Session(pg_engine) as check:
+        stored = repository.get_by_challenge_id(check, challenge_id)
+        assert stored is not None
+        assert stored.status == ConfirmationStatus.EXPIRED.value
+        assert stored.terminal_at is not None
+        assert stored.consumed_at is None
+
+
 def test_outcome_can_be_recorded_once_after_consumption(db, repository) -> None:
     record = _consumed(db, repository)
 
@@ -686,6 +904,11 @@ def test_export_is_stable_and_self_describing(db, repository) -> None:
     assert first.version == CONFIRMATION_EXPORT_VERSION
     assert first.retention_days == CONFIRMATION_RETENTION_DAYS
     assert first.record_count == 2
+    assert first.total_record_count == 2
+    assert first.offset == 0
+    assert first.has_more is False
+    assert first.next_offset is None
+    assert first.is_complete is True
     assert len(first.records) == 2
     assert [item.status for item in first.records] == [
         ConfirmationStatus.PENDING,
@@ -727,11 +950,19 @@ def test_export_distinguishes_retained_absent_and_redacted(db, repository) -> No
     by_id = {item.id: item for item in export.records}
 
     assert by_id[old.id].material_state is MaterialState.REDACTED
-    assert by_id[old_without_material.id].material_state is MaterialState.REDACTED
+    # A terminal record that never carried a value stays ABSENT: it is not
+    # given a digest of an empty object and not reported as redacted.
+    assert by_id[old_without_material.id].material_state is MaterialState.ABSENT
+    assert by_id[old_without_material.id].material_digest_recorded is False
     assert by_id[recent.id].material_state is MaterialState.RETAINED
     assert by_id[recent.id].target == "note-2"
     assert by_id[pending_without_material.id].material_state is MaterialState.ABSENT
     assert by_id[pending_without_material.id].target is None
+    # Even a full-store export states its totals and completeness.
+    assert export.total_record_count == 4
+    assert export.record_count == 4
+    assert export.has_more is False
+    assert export.is_complete is True
 
 
 def test_export_after_redaction_contains_no_values(db, repository) -> None:
@@ -751,6 +982,66 @@ def test_export_after_redaction_contains_no_values(db, repository) -> None:
     assert record_view.parameters == {}
     assert record_view.material_digest_recorded is True
     assert "private-note-marker" not in export.model_dump_json()
+
+
+def test_export_reports_total_and_is_not_mistaken_for_a_full_export(
+    db, repository
+) -> None:
+    _bulk_create(db, 3)
+    db.commit()
+
+    page = repository.export_records(db, generated_at=NOW, limit=2)
+
+    assert page.total_record_count == 3
+    assert page.record_count == 2
+    assert page.limit == 2
+    assert page.offset == 0
+    assert page.has_more is True
+    assert page.next_offset == 2
+    assert page.is_complete is False
+
+
+def test_export_pages_cover_every_record_without_gaps_or_duplicates(
+    db, repository
+) -> None:
+    count = MAX_INSPECTION_LIMIT + 5
+    inserted = set(_bulk_create(db, count))
+    db.commit()
+
+    first = repository.export_records(db, generated_at=NOW)
+    assert first.record_count == MAX_INSPECTION_LIMIT
+    assert first.total_record_count == count
+    assert first.has_more is True
+    assert first.next_offset == MAX_INSPECTION_LIMIT
+    assert first.is_complete is False
+
+    collected: list = list(first.records)
+    page = first
+    while page.has_more:
+        page = repository.export_records(db, generated_at=NOW, offset=page.next_offset)
+        collected.extend(page.records)
+
+    exported_ids = {view.id for view in collected}
+    assert len(collected) == count
+    assert exported_ids == inserted
+    assert page.has_more is False
+    assert page.next_offset is None
+    assert page.total_record_count == count
+    # The tail page is not itself a complete export.
+    assert page.is_complete is False
+
+
+def test_export_page_beyond_the_end_is_empty_and_not_complete(db, repository) -> None:
+    _bulk_create(db, 1)
+    db.commit()
+
+    page = repository.export_records(db, generated_at=NOW, offset=MAX_INSPECTION_LIMIT)
+
+    assert page.record_count == 0
+    assert page.total_record_count == 1
+    assert page.has_more is False
+    assert page.next_offset is None
+    assert page.is_complete is False
 
 
 # --- retention and redaction ------------------------------------------------
@@ -782,6 +1073,156 @@ def test_a_terminal_record_at_the_threshold_is_redacted(db, repository) -> None:
     assert result.redacted_count == 1
     db.refresh(record)
     assert record.material_redacted is True
+
+
+def test_retention_period_is_fixed_and_not_a_caller_argument(db, repository) -> None:
+    record = _consumed(db, repository, target="note-fixed")
+    db.commit()
+
+    # An ordinary caller cannot substitute a shorter retention period.
+    with pytest.raises(TypeError):
+        repository.redact_terminal_records(db, retention_days=0)  # type: ignore[call-arg]
+
+    # The approved 30-day window alone decides eligibility.
+    kept = repository.redact_terminal_records(
+        db, now=NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS) - timedelta(seconds=1)
+    )
+    assert kept.redacted_count == 0
+    db.refresh(record)
+    assert record.material_redacted is False
+    assert record.target == "note-fixed"
+
+    at_threshold = repository.redact_terminal_records(
+        db, now=NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+    )
+    assert at_threshold.redacted_count == 1
+
+
+def test_an_absent_terminal_record_is_never_redacted_or_given_a_digest(
+    db, repository
+) -> None:
+    record = _consumed(db, repository, target=None, scope=None, parameters={})
+    db.commit()
+
+    result = repository.redact_terminal_records(
+        db, now=NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS + 5)
+    )
+    db.commit()
+
+    assert result.redacted_count == 0
+    row = _raw_row(db, record.id)
+    assert row.material_redacted is False
+    assert row.material_digest is None
+    assert row.material_digest_salt is None
+    assert row.redacted_at is None
+
+    view = repository.describe(db, record.challenge_id)
+    assert view is not None
+    assert view.material_state is MaterialState.ABSENT
+    assert view.material_digest_recorded is False
+
+
+def test_an_absent_record_stays_absent_before_and_after_the_window(
+    db, repository
+) -> None:
+    record = _consumed(db, repository, target=None, parameters={})
+    db.commit()
+
+    just_before = (
+        NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS) - timedelta(seconds=1)
+    )
+    assert repository.redact_terminal_records(db, now=just_before).redacted_count == 0
+    after = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS + 1)
+    assert repository.redact_terminal_records(db, now=after).redacted_count == 0
+
+    db.refresh(record)
+    assert record.status == ConfirmationStatus.CONSUMED.value
+    view = repository.describe(db, record.challenge_id)
+    assert view is not None
+    assert view.material_state is MaterialState.ABSENT
+
+
+def test_a_record_with_only_a_target_retains_then_redacts(db, repository) -> None:
+    record = _consumed(db, repository, target="note-only", parameters={})
+    db.commit()
+
+    before = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS) - timedelta(days=1)
+    assert repository.redact_terminal_records(db, now=before).redacted_count == 0
+    view = repository.describe(db, record.challenge_id)
+    assert view is not None
+    assert view.material_state is MaterialState.RETAINED
+    assert view.target == "note-only"
+
+    at_threshold = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+    assert repository.redact_terminal_records(db, now=at_threshold).redacted_count == 1
+
+
+def test_absent_records_never_starve_material_records_from_the_batch(
+    db, repository
+) -> None:
+    # Five older, material-free terminal records sit ahead of one older
+    # record that still holds values. With a batch of one, an absent
+    # record must not consume the only slot.
+    for index in range(5):
+        _consumed(
+            db,
+            repository,
+            challenge_id=_challenge_id(f"01{index:02d}"),
+            target=None,
+            parameters={},
+            now=NOW + timedelta(seconds=index),
+        )
+    material = _consumed(
+        db,
+        repository,
+        challenge_id=_challenge_id("0199"),
+        target="note-material",
+        now=NOW + timedelta(seconds=10),
+    )
+    db.commit()
+
+    result = repository.redact_terminal_records(
+        db, now=NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS + 1), limit=1
+    )
+
+    assert result.redacted_count == 1
+    db.refresh(material)
+    assert material.material_redacted is True
+
+
+def test_repeated_retention_passes_leave_absent_records_untouched(
+    db, repository
+) -> None:
+    absent = _consumed(
+        db, repository, challenge_id=_challenge_id("0101"), target=None, parameters={}
+    )
+    material = _consumed(
+        db, repository, challenge_id=_challenge_id("0102"), target="note-keep"
+    )
+    db.commit()
+
+    threshold = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+    assert repository.redact_terminal_records(db, now=threshold).redacted_count == 1
+    db.commit()
+
+    before = _raw_row(db, material.id)
+    assert (
+        repository.redact_terminal_records(
+            db, now=threshold + timedelta(days=15)
+        ).redacted_count
+        == 0
+    )
+    db.commit()
+    after = _raw_row(db, material.id)
+
+    assert after.material_digest == before.material_digest
+    assert after.material_digest_salt == before.material_digest_salt
+    assert after.redacted_at == before.redacted_at
+
+    absent_view = repository.describe(db, absent.challenge_id)
+    assert absent_view is not None
+    assert absent_view.material_state is MaterialState.ABSENT
+    assert absent_view.material_digest_recorded is False
 
 
 def test_pending_records_are_never_redacted_by_terminal_retention(

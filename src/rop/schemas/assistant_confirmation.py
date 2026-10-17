@@ -221,13 +221,22 @@ class AssistantConfirmationView(BaseModel):
 
 
 class AssistantConfirmationExport(BaseModel):
-    """A stable, self-describing export of the stored confirmation records.
+    """One self-describing page of the stored confirmation records.
 
     The shape is fixed by ``CONFIRMATION_EXPORT_FORMAT`` and
     ``CONFIRMATION_EXPORT_VERSION`` so a later data-control surface can
     serialize it without re-deciding what an export contains. Record
     order is the repository's deterministic order, so the same database
     state exports to the same sequence.
+
+    The contract deliberately distinguishes a *page* from a *complete
+    export*: ``record_count`` is how many records are in this page, while
+    ``total_record_count`` is how many records the database holds. When
+    ``has_more`` is true, ``next_offset`` is the exact offset to request
+    for the following page, so every record can be retrieved by starting
+    at offset ``0`` and repeatedly following ``next_offset`` until
+    ``has_more`` is false. A caller must never assume ``record_count``
+    equals ``total_record_count``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -236,13 +245,29 @@ class AssistantConfirmationExport(BaseModel):
     version: Literal["1"] = CONFIRMATION_EXPORT_VERSION
     generated_at: datetime
     retention_days: int = CONFIRMATION_RETENTION_DAYS
+    #: Number of stored records in total, independent of this page.
+    total_record_count: int = Field(ge=0)
+    #: Number of records in *this* page. Not the database total.
     record_count: int = Field(ge=0)
+    #: The zero-based position of the first record in this page.
+    offset: int = Field(ge=0)
+    #: The maximum page size this export was requested with.
+    limit: int = Field(gt=0)
+    #: Whether at least one record remains after this page.
+    has_more: bool
+    #: Offset to request next, or ``None`` when this is the final page.
+    next_offset: int | None = Field(default=None, ge=0)
+    #: True only when this page is the whole store (offset 0, no more).
+    is_complete: bool
     records: tuple[AssistantConfirmationView, ...]
     notes: tuple[str, ...] = (
         "Material values are present only while a record is unredacted; "
         "material_state distinguishes retained, redacted, and absent values.",
         "Challenge identifiers, display codes, and their hashes are never "
         "included in an export.",
+        "record_count is the number of records in this page; "
+        "total_record_count is the number of stored records. Follow "
+        "next_offset while has_more is true to export every record.",
     )
 
 

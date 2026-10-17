@@ -285,7 +285,8 @@ user; that is stated in section 4 and must not be softened in the UI.
 
 - With durable pendings (section 6): outstanding challenges survive a restart
   but are still bounded by `expires_at`; a restart never extends a deadline.
-  The startup sweep expires overdue records.
+  The startup sweep expires overdue records in bounded batches, and any
+  transition that meets an expired challenge settles it to `EXPIRED`.
 - With ephemeral pendings: a restart silently discards them, and the user
   must ask again. That is fail-closed and honest, but it also means the
   interface must not show a stale "pending" card after a restart.

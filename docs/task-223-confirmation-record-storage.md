@@ -43,6 +43,21 @@ enforces that a verifier exists exactly while the record is `PENDING`: a
 decided record can never be confirmed again, so it keeps no code material at
 all.
 
+A transition attempted after `expires_at` does nothing, but it is not allowed
+to leave the challenge looking live: `_expire_if_overdue()` settles such a
+record to `EXPIRED` in the same guarded statement (still `PENDING`, still
+overdue), setting `decided_at` and `terminal_at` and clearing the verifier.
+It never consumes, renews, revives, extends, or executes the challenge, and a
+concurrent cancel/reject/invalidate/consume resolves through the same guarded
+`UPDATE`, so no terminal state overwrites another. Expiry starts the retention
+window below.
+
+`expire_overdue(limit=...)` is the bounded maintenance sweep for startup: one
+invocation expires at most `limit` (default `DEFAULT_EXPIRY_SWEEP_LIMIT`,
+capped at `MAX_EXPIRY_SWEEP_LIMIT`) records, ordered by deadline then id, and
+selected with `FOR UPDATE SKIP LOCKED` so it races safely with concurrent
+decisions.
+
 `consume()` requires the fingerprint the caller recomputed from the effective
 policy. A mismatch invalidates the still-pending record rather than consuming
 it, so a rule change cannot leave an old approval usable even though
@@ -51,8 +66,10 @@ it, so a rule change cannot leave an old approval usable even though
 ## Retention and redaction
 
 A terminal record keeps its `target`, `scope`, and `parameters` for **30 days
-from `terminal_at`**. `redact_terminal_records(now=...)` then removes those
-values from the columns and stores:
+from `terminal_at`**. This is the owner-approved policy, fixed at
+`CONFIRMATION_RETENTION_DAYS = 30`; `redact_terminal_records(now=...)` takes no
+retention argument, so an ordinary caller cannot shorten the window or redact
+early. It then removes those values from the columns and stores:
 
 - `material_digest` — SHA-256 of
   `b"rop.assistant-confirmation-material.v1" \x00 salt \x00 canonical`,
@@ -62,19 +79,41 @@ values from the columns and stores:
 - `redacted_at` — the retention pass's instant.
 
 The pass is bounded, takes row locks, and is idempotent: already-redacted rows
-are excluded, so a second run changes nothing. Pending records are never
-selected, whatever their age; they must expire first. `material_redacted`
-distinguishes "removed after the window" from "never supplied", and every
-inspection or export reports that as `material_state`.
+are excluded, so a second run changes nothing and never rewrites a digest or a
+timestamp. Pending records are never selected, whatever their age; they must
+expire first.
+
+Only records that actually carried a target, scope, or parameter are selected.
+A terminal record that never carried a material value stays `ABSENT`: it is
+never given a digest of an empty object, is never reported as `REDACTED`, and
+cannot occupy a slot in the bounded batch ahead of an older record that still
+holds values. `material_redacted` distinguishes "removed after the window"
+from "never supplied", and every inspection or export reports that as
+`material_state`.
 
 ## Inspection, export, and deletion
 
 `describe()`, `list_records()`, and `export_records()` project records onto
 `AssistantConfirmationView`, which deliberately omits the challenge
-identifier, the display-code hash and salt, and the material digest. The
-export is self-describing (`format` = `rop.assistant-confirmation-records`,
-`version` = `1`), ordered by creation time then id, and carries `retention_days`
-plus the redaction note.
+identifier, the display-code hash and salt, and the material digest.
+
+`export_records()` returns **one page** of a self-describing
+(`format` = `rop.assistant-confirmation-records`, `version` = `1`) export
+ordered by creation time then id. A page is not a whole export and cannot be
+mistaken for one:
+
+- `record_count` — records in **this page**;
+- `total_record_count` — records in the **whole store**;
+- `offset` — the page's zero-based start; `limit` — the page size used;
+- `has_more` and `next_offset` — whether more remain and the exact offset to
+  request next; and
+- `is_complete` — true only when the page is the whole store.
+
+A caller exports everything by starting at `offset = 0` and following
+`next_offset` while `has_more` is true; it never guesses offsets and never
+assumes `record_count` is the database total. `list_records()` keeps its
+`MAX_INSPECTION_LIMIT` bound, and the export never fetches the table
+unboundedly — it counts with an aggregate and reads one bounded page.
 
 Deletion is available by primary key, by challenge identifier, and for the
 whole store. It removes material values with the record and executes nothing;

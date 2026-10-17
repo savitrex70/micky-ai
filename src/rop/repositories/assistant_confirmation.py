@@ -24,7 +24,10 @@ replaces them with ``material_digest``, a salted SHA-256 over
 where the canonical bytes are ``canonical_material_values``. The digest
 is therefore verifiable while the values themselves are gone, and each
 record has its own random salt. Pending records are never redacted by
-this pass; their expiry belongs to the confirmation lifecycle.
+this pass; their expiry belongs to the confirmation lifecycle. A record
+that never carried a target, scope, or parameter is ``ABSENT`` and is
+left untouched: it has nothing to redact and never receives a digest of
+an empty object.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import case, delete, null, select, update
+from sqlalchemy import Text, case, cast, delete, func, null, or_, select, update
 from sqlalchemy.orm import Session
 
 from rop.models.assistant_confirmation import AssistantConfirmation
@@ -64,7 +67,29 @@ MATERIAL_DIGEST_CONTEXT = b"rop.assistant-confirmation-material.v1"
 DEFAULT_INSPECTION_LIMIT = 100
 MAX_INSPECTION_LIMIT = 1000
 
+DEFAULT_EXPIRY_SWEEP_LIMIT = 100
+"""How many overdue records one maintenance sweep may expire. Bounded."""
+
+MAX_EXPIRY_SWEEP_LIMIT = 1000
+"""Upper bound on a single sweep, so no sweep can be unbounded."""
+
 _HEX_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _has_material_values():
+    """SQL predicate: the record ever carried a target, scope, or parameter.
+
+    This is the existing invariant that separates a record that never had
+    material values (``ABSENT``) from one whose values are still present.
+    It is used to keep absent records out of the retention batch instead
+    of inventing a second "already processed" flag; an absent record has
+    nothing to redact and therefore never needs to be revisited.
+    """
+    return or_(
+        AssistantConfirmation.target.is_not(None),
+        AssistantConfirmation.scope.is_not(None),
+        cast(AssistantConfirmation.parameters, Text) != "{}",
+    )
 
 
 class ConfirmationRecordError(ValueError):
@@ -240,18 +265,32 @@ class AssistantConfirmationRepository:
         limit: int = MAX_INSPECTION_LIMIT,
         offset: int = 0,
     ) -> AssistantConfirmationExport:
-        """Return a stable, self-describing export of stored records.
+        """Return one self-describing page of the stored records.
 
-        Redacted records appear with ``material_state=REDACTED`` and no
-        values; nothing is reconstructed on their behalf.
+        Reaching ``limit`` never silently discards records: the page
+        reports ``total_record_count``, the ``offset`` it started at, and
+        ``has_more``/``next_offset``, so a caller can page through every
+        record without guessing offsets and without mistaking a page for
+        a complete export. Redacted records appear with
+        ``material_state=REDACTED`` and no values; nothing is
+        reconstructed on their behalf.
         """
         records = tuple(self.list_records(db, limit=limit, offset=offset))
+        total = db.scalar(select(func.count()).select_from(AssistantConfirmation)) or 0
+        consumed = offset + len(records)
+        has_more = consumed < total
         return AssistantConfirmationExport(
             format=CONFIRMATION_EXPORT_FORMAT,
             version=CONFIRMATION_EXPORT_VERSION,
             generated_at=_checked_now(generated_at),
             retention_days=CONFIRMATION_RETENTION_DAYS,
+            total_record_count=total,
             record_count=len(records),
+            offset=offset,
+            limit=limit,
+            has_more=has_more,
+            next_offset=consumed if has_more else None,
+            is_complete=offset == 0 and not has_more,
             records=records,
         )
 
@@ -272,6 +311,12 @@ class AssistantConfirmationRepository:
         not yet expired, and optionally the stored policy identity), so a
         concurrent caller that already changed the record makes this
         update match zero rows instead of writing over it.
+
+        A transition that matches nothing may have failed only because
+        the record is an overdue ``PENDING`` challenge. Rather than
+        leaving an expired challenge looking live, this settles it to
+        ``EXPIRED`` atomically (see ``_expire_if_overdue``) and still
+        reports that the requested transition did not happen.
         """
         conditions = [
             AssistantConfirmation.challenge_id == challenge_id,
@@ -298,6 +343,37 @@ class AssistantConfirmationRepository:
             update(AssistantConfirmation)
             .where(*conditions)
             .values(**values)
+            .returning(AssistantConfirmation.id)
+        )
+        if db.execute(statement).first() is not None:
+            return True
+        self._expire_if_overdue(db, challenge_id, now)
+        return False
+
+    def _expire_if_overdue(self, db: Session, challenge_id: str, now: datetime) -> bool:
+        """Expire one overdue ``PENDING`` record atomically, if still due.
+
+        The update only matches a record that is still ``PENDING`` and
+        genuinely past ``expires_at``, so it can never overwrite a
+        terminal state another caller already established and can never
+        revive, renew, extend, consume, or execute a challenge. It sets
+        both decision and terminal timestamps and drops the code
+        verifier; ``terminal_at`` starts the retention window.
+        """
+        statement = (
+            update(AssistantConfirmation)
+            .where(
+                AssistantConfirmation.challenge_id == challenge_id,
+                AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
+                AssistantConfirmation.expires_at <= now,
+            )
+            .values(
+                status=ConfirmationStatus.EXPIRED.value,
+                decided_at=now,
+                terminal_at=now,
+                display_code_hash=None,
+                display_code_salt=None,
+            )
             .returning(AssistantConfirmation.id)
         )
         return db.execute(statement).first() is not None
@@ -464,7 +540,12 @@ class AssistantConfirmationRepository:
             .returning(AssistantConfirmation.failed_code_attempts)
         )
         row = db.execute(statement).first()
-        return None if row is None else row[0]
+        if row is None:
+            # An overdue pending challenge must not stay looking live just
+            # because someone guessed a code at it after it expired.
+            self._expire_if_overdue(db, challenge_id, current)
+            return None
+        return row[0]
 
     def record_outcome(
         self,
@@ -491,12 +572,49 @@ class AssistantConfirmationRepository:
         )
         return db.execute(statement).first() is not None
 
-    def expire_overdue(self, db: Session, *, now: datetime | None = None) -> int:
-        """Mark every pending record past its deadline as ``EXPIRED``."""
+    def expire_overdue(
+        self,
+        db: Session,
+        *,
+        now: datetime | None = None,
+        limit: int = DEFAULT_EXPIRY_SWEEP_LIMIT,
+    ) -> int:
+        """Expire up to ``limit`` overdue pending records, deterministically.
+
+        This is the bounded maintenance sweep: one invocation expires no
+        more than ``limit`` records, so it is safe to call on startup
+        without holding an unbounded transaction open. Ordering is by
+        deadline then identifier, so repeated sweeps advance through
+        overdue records in a stable order. Candidate rows are selected
+        with ``FOR UPDATE SKIP LOCKED`` and the update re-checks
+        ``PENDING`` and the deadline, so a sweep races safely with
+        concurrent decisions: a record cancelled, rejected, invalidated,
+        or consumed first is skipped, and no terminal state is
+        overwritten. It runs inside the caller's transaction.
+        """
+        if limit <= 0 or limit > MAX_EXPIRY_SWEEP_LIMIT:
+            raise ConfirmationRecordError("invalid expiry sweep limit")
         current = _checked_now(now)
+        candidate_ids = (
+            select(AssistantConfirmation.id)
+            .where(
+                AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
+                AssistantConfirmation.expires_at <= current,
+            )
+            .order_by(
+                AssistantConfirmation.expires_at.asc(),
+                AssistantConfirmation.id.asc(),
+            )
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        ids = list(db.scalars(candidate_ids).all())
+        if not ids:
+            return 0
         statement = (
             update(AssistantConfirmation)
             .where(
+                AssistantConfirmation.id.in_(ids),
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
                 AssistantConfirmation.expires_at <= current,
             )
@@ -518,22 +636,28 @@ class AssistantConfirmationRepository:
         db: Session,
         *,
         now: datetime | None = None,
-        retention_days: int = CONFIRMATION_RETENTION_DAYS,
         limit: int = 500,
     ) -> RedactionResult:
-        """Redact terminal records whose retention window has elapsed.
+        """Redact terminal records whose fixed retention window has elapsed.
 
-        Runs inside the caller's transaction, is bounded by ``limit``, and
-        is idempotent: rows already redacted are excluded, so re-running it
-        changes nothing and never rewrites the digest, the timestamps, or
-        the decision metadata.
+        The retention window is the owner-approved
+        ``CONFIRMATION_RETENTION_DAYS`` (thirty days) and is not a caller
+        argument: no ordinary caller can shorten it or redact material
+        values early. Runs inside the caller's transaction, is bounded by
+        ``limit``, and is idempotent: already-redacted rows are excluded,
+        so re-running it changes nothing and never rewrites the digest,
+        the timestamps, or the decision metadata.
+
+        Only records that actually carried a target, scope, or parameter
+        are selected. A record that never had material values stays
+        ``ABSENT``: it is never given a digest of an empty object, is
+        never reported as redacted, and cannot occupy a slot in the
+        bounded batch ahead of an older record that still holds values.
         """
-        if retention_days < 0:
-            raise ConfirmationRecordError("invalid retention window")
         if limit <= 0:
             raise ConfirmationRecordError("invalid redaction limit")
         current = _checked_now(now)
-        cutoff = current - timedelta(days=retention_days)
+        cutoff = current - timedelta(days=CONFIRMATION_RETENTION_DAYS)
 
         statement = (
             select(AssistantConfirmation)
@@ -544,6 +668,7 @@ class AssistantConfirmationRepository:
                 AssistantConfirmation.material_redacted.is_(False),
                 AssistantConfirmation.terminal_at.is_not(None),
                 AssistantConfirmation.terminal_at <= cutoff,
+                _has_material_values(),
             )
             .order_by(
                 AssistantConfirmation.terminal_at.asc(),
