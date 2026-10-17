@@ -7,12 +7,14 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from rop import database as database_module
 from rop.api.assistant import router as assistant_router
 from rop.api.confirmations import router as confirmations_router
 from rop.api.health import router as health_router
 from rop.api.sessions import router as sessions_router
 from rop.config import get_settings
 from rop.logging_config import configure_logging
+from rop.services.confirmation import run_startup_recovery
 from rop.web.routes import mount_static
 from rop.web.routes import router as web_router
 
@@ -22,6 +24,14 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level)
+    # Bounded, fail-closed crash recovery: marks consumed records whose
+    # execution outcome was never established as unknown, and expires
+    # overdue pending challenges. It never executes, retries, or renews
+    # anything, and it tolerates a temporarily unavailable database.
+    # Gated so tests that drive the confirmation clock with a fixed
+    # instant are not swept against the real wall clock.
+    if settings.startup_recovery_enabled:
+        run_startup_recovery(database_module.SessionLocal)
     yield
 
 

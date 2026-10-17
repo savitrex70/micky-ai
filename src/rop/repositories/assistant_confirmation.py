@@ -39,8 +39,20 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Text, case, cast, delete, func, null, or_, select, update
+from sqlalchemy import (
+    Text,
+    case,
+    cast,
+    delete,
+    func,
+    literal,
+    null,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.orm import Session
+from sqlalchemy.types import DateTime
 
 from rop.models.assistant_confirmation import AssistantConfirmation
 from rop.schemas.assistant_confirmation import (
@@ -113,6 +125,23 @@ def _checked_now(now: datetime | None) -> datetime:
     if current.tzinfo is None or current.utcoffset() is None:
         raise ConfirmationRecordError("a timezone-aware timestamp is required")
     return current.astimezone(UTC)
+
+
+def _sql_now(now: datetime | None):
+    """Return a SQL expression for the trusted current instant.
+
+    When a caller supplies ``now`` (deterministic tests), the value is
+    bound as a literal so the predicate stays reproducible. When ``now``
+    is ``None`` (production), PostgreSQL's ``clock_timestamp()`` is used:
+    the predicate is evaluated against the actual wall clock at the
+    moment the guarded UPDATE runs, not against a value captured when
+    the request began. This prevents a challenge that expires during
+    code verification or policy evaluation from being consumed by a
+    stale timestamp.
+    """
+    if now is None:
+        return func.clock_timestamp()
+    return literal(_checked_now(now), type_=DateTime(timezone=True))
 
 
 def _checked_identity(policy_identity: str) -> str:
@@ -332,15 +361,19 @@ class AssistantConfirmationRepository:
         challenge_id: str,
         *,
         to_status: ConfirmationStatus,
-        now: datetime,
+        now: datetime | None,
         expected_policy_identity: str | None = None,
     ) -> bool:
         """Apply one guarded transition; return True only if it won.
 
         The predicate carries the state the caller expects (``PENDING``,
-        not yet expired, and optionally the stored policy identity), so a
-        concurrent caller that already changed the record makes this
-        update match zero rows instead of writing over it.
+        not yet expired at the moment the UPDATE runs, and optionally the
+        stored policy identity). When ``now`` is ``None`` the expiry
+        predicate is evaluated against PostgreSQL's ``clock_timestamp()``,
+        so a challenge that expires while its code is being verified
+        cannot be consumed by a stale request-start timestamp. When
+        ``now`` is supplied (deterministic tests) it is used as a bound
+        literal.
 
         A transition that matches nothing may have failed only because
         the record is an overdue ``PENDING`` challenge. Rather than
@@ -348,10 +381,11 @@ class AssistantConfirmationRepository:
         ``EXPIRED`` atomically (see ``_expire_if_overdue``) and still
         reports that the requested transition did not happen.
         """
+        now_sql = _sql_now(now)
         conditions = [
             AssistantConfirmation.challenge_id == challenge_id,
             AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-            AssistantConfirmation.expires_at > now,
+            AssistantConfirmation.expires_at > now_sql,
         ]
         if expected_policy_identity is not None:
             conditions.append(
@@ -359,15 +393,15 @@ class AssistantConfirmationRepository:
             )
         values: dict[str, object] = {
             "status": to_status.value,
-            "decided_at": now,
-            "terminal_at": now,
+            "decided_at": now_sql,
+            "terminal_at": now_sql,
             # A decided record can never be confirmed again, so its code
             # verifier is no longer needed and is dropped rather than kept.
             "display_code_hash": None,
             "display_code_salt": None,
         }
         if to_status is ConfirmationStatus.CONSUMED:
-            values["consumed_at"] = now
+            values["consumed_at"] = now_sql
             values.pop("decided_at")
         statement = (
             update(AssistantConfirmation)
@@ -380,27 +414,31 @@ class AssistantConfirmationRepository:
         self._expire_if_overdue(db, challenge_id, now)
         return False
 
-    def _expire_if_overdue(self, db: Session, challenge_id: str, now: datetime) -> bool:
+    def _expire_if_overdue(
+        self, db: Session, challenge_id: str, now: datetime | None
+    ) -> bool:
         """Expire one overdue ``PENDING`` record atomically, if still due.
 
         The update only matches a record that is still ``PENDING`` and
-        genuinely past ``expires_at``, so it can never overwrite a
-        terminal state another caller already established and can never
-        revive, renew, extend, consume, or execute a challenge. It sets
-        both decision and terminal timestamps and drops the code
+        genuinely past ``expires_at`` at the moment the UPDATE runs
+        (``clock_timestamp()`` when ``now`` is ``None``), so it can never
+        overwrite a terminal state another caller already established and
+        can never revive, renew, extend, consume, or execute a challenge.
+        It sets both decision and terminal timestamps and drops the code
         verifier; ``terminal_at`` starts the retention window.
         """
+        now_sql = _sql_now(now)
         statement = (
             update(AssistantConfirmation)
             .where(
                 AssistantConfirmation.challenge_id == challenge_id,
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-                AssistantConfirmation.expires_at <= now,
+                AssistantConfirmation.expires_at <= now_sql,
             )
             .values(
                 status=ConfirmationStatus.EXPIRED.value,
-                decided_at=now,
-                terminal_at=now,
+                decided_at=now_sql,
+                terminal_at=now_sql,
                 display_code_hash=None,
                 display_code_salt=None,
             )
@@ -437,19 +475,18 @@ class AssistantConfirmationRepository:
         the stored identity the record is invalidated instead of
         consumed, so a rule change cannot leave an old approval usable.
         """
-        current = _checked_now(now)
         identity = _checked_identity(expected_policy_identity)
         consumed = self._transition(
             db,
             challenge_id,
             to_status=ConfirmationStatus.CONSUMED,
-            now=current,
+            now=now,
             expected_policy_identity=identity,
         )
         if consumed:
             return True
         self._invalidate_on_policy_change(
-            db, challenge_id, expected_policy_identity=identity, now=current
+            db, challenge_id, expected_policy_identity=identity, now=now
         )
         return False
 
@@ -459,9 +496,10 @@ class AssistantConfirmationRepository:
         challenge_id: str,
         *,
         expected_policy_identity: str,
-        now: datetime,
+        now: datetime | None,
     ) -> bool:
         """Invalidate a still-pending record whose policy identity moved."""
+        now_sql = _sql_now(now)
         statement = (
             update(AssistantConfirmation)
             .where(
@@ -471,8 +509,8 @@ class AssistantConfirmationRepository:
             )
             .values(
                 status=ConfirmationStatus.INVALIDATED.value,
-                decided_at=now,
-                terminal_at=now,
+                decided_at=now_sql,
+                terminal_at=now_sql,
                 display_code_hash=None,
                 display_code_salt=None,
             )
@@ -492,7 +530,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.REJECTED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def cancel(
@@ -511,7 +549,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.CANCELLED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def invalidate(
@@ -526,7 +564,7 @@ class AssistantConfirmationRepository:
             db,
             challenge_id,
             to_status=ConfirmationStatus.INVALIDATED,
-            now=_checked_now(now),
+            now=now,
         )
 
     def record_failed_code_attempt(
@@ -546,7 +584,7 @@ class AssistantConfirmationRepository:
         expired, locked, or already decided), which is exactly the
         indistinguishable outcome a guessing caller must see.
         """
-        current = _checked_now(now)
+        now_sql = _sql_now(now)
         next_attempt = AssistantConfirmation.failed_code_attempts + 1
         locked = next_attempt >= MAX_FAILED_CODE_ATTEMPTS
         statement = (
@@ -554,7 +592,7 @@ class AssistantConfirmationRepository:
             .where(
                 AssistantConfirmation.challenge_id == challenge_id,
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-                AssistantConfirmation.expires_at > current,
+                AssistantConfirmation.expires_at > now_sql,
                 AssistantConfirmation.failed_code_attempts < MAX_FAILED_CODE_ATTEMPTS,
             )
             .values(
@@ -564,11 +602,11 @@ class AssistantConfirmationRepository:
                     else_=AssistantConfirmation.status,
                 ),
                 terminal_at=case(
-                    (locked, current),
+                    (locked, now_sql),
                     else_=AssistantConfirmation.terminal_at,
                 ),
                 decided_at=case(
-                    (locked, current),
+                    (locked, now_sql),
                     else_=AssistantConfirmation.decided_at,
                 ),
                 display_code_hash=case(
@@ -586,7 +624,7 @@ class AssistantConfirmationRepository:
         if row is None:
             # An overdue pending challenge must not stay looking live just
             # because someone guessed a code at it after it expired.
-            self._expire_if_overdue(db, challenge_id, current)
+            self._expire_if_overdue(db, challenge_id, now)
             return None
         return row[0]
 
@@ -683,12 +721,12 @@ class AssistantConfirmationRepository:
         """
         if limit <= 0 or limit > MAX_EXPIRY_SWEEP_LIMIT:
             raise ConfirmationRecordError("invalid expiry sweep limit")
-        current = _checked_now(now)
+        now_sql = _sql_now(now)
         candidate_ids = (
             select(AssistantConfirmation.id)
             .where(
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-                AssistantConfirmation.expires_at <= current,
+                AssistantConfirmation.expires_at <= now_sql,
             )
             .order_by(
                 AssistantConfirmation.expires_at.asc(),
@@ -705,12 +743,12 @@ class AssistantConfirmationRepository:
             .where(
                 AssistantConfirmation.id.in_(ids),
                 AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
-                AssistantConfirmation.expires_at <= current,
+                AssistantConfirmation.expires_at <= now_sql,
             )
             .values(
                 status=ConfirmationStatus.EXPIRED.value,
-                decided_at=current,
-                terminal_at=current,
+                decided_at=now_sql,
+                terminal_at=now_sql,
                 display_code_hash=None,
                 display_code_salt=None,
             )

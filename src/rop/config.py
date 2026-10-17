@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     log_level: LogLevel
     database_url: str = Field(min_length=1)
     assistant_local_origin: str = "http://127.0.0.1:8000"
+    startup_recovery_enabled: bool = True
+    """Run the bounded startup recovery sweep during application startup.
+
+    Disabled in test environments so challenge expiry, which tests drive
+    with a fixed clock, is not disturbed by a sweep that sees the real
+    wall clock. Production deployments leave this enabled.
+    """
     """The trusted loopback origin for state-changing confirmation requests.
 
     Read from configuration and validated as a loopback ``http`` origin, so

@@ -5,6 +5,11 @@ import pytest
 os.environ.setdefault("ROP_APP_NAME", "Reasoning Operating Platform")
 os.environ.setdefault("ROP_ENVIRONMENT", "testing")
 os.environ.setdefault("ROP_LOG_LEVEL", "INFO")
+# Disable the startup recovery sweep during tests: several tests drive
+# challenge expiry with a fixed NOW clock and exercise the HTTP layer
+# via TestClient, whose lifespan would otherwise run recovery against
+# the real wall clock and legitimately expire those test-time challenges.
+os.environ.setdefault("ROP_STARTUP_RECOVERY_ENABLED", "false")
 
 
 @pytest.fixture
