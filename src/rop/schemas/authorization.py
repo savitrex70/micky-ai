@@ -9,9 +9,12 @@ These contracts deliberately do not model a user's confirmation. There is
 no receipt, token, nonce, or confirmation record in this module, and no
 policy result is evidence that a user approved anything. ``AuthorizedScope``
 describes what the boundary that owns the real permission interaction
-asserts is already authorized for exactly one operation; creating that
-assertion, and the interaction behind it, are outside this module and are
-not implemented.
+asserts is already authorized for exactly one operation. That interaction
+is implemented outside this module in
+``src/rop/services/confirmation.py`` and ``src/rop/api/confirmations.py``;
+the browser controls that would surface it to the user remain
+unimplemented. This module stays data-only: it does not mint, verify, or
+store a confirmation.
 
 Operation identifiers are machine-facing names, not user text. They are
 matched exactly: surrounding whitespace, case, and embedded spacing are

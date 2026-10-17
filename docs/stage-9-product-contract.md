@@ -439,6 +439,19 @@ The following principles are the agreed policy. They are the standard the
 implementation is measured against, not a description of behaviour that
 already exists end to end.
 
+**Implementation status (Task 224).** The server-side half of this
+policy exists: challenge issuance, decision handling, policy
+revalidation against the effective policy identity, atomic consumption,
+and the executor boundary are implemented in
+`src/rop/services/confirmation.py` and exposed at
+`POST /api/assistant/confirmations/{id}/decision`. The browser
+confirmation card and its Confirm/Cancel controls are not implemented,
+and the default production executor registry is empty, so no
+`REQUIRE_CONFIRMATION` operation can execute in this build. The
+principles below remain the agreed policy; the server-side lifecycle
+now enforces them, while the UI does not yet surface a pending
+confirmation to the user.
+
 - **Clear, supported, low-risk operations** may proceed without an
   additional confirmation when they are explicitly allowed by the
   applicable policy. Permission is granted by an explicit policy rule,
@@ -585,27 +598,28 @@ commitments:
   specific proposed operation and its material parameters; a materially
   changed operation, target, or scope needs a new decision. Session-scoped
   authorization was not chosen. Principles are recorded in section E.2.
-- STILL PENDING - the interaction that obtains and records a confirmation.
-  Task 221 added enforcement at the assistant capability-dispatch
-  boundary: a matched capability is answered only on `ALLOW`, and every
-  other outcome returns an explicit non-success status. That boundary
-  cannot reach a state-changing operation, because none is registered,
-  and no confirmation can be obtained, recorded, or asserted through it.
-  The deterministic evaluator and the dispatch boundary are independently
-  tested; the end-to-end permission flow does not exist and is not
-  claimed. A reviewable design for the interaction exists in
-  `docs/task-222-confirmation-flow-design.md`, and the storage half of its
-  recording question is resolved below.
-- RESOLVED - recording and retention: **durable local records**, with a
-  terminal record keeping its material values for **thirty days** and then
-  retaining only decision metadata and a salted digest. Approved by the
-  owner for Task 223 and implemented as a storage layer only
-  (`docs/task-223-confirmation-record-storage.md`): the table, its
-  constraints, and the inspection, export, deletion, and retention
-  operations exist, but no route, control, or workflow exposes them, and no
-  confirmation can be obtained, recorded, or spent through the application.
-  The interaction that obtains a confirmation, and the E.1 user-control
-  surface that presents these records, remain pending.
+- IMPLEMENTED (Task 224) - the server-side interaction that obtains and
+  records a confirmation. A `REQUIRE_CONFIRMATION` decision with a
+  registered executor now mints a durable challenge through
+  `src/rop/services/confirmation.py`; a decision request at
+  `POST /api/assistant/confirmations/{id}/decision` revalidates the stored
+  operation against the current effective policy identity, verifies the
+  display code in constant time, and consumes the approval at most once,
+  committed before the executor runs. The default production executor
+  registry is empty, so a `REQUIRE_CONFIRMATION` operation still cannot
+  execute in this build; and the browser confirmation card and its
+  Confirm/Cancel controls are not implemented, so the user cannot yet
+  decide a challenge through the UI.
+- RESOLVED and IMPLEMENTED - recording and retention: **durable local
+  records**, with a terminal record keeping its material values for
+  **thirty days** and then retaining only decision metadata and a salted
+  digest. The store itself was implemented in Task 223 (table, constraints,
+  inspection, export, deletion, retention); Task 224 built the server-side
+  confirmation lifecycle on top of that store
+  (`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`)
+  without adding a parallel record table. No HTTP or UI surface for
+  inspecting, exporting, or deleting confirmation records exists yet;
+  those are tracked as separate follow-ups.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
 - No owner decision in sections H.1, H.3, or H.4 is resolved by this one,

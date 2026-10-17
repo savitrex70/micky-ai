@@ -24,12 +24,19 @@ in this build.
 | Request endpoint | `src/rop/api/assistant.py` | Implemented. `POST /api/assistant/requests`, message-only schema, `_REGISTRY` plus explicitly configured `_POLICY`. |
 | Response envelope | `src/rop/schemas/assistant.py` | Implemented. `success`, `unsupported-capability`, `clarification-required`, `confirmation-required`, `refused`. |
 | Interface | `src/rop/web/static/` | Implemented. Vanilla HTML/CSS/JS; each status has its own wording; replies are written with `textContent`. |
+| Confirmation record | `src/rop/models/assistant_confirmation.py` | Implemented (Task 223). Durable `assistant_confirmations` table (migration `20261017_0017`), guarded transitions in `src/rop/repositories/assistant_confirmation.py`, thirty-day retention and redaction. |
+| Confirmation service | `src/rop/services/confirmation.py` | Implemented (Task 224). Challenge issuance, decision handling, constant-time code verification, policy revalidation against the effective policy identity, atomic once-only consumption, and the executor boundary. |
+| Confirmation API | `src/rop/api/confirmations.py` | Implemented (Task 224). `POST /api/assistant/confirmations/{id}/decision` with a strict body schema, loopback origin enforcement, and value-free refusals. |
+| Executor registry | `src/rop/authorization/executors.py` | Implemented (Task 224). Server-side only. **Empty by default**: no production executor is registered, so a `REQUIRE_CONFIRMATION` operation cannot execute in this build. |
 
-What does **not** exist: any confirmation interaction, any confirmation
-record, any trusted way to turn a user's approval into the `AuthorizedScope`
-that `evaluate_authorization` accepts, and any state-changing capability or
-executor. `REQUIRE_CONFIRMATION` is therefore terminal today, and reachable
-only through test policies.
+The server-side confirmation workflow is implemented and exposed through
+`POST /api/assistant/confirmations/{id}/decision`. What does **not**
+exist in this build: the browser confirmation card and its Confirm/Cancel
+controls; any HTTP surface for inspecting, exporting, or deleting
+confirmation records; a production state-changing capability; and any
+production executor. Because the default executor registry is empty, a
+`REQUIRE_CONFIRMATION` operation cannot execute, and the only capability
+registered is `help`.
 
 Two properties of the current code are load-bearing for this design:
 
@@ -884,7 +891,7 @@ The design is complete when a reviewer can confirm:
 - [ ] Stage 9's contract remains a draft and no other pending decision is
       resolved here.
 
-## 14. Implementation status (Task 223)
+## 14. Implementation status at end of Task 223 (superseded by Task 224)
 
 Task 223 implemented the storage and data-lifecycle foundation only. What
 exists today:
@@ -917,3 +924,11 @@ What does not exist, and is not claimed:
 Status: the durable-record foundation and its privacy lifecycle are
 implemented and tested; the confirmation interaction and the execution path
 remain unimplemented pending separate review and approval.
+
+**Superseded by Task 224.** The server-side confirmation workflow that
+sections 1 and 7 of this document specify was implemented in Task 224:
+challenge issuance, decision handling, policy revalidation, atomic
+consumption, and the executor boundary. The browser confirmation card
+and Confirm/Cancel controls remain unimplemented, and no production
+executor is registered. The bullets above describe the state at the end
+of Task 223 and are preserved as a historical snapshot.

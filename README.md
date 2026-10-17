@@ -161,17 +161,33 @@ step, not a finished assistant):
   malformed identifier is refused rather than resolved. The assistant
   request endpoint gates capability dispatch on it
   (`src/rop/authorization/dispatch.py`), so registering a capability does
-  not authorize it: a capability with no policy rule is refused. The
-  end-user confirmation workflow is not implemented, so a consequential
-  capability could not be approved through the interface yet, and no
-  state-changing capability is registered. See
-  [the authorization policy](docs/task-220-authorization-policy.md) and
-  [the dispatch boundary](docs/task-221-authorization-dispatch.md).
-  The confirmation interaction that would change that is specified, but
-  not implemented, in
+  not authorize it: a capability with no policy rule is refused.
+- The server-side confirmation workflow is implemented: a
+  `REQUIRE_CONFIRMATION` decision with a registered executor mints a
+  durable challenge (`src/rop/services/confirmation.py`), and a decision
+  request at `POST /api/assistant/confirmations/{id}/decision`
+  revalidates the stored operation against the current policy, verifies
+  the display code in constant time, and consumes the approval at most
+  once before any executor runs. The persistence store lives in
+  `assistant_confirmations` (Task 223). Bounded startup recovery marks
+  consumed records whose outcome was never established as unknown and
+  expires overdue pending challenges.
+- The browser confirmation card and its Confirm/Cancel controls are not
+  implemented, so a user cannot yet decide a challenge through the UI.
+  The API contract exposes the challenge display values for a later UI
+  task to consume.
+- No production state-changing capability and no production executor are
+  registered. The default executor registry
+  (`src/rop/authorization/executors.py`) is empty, so a
+  `REQUIRE_CONFIRMATION` operation cannot execute in this build, and the
+  only capability registered is `help`. See
+  [the authorization policy](docs/task-220-authorization-policy.md),
+  [the dispatch boundary](docs/task-221-authorization-dispatch.md), and
   [the confirmation flow design](docs/task-222-confirmation-flow-design.md).
-- The interface does not access the database, model providers, or the
-  network beyond the local server.
+- The interface itself does not access model providers, remote services,
+  or the network beyond the local server. The one database write the
+  assistant request path performs is challenge persistence on the
+  confirmation path, and only through the store above.
 
 ### Stage 7 release-readiness evidence chain
 
@@ -495,9 +511,11 @@ stance, and measurable definition of done for the stage:
 The contract does **not** imply that the personal-assistant features
 described within it have already been implemented. The local assistant
 interface, deterministic capability routing, the single `help`
-capability, and a policy-enforced authorization check on capability
-dispatch exist. The conversational workflow, notes/tasks/reminders,
-local retrieval, and user-facing persistence controls do not exist, and
-the end-user confirmation workflow is not implemented. The FastAPI-
-generated `/docs` developer interface is not a personal-assistant
-product.
+capability, the policy-enforced authorization check on capability
+dispatch, the durable confirmation record, and the server-side
+confirmation lifecycle all exist. The conversational workflow,
+notes/tasks/reminders, local retrieval, user-facing persistence
+controls, the browser confirmation card and its Confirm/Cancel
+controls, and any production state-changing capability or executor do
+not exist. The FastAPI-generated `/docs` developer interface is not a
+personal-assistant product.
