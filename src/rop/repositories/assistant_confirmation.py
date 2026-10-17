@@ -73,6 +73,12 @@ DEFAULT_EXPIRY_SWEEP_LIMIT = 100
 MAX_EXPIRY_SWEEP_LIMIT = 1000
 """Upper bound on a single sweep, so no sweep can be unbounded."""
 
+DEFAULT_REDACTION_LIMIT = 500
+"""How many terminal records one retention pass redacts by default."""
+
+MAX_REDACTION_LIMIT = 1000
+"""Hard cap on a single retention pass, so no pass can be unbounded."""
+
 _HEX_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -240,9 +246,12 @@ class AssistantConfirmationRepository:
         """Return stored records in deterministic order for inspection.
 
         Ordering is by creation time and then identifier, so the same
-        database state always produces the same sequence.
+        database state always produces the same sequence. A page size
+        must be positive and within ``MAX_INSPECTION_LIMIT``; an invalid
+        limit is rejected here, at the repository boundary, rather than
+        surfacing later as a schema-construction error.
         """
-        if limit < 0 or limit > MAX_INSPECTION_LIMIT:
+        if limit <= 0 or limit > MAX_INSPECTION_LIMIT:
             raise ConfirmationRecordError("invalid inspection limit")
         if offset < 0:
             raise ConfirmationRecordError("invalid inspection offset")
@@ -636,7 +645,7 @@ class AssistantConfirmationRepository:
         db: Session,
         *,
         now: datetime | None = None,
-        limit: int = 500,
+        limit: int = DEFAULT_REDACTION_LIMIT,
     ) -> RedactionResult:
         """Redact terminal records whose fixed retention window has elapsed.
 
@@ -648,13 +657,19 @@ class AssistantConfirmationRepository:
         so re-running it changes nothing and never rewrites the digest,
         the timestamps, or the decision metadata.
 
+        ``limit`` must be positive and no larger than
+        ``MAX_REDACTION_LIMIT``; an invalid value is rejected rather than
+        clamped, so one call can never select, lock, or redact more than
+        the hard maximum. Eligible records are ordered deterministically,
+        so successive bounded passes process the remainder in order.
+
         Only records that actually carried a target, scope, or parameter
         are selected. A record that never had material values stays
         ``ABSENT``: it is never given a digest of an empty object, is
         never reported as redacted, and cannot occupy a slot in the
         bounded batch ahead of an older record that still holds values.
         """
-        if limit <= 0:
+        if limit <= 0 or limit > MAX_REDACTION_LIMIT:
             raise ConfirmationRecordError("invalid redaction limit")
         current = _checked_now(now)
         cutoff = current - timedelta(days=CONFIRMATION_RETENTION_DAYS)

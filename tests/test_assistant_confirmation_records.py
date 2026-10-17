@@ -41,9 +41,11 @@ from rop.database import Base
 from rop.models import AssistantConfirmation, ReasoningSession
 from rop.repositories.assistant_confirmation import (
     DEFAULT_EXPIRY_SWEEP_LIMIT,
+    DEFAULT_REDACTION_LIMIT,
     MATERIAL_DIGEST_CONTEXT,
     MAX_EXPIRY_SWEEP_LIMIT,
     MAX_INSPECTION_LIMIT,
+    MAX_REDACTION_LIMIT,
     AssistantConfirmationRepository,
     ConfirmationRecordError,
 )
@@ -1044,6 +1046,62 @@ def test_export_page_beyond_the_end_is_empty_and_not_complete(db, repository) ->
     assert page.is_complete is False
 
 
+def test_export_of_an_empty_store_is_complete(db, repository) -> None:
+    page = repository.export_records(db, generated_at=NOW)
+
+    assert page.total_record_count == 0
+    assert page.record_count == 0
+    assert page.offset == 0
+    assert page.has_more is False
+    assert page.next_offset is None
+    assert page.is_complete is True
+    assert page.records == ()
+
+
+def test_inspection_and_export_reject_non_positive_and_over_max_limits(
+    db, repository
+) -> None:
+    _bulk_create(db, 1)
+    db.commit()
+
+    for invalid in (0, -1, MAX_INSPECTION_LIMIT + 1):
+        with pytest.raises(ConfirmationRecordError):
+            repository.list_records(db, limit=invalid)
+        with pytest.raises(ConfirmationRecordError):
+            repository.export_records(db, generated_at=NOW, limit=invalid)
+
+
+def test_export_accepts_the_maximum_page_size(db, repository) -> None:
+    inserted = set(_bulk_create(db, 3))
+    db.commit()
+
+    page = repository.export_records(db, generated_at=NOW, limit=MAX_INSPECTION_LIMIT)
+
+    assert page.limit == MAX_INSPECTION_LIMIT
+    assert page.record_count == 3
+    assert {view.id for view in page.records} == inserted
+    assert page.is_complete is True
+
+
+def test_valid_final_export_page_reports_the_tail(db, repository) -> None:
+    inserted = _bulk_create(db, 3)
+    db.commit()
+    expected_order = sorted(inserted)
+
+    first = repository.export_records(db, generated_at=NOW, limit=2)
+    final = repository.export_records(db, generated_at=NOW, limit=2, offset=2)
+
+    assert final.total_record_count == 3
+    assert final.record_count == 1
+    assert final.offset == 2
+    assert final.has_more is False
+    assert final.next_offset is None
+    # The tail page is a page, not the whole store.
+    assert final.is_complete is False
+    assert [view.id for view in first.records] == expected_order[:2]
+    assert [view.id for view in final.records] == expected_order[2:]
+
+
 # --- retention and redaction ------------------------------------------------
 
 
@@ -1223,6 +1281,95 @@ def test_repeated_retention_passes_leave_absent_records_untouched(
     assert absent_view is not None
     assert absent_view.material_state is MaterialState.ABSENT
     assert absent_view.material_digest_recorded is False
+
+
+def test_redaction_batch_default_and_maximum_are_accepted(db, repository) -> None:
+    assert DEFAULT_REDACTION_LIMIT == 500
+    assert MAX_REDACTION_LIMIT >= DEFAULT_REDACTION_LIMIT
+    threshold = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+
+    by_default = _consumed(
+        db, repository, challenge_id=_challenge_id("0501"), target="note-default"
+    )
+    db.commit()
+    assert repository.redact_terminal_records(db, now=threshold).redacted_count == 1
+    db.refresh(by_default)
+    assert by_default.material_redacted is True
+
+    at_maximum = _consumed(
+        db, repository, challenge_id=_challenge_id("0502"), target="note-max"
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(
+            db, now=threshold, limit=MAX_REDACTION_LIMIT
+        ).redacted_count
+        == 1
+    )
+    db.refresh(at_maximum)
+    assert at_maximum.material_redacted is True
+
+
+def test_redaction_batch_rejects_invalid_limits(db, repository) -> None:
+    _consumed(db, repository, target="note-invalid")
+    db.commit()
+    threshold = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS)
+
+    for invalid in (0, -1, -100, MAX_REDACTION_LIMIT + 1):
+        with pytest.raises(ConfirmationRecordError):
+            repository.redact_terminal_records(db, now=threshold, limit=invalid)
+
+
+def test_successive_bounded_redaction_passes_cover_more_than_one_batch(
+    db, repository
+) -> None:
+    records = [
+        _consumed(
+            db,
+            repository,
+            challenge_id=_challenge_id(f"06{index:02d}"),
+            target=f"note-batch-{index}",
+            now=NOW + timedelta(seconds=index),
+        )
+        for index in range(4)
+    ]
+    db.commit()
+    threshold = NOW + timedelta(days=CONFIRMATION_RETENTION_DAYS + 1)
+
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=1).redacted_count
+        == 1
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=1).redacted_count
+        == 1
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=1).redacted_count
+        == 1
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=1).redacted_count
+        == 1
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=1).redacted_count
+        == 0
+    )
+    db.commit()
+    assert (
+        repository.redact_terminal_records(db, now=threshold, limit=2).redacted_count
+        == 0
+    )
+    db.commit()
+
+    for record in records:
+        db.refresh(record)
+        assert record.material_redacted is True
 
 
 def test_pending_records_are_never_redacted_by_terminal_retention(

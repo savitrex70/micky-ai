@@ -78,10 +78,13 @@ early. It then removes those values from the columns and stores:
 - `material_digest_salt` — 32 random bytes, hex, unique per record;
 - `redacted_at` — the retention pass's instant.
 
-The pass is bounded, takes row locks, and is idempotent: already-redacted rows
-are excluded, so a second run changes nothing and never rewrites a digest or a
-timestamp. Pending records are never selected, whatever their age; they must
-expire first.
+The pass is bounded by `limit` (default `DEFAULT_REDACTION_LIMIT`, capped at
+the hard maximum `MAX_REDACTION_LIMIT`), takes row locks, and is idempotent:
+already-redacted rows are excluded, so a second run changes nothing and never
+rewrites a digest or a timestamp. A non-positive or over-maximum `limit` is
+rejected with `ConfirmationRecordError` rather than clamped, so one call can
+never select, lock, or redact more than the maximum. Pending records are never
+selected, whatever their age; they must expire first.
 
 Only records that actually carried a target, scope, or parameter are selected.
 A terminal record that never carried a material value stays `ABSENT`: it is
@@ -111,8 +114,10 @@ mistaken for one:
 
 A caller exports everything by starting at `offset = 0` and following
 `next_offset` while `has_more` is true; it never guesses offsets and never
-assumes `record_count` is the database total. `list_records()` keeps its
-`MAX_INSPECTION_LIMIT` bound, and the export never fetches the table
+assumes `record_count` is the database total. Inspection and export limits
+must be positive and within `MAX_INSPECTION_LIMIT`; an invalid limit is
+rejected with `ConfirmationRecordError` at the repository boundary rather than
+surfacing as a schema-construction error. The export never fetches the table
 unboundedly — it counts with an aggregate and reads one bounded page.
 
 Deletion is available by primary key, by challenge identifier, and for the
