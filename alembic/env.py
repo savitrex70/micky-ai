@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from rop.config import get_settings
 from rop.database import Base
+from rop.models import AssistantConfirmation as _AssistantConfirmation  # noqa: F401
 from rop.models import ReasoningSession as _ReasoningSession  # noqa: F401
 
 config = context.config

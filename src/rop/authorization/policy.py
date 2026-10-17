@@ -59,6 +59,9 @@ implemented here and is not claimed.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -76,6 +79,8 @@ from rop.schemas.authorization import (
 
 HELP_OPERATION_ID = "help"
 """The only registered assistant capability that changes no state."""
+
+_POLICY_IDENTITY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 DEFAULT_POLICY_RULES: tuple[OperationRule, ...] = (
     OperationRule(
@@ -121,6 +126,80 @@ def _checked_policy(policy: AuthorizationPolicy) -> AuthorizationPolicy:
     raise AuthorizationPolicyError(
         AuthorizationErrorCode.INVALID_POLICY, "authorization policy is invalid"
     )
+
+
+def _canonical_policy_contents(policy: AuthorizationPolicy) -> dict[str, Any]:
+    """The authorization-affecting projection of ``policy``.
+
+    A rule's ``description`` is deliberately absent: it is documentation
+    and cannot change a decision, so editing it must not invalidate a
+    confirmation that was already obtained for an operation. Everything
+    that *can* change a decision is present, including an explicitly
+    ``None`` risk for an unclassified rule, which is denied rather than
+    allowed by omission.
+    """
+    return {
+        "policy_version": policy.policy_version,
+        "rules": [
+            {
+                "operation_id": rule.operation_id,
+                "risk": None if rule.risk is None else str(rule.risk),
+                "prohibited": bool(rule.prohibited),
+                "requires_target": bool(rule.requires_target),
+                "required_parameters": sorted(set(rule.required_parameters)),
+            }
+            for rule in sorted(policy.rules, key=lambda rule: rule.operation_id)
+        ],
+    }
+
+
+def authorization_policy_identity(policy: AuthorizationPolicy) -> str:
+    """Return the deterministic identity of a policy's effective contents.
+
+    The identity is the lowercase hex SHA-256 digest of a canonical
+    serialization of every field that can change an authorization
+    decision: the registered operation identifiers, each rule's risk
+    classification (including an unclassified rule's ``None``), its
+    ``prohibited`` and ``requires_target`` flags, its required-parameter
+    set, and the policy-version label. Rule ordering and
+    ``required_parameters`` ordering are canonicalized, so two policies
+    that authorize identically share one identity regardless of how they
+    were assembled. A rule's description is excluded because it cannot
+    affect a decision.
+
+    This is a change *detector*, not proof of authenticity: it describes
+    the policy the process currently holds and does not establish that
+    the policy is trustworthy. It exists so a pending confirmation can
+    fail closed when the rules that produced it change, even though
+    ``policy_version`` remains the fixed literal ``"1"``.
+
+    The helper is pure: it validates a copy of the supplied policy,
+    mutates nothing, evaluates nothing, and touches no database, network,
+    or model. Failure is never replaced by a fabricated identity - an
+    invalid policy, an unserializable projection, or a malformed digest
+    raises ``AuthorizationPolicyError`` with the value-free
+    ``INVALID_POLICY`` code.
+    """
+    try:
+        checked_policy = _checked_policy(policy)
+        canonical = json.dumps(
+            _canonical_policy_contents(checked_policy),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        identity = hashlib.sha256(canonical).hexdigest()
+    except Exception:
+        raise AuthorizationPolicyError(
+            AuthorizationErrorCode.INVALID_POLICY,
+            "authorization policy identity is unavailable",
+        ) from None
+    if not _POLICY_IDENTITY_PATTERN.fullmatch(identity):
+        raise AuthorizationPolicyError(
+            AuthorizationErrorCode.INVALID_POLICY,
+            "authorization policy identity is unavailable",
+        )
+    return identity
 
 
 def _checked_operation(

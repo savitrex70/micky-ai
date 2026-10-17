@@ -404,9 +404,12 @@ five failed code attempts per challenge**, after which the challenge locks.
 
 ## 6. Recording and privacy
 
-Section H.2 of the Stage 9 contract leaves the form and persistence of
-confirmation records undecided. This section compares the options and makes a
-**recommendation**, which remains an owner decision.
+**Approved by the project owner (Task 223):** option B - durable local
+records in the dedicated `assistant_confirmations` table, with a terminal
+record keeping its material values for thirty days and then retaining only a
+salted digest. The comparison below is kept as the record of how that was
+decided. Durable storage being approved does not mean the confirmation
+workflow exists: see section 14.
 
 ### 6.1 Options
 
@@ -416,10 +419,12 @@ confirmation records undecided. This section compares the options and makes a
 | B. Durable local records | Challenges and decisions are rows in the existing local PostgreSQL database, in a dedicated personal-assistant table. | Survives restart; provides a real record of what was approved and consumed; fits the existing stack (SQLAlchemy, Alembic, `/health/ready`). Costs one migration, one table, and a retention policy; stores operation values that are personal data and therefore need protection and deletion paths. |
 | C. Hybrid | Pending state in memory; a durable record only for decided outcomes. | Keeps pending material out of the database, but pending approvals then vanish on restart, and the record is written after the fact — so a crash between execution and write can lose the record, which weakens exactly the audit property the record is for. |
 
-### 6.2 Recommendation (not yet approved)
+### 6.2 Approved decision (Task 223)
 
-**Recommend option B: durable local records in the existing database, in a
-dedicated table, with redaction of material values after the decision window.**
+**Option B is approved: durable local records in the existing database, in a
+dedicated table, with a thirty-day retention window on material values after a
+record becomes terminal.** The reasons below are the ones put to the owner and
+are kept as the record of the decision, not as an argument still under review.
 
 Reasons:
 
@@ -433,16 +438,19 @@ Reasons:
 - The project already has the machinery (SQLAlchemy models, Alembic
   migrations) and the local-first stance forbids sending this anywhere.
 
-### 6.3 Proposed minimum fields
+### 6.3 Stored fields (implemented in Task 223)
 
-`assistant_confirmations` (name illustrative; final naming follows existing
-model conventions):
+`assistant_confirmations`, created by migration `20261017_0017`. The
+implementation keeps these names; the two salt columns and `redacted_at`
+were added because a bare hash of a six-character code, and a digest with no
+record of which salt produced it, would not support the privacy rules below.
 
 | Field | Purpose | Notes |
 | --- | --- | --- |
 | `id` | Primary key | Internal, not the challenge identifier. |
 | `challenge_id` | Opaque 128-bit identifier, unique index | Lookup key for the confirmation endpoint. |
-| `display_code_hash` | Short code shown to the human | Stored hashed, compared in constant time; never logged. |
+| `display_code_hash` | Short code shown to the human | Salted hash; the code itself is never stored or logged, and no verification path exists yet. Cleared when the record becomes terminal, since a decided record can never be confirmed again. |
+| `display_code_salt` | Per-record salt for that hash | Prevents a six-character code from being recovered from an unsalted digest. |
 | `operation_id` | Exact machine identifier | Never normalized. |
 | `target`, `scope` | Canonical target/scope, or null | Personal data; redact after the window. |
 | `parameters` | Canonical parameter map, or empty | Personal data; redact after the window. |
@@ -450,13 +458,24 @@ model conventions):
 | `policy_version` | Human-readable version label that required confirmation | Metadata only; the current value is always `"1"`, so it cannot detect a rule change. |
 | `failed_code_attempts` | Wrong display codes seen so far | Integer only; never stores a submitted code. |
 | `required_risk`, `required_reason` | Why confirmation was required | Makes the record self-explaining. |
-| `status` | `PENDING`, `CONFIRMED`, `REJECTED`, `CANCELLED`, `EXPIRED`, `CONSUMED`, `INVALIDATED`, `LOCKED` | Terminal states are explicit; `LOCKED` means the attempt budget was exhausted. |
-| `created_at`, `expires_at`, `decided_at`, `consumed_at` | Timing | Server clock only. |
+| `status` | `PENDING`, `CONSUMED`, `REJECTED`, `CANCELLED`, `EXPIRED`, `INVALIDATED`, `LOCKED` | Terminal states are explicit; `LOCKED` means the attempt budget was exhausted. There is no separate `CONFIRMED` state: the single success transition is `PENDING` to `CONSUMED`. |
+| `created_at`, `expires_at`, `decided_at`, `terminal_at`, `consumed_at` | Timing | Server clock only; `terminal_at` is what the retention window counts from. |
 | `outcome` | Result of the execution attempt, if any | `NOT_RUN`, `FAILED`, `SUCCEEDED`, `UNKNOWN_AFTER_CONSUME`. |
+| `material_redacted` | Whether the values above were removed | Distinguishes "redacted after the window" from "never supplied". |
+| `material_digest`, `material_digest_salt` | Salted digest of the removed values | One salt per record; present only once redacted. |
+| `redacted_at` | When the values were removed | Server clock only. |
 
 Deliberately **not** stored: the user's raw message, the assistant reply, any
 model output, and any value that is not material to binding or reporting the
 operation. The record must not become a conversation store.
+
+Constraints enforced by the database, not only by application code: the
+status enum, the outcome enum, the attempt counter bounded to zero through
+five, the challenge identifier unique, `terminal_at` present exactly when the
+record is not `PENDING`, a code verifier present exactly while the record is
+`PENDING`, that verifier's hash and salt present together, the digest and its
+salt present together, a redacted record carrying a digest, and a redacted
+record carrying `redacted_at`. The table has no foreign keys at all.
 
 ### 6.4 Privacy rules
 
@@ -465,7 +484,11 @@ operation. The record must not become a conversation store.
   terminal and past the retention window; the identifier, decision, timing,
   policy identity, and reason survive so the audit trail still shows *that*
   an exactly-specified action was approved, and under which rules it was
-  approved.
+  approved. The window is thirty days from `terminal_at`, approved with the
+  storage decision; the digest is SHA-256 over a domain-separated canonical
+  form of the removed values and a random per-record salt. The original
+  values are removed from every column, not hidden from output, and pending
+  records are never redacted.
 - Confirmation records, material values, and display codes are never written
   to application logs. Log lines may reference the internal id and status
   only.
@@ -474,9 +497,11 @@ operation. The record must not become a conversation store.
   values for `/api/assistant/`; the confirm endpoint must be covered by the
   same treatment). Failed-attempt counts are never disclosed to the client,
   and a submitted code is never stored in plaintext or logged.
-- User control: the eventual inspect/export/delete surface for assistant data
-  (H.3 territory) must include confirmation records, otherwise option B
-  conflicts with E.1. This is flagged as an owner decision in section 11.
+- User control: the storage layer now provides inspection, export, and
+  deletion of confirmation records, but **no HTTP route or UI exposes them
+  yet**. Until a later task integrates that surface with the confirmation
+  lifecycle, E.1's inspect/export/delete promise is met at the service layer
+  only, and the design does not claim otherwise.
 
 ### 6.5 Separation from clinical records
 
@@ -740,7 +765,9 @@ exact identifier matching, one-action scope matching, no outcome other than
 
 ## 11. Recommended defaults
 
-These are proposals, not approved decisions.
+These were proposals. Items 5 and 6 were approved by the owner and
+implemented in Task 223 (noted inline); the rest remain proposals, because
+nothing mints, displays, or verifies a challenge yet.
 
 1. **Challenge lifetime: 5 minutes**, configurable, evaluated inside the
    atomic transition. Long enough to read a summary, short enough that a
@@ -753,10 +780,10 @@ These are proposals, not approved decisions.
    in the same request.
 5. **Durable local records (option B)** in a dedicated assistant table, with
    material values redacted to a salted digest once terminal and past the
-   retention window.
+   retention window. **Approved and implemented (Task 223).**
 6. **Retention: keep pending records only until expiry; keep terminal records
-   for a bounded window (proposal: 30 days) and then redact material values**
-   while keeping the decision metadata.
+   for a bounded window (30 days) and then redact material values** while
+   keeping the decision metadata. **Approved and implemented (Task 223).**
 7. **Loopback-only, same-origin state-changing requests** with
    `Content-Type: application/json`, no CORS allowance.
 8. **Cancellation and rejection are first-class states**, reported plainly and
@@ -774,19 +801,20 @@ These are proposals, not approved decisions.
     canonical policy contents** (section 5.9), not to the fixed `"1"` version
     label, and the fingerprint is recomputed and compared at consumption.
 
-Implementing items 11 and 12 adds one side-effect-free helper to Task 220's
-policy module and two columns (the stored identity and the attempt counter) to
-the proposed record. Neither changes an authorization decision, and neither is
-implemented by this document.
+Items 11 and 12 add one side-effect-free helper to Task 220's policy module
+(`authorization_policy_identity`) and two columns (the stored identity and the
+attempt counter). Task 223 implemented both at the storage layer. Neither
+changes an authorization decision, and neither makes a confirmation
+obtainable: no challenge can be minted, consumed, or validated through any
+HTTP route yet.
 
 ## 12. Decisions requiring owner approval
 
-1. **Confirmation recording and retention (H.2 pending item).** Durable
-   records in the existing local database, with the retention window and
-   redaction timing above — or ephemeral in-memory records with no audit of
-   what was approved. This changes the privacy surface and the answer to
-   acceptance criterion (a), so it cannot be derived from the existing
-   per-operation rule.
+1. **Confirmation recording and retention (H.2 pending item).** **RESOLVED
+   (owner, Task 223):** durable records in the existing local database, with
+   the thirty-day terminal retention and redaction described above. The
+   recording choice is decided; the interaction that obtains a confirmation is
+   not, and no confirmation can be obtained through the application today.
 2. **Identity and session binding assumption.** The design assumes a single
    local user on loopback with no authentication, and therefore binds an
    approval to the challenge alone. Any move to multiple users, remote
@@ -796,19 +824,25 @@ implemented by this document.
    delete surface** (E.1 user control), and under which Stage 9 item that
    surface is delivered. If durable records are approved without a deletion
    path, E.1 is not satisfied.
-4. **Expiry duration and retention window** (proposed 5 minutes and 30 days).
+4. **Expiry duration and retention window.** **RESOLVED for retention (owner,
+   Task 223):** thirty days from `terminal_at`. The five-minute challenge
+   lifetime remains a proposal, since nothing mints a challenge yet.
 5. **How "no executor exists yet" is reported.** Reusing `refused` conflates
    a policy decision with a build limitation; a new additive status (for
    example `not-implemented`) is more honest but extends the response
    contract, so it needs review.
 6. **Whether a pending approval survives a restart** (durable) or is
    discarded (ephemeral), and whether the user is told about the loss.
+   **RESOLVED for storage (owner, Task 223):** pending records are durable, so
+   a restart does not discard an outstanding challenge; the user-facing
+   behaviour when one lapses still belongs to the confirmation workflow.
 
 Unchanged by this document: the contract as a whole remains a **draft**; H.1,
 H.3, and H.4 remain unresolved; E.2's owner decision stands as recorded; and
-nothing here marks the authorization work as complete. The confirmation
-recording decision above is exactly the item §H.2 still lists as pending, and
-it stays pending until the owner chooses.
+nothing here marks the authorization work as complete. The recording and
+retention decision above resolves the storage half of §H.2; the interaction
+that obtains a confirmation remains pending, and no confirmation can be
+obtained through the application today.
 
 ## 13. Review checklist
 
@@ -834,3 +868,37 @@ The design is complete when a reviewer can confirm:
 - [ ] a testing plan exists for each failure scenario;
 - [ ] Stage 9's contract remains a draft and no other pending decision is
       resolved here.
+
+## 14. Implementation status (Task 223)
+
+Task 223 implemented the storage and data-lifecycle foundation only. What
+exists today:
+
+- table `assistant_confirmations`, created by migration `20261017_0017`,
+  with the constraints listed in section 6.3 and no foreign keys;
+- `src/rop/models/assistant_confirmation.py`, registered in the models
+  package and imported by Alembic's `env.py`;
+- `src/rop/repositories/assistant_confirmation.py`: draft creation,
+  challenge lookup, inspection, export, deletion, guarded transitions
+  (consume, reject, cancel, invalidate, expire), the atomic failed-attempt
+  counter with the `LOCKED` terminal state, and the thirty-day retention and
+  redaction pass;
+- `authorization_policy_identity(policy)` in the Task 220 policy module;
+- tests that run against PostgreSQL: `tests/test_assistant_confirmation_records.py`
+  and `tests/test_authorization_policy_identity.py`.
+
+What does not exist, and is not claimed:
+
+- no endpoint issues, confirms, cancels, or rejects a challenge, and no UI
+  control does either;
+- no code mints a challenge, so `REQUIRE_CONFIRMATION` is still unreachable
+  and the Task 221 dispatch boundary cannot reach a state-changing operation;
+- no executor, no state-changing capability, and no simulated action;
+- no HTTP route exposes the inspection, export, or deletion service, so E.1's
+  user-control promise is satisfied at the service layer only;
+- `authorization_policy_identity` is not yet consulted by the live dispatch
+  path; only the later confirmation workflow can enforce it.
+
+Status: the durable-record foundation and its privacy lifecycle are
+implemented and tested; the confirmation interaction and the execution path
+remain unimplemented pending separate review and approval.

@@ -580,9 +580,18 @@ commitments:
   The deterministic evaluator and the dispatch boundary are independently
   tested; the end-to-end permission flow does not exist and is not
   claimed. A reviewable design for the interaction exists in
-  `docs/task-222-confirmation-flow-design.md`; it is a proposal that
-  decides nothing on its own, and the recording and retention choice
-  remains an owner decision.
+  `docs/task-222-confirmation-flow-design.md`, and the storage half of its
+  recording question is resolved below.
+- RESOLVED - recording and retention: **durable local records**, with a
+  terminal record keeping its material values for **thirty days** and then
+  retaining only decision metadata and a salted digest. Approved by the
+  owner for Task 223 and implemented as a storage layer only
+  (`docs/task-223-confirmation-record-storage.md`): the table, its
+  constraints, and the inspection, export, deletion, and retention
+  operations exist, but no route, control, or workflow exposes them, and no
+  confirmation can be obtained, recorded, or spent through the application.
+  The interaction that obtains a confirmation, and the E.1 user-control
+  surface that presents these records, remain pending.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
 - No owner decision in sections H.1, H.3, or H.4 is resolved by this one,
