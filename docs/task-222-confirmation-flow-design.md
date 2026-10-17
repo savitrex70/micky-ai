@@ -834,7 +834,7 @@ not implemented, and no production executor is registered, so a
 
 ## 12. Decisions requiring owner approval
 
-1. **Confirmation recording and retention (H.2 pending item).** **RESOLVED
+1. **Confirmation recording and retention (H.2 item).** **RESOLVED
    (owner, Task 223):** durable records in the existing local database, with
    the thirty-day terminal retention and redaction described above. The
    recording choice is decided. The server-side interaction that obtains
