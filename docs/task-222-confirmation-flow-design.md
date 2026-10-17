@@ -835,7 +835,8 @@ HTTP route yet.
    path, E.1 is not satisfied.
 4. **Expiry duration and retention window.** **RESOLVED for retention (owner,
    Task 223):** thirty days from `terminal_at`. The five-minute challenge
-   lifetime remains a proposal, since nothing mints a challenge yet.
+   lifetime is implemented (Task 224: `CHALLENGE_LIFETIME` in
+   `src/rop/services/confirmation.py`).
 5. **How "no executor exists yet" is reported.** Reusing `refused` conflates
    a policy decision with a build limitation; a new additive status (for
    example `not-implemented`) is more honest but extends the response
@@ -849,9 +850,14 @@ HTTP route yet.
 Unchanged by this document: the contract as a whole remains a **draft**; H.1,
 H.3, and H.4 remain unresolved; E.2's owner decision stands as recorded; and
 nothing here marks the authorization work as complete. The recording and
-retention decision above resolves the storage half of §H.2; the interaction
-that obtains a confirmation remains pending, and no confirmation can be
-obtained through the application today.
+retention decision above resolves the storage half of the H.2 section. The
+server-side confirmation workflow that obtains and consumes a user approval
+was implemented in Task 224 (`src/rop/services/confirmation.py`,
+`src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`); the
+browser surface that lets a user actually decide a pending challenge is not,
+so no confirmation can be obtained through the application UI today. No
+production executor is registered, so a `REQUIRE_CONFIRMATION` operation
+cannot execute in this build.
 
 ## 13. Review checklist
 

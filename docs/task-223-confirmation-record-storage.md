@@ -151,11 +151,22 @@ test are PostgreSQL behaviour.
 
 ## Scope limits
 
-Not implemented, and not claimed: challenge issuance, confirm/cancel/reject
-endpoints, browser controls, a state-changing capability, an executor or any
-simulated action, an alternate risk table, session-wide permissions, or model
-inference. `REQUIRE_CONFIRMATION` remains unreachable because nothing mints a
-challenge, and the Task 221 dispatch boundary is unchanged.
+Not implemented *by Task 223*, and not claimed: challenge issuance,
+confirm/cancel/reject endpoints, browser controls, a state-changing
+capability, an executor or any simulated action, an alternate risk table,
+session-wide permissions, or model inference.
+
+Subsequent to this document, the server-side confirmation workflow those
+endpoints represent was implemented in Task 224
+(`src/rop/services/confirmation.py` for challenge issuance, verification,
+atomic consumption, and executor invocation; `src/rop/api/confirmations.py`
+for the decision endpoint; `src/rop/authorization/executors.py` for the
+server-side executor registry). That workflow uses the store described in
+this document and adds no parallel record table.
+
+What remains unimplemented: browser controls, a production state-changing
+capability, and a production executor. The default executor registry is
+empty, so a `REQUIRE_CONFIRMATION` operation cannot execute in this build.
 
 
 ## Startup recovery (Task 224 correction)
