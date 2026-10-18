@@ -60,6 +60,18 @@
       "nothing ran.",
   };
 
+  // Semantic requirement between status and executed. Any status not present
+  // here is unrecognised and must be treated as an unverifiable response.
+  const DECISION_EXECUTED_REQUIREMENT = {
+    executed: true,
+    failed: true,
+    unknown: true,
+    cancelled: false,
+    rejected: false,
+    refused: false,
+    unavailable: false,
+  };
+
   function describeStatus(value) {
     const text = STATUS_TEXT[value];
     if (typeof text === "string") return text;
@@ -237,6 +249,41 @@
     return true;
   }
 
+  // A response is semantically valid only when its status is one the server
+  // actually emits, and the `executed` flag agrees with that status. An
+  // inconsistent pair (for example `cancelled` with `executed: true`, or
+  // `unavailable` with `executed: true`, or any unrecognised status) must be
+  // treated as unverifiable rather than as "nothing ran".
+  function isSemanticallyValidDecision(payload) {
+    if (!isValidDecisionPayload(payload)) return false;
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        DECISION_EXECUTED_REQUIREMENT,
+        payload.status
+      )
+    ) {
+      return false;
+    }
+    // The `executed` status additionally requires `executed: true`; the
+    // generic requirement below would already reject this, but the explicit
+    // guard keeps the invariant obvious to readers.
+    if (payload.status === "executed" && payload.executed !== true) return false;
+    const expectedExecuted = DECISION_EXECUTED_REQUIREMENT[payload.status];
+    return payload.executed === expectedExecuted;
+  }
+
+  function markChallengeUnresolved(reason) {
+    challengeUnresolved = true;
+    setDecisionBusy(false);
+    setStatus(
+      reason +
+        " Do not assume the operation did not run. This confirmation " +
+        "cannot be retried from this page; the server-side challenge " +
+        "remains pending until it expires.",
+      "error"
+    );
+  }
+
   async function resolveDecision(decision, code) {
     if (decisionInFlight || activeChallengeId === null || challengeUnresolved) {
       return;
@@ -251,44 +298,23 @@
     try {
       result = await sendDecision(challengeId, decision, code);
     } catch (err) {
-      // The request was attempted, but the connection failed before the
+      // The request was attempted but the connection failed before a
       // response arrived. We do not know whether the server processed the
       // decision. Do not automatically retry; disable further action.
-      challengeUnresolved = true;
-      setDecisionBusy(false);
-      setStatus(
-        "The decision could not be verified because the connection failed. " +
-        "This confirmation cannot be retried from this page; start a new " +
-        "request if you want to try again.",
-        "error"
+      markChallengeUnresolved(
+        "The decision could not be verified because the connection failed."
       );
       return;
     }
 
-    if (!result.ok || !isValidDecisionPayload(result.payload)) {
-      challengeUnresolved = true;
-      setDecisionBusy(false);
-      setStatus(
-        "The decision response could not be verified. This confirmation " +
-        "cannot be retried from this page.",
-        "error"
+    if (!result.ok || !isSemanticallyValidDecision(result.payload)) {
+      markChallengeUnresolved(
+        "The decision outcome could not be verified."
       );
       return;
     }
 
     const payload = result.payload;
-
-    // "executed" is only success when the response also says executed: true.
-    if (payload.status === "executed" && payload.executed !== true) {
-      challengeUnresolved = true;
-      setDecisionBusy(false);
-      setStatus(
-        "The server reported execution but did not confirm it. Treat the " +
-        "outcome as unknown.",
-        "error"
-      );
-      return;
-    }
 
     addHistory(summaryForHistory, payload.message, payload.status);
     hideConfirmationCard();
@@ -301,6 +327,29 @@
     event.preventDefault();
     if (requestInFlight) return;
 
+    // A pending or unresolved confirmation must be resolved before a new
+    // request may start. Starting a new request would silently abandon an
+    // outstanding server-side challenge; this interface never does that.
+    // The user must explicitly Cancel an ordinary pending card, and a card
+    // whose outcome could not be verified must not be replaced by repeating
+    // the same or a different action.
+    if (!card.hidden || challengeUnresolved) {
+      if (challengeUnresolved) {
+        markChallengeUnresolved(
+          "The previous decision could not be verified."
+        );
+      } else {
+        setStatus(
+          "Resolve the pending confirmation first: choose Cancel to " +
+            "discard it, or Confirm with the display code. Starting a new " +
+            "request would abandon an outstanding server-side challenge.",
+          "error"
+        );
+        cardCancel.focus();
+      }
+      return;
+    }
+
     const text = input.value;
     if (!text.trim()) {
       setStatus("Enter a request before sending.", "error");
@@ -312,9 +361,6 @@
       return;
     }
 
-    // Any new request hides a previously shown card: the server never lets
-    // an old approval cover a different operation.
-    hideConfirmationCard();
     setRequestBusy(true);
     setStatus("Sending\u2026", "pending");
 
@@ -328,7 +374,7 @@
         } else {
           setStatus(
             "The server asked for confirmation but did not provide a " +
-            "usable challenge. Nothing can be confirmed here.",
+              "usable challenge. Nothing can be confirmed here.",
             "error"
           );
         }

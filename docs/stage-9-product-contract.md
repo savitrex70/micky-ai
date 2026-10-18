@@ -500,8 +500,8 @@ confirmation card and its Confirm/Cancel controls are implemented
 (Task 226). The default production executor registry is empty, so no
 `REQUIRE_CONFIRMATION` operation can execute in this build. The
 principles below remain the agreed policy; the server-side lifecycle
-now enforces them, while the UI does not yet surface a pending
-confirmation to the user.
+now enforces them, and the browser confirmation card added in Task 226
+lets the user review and decide a pending challenge.
 
 - **Clear, supported, low-risk operations** may proceed without an
   additional confirmation when they are explicitly allowed by the

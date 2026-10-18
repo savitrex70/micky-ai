@@ -350,13 +350,27 @@ def test_page_javascript_handles_unknown_decision_outcome() -> None:
     assert "unrecognised decision outcome" in js
 
 
-def test_page_javascript_hides_card_on_new_request() -> None:
+def test_page_javascript_blocks_new_request_while_card_pending() -> None:
     js = _served_js()
-    # A new request must hide a previous card so an old approval cannot cover
-    # a different operation.
+    # A new request must not silently abandon a pending or unresolved
+    # confirmation. The submit handler must refuse to proceed while a card is
+    # visible, and must not call hideConfirmationCard() from the submit path.
     idx = js.index('form.addEventListener("submit"')
-    body = js[idx : idx + 3000]
-    assert "hideConfirmationCard()" in body
+    # Grab a generous window covering the entire submit handler
+    tail = js[idx:]
+    marker = "cardConfirm.addEventListener"
+    window_end = tail.index(marker) if marker in tail else len(tail)
+    body = tail[:window_end]
+    assert "if (!card.hidden || challengeUnresolved)" in body
+    assert "Resolve the pending confirmation first" in body
+    assert (
+        "hideConfirmationCard()" not in body
+    ), "submit handler must not hide the card without a server decision"
+    # Also verify the new-request guard comes before the message value is
+    # read, so an empty-message submission cannot slip past it.
+    guard = body.index("if (!card.hidden || challengeUnresolved)")
+    value_read = body.index("const text = input.value;")
+    assert guard < value_read
 
 
 def test_page_javascript_shows_card_only_for_confirmation_required() -> None:
@@ -378,3 +392,73 @@ def test_confirmation_status_text_still_says_not_executed() -> None:
     entries = _status_entries(js)
     text = entries["confirmation-required"]
     assert "not been executed" in text or "not executed" in text
+
+
+def test_page_javascript_validates_status_executed_consistency() -> None:
+    """An invalid status/executed pair must not be accepted as a decision.
+
+    The reviewer flagged that `cancelled` + `executed: true` was previously
+    accepted and displayed as "cancelled", even though the server said an
+    executor ran. The JS now requires the status and the executed flag to
+    agree, per the ConfirmationDecisionStatus contract.
+    """
+    js = _served_js()
+    assert "function isSemanticallyValidDecision(" in js
+    assert "DECISION_EXECUTED_REQUIREMENT" in js
+    for status in (
+        "executed",
+        "failed",
+        "unknown",
+        "cancelled",
+        "rejected",
+        "refused",
+        "unavailable",
+    ):
+        assert status + ":" in js, status
+    # The requirement map must show executed-only statuses requiring true.
+    assert "executed: true" in js
+    assert "cancelled: false" in js
+    assert "unavailable: false" in js
+
+
+def test_page_javascript_rejects_inconsistent_decision_response() -> None:
+    js = _served_js()
+    # resolveDecision must route a semantically invalid payload to the
+    # unresolved path, not to the "cancelled" or other non-execution paths.
+    idx = js.index("async function resolveDecision")
+    body = js[idx : idx + 2500]
+    assert "isSemanticallyValidDecision(result.payload)" in body
+    assert "markChallengeUnresolved" in body
+    assert "could not be verified" in body
+
+
+def test_page_javascript_unresolved_does_not_claim_nothing_ran() -> None:
+    js = _served_js()
+    # markChallengeUnresolved must explicitly warn against assuming the
+    # operation did not run.
+    assert "Do not assume the operation did not run" in js
+
+
+def test_page_javascript_does_not_auto_retry_decision() -> None:
+    js = _served_js()
+    # There must be no recursive or repeated call to resolveDecision or
+    # sendDecision from failure paths.
+    idx = js.index("function markChallengeUnresolved")
+    end = js.index("\n  }", idx) + 3
+    body = js[idx:end]
+    assert "resolveDecision(" not in body
+    assert "sendDecision(" not in body
+
+
+def test_page_javascript_recognises_unknown_status_wording() -> None:
+    js = _served_js()
+    # describeDecision must handle a status not in the map without claiming
+    # success or non-execution.
+    assert "unrecognised decision outcome" in js
+
+
+def test_page_javascript_preserves_executed_true_requirement() -> None:
+    js = _served_js()
+    # Even with isSemanticallyValidDecision, the explicit executed guard
+    # must remain.
+    assert 'payload.status === "executed" && payload.executed !== true' in js
