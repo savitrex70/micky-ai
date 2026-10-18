@@ -171,3 +171,79 @@ footer {
   body { padding: 0.9rem; }
   h1 { font-size: 1.35rem; }
 }
+
+.confirmation-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1.25rem 0;
+}
+.confirmation-card[hidden] { display: none; }
+.confirmation-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.confirmation-card h2 { margin-top: 0; }
+.confirmation-summary {
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.confirmation-code-row {
+  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.confirmation-code-label { color: var(--muted); }
+.confirmation-code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 1.1rem;
+  letter-spacing: 0.15em;
+  padding: 0.2rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.confirmation-not-run { margin: 0.75rem 0; }
+.confirmation-card label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+.confirmation-card input[type="text"] {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0.1em;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.confirmation-card input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.confirmation-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+#confirmation-cancel {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+#confirmation-cancel:hover:not([disabled]) { background: var(--bg); }
+@media (max-width: 480px) {
+  .confirmation-actions { flex-direction: column; }
+  .confirmation-actions button { width: 100%; }
+}

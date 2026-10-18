@@ -172,10 +172,16 @@ step, not a finished assistant):
   `assistant_confirmations` (Task 223). Bounded startup recovery marks
   consumed records whose outcome was never established as unknown and
   expires overdue pending challenges.
-- The browser confirmation card and its Confirm/Cancel controls are not
-  implemented, so a user cannot yet decide a challenge through the UI.
-  The API contract exposes the challenge display values for a later UI
-  task to consume.
+- The browser confirmation interface is implemented (Task 226): when
+  the server returns `confirmation-required` with a valid challenge,
+  the page shows a pending confirmation card with the stored operation
+  summary, the server-issued display code, the expiry in local time,
+  and Confirm/Cancel actions. The code-entry field starts empty; the
+  user must type the code and deliberately activate Confirm. Outcomes
+  are reported honestly - success only when the server also
+  establishes `executed: true`. With no production executor
+  registered, a consequential operation still cannot execute in this
+  build.
 - No production state-changing capability and no production executor are
   registered. The default executor registry
   (`src/rop/authorization/executors.py`) is empty, so a
@@ -512,10 +518,12 @@ The contract does **not** imply that the personal-assistant features
 described within it have already been implemented. The local assistant
 interface, deterministic capability routing, the single `help`
 capability, the policy-enforced authorization check on capability
-dispatch, the durable confirmation record, and the server-side
-confirmation lifecycle all exist. The conversational workflow,
+dispatch, the durable confirmation record, the server-side
+confirmation lifecycle, and the browser confirmation card with its
+Confirm/Cancel controls all exist. The conversational workflow,
 notes/tasks/reminders, local retrieval, user-facing persistence
-controls, the browser confirmation card and its Confirm/Cancel
-controls, and any production state-changing capability or executor do
-not exist. The FastAPI-generated `/docs` developer interface is not a
+controls beyond the confirmation card, a user-facing
+inspect/export/delete surface for confirmation records, and any
+production state-changing capability or executor do not exist. The
+FastAPI-generated `/docs` developer interface is not a
 personal-assistant product.

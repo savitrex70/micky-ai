@@ -175,9 +175,13 @@ Implemented foundation:
     `docs/task-221-authorization-dispatch.md`,
     `docs/task-222-confirmation-flow-design.md`, and
     `docs/task-223-confirmation-record-storage.md`.
-  - Absent: the browser confirmation card and its Confirm/Cancel
-    controls, and any HTTP surface for inspection, export, or deletion
-    of confirmation records. No production state-changing capability and
+  - Implemented (Task 226): the browser confirmation card and its
+    Confirm/Cancel controls. The card displays the stored operation
+    summary, the server-issued display code, the expiry in local time,
+    and clear Confirm/Cancel actions, and reports the server's honest
+    decision outcome.
+  - Absent: any HTTP surface for inspection, export, or deletion of
+    confirmation records. No production state-changing capability and
     no production executor are registered; consequential operations
     remain non-executable in this build.
 
@@ -382,9 +386,9 @@ section E.1 applies to every entry below.
    - Remaining gaps: the default production executor registry is empty
      and no production state-changing capability is registered, so a
      `REQUIRE_CONFIRMATION` operation cannot execute in this build. The
-     browser confirmation card and its Confirm/Cancel controls are not
-     implemented, so a user cannot yet decide a challenge through the
-     interface. No HTTP or UI surface exists for inspecting, exporting,
+     browser confirmation card and its Confirm/Cancel controls are
+     implemented (Task 226), so a user can decide a challenge through
+     the interface. No HTTP or UI surface exists for inspecting, exporting,
      or deleting confirmation records.
    - Acceptance (for the complete mechanism):
        (a) an unauthorized call to a protected operation is refused,
@@ -492,8 +496,8 @@ revalidation against the effective policy identity, atomic consumption,
 and the executor boundary are implemented in
 `src/rop/services/confirmation.py` and exposed at
 `POST /api/assistant/confirmations/{id}/decision`. The browser
-confirmation card and its Confirm/Cancel controls are not implemented,
-and the default production executor registry is empty, so no
+confirmation card and its Confirm/Cancel controls are implemented
+(Task 226). The default production executor registry is empty, so no
 `REQUIRE_CONFIRMATION` operation can execute in this build. The
 principles below remain the agreed policy; the server-side lifecycle
 now enforces them, while the UI does not yet surface a pending
@@ -536,10 +540,10 @@ Server-side status (Task 224) and remaining gaps:
   consumption, bounded startup recovery of unestablished outcomes and
   overdue challenges, and the executor boundary. A confirmation is bound to
   the effective policy identity, not to the fixed `"1"` version label.
-- **Remaining gap - browser confirmation UI:** the pending-confirmation
-  card and its Confirm/Cancel controls are not implemented. A user cannot
-  yet decide a challenge through the interface; the API contract exposes
-  the display values for a later UI task to consume.
+- **Browser confirmation UI (Task 226):** the pending-confirmation card
+  and its Confirm/Cancel controls are implemented. A user can decide a
+  challenge through the interface. With the default executor registry
+  empty, a `REQUIRE_CONFIRMATION` operation still cannot execute.
 - **Remaining gap - production execution:** no production executor and no
   production state-changing capability is registered. The default executor
   registry (`src/rop/authorization/executors.py`) is empty, so a
@@ -665,7 +669,7 @@ commitments:
   committed before the executor runs. The default production executor
   registry is empty, so a `REQUIRE_CONFIRMATION` operation still cannot
   execute in this build; and the browser confirmation card and its
-  Confirm/Cancel controls are not implemented, so the user cannot yet
+  Confirm/Cancel controls are implemented (Task 226), so the user can
   decide a challenge through the UI.
 - RESOLVED and IMPLEMENTED - recording and retention: **durable local
   records**, with a terminal record keeping its material values for

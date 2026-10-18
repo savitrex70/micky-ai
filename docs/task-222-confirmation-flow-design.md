@@ -535,7 +535,7 @@ record carrying `redacted_at`. The table has no foreign keys at all.
 
 ## 7. Trust boundary and user interaction
 
-### 7.1 The UI contract (to be built later; not built here)
+### 7.1 The UI contract (implemented in Task 226)
 
 When the response status is `confirmation-required`, the page shows a pending
 confirmation card containing:

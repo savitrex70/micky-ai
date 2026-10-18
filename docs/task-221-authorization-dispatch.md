@@ -181,11 +181,20 @@ Two consequences follow:
 `src/rop/web/static/app.js` maps each status to its own wording. Only
 `success` is described as a capability responding; the other four all state
 that the request was not executed. Replies are written with `textContent`,
-so nothing is rendered as HTML. No approval button and no fake confirmation
-is displayed. The `confirmation-required` response's `challenge` field is
-part of the API contract the browser will consume once the pending-confirmation
-card exists; that card is not yet implemented, so today the status is
-displayed honestly without any way to decide the challenge from the UI.
+so nothing is rendered as HTML. No fake confirmation is displayed. The
+`confirmation-required` response's `challenge` field is consumed by the
+pending-confirmation card added in Task 226: when the server returns a
+valid challenge, the page shows a card with the stored operation
+summary, the display code, the expiry in local time, and Confirm/Cancel
+actions. The card does not prefill the code input, does not
+auto-confirm, does not store codes or confirmation state in
+client-side storage, and blocks Enter inside the code field so a
+stray keypress cannot submit a confirmation. A decision request is
+sent to `POST /api/assistant/confirmations/{id}/decision` and the
+outcome is reported honestly - success is only claimed when the
+payload also establishes `executed: true`. The default executor
+registry remains empty, so no production state-changing operation
+can execute in this build.
 
 ## Tests
 
