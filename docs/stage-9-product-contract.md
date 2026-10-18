@@ -329,8 +329,12 @@ section E.1 applies to every entry below.
    - Acceptance: tests covering each status.
 
 9. **Permission boundary for data-modifying operations**
-   - Status: Partially implemented - deterministic policy evaluation only;
-     no execution path is gated by it, and nothing is enforced yet.
+   - Status: Partially implemented. Policy evaluation, the
+     authorization-enforced dispatch boundary, the durable confirmation
+     record, and the server-side confirmation lifecycle are implemented.
+     The browser confirmation UI, a production executor, a production
+     state-changing capability, and a user-facing inspect/export/delete
+     surface for confirmation records are not.
    - Outcome: any operation classified as protected by the agreed
      security policy requires effective authorization before it may
      execute. No protected state-changing operation may run silently.
@@ -339,31 +343,74 @@ section E.1 applies to every entry below.
    - Owner decision recorded (section H.2, principles in section E.2):
      risk-based per-operation confirmation. Session-scoped authorization
      was not chosen.
-   - Implemented: `src/rop/authorization/policy.py` evaluates one proposed
-     operation under a versioned rule table and returns `ALLOW`,
-     `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` with a stable reason
-     code. Operation identifiers are matched exactly and are never
-     normalized, so a malformed identifier is refused as unusable input
-     instead of resolving to a registered operation. The assistant
-     request endpoint consults this policy through
+   - Implemented - policy evaluation (Task 220):
+     `src/rop/authorization/policy.py` evaluates one proposed operation
+     under a versioned rule table and returns `ALLOW`, `CLARIFY`,
+     `REQUIRE_CONFIRMATION`, or `DENY` with a stable reason code.
+     Operation identifiers are matched exactly and are never normalized,
+     so a malformed identifier is refused as unusable input instead of
+     resolving to a registered operation.
+   - Implemented - dispatch enforcement (Task 221): the assistant request
+     endpoint consults the policy through
      `src/rop/authorization/dispatch.py` before returning a matched
-     capability's response: only `ALLOW` dispatches it, and every other
-     outcome, a capability with no policy rule, and any evaluation
-     failure stop dispatch with an explicit non-success status. The
-     evaluator and the boundary execute, persist, record, and log
+     capability's response. Only `ALLOW` dispatches; every other outcome,
+     a capability with no policy rule, and any evaluation failure stop
+     dispatch with an explicit non-success status. The evaluator and the
+     dispatch boundary themselves execute, persist, record, and log
      nothing, call no model or network, and neither obtain, verify,
-     record, nor invent a user's confirmation.
+     record, nor invent a user's confirmation. The dispatch boundary
+     accepts no caller-supplied `AuthorizedScope`, `confirmed` flag, or
+     permission assertion.
+   - Implemented - durable confirmation record (Task 223): challenges are
+     persisted in the `assistant_confirmations` table with a thirty-day
+     terminal retention and redaction lifecycle, and the effective policy
+     identity is fingerprinted via `authorization_policy_identity`. See
+     `docs/task-223-confirmation-record-storage.md`.
+   - Implemented - server-side confirmation workflow (Task 224):
+     `src/rop/services/confirmation.py` mints a challenge only for
+     `REQUIRE_CONFIRMATION` with a registered executor, verifies the
+     display code in constant time, revalidates the stored operation
+     against the current effective policy identity, and consumes the
+     approval at most once before invoking the executor.
+     `src/rop/api/confirmations.py` exposes
+     `POST /api/assistant/confirmations/{id}/decision` behind the
+     loopback same-origin check; `src/rop/authorization/executors.py` is
+     the server-side executor registry. Bounded startup recovery
+     (`src/rop/services/confirmation_recovery.py`) marks consumed
+     records without an established outcome as unknown and expires
+     overdue pending challenges.
+   - Remaining gaps: the default production executor registry is empty
+     and no production state-changing capability is registered, so a
+     `REQUIRE_CONFIRMATION` operation cannot execute in this build. The
+     browser confirmation card and its Confirm/Cancel controls are not
+     implemented, so a user cannot yet decide a challenge through the
+     interface. No HTTP or UI surface exists for inspecting, exporting,
+     or deleting confirmation records.
    - Acceptance (for the complete mechanism):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
        (b) an authorized call to a protected operation completes;
        (c) no protected state-changing operation executes when
            authorization is absent, empty, or invalid.
-   - Partly met: dispatch of a registered capability is now refused unless
-     the policy returns `ALLOW`, which is the dispatch half of (c). It is
-     still vacuous for state-changing operations, because none is
-     registered; the refusal is not recorded; and (a) and (b) need the
-     confirmation interaction and its recording, neither of which exists.
+   - Status of acceptance criteria:
+       (c) is met: dispatch of a registered capability is refused unless
+           the policy returns `ALLOW`, and the server-side confirmation
+           workflow re-evaluates the stored operation against the
+           effective policy identity before consuming a challenge or
+           invoking an executor. No protected state-changing operation
+           executes when authorization is absent, empty, or invalid.
+       (a) is partly met: dispatch-time refusals are not persisted to a
+           durable record, and the confirmation workflow returns the
+           same generic refusal without writing a record for wrong-code,
+           expired, locked, or unknown-challenge cases. The refusals
+           that do persist are terminal challenge states (INVALIDATED,
+           EXPIRED, LOCKED, CANCELLED, REJECTED); arbitrary refusals are
+           not recorded.
+       (b) is not demonstrable in this build: the mechanism exists to
+           authorize and execute one protected operation, but no
+           production executor is registered, so an authorized
+           protected operation cannot be shown completing. The workflow
+           is exercised end to end only with test-only executors.
 
 ## C. Architecture and intelligence boundaries
 

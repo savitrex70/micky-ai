@@ -13,9 +13,16 @@ This boundary obtains no confirmation and manufactures none. It accepts no
 anywhere: its only inputs are a capability the registry already resolved and
 the explicitly configured policy. There is therefore no way for a caller to
 reach a state-changing operation through it, and a consequential capability
-would remain non-executable until the confirmation interaction - obtaining,
-recording, and enforcing a user's permission - genuinely exists, which it
-does not.
+would remain non-executable without a registered executor. The separate
+trusted confirmation workflow (`src/rop/services/confirmation.py`,
+`src/rop/api/confirmations.py`) implements the server-side lifecycle that
+obtains, records, and consumes a user's approval, and the executor boundary
+(`src/rop/authorization/executors.py`) runs only after consumption. That
+workflow does not accept a caller-supplied `confirmed` flag,
+`AuthorizedScope`, or permission assertion either. The default production
+executor registry is empty, so no production state-changing operation can
+execute in this build, and the browser confirmation UI remains
+unimplemented. This boundary continues to fail closed.
 
 Nothing here executes, persists, logs, or records anything, and it touches
 no database, model, or network.
