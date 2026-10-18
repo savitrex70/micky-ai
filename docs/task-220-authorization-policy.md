@@ -7,9 +7,22 @@ against a versioned rule table and returns an immutable
 `AuthorizationDecision` (`src/rop/schemas/authorization.py`) stating what
 must happen next.
 
-This is a policy evaluation, not a permission flow. It is not wired into
-the assistant request path, it does not obtain or record a user's
-confirmation, and nothing in the product is gated by it yet.
+This is a policy evaluation, not a permission flow. The module itself
+does not obtain or record a user's confirmation, and returning a
+decision is not execution. The claims below describe the policy
+module's own scope; the product-wide state has since moved on, and
+statements that describe what the wider product did at the end of
+Task 220 are historical. Task 221 wired the policy into the assistant
+capability-dispatch boundary
+(`src/rop/authorization/dispatch.py`), so a matched capability is now
+gated on an `ALLOW` decision and every other outcome stops dispatch
+with a non-success status. Task 224 implemented the separate
+server-side confirmation workflow (`src/rop/services/confirmation.py`,
+`src/rop/api/confirmations.py`) that turns a `REQUIRE_CONFIRMATION`
+outcome into a durable challenge and consumes approval at most once
+before an executor runs. The default production executor registry is
+empty, so no production state-changing operation can execute in this
+build, and the browser confirmation UI remains unimplemented.
 
 ## What it decides
 
@@ -91,15 +104,23 @@ identifier rather than the same operation.
 
 ## Deliberate absences
 
-- **No confirmation receipt.** This module defines no token, nonce,
-  receipt, or confirmation record, and no policy result is treated as
-  evidence that a user approved anything. The confirmation flow does not
-  exist and is not simulated.
-- **No enforcement.** A `DENY` or `REQUIRE_CONFIRMATION` outcome is only
-  as strong as the code path that honours it. No such path exists today,
-  so a decision cannot by itself stop or start anything. The evaluator is
-  isolated on purpose rather than wired to a handler that would appear to
-  enforce it.
+- **No confirmation receipt in this module.** This module defines no
+  token, nonce, receipt, or confirmation record, and no policy result
+  is treated as evidence that a user approved anything. The
+  server-side confirmation workflow that records a user's approval
+  lives outside this module in `src/rop/services/confirmation.py` and
+  `src/rop/api/confirmations.py` (Task 224); the browser confirmation
+  card that would surface it to the user is not implemented.
+- **No enforcement inside this module.** A `DENY` or
+  `REQUIRE_CONFIRMATION` outcome is only as strong as the code path
+  that honours it, and this module executes nothing. Two paths honour
+  it: the Task 221 capability-dispatch boundary
+  (`src/rop/authorization/dispatch.py`) stops dispatch of a matched
+  capability unless the decision is `ALLOW`, and the Task 224
+  server-side confirmation workflow revalidates the stored operation
+  against the current effective policy identity before consuming an
+  approval. No production executor or state-changing capability is
+  registered, so no consequential operation executes in this build.
 - **No state-changing capability.** The default policy registers exactly
   one rule: `help`, the only registered capability, classified `LOW`
   because it changes nothing. No state-changing operation is registered,
@@ -168,10 +189,16 @@ No network, database, model, or real data is required.
 
 ## Not established
 
-This work does not implement notes, reminders, memory, file modification,
-external actions, or any other personal-assistant capability. It adds no
-endpoint, no dependency, no migration, and no configuration. It does not
-change clinical reasoning, evidence, audit, provenance, certification, or
-session-identity semantics. It does not claim that the interface can
-obtain, verify, or enforce a user's confirmation, and it resolves no
-other Stage 9 owner decision.
+This work does not implement notes, reminders, memory, file
+modification, external actions, or any other personal-assistant
+capability. It adds no endpoint, no dependency, no migration, and no
+configuration. It does not change clinical reasoning, evidence, audit,
+provenance, certification, or session-identity semantics. It does not
+claim that this module obtains, verifies, or enforces a user's
+confirmation on its own; the server-side confirmation workflow that
+does so lives in `src/rop/services/confirmation.py` and
+`src/rop/api/confirmations.py` (Task 224), the dispatch-time
+enforcement lives in `src/rop/authorization/dispatch.py` (Task 221),
+and the browser interaction that would let a user decide a challenge
+is not implemented. The default production executor registry is
+empty. This task resolves no other Stage 9 owner decision.
