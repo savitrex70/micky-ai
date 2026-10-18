@@ -331,17 +331,21 @@ def test_page_javascript_guards_duplicate_requests_and_decisions() -> None:
 def test_page_javascript_disables_controls_during_decision() -> None:
     js = _served_js()
     assert "function setDecisionBusy(" in js
-    assert "cardConfirm.disabled = locked" in js
+    # Confirm and code-input may be blocked either by in-flight state or by
+    # "cannot execute"; Cancel is only blocked by in-flight/unresolved.
+    assert "cardConfirm.disabled = confirmBlocked" in js
     assert "cardCancel.disabled = locked" in js
-    assert "cardCodeInput.disabled = locked" in js
+    assert "cardCodeInput.disabled = confirmBlocked" in js
 
 
 def test_page_javascript_marks_unresolved_challenge_on_network_failure() -> None:
     js = _served_js()
-    # On a network failure, disable further action and explain.
+    # On a network failure, disable further action and explain that the
+    # state is unknown. The wording must not claim the challenge is still
+    # pending, and must not claim it was retried.
     assert "challengeUnresolved = true" in js
     assert "could not be verified" in js
-    assert "cannot be retried from this page" in js
+    assert "will not automatically retry" in js
 
 
 def test_page_javascript_handles_unknown_decision_outcome() -> None:
@@ -426,25 +430,39 @@ def test_page_javascript_rejects_inconsistent_decision_response() -> None:
     # resolveDecision must route a semantically invalid payload to the
     # unresolved path, not to the "cancelled" or other non-execution paths.
     idx = js.index("async function resolveDecision")
-    body = js[idx : idx + 2500]
+    body = js[idx : idx + 6000]
     assert "isSemanticallyValidDecision(result.payload)" in body
-    assert "markChallengeUnresolved" in body
-    assert "could not be verified" in body
+    assert "markChallengeUnresolved()" in body
+    # The wording lives inside markChallengeUnresolved, which is defined
+    # earlier in the file. Confirm it exists at all.
+    assert "could not be verified" in js
 
 
-def test_page_javascript_unresolved_does_not_claim_nothing_ran() -> None:
+def test_page_javascript_unresolved_does_not_claim_pending_or_nothing_ran() -> None:
     js = _served_js()
-    # markChallengeUnresolved must explicitly warn against assuming the
-    # operation did not run.
-    assert "Do not assume the operation did not run" in js
+    idx = js.index("function markChallengeUnresolved")
+    end = js.index("\n  }", idx) + 4
+    body = js[idx:end]
+    # Must warn against assuming the operation did not run (phrases may be
+    # split across concatenated string literals, so check fragments).
+    assert "Do not assume the operation did not" in body
+    assert "run." in body
+    # Must not claim the challenge is definitively still pending.
+    assert "remains pending until it expires" not in body
+    # Must acknowledge the state is unknown rather than pending.
+    assert "may still" in body
+    assert "already have transitioned" in body
+    assert "state is unknown" in body
+    # Must state that retry is not automatic.
+    assert "will not automatically retry" in body
 
 
 def test_page_javascript_does_not_auto_retry_decision() -> None:
     js = _served_js()
     # There must be no recursive or repeated call to resolveDecision or
-    # sendDecision from failure paths.
+    # sendDecision from the unresolved path.
     idx = js.index("function markChallengeUnresolved")
-    end = js.index("\n  }", idx) + 3
+    end = js.index("\n  }", idx) + 4
     body = js[idx:end]
     assert "resolveDecision(" not in body
     assert "sendDecision(" not in body
@@ -462,3 +480,91 @@ def test_page_javascript_preserves_executed_true_requirement() -> None:
     # Even with isSemanticallyValidDecision, the explicit executed guard
     # must remain.
     assert 'payload.status === "executed" && payload.executed !== true' in js
+
+
+def test_page_javascript_unavailable_keeps_card_and_blocks_confirm() -> None:
+    """An `unavailable` response must not hide the card.
+
+    The server can return `unavailable` before consuming the challenge.
+    The interface must keep the pending card visible, disable Confirm (there
+    is no executor to run against), and leave Cancel available.
+    """
+    js = _served_js()
+    # Handle the unavailable status distinctly, before the terminal path.
+    idx = js.index("async function resolveDecision")
+    body = js[idx : idx + 4500]
+    assert 'payload.status === "unavailable"' in body
+    assert "challengeCannotExecute = true" in body
+    # Must explicitly say the challenge may still be pending.
+    assert "The challenge may still be pending" in body
+    # Must point the user at Cancel.
+    assert "Use Cancel to withdraw" in body or "use Cancel to withdraw" in body
+    # Must NOT call hideConfirmationCard on this path.
+    unavail_idx = body.index('payload.status === "unavailable"')
+    next_block_idx = body.index('payload.status === "refused"', unavail_idx)
+    unavail_block = body[unavail_idx:next_block_idx]
+    assert "hideConfirmationCard" not in unavail_block
+
+
+def test_page_javascript_refused_keeps_card() -> None:
+    """A refused response must not be treated as a terminal state.
+
+    The server uses a generic refusal for wrong code, expired, locked,
+    invalidated, and not-pending challenges. The UI must preserve the card
+    and allow the user to decide again or cancel.
+    """
+    js = _served_js()
+    idx = js.index("async function resolveDecision")
+    body = js[idx : idx + 4500]
+    assert 'payload.status === "refused"' in body
+    refused_idx = body.index('payload.status === "refused"')
+    # Find the terminal path marker after refused
+    terminal_idx = body.index("addHistory(summaryForHistory", refused_idx)
+    refused_block = body[refused_idx:terminal_idx]
+    assert "hideConfirmationCard" not in refused_block
+    # Refusal must acknowledge the challenge state is uncertain.
+    assert "may still be pending" in refused_block
+    # Code input must be cleared so a retry enters fresh.
+    assert "cardCodeInput.value" in refused_block
+
+
+def test_page_javascript_confirm_blocked_when_cannot_execute() -> None:
+    js = _served_js()
+    # setDecisionBusy must respect challengeCannotExecute for the confirm
+    # controls (button + code input), while leaving cancel enabled.
+    idx = js.index("function setDecisionBusy")
+    end = js.index("\n  }", idx) + 4
+    body = js[idx:end]
+    assert "challengeCannotExecute" in body
+    assert "confirmBlocked" in body
+    assert "cardConfirm.disabled = confirmBlocked" in body
+    assert "cardCodeInput.disabled = confirmBlocked" in body
+    # Cancel must remain independent of challengeCannotExecute.
+    assert "cardCancel.disabled = locked" in body
+    assert "cardCancel.disabled = confirmBlocked" not in body
+
+
+def test_page_javascript_cancelled_clears_card() -> None:
+    """A valid cancelled response is terminal and clears the card."""
+    js = _served_js()
+    idx = js.index("async function resolveDecision")
+    body = js[idx : idx + 4500]
+    # The terminal path (after unavailable and refused branches) must call
+    # addHistory and hideConfirmationCard.
+    terminal = body[body.index("// Terminal outcomes") :]
+    assert "addHistory(summaryForHistory" in terminal
+    assert "hideConfirmationCard" in terminal
+
+
+def test_page_javascript_terminal_path_excludes_unavailable_and_refused() -> None:
+    """unavailable and refused must be handled by earlier returns."""
+    js = _served_js()
+    idx = js.index("async function resolveDecision")
+    body = js[idx : idx + 4500]
+    unavailable_idx = body.index('payload.status === "unavailable"')
+    refused_idx = body.index('payload.status === "refused"')
+    terminal_idx = body.index("// Terminal outcomes")
+    assert unavailable_idx < refused_idx < terminal_idx
+    # Both earlier branches must return before the terminal path.
+    assert "return;" in body[unavailable_idx:refused_idx]
+    assert "return;" in body[refused_idx:terminal_idx]

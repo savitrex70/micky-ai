@@ -21,11 +21,13 @@
   let decisionInFlight = false;
   let activeChallengeId = null;
   let challengeUnresolved = false;
+  // Set true when the server reports no executor is available for this
+  // operation. Once true, Confirm and the code field stay disabled so the
+  // interface never offers Confirm as a route to execution for an operation
+  // the server says cannot be executed. Cancel remains available so the
+  // user can withdraw the pending challenge.
+  let challengeCannotExecute = false;
 
-  // Every status the server can report for the assistant request endpoint.
-  // Every non-success wording states that nothing ran. "confirmation-required"
-  // is set right after the pending card is shown, and the operation has indeed
-  // not executed at that moment.
   const STATUS_TEXT = {
     "success": "Capability responded. See the reply below.",
     "unsupported-capability":
@@ -41,9 +43,6 @@
       "was not executed.",
   };
 
-  // Decision outcomes. "executed" is success only when the response also
-  // establishes `executed: true` (checked separately before this text is
-  // used). The others describe what actually happened without overclaiming.
   const DECISION_TEXT = {
     "executed": "Confirmed and executed successfully.",
     "failed":
@@ -54,14 +53,13 @@
       "success or definite failure.",
     "cancelled": "Cancelled. The operation did not run.",
     "rejected": "Rejected. The operation did not run.",
-    "refused": "The decision was refused. Nothing was authorized.",
+    "refused":
+      "The decision was refused. The challenge may or may not still be " +
+      "pending.",
     "unavailable":
-      "Not carried out: no executor is available for this operation, so " +
-      "nothing ran.",
+      "Not carried out: no executor is available for this operation.",
   };
 
-  // Semantic requirement between status and executed. Any status not present
-  // here is unrecognised and must be treated as an unverifiable response.
   const DECISION_EXECUTED_REQUIREMENT = {
     executed: true,
     failed: true,
@@ -110,9 +108,10 @@
   function setDecisionBusy(busy) {
     decisionInFlight = busy;
     const locked = busy || challengeUnresolved;
-    cardConfirm.disabled = locked;
+    const confirmBlocked = locked || challengeCannotExecute;
+    cardConfirm.disabled = confirmBlocked;
     cardCancel.disabled = locked;
-    cardCodeInput.disabled = locked;
+    cardCodeInput.disabled = confirmBlocked;
   }
 
   function addHistory(prompt, reply, badge) {
@@ -166,6 +165,7 @@
   function hideConfirmationCard() {
     activeChallengeId = null;
     challengeUnresolved = false;
+    challengeCannotExecute = false;
     card.hidden = true;
     cardSummary.textContent = "";
     cardDisplayCode.textContent = "";
@@ -179,6 +179,7 @@
   function showConfirmationCard(challenge) {
     activeChallengeId = challenge.challenge_id;
     challengeUnresolved = false;
+    challengeCannotExecute = false;
     cardSummary.textContent = challenge.summary;
     cardDisplayCode.textContent = challenge.display_code;
     cardExpiry.textContent =
@@ -249,11 +250,6 @@
     return true;
   }
 
-  // A response is semantically valid only when its status is one the server
-  // actually emits, and the `executed` flag agrees with that status. An
-  // inconsistent pair (for example `cancelled` with `executed: true`, or
-  // `unavailable` with `executed: true`, or any unrecognised status) must be
-  // treated as unverifiable rather than as "nothing ran".
   function isSemanticallyValidDecision(payload) {
     if (!isValidDecisionPayload(payload)) return false;
     if (
@@ -264,22 +260,22 @@
     ) {
       return false;
     }
-    // The `executed` status additionally requires `executed: true`; the
-    // generic requirement below would already reject this, but the explicit
-    // guard keeps the invariant obvious to readers.
     if (payload.status === "executed" && payload.executed !== true) return false;
     const expectedExecuted = DECISION_EXECUTED_REQUIREMENT[payload.status];
     return payload.executed === expectedExecuted;
   }
 
-  function markChallengeUnresolved(reason) {
+  // The server's response told us nothing reliable about whether the
+  // decision was processed. Do not claim the challenge is pending, does not
+  // exist, or was resolved. Do not retry. Lock the controls for this card.
+  function markChallengeUnresolved() {
     challengeUnresolved = true;
     setDecisionBusy(false);
     setStatus(
-      reason +
-        " Do not assume the operation did not run. This confirmation " +
-        "cannot be retried from this page; the server-side challenge " +
-        "remains pending until it expires.",
+      "The decision outcome could not be verified. The challenge may still " +
+        "be pending on the server or may already have transitioned; its " +
+        "state is unknown from here. Do not assume the operation did not " +
+        "run. This page will not automatically retry the decision.",
       "error"
     );
   }
@@ -298,24 +294,69 @@
     try {
       result = await sendDecision(challengeId, decision, code);
     } catch (err) {
-      // The request was attempted but the connection failed before a
-      // response arrived. We do not know whether the server processed the
-      // decision. Do not automatically retry; disable further action.
-      markChallengeUnresolved(
-        "The decision could not be verified because the connection failed."
-      );
+      markChallengeUnresolved();
       return;
     }
 
     if (!result.ok || !isSemanticallyValidDecision(result.payload)) {
-      markChallengeUnresolved(
-        "The decision outcome could not be verified."
-      );
+      markChallengeUnresolved();
       return;
     }
 
     const payload = result.payload;
 
+    // The server uses "unavailable" before consuming the challenge when no
+    // executor exists. The challenge may still be pending. Keep the card
+    // visible, disable Confirm / code entry (there is nothing to execute
+    // against in this build), and leave Cancel available so the user can
+    // explicitly withdraw the pending challenge.
+    if (payload.status === "unavailable") {
+      challengeCannotExecute = true;
+      setDecisionBusy(false);
+      setStatus(
+        "No executor is available for this operation, so it cannot be " +
+          "executed here. The challenge may still be pending on the " +
+          "server. Use Cancel to withdraw it.",
+        "error"
+      );
+      cardCancel.focus();
+      return;
+    }
+
+    // "refused" is a generic server-side refusal. It can mean a wrong code
+    // (challenge still pending), an expired/locked/invalidated challenge,
+    // or an already-consumed one. Do not treat it as terminal. Keep the
+    // card visible so the user can decide again or cancel, and prevent a
+    // new request from silently replacing it.
+    if (payload.status === "refused") {
+      setDecisionBusy(false);
+      if (challengeCannotExecute) {
+        setStatus(
+          "The decision was refused. The challenge may still be pending " +
+            "on the server or may already have transitioned. Do not " +
+            "assume the operation did not run. No executor is available " +
+            "for this operation; use Cancel to withdraw it.",
+          "error"
+        );
+        cardCancel.focus();
+      } else {
+        setStatus(
+          "The decision was refused. The challenge may still be pending " +
+            "(for example, if the code was wrong) or may already have " +
+            "transitioned (expired, locked, invalidated, or already " +
+            "decided). Do not assume the operation did not run. Enter " +
+            "the display code again, or choose Cancel to withdraw it.",
+          "error"
+        );
+        cardCodeInput.value = "";
+        cardCodeInput.focus();
+      }
+      return;
+    }
+
+    // Terminal outcomes: cancelled, rejected, executed, failed, unknown.
+    // All of these establish a server-side terminal transition, so it is
+    // safe to clear the card and add the outcome to history.
     addHistory(summaryForHistory, payload.message, payload.status);
     hideConfirmationCard();
     setDecisionBusy(false);
@@ -329,20 +370,16 @@
 
     // A pending or unresolved confirmation must be resolved before a new
     // request may start. Starting a new request would silently abandon an
-    // outstanding server-side challenge; this interface never does that.
-    // The user must explicitly Cancel an ordinary pending card, and a card
-    // whose outcome could not be verified must not be replaced by repeating
-    // the same or a different action.
+    // outstanding server-side challenge.
     if (!card.hidden || challengeUnresolved) {
       if (challengeUnresolved) {
-        markChallengeUnresolved(
-          "The previous decision could not be verified."
-        );
+        markChallengeUnresolved();
       } else {
         setStatus(
           "Resolve the pending confirmation first: choose Cancel to " +
-            "discard it, or Confirm with the display code. Starting a new " +
-            "request would abandon an outstanding server-side challenge.",
+            "discard it, or Confirm with the display code. Starting a " +
+            "new request would abandon an outstanding server-side " +
+            "challenge.",
           "error"
         );
         cardCancel.focus();
@@ -409,8 +446,6 @@
     resolveDecision("cancel", null);
   });
 
-  // Enter inside the code field must never submit a confirmation. The user
-  // must activate Confirm deliberately.
   cardCodeInput.addEventListener("keydown", function (event) {
     if (event.key === "Enter") {
       event.preventDefault();
