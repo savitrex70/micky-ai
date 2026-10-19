@@ -482,11 +482,20 @@ def test_export_rejects_concurrent_count_preserving_change(
     page reads and confirms the export still returns a self-consistent
     bundle rather than silently mixing two snapshots.
     """
-    _create_records(db, 4)
+    created_ids = _create_records(db, 4)
+    # Capture the exact IDs in the repository's deterministic order
+    # (created_at asc, id asc). All four records share the fixed NOW, so
+    # the order reduces to id asc — matching the export order.
+    repo = AssistantConfirmationRepository()
+    original_views = repo.list_records(db, limit=10, offset=0)
+    original_ids = [str(v.id) for v in original_views]
+    assert len(original_ids) == 4
+    assert set(original_ids) == {str(i) for i in created_ids}
+
     # Force multiple pages so a mid-walk change can affect later offsets.
     monkeypatch.setattr(records_module, "_EXPORT_PAGE_LIMIT", 2)
 
-    changes_applied = {"done": False}
+    changes_applied = {"done": False, "inserted_id": None}
 
     def walk_and_mutate(session, *, generated_at):
         # Patch _walk_all_pages to run a concurrent mutation via a SEPARATE
@@ -533,6 +542,7 @@ def test_export_rejects_concurrent_count_preserving_change(
                     # it must be supplied explicitly here.
                     import uuid as _uuid
 
+                    new_id = _uuid.uuid4()
                     other.execute(
                         text(
                             "insert into assistant_confirmations "
@@ -548,7 +558,7 @@ def test_export_rejects_concurrent_count_preserving_change(
                             "false, now(), now() + interval '5 minutes')"
                         ),
                         {
-                            "rid": _uuid.uuid4(),
+                            "rid": new_id,
                             "cid": _uuid.uuid4().hex,
                             "dh": "0" * 64,
                             "ds": "0" * 32,
@@ -557,6 +567,7 @@ def test_export_rejects_concurrent_count_preserving_change(
                         },
                     )
                     other.commit()
+                    changes_applied["inserted_id"] = str(new_id)
                 finally:
                     other.close()
                 changes_applied["done"] = True
@@ -570,18 +581,34 @@ def test_export_rejects_concurrent_count_preserving_change(
 
     response = client.get("/api/assistant/confirmation-records/export")
     payload = response.json()
-    # REPEATABLE READ: the export sees the pre-mutation snapshot and
-    # reports it as complete, with every record from that snapshot.
     assert payload["is_complete"] is True
     assert payload["total_record_count"] == 4
-    all_ids = [r["id"] for page in payload["pages"] for r in page["records"]]
-    assert len(all_ids) == 4
-    assert len(set(all_ids)) == 4
-    assert changes_applied["done"] is True
+    exported_ids = [r["id"] for page in payload["pages"] for r in page["records"]]
 
-    # The store now holds a different set of 4 records (1 deleted, 1 inserted)
-    # — the number of records is unchanged but the export correctly captured
-    # the snapshot it saw.
+    # The exact-ID check is the whole point: a mixed export that silently
+    # substituted the newly inserted record for an original one would pass
+    # a count-only assertion but fail this one.
+    assert exported_ids == original_ids, (
+        "export must reproduce the original REPEATABLE READ snapshot "
+        "exactly (same IDs, same order); a count-only match is insufficient"
+    )
+    # And specifically, the newly inserted (post-snapshot) record must not
+    # appear in the export.
+    assert changes_applied["inserted_id"] is not None
+    assert changes_applied["inserted_id"] not in exported_ids
+
+    # The live database now holds a *different* set of 4 records: one
+    # original deleted, one new inserted. The total is still 4, which is
+    # exactly why a count-only test cannot prove snapshot consistency.
     with Session(pg_engine) as check:
-        live_count = check.scalar(text("select count(*) from assistant_confirmations"))
-    assert live_count == 4
+        live_rows = check.execute(
+            text(
+                "select id from assistant_confirmations "
+                "order by created_at asc, id asc"
+            )
+        ).all()
+    live_ids = {str(r[0]) for r in live_rows}
+    assert len(live_ids) == 4
+    assert changes_applied["inserted_id"] in live_ids
+    # At least one original ID is no longer live (the one that was deleted).
+    assert not live_ids.issuperset(set(original_ids))

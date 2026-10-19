@@ -1,6 +1,10 @@
 ﻿"""Tests for the local Micky AI web interface."""
 
+import json as _json
 import re
+import shutil as _shutil
+import subprocess as _subprocess
+from pathlib import Path as _Path
 
 from fastapi.testclient import TestClient
 
@@ -807,3 +811,79 @@ def test_page_notice_does_not_claim_nothing_is_saved() -> None:
     assert "retention" in html.lower() or "redaction" in html.lower()
     # And must not imply conversations/notes are persisted.
     assert "Conversations, notes, tasks, and reminders are not persisted" in html
+
+
+# ============================================================================
+# Behavioural test of the records UI via a real JS engine (Node)
+# ============================================================================
+#
+# The source-text assertions above are retained as useful smoke checks, but
+# they cannot prove that clicking Delete actually causes the deleted row to
+# disappear from the rendered table. This test loads the real app.js into a
+# minimal DOM/fetch harness (tests/records_ui_harness.cjs) and executes the
+# actual delete handler, then asserts the observable DOM state.
+
+
+def _run_harness(scenario: str) -> dict:
+    node = _shutil.which("node")
+    if node is None:
+        import pytest as _pytest
+
+        _pytest.skip("node is not available; behavioural UI test requires it")
+
+    here = _Path(__file__).resolve().parent
+    harness = here / "records_ui_harness.cjs"
+    app_js = here.parent / "src" / "rop" / "web" / "static" / "app.js"
+    assert harness.is_file(), f"harness missing: {harness}"
+    assert app_js.is_file(), f"app.js missing: {app_js}"
+
+    result = _subprocess.run(
+        [node, str(harness), str(app_js), scenario],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "harness failed:\nstdout:\n" + result.stdout + "\nstderr:\n" + result.stderr
+        )
+    line = result.stdout.strip().splitlines()[-1]
+    return _json.loads(line)
+
+
+def test_records_ui_delete_refresh_behavioural() -> None:
+    """Executing the real delete handler removes the deleted row from the DOM.
+
+    This is the behavioural proof the source-text test cannot provide:
+    the harness loads the served app.js, seeds two records, selects one,
+    confirms deletion, mocks a successful delete response and a refreshed
+    list, and asserts the deleted row is gone from the rendered table.
+    """
+    out = _run_harness("delete-refresh")
+    assert out["ok"] is True
+    assert out["initialContainsA"] is True, "row A must be visible before delete"
+    assert out["initialContainsB"] is True, "row B must be visible before delete"
+    # The deleted row must disappear after the handler runs.
+    assert (
+        out["finalContainsA"] is False
+    ), "deleted row still present in the rendered table:\n" + out.get("finalText", "")
+    # The un-deleted row must remain.
+    assert (
+        out["finalContainsB"] is True
+    ), "un-deleted row missing from the rendered table:\n" + out.get("finalText", "")
+    # Status must reflect the actual deletion count reported by the server.
+    assert out["statusMentionsDeleted"] is True, out.get("statusText", "")
+
+
+def test_records_ui_duplicate_delete_blocked_behavioural() -> None:
+    """A second Delete click while one is in flight must not issue a second POST.
+
+    Executes the real handler against a fetch mock whose POST hangs until
+    released; the second click is dispatched while the first is still in
+    flight. The harness reports how many POSTs were actually issued.
+    """
+    out = _run_harness("duplicate-click")
+    assert out["ok"] is True
+    assert out["postCalls"] == 1, (
+        "duplicate Delete click issued " + str(out["postCalls"]) + " POSTs"
+    )

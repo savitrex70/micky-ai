@@ -808,9 +808,11 @@
         body: JSON.stringify({ record_ids: ids }),
       });
       if (!resp.ok) {
+        // A non-OK status does not establish whether the server removed any
+        // record. Say only what the response actually supports.
         setStatus(
-          "The deletion could not be completed (HTTP " + resp.status +
-            "). No records were removed.",
+          "The server did not confirm the deletion (HTTP " + resp.status +
+            "). Reload to verify the actual state.",
           "error"
         );
         return;
