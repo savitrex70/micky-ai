@@ -1,17 +1,19 @@
 # Task 222 — Per-Operation Confirmation Flow (design proposal)
 
-**Status: implemented server-side (Task 224). Browser confirmation UI is not
-implemented.**
+**Status: implemented server-side (Task 224). Browser confirmation UI
+implemented (Task 226).**
 This document was written as a design proposal and its mechanism has since
-been built in two follow-on tasks. Task 223 added the durable confirmation
-record (`assistant_confirmations`, migration `20261017_0017`,
-`src/rop/repositories/assistant_confirmation.py`). Task 224 added the
-server-side lifecycle (`src/rop/services/confirmation.py`,
-`src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`) and
-wired challenge creation into the assistant request endpoint. The browser
-confirmation card and its Confirm/Cancel controls, described in section 7.1,
-remain unimplemented. No production state-changing capability and no
-production executor are registered, so a consequential operation cannot run
+been built in three follow-on tasks. Task 223 added the durable
+confirmation record (`assistant_confirmations`, migration
+`20261017_0017`, `src/rop/repositories/assistant_confirmation.py`).
+Task 224 added the server-side lifecycle
+(`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`,
+`src/rop/authorization/executors.py`) and wired challenge creation into the
+assistant request endpoint. Task 226 added the browser confirmation card
+and its Confirm/Cancel controls (`src/rop/web/static/index.html`, `app.js`,
+`app.css`), described in §7.1. No production state-changing capability and
+no production executor are registered, so a consequential operation cannot
+run in this build.
 in this build.
 
 ## 1. What exists today
@@ -30,11 +32,13 @@ in this build.
 | Executor registry | `src/rop/authorization/executors.py` | Implemented (Task 224). Server-side only. **Empty by default**: no production executor is registered, so a `REQUIRE_CONFIRMATION` operation cannot execute in this build. |
 
 The server-side confirmation workflow is implemented and exposed through
-`POST /api/assistant/confirmations/{id}/decision`. What does **not**
-exist in this build: the browser confirmation card and its Confirm/Cancel
-controls; any HTTP surface for inspecting, exporting, or deleting
-confirmation records; a production state-changing capability; and any
-production executor. Because the default executor registry is empty, a
+`POST /api/assistant/confirmations/{id}/decision`. The browser
+confirmation card and its Confirm/Cancel controls were implemented in
+Task 226 and are served at `GET /` (`src/rop/web/static/index.html`,
+`app.js`, `app.css`). What does **not** exist in this build: any HTTP
+surface for inspecting, exporting, or deleting confirmation records; a
+production state-changing capability; and any production executor.
+Because the default executor registry is empty, a
 `REQUIRE_CONFIRMATION` operation cannot execute, and the only capability
 registered is `help`.
 
@@ -570,6 +574,55 @@ The UI must not display a fake approval affordance: no "approve all", no
 session-wide "always allow", and no control that claims to have authorized
 anything on the user's behalf.
 
+#### 7.1.1 Lifecycle behaviour of the implemented card
+
+The card tracks each challenge until the server response settles it
+unambiguously. The rules below describe how the interface handles the
+decision outcomes the server actually returns. They are documented here
+because the lifecycle is security-relevant: an unresolved or possibly
+pending challenge must not be silently abandoned.
+
+- **`cancelled` and `rejected`** clear the card only when the response
+  is semantically valid and `executed` is `false`. These are the only
+  outcomes that establish the challenge as terminal without an executor
+  having run.
+- **`executed`, `failed`, and `unknown`** clear the card only when the
+  status and the `executed` flag are consistent with the
+  `ConfirmationDecisionStatus` contract (`true` for those three
+  statuses). `failed` is shown as "ran but failed"; `unknown` is shown as
+  "outcome could not be established"; neither is ever shown as success.
+- **`unavailable`** does not consume the challenge. The card stays
+  visible; the server reported no executor is registered for this
+  operation, so Confirm and code entry are disabled. Cancel remains
+  available so the user can explicitly withdraw the pending challenge.
+  This prevents the UI from offering Confirm as a route to execution for
+  an operation the server says cannot be executed here.
+- **`refused`** is not treated as proof of a terminal challenge state.
+  The server returns the same generic refusal for a wrong code, an
+  expired challenge, a locked challenge, an invalidated challenge, and a
+  challenge that is no longer pending. The card stays visible; the code
+  input is cleared so the user can decide again; Cancel remains
+  available. If `unavailable` was previously reported for the same
+  challenge, Confirm stays disabled and only Cancel is offered.
+- **Malformed, missing, inconsistent, or network-failed responses** are
+  treated as unverified. The controls for that challenge are disabled
+  permanently for the current page load, no automatic retry is
+  performed, and the status message says: the challenge may still be
+  pending on the server or may already have transitioned; its state is
+  unknown from here; do not assume the operation did not run. This
+  page will not automatically retry the decision.
+- **A visible or unresolved challenge blocks starting another request**
+  from the same page. The submit handler refuses to proceed while the
+  card is visible or the outcome is unverified, and directs the user to
+  Cancel or to complete the current decision first. This prevents a new
+  request from silently abandoning an outstanding server-side challenge.
+- **Server-side state is authoritative.** The browser never claims that
+  hiding the card, refreshing the page, or starting a new request
+  cancels a durable server-side challenge. Only a valid `cancelled`
+  response establishes cancellation; anything else preserves an honest
+  unknown or pending description.
+
+
 ### 7.2 Server-side verification is the boundary
 
 Hiding, disabling, or removing a button is presentation, not security. The
@@ -786,8 +839,9 @@ implemented in Task 223 (noted inline). Item 7 (loopback-only,
 same-origin enforcement), item 11 (atomic failed-code counter with
 lockout), and item 12 (policy-content fingerprint binding) were
 implemented as part of the server-side workflow in Task 224. The browser
-confirmation card described by the remaining items is not implemented,
-and no production executor is registered.
+confirmation card described by the remaining items was implemented in
+Task 226 (see §7.1). No production executor is registered, so no
+`REQUIRE_CONFIRMATION` operation can execute in this build.
 
 1. **Challenge lifetime: 5 minutes**, configurable, evaluated inside the
    atomic transition. Long enough to read a summary, short enough that a
@@ -828,9 +882,10 @@ the attempt counter). Task 223 implemented both at the storage layer. Task
 issuance and decision handling at `src/rop/services/confirmation.py` and
 `POST /api/assistant/confirmations/{id}/decision`, including policy
 revalidation against the fingerprint at consumption. The browser
-confirmation card that would present a pending challenge to the user is
-not implemented, and no production executor is registered, so a
-`REQUIRE_CONFIRMATION` operation cannot execute in this build.
+   confirmation card that presents a pending challenge to the user, and
+   lets them decide it, was implemented in Task 226 (see §7.1). No
+   production executor is registered, so a `REQUIRE_CONFIRMATION`
+   operation cannot execute in this build.
 
 ## 12. Decisions requiring owner approval
 
@@ -840,9 +895,9 @@ not implemented, and no production executor is registered, so a
    recording choice is decided. The server-side interaction that obtains
    and consumes a confirmation was implemented in Task 224
    (`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`).
-   The browser confirmation card that would let a user actually complete
-   one is not implemented, and no production executor is registered, so a
-   consequential operation cannot execute in this build.
+   The browser confirmation card that lets a user actually complete one
+   was implemented in Task 226 (see §7.1). No production executor is
+   registered, so a consequential operation cannot execute in this build.
 2. **Identity and session binding assumption.** The design assumes a single
    local user on loopback with no authentication, and therefore binds an
    approval to the challenge alone. Any move to multiple users, remote
@@ -873,10 +928,14 @@ retention decision above resolves the storage half of the H.2 section. The
 server-side confirmation workflow that obtains and consumes a user approval
 was implemented in Task 224 (`src/rop/services/confirmation.py`,
 `src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`); the
-browser surface that lets a user actually decide a pending challenge is not,
-so no confirmation can be obtained through the application UI today. No
-production executor is registered, so a `REQUIRE_CONFIRMATION` operation
-cannot execute in this build.
+server-side confirmation workflow that obtains and consumes a user approval
+was implemented in Task 224 (`src/rop/services/confirmation.py`,
+`src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`), and
+the browser confirmation card that presents a pending challenge and lets
+the user decide it was implemented in Task 226
+(`src/rop/web/static/index.html`, `app.js`, `app.css`). No production
+executor is registered, so a `REQUIRE_CONFIRMATION` operation cannot
+execute in this build.
 
 ## 13. Review checklist
 
