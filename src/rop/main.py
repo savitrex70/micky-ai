@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from rop.api.assistant import router as assistant_router
+from rop.api.confirmation_records import router as confirmation_records_router
 from rop.api.confirmations import router as confirmations_router
 from rop.api.health import router as health_router
 from rop.api.sessions import router as sessions_router
@@ -46,6 +47,7 @@ app = FastAPI(
 app.include_router(health_router)
 app.include_router(assistant_router)
 app.include_router(confirmations_router)
+app.include_router(confirmation_records_router)
 app.include_router(sessions_router)
 app.include_router(web_router)
 mount_static(app)

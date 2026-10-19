@@ -452,3 +452,396 @@
     }
   });
 })();
+
+// ============================================================================
+// Confirmation records management (Task 227)
+// ============================================================================
+(function () {
+  const loadBtn = document.getElementById("records-load");
+  const exportBtn = document.getElementById("records-export");
+  const deleteBtn = document.getElementById("records-delete");
+  const statusEl = document.getElementById("records-status");
+  const pagination = document.getElementById("records-pagination");
+  const prevBtn = document.getElementById("records-prev");
+  const nextBtn = document.getElementById("records-next");
+  const rangeEl = document.getElementById("records-range");
+  const table = document.getElementById("records-table");
+  const tbody = document.getElementById("records-tbody");
+
+  if (!loadBtn || !statusEl || !tbody) return;
+
+  const PAGE_SIZE = 50;
+  let currentOffset = 0;
+  let inFlight = false;
+  let currentRecords = [];
+  const selectedIds = new Set();
+
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    if (kind) statusEl.setAttribute("data-kind", kind);
+    else statusEl.removeAttribute("data-kind");
+  }
+
+  function setBusy(busy) {
+    inFlight = busy;
+    loadBtn.disabled = busy;
+    exportBtn.disabled = busy;
+    updateDeleteButton();
+  }
+
+  function updateDeleteButton() {
+    deleteBtn.disabled = inFlight || selectedIds.size === 0;
+  }
+
+  function clearTable() {
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+  }
+
+  function describeStatus(value) {
+    const map = {
+      PENDING: "Pending",
+      CONSUMED: "Consumed",
+      REJECTED: "Rejected",
+      CANCELLED: "Cancelled",
+      EXPIRED: "Expired",
+      INVALIDATED: "Invalidated",
+      LOCKED: "Locked",
+    };
+    return map[value] || value;
+  }
+
+  function describeMaterial(state) {
+    if (state === "ABSENT") return "Never present";
+    if (state === "REDACTED") return "Redacted by retention";
+    if (state === "RETAINED") return "Retained";
+    return state;
+  }
+
+  function describeOutcome(value) {
+    if (value === null || value === undefined) return "—";
+    const map = {
+      NOT_RUN: "Not run",
+      FAILED: "Failed",
+      SUCCEEDED: "Succeeded",
+      UNKNOWN_AFTER_CONSUME: "Unknown after consume",
+    };
+    return map[value] || value;
+  }
+
+  function formatTime(iso) {
+    if (!iso) return "—";
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "—";
+      return d.toLocaleString();
+    } catch (err) {
+      return "—";
+    }
+  }
+
+  function renderRows(records) {
+    clearTable();
+    if (records.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 8;
+      td.className = "records-empty";
+      td.textContent = "No records.";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    for (const rec of records) {
+      const tr = document.createElement("tr");
+
+      // checkbox cell
+      const cbTd = document.createElement("td");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = selectedIds.has(rec.id);
+      cb.setAttribute("aria-label", "Select record " + rec.operation_id);
+      cb.addEventListener("change", function () {
+        if (cb.checked) selectedIds.add(rec.id);
+        else selectedIds.delete(rec.id);
+        updateDeleteButton();
+      });
+      cbTd.appendChild(cb);
+      tr.appendChild(cbTd);
+
+      const opTd = document.createElement("td");
+      opTd.textContent = rec.operation_id;
+      tr.appendChild(opTd);
+
+      const statusTd = document.createElement("td");
+      statusTd.textContent = describeStatus(rec.status);
+      tr.appendChild(statusTd);
+
+      const riskTd = document.createElement("td");
+      riskTd.textContent = rec.required_risk + " / " + rec.required_reason;
+      tr.appendChild(riskTd);
+
+      const outcomeTd = document.createElement("td");
+      outcomeTd.textContent = describeOutcome(rec.outcome);
+      tr.appendChild(outcomeTd);
+
+      const materialTd = document.createElement("td");
+      materialTd.textContent = describeMaterial(rec.material_state);
+      tr.appendChild(materialTd);
+
+      const createdTd = document.createElement("td");
+      createdTd.textContent = formatTime(rec.created_at);
+      tr.appendChild(createdTd);
+
+      const terminalTd = document.createElement("td");
+      terminalTd.textContent = formatTime(rec.terminal_at);
+      tr.appendChild(terminalTd);
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderPagination(total, offset, count) {
+    if (total === 0) {
+      pagination.hidden = true;
+      return;
+    }
+    pagination.hidden = false;
+    const end = offset + count;
+    rangeEl.textContent =
+      "Showing " + (offset + 1) + "–" + end + " of " + total;
+    prevBtn.disabled = inFlight || offset <= 0;
+    nextBtn.disabled = inFlight || end >= total;
+  }
+
+  async function loadPage(offset) {
+    if (inFlight) return;
+    setBusy(true);
+    setStatus("Loading records\u2026", "info");
+    try {
+      const url =
+        "/api/assistant/confirmation-records?limit=" +
+        PAGE_SIZE +
+        "&offset=" +
+        offset;
+      const resp = await fetch(url, { method: "GET" });
+      if (!resp.ok) {
+        setStatus(
+          "The server could not return confirmation records (HTTP " +
+            resp.status +
+            ").",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus("The server returned an unreadable response.", "error");
+        return;
+      }
+      if (
+        !payload ||
+        !Array.isArray(payload.records) ||
+        typeof payload.total_record_count !== "number"
+      ) {
+        setStatus("The server returned an unexpected response.", "error");
+        return;
+      }
+      currentOffset = offset;
+      currentRecords = payload.records;
+      // Drop selections that are no longer on the visible page
+      for (const id of Array.from(selectedIds)) {
+        if (!currentRecords.some((r) => r.id === id)) selectedIds.delete(id);
+      }
+      table.hidden = currentRecords.length === 0 && payload.total_record_count === 0;
+      renderRows(currentRecords);
+      renderPagination(
+        payload.total_record_count,
+        offset,
+        currentRecords.length
+      );
+      setStatus(
+        currentRecords.length === 0
+          ? "No confirmation records stored."
+          : "Loaded " +
+              currentRecords.length +
+              " of " +
+              payload.total_record_count +
+              " records.",
+        "info"
+      );
+      updateDeleteButton();
+    } catch (err) {
+      setStatus(
+        "Could not reach the server to load records. " +
+          "Check that the local API is running.",
+        "error"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadExport() {
+    if (inFlight) return;
+    setBusy(true);
+    setStatus("Preparing complete export\u2026", "info");
+    try {
+      const resp = await fetch("/api/assistant/confirmation-records/export", {
+        method: "GET",
+      });
+      if (!resp.ok) {
+        setStatus(
+          "The export could not be produced (HTTP " + resp.status + ").",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus("The export response could not be read.", "error");
+        return;
+      }
+      if (!payload || payload.is_complete !== true) {
+        setStatus(
+          "The export did not complete and cannot be treated as a full " +
+            "capture. Try again when the record store is stable.",
+          "error"
+        );
+        return;
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const filename =
+        "confirmation-records-" +
+        new Date().toISOString().replace(/[:.]/g, "-") +
+        ".json";
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 0);
+      setStatus(
+        "Exported " +
+          payload.total_record_count +
+          " records (" +
+          payload.page_count +
+          " page" +
+          (payload.page_count === 1 ? "" : "s") +
+          ").",
+        "info"
+      );
+    } catch (err) {
+      setStatus(
+        "The export could not be produced because the server was " +
+          "unreachable.",
+        "error"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelected() {
+    if (inFlight || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const pendingOnPage = currentRecords.filter(
+      (r) => ids.includes(r.id) && r.status === "PENDING"
+    ).length;
+    let confirmMessage =
+      "Delete " + ids.length + " confirmation record" +
+      (ids.length === 1 ? "" : "s") + "?\n\n" +
+      "This permanently removes the selected records from the " +
+      "confirmation-record store.";
+    if (pendingOnPage > 0) {
+      confirmMessage +=
+        "\n\n" + pendingOnPage + " of them " +
+        (pendingOnPage === 1 ? "is still pending" : "are still pending") +
+        ". Deleting a pending record also removes its stored challenge; " +
+        "that challenge cannot be confirmed or executed afterwards. " +
+        "Deletion is not the same as Confirm or Cancel.";
+    }
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+    setBusy(true);
+    setStatus("Deleting selected records\u2026", "info");
+    try {
+      const resp = await fetch("/api/assistant/confirmation-records", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ record_ids: ids }),
+      });
+      if (!resp.ok) {
+        setStatus(
+          "The deletion could not be completed (HTTP " + resp.status +
+            "). No records were removed.",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus(
+          "The deletion response could not be read. Reload to verify the " +
+            "actual state.",
+          "error"
+        );
+        return;
+      }
+      if (!payload || typeof payload.deleted_count !== "number") {
+        setStatus(
+          "The deletion response was unexpected. Reload to verify the " +
+            "actual state.",
+          "error"
+        );
+        return;
+      }
+      selectedIds.clear();
+      setStatus(
+        "Deleted " + payload.deleted_count + " record" +
+          (payload.deleted_count === 1 ? "" : "s") + ".",
+        "info"
+      );
+      // Reload current page (or back one page if we emptied it)
+      const remaining = currentRecords.length - payload.deleted_count;
+      const nextOffset =
+        remaining <= 0 && currentOffset > 0
+          ? Math.max(0, currentOffset - PAGE_SIZE)
+          : currentOffset;
+      await loadPage(nextOffset);
+    } catch (err) {
+      setStatus(
+        "The deletion could not be completed because the server was " +
+          "unreachable. No records were confirmed deleted; reload to verify.",
+        "error"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  loadBtn.addEventListener("click", function () {
+    loadPage(currentOffset);
+  });
+  exportBtn.addEventListener("click", downloadExport);
+  deleteBtn.addEventListener("click", deleteSelected);
+  prevBtn.addEventListener("click", function () {
+    if (currentOffset <= 0) return;
+    loadPage(Math.max(0, currentOffset - PAGE_SIZE));
+  });
+  nextBtn.addEventListener("click", function () {
+    loadPage(currentOffset + PAGE_SIZE);
+  });
+})();

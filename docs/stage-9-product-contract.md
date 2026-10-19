@@ -180,10 +180,12 @@ Implemented foundation:
     summary, the server-issued display code, the expiry in local time,
     and clear Confirm/Cancel actions, and reports the server's honest
     decision outcome.
-  - Absent: any HTTP surface for inspection, export, or deletion of
-    confirmation records. No production state-changing capability and
-    no production executor are registered; consequential operations
-    remain non-executable in this build.
+  - Implemented (Task 227): the user-facing inspect/export/delete
+    surface for confirmation records, at
+    `/api/assistant/confirmation-records` and in the browser interface.
+    No production state-changing capability and no production executor
+    are registered; consequential operations remain non-executable in
+    this build.
 
 Planned capabilities (Stage 9 target):
 
@@ -336,9 +338,11 @@ section E.1 applies to every entry below.
    - Status: Partially implemented. Policy evaluation, the
      authorization-enforced dispatch boundary, the durable confirmation
      record, and the server-side confirmation lifecycle are implemented.
-     The browser confirmation UI, a production executor, a production
-     state-changing capability, and a user-facing inspect/export/delete
-     surface for confirmation records are not.
+     record, and the server-side confirmation lifecycle are implemented,
+     as are the browser confirmation card and the user-facing
+     inspect/export/delete surface for confirmation records. A
+     production executor and a production state-changing capability are
+     not.
    - Outcome: any operation classified as protected by the agreed
      security policy requires effective authorization before it may
      execute. No protected state-changing operation may run silently.
@@ -388,8 +392,9 @@ section E.1 applies to every entry below.
      `REQUIRE_CONFIRMATION` operation cannot execute in this build. The
      browser confirmation card and its Confirm/Cancel controls are
      implemented (Task 226), so a user can decide a challenge through
-     the interface. No HTTP or UI surface exists for inspecting, exporting,
-     or deleting confirmation records.
+     the interface. The user-facing inspect/export/delete surface for
+     confirmation records is implemented in Task 227 (see
+     `docs/task-222-confirmation-flow-design.md` §6.4).
    - Acceptance (for the complete mechanism):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
@@ -548,10 +553,14 @@ Server-side status (Task 224) and remaining gaps:
   production state-changing capability is registered. The default executor
   registry (`src/rop/authorization/executors.py`) is empty, so a
   `REQUIRE_CONFIRMATION` operation cannot execute in this build.
-- **Remaining gap - user control over records:** no HTTP or UI surface for
-  inspecting, exporting, or deleting confirmation records exists yet. That
-  surface is required by E.1 but is not part of this decision or of the
-  implementation shipped so far.
+- **User control over records (Task 227):** the confirmation-record
+  inspection, export, and deletion surface is implemented at
+  `/api/assistant/confirmation-records` and in the browser interface.
+  A user can inspect stored records, download a complete export, and
+  delete selected records. This satisfies E.1's inspect/export/delete
+  promise for confirmation records; the broader user-controlled
+  persistence requirement (conversations, notes, tasks, reminders)
+  remains separate and incomplete.
 
 ## F. Non-goals
 
@@ -678,9 +687,9 @@ commitments:
   inspection, export, deletion, retention); Task 224 built the server-side
   confirmation lifecycle on top of that store
   (`src/rop/services/confirmation.py`, `src/rop/api/confirmations.py`)
-  without adding a parallel record table. No HTTP or UI surface for
-  inspecting, exporting, or deleting confirmation records exists yet;
-  those are tracked as separate follow-ups.
+  without adding a parallel record table. The user-facing HTTP and UI
+  surface for inspecting, exporting, and deleting confirmation records
+  was implemented in Task 227.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
 - No owner decision in sections H.1, H.3, or H.4 is resolved by this one,

@@ -34,9 +34,10 @@ The server-side confirmation workflow is implemented and exposed through
 `POST /api/assistant/confirmations/{id}/decision`. The browser
 confirmation card and its Confirm/Cancel controls were implemented in
 Task 226 and are served at `GET /` (`src/rop/web/static/index.html`,
-`app.js`, `app.css`). What does **not** exist in this build: any HTTP
-surface for inspecting, exporting, or deleting confirmation records; a
-production state-changing capability; and any production executor.
+`app.js`, `app.css`). The user-facing HTTP and UI surface for
+inspecting, exporting, and deleting confirmation records was
+implemented in Task 227. What does **not** exist in this build: a
+production state-changing capability and any production executor.
 Because the default executor registry is empty, a
 `REQUIRE_CONFIRMATION` operation cannot execute, and the only capability
 registered is `help`.
@@ -516,11 +517,13 @@ record carrying `redacted_at`. The table has no foreign keys at all.
   values for `/api/assistant/`; the confirm endpoint must be covered by the
   same treatment). Failed-attempt counts are never disclosed to the client,
   and a submitted code is never stored in plaintext or logged.
-- User control: the storage layer now provides inspection, export, and
-  deletion of confirmation records, but **no HTTP route or UI exposes them
-  yet**. Until a later task integrates that surface with the confirmation
-  lifecycle, E.1's inspect/export/delete promise is met at the service layer
-  only, and the design does not claim otherwise.
+- User control: the storage layer provides inspection, export, and
+  deletion of confirmation records. The user-facing HTTP and UI
+  surface for those operations was implemented in Task 227
+  (`/api/assistant/confirmation-records` and the records section of
+  the browser interface), so E.1's inspect/export/delete promise is
+  met for confirmation records specifically. It is not met for other
+  personal data, which remains a separate Stage 9 requirement.
 
 ### 6.5 Separation from clinical records
 
@@ -912,10 +915,13 @@ revalidation against the fingerprint at consumption. The browser
    approval to the challenge alone. Any move to multiple users, remote
    access, or a shared machine invalidates that assumption and requires a
    session identity decision first.
-3. **Whether confirmation records appear in the user's inspect, export, and
-   delete surface** (E.1 user control), and under which Stage 9 item that
-   surface is delivered. If durable records are approved without a deletion
-   path, E.1 is not satisfied.
+3. **Whether confirmation records appear in the user's inspect, export,
+   and delete surface** (E.1 user control). **RESOLVED and implemented
+   (Task 227):** the surface exists at
+   `/api/assistant/confirmation-records` and in the browser interface,
+   covering confirmation records only. Broader user-controlled
+   persistence for other personal data remains a separate, open
+   requirement.
 4. **Expiry duration and retention window.** **RESOLVED for retention (owner,
    Task 223):** thirty days from `terminal_at`. The five-minute challenge
    lifetime is implemented (Task 224: `CHALLENGE_LIFETIME` in

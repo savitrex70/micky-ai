@@ -568,3 +568,182 @@ def test_page_javascript_terminal_path_excludes_unavailable_and_refused() -> Non
     # Both earlier branches must return before the terminal path.
     assert "return;" in body[unavailable_idx:refused_idx]
     assert "return;" in body[refused_idx:terminal_idx]
+
+
+# ============================================================================
+# Task 227: confirmation-records management UI
+# ============================================================================
+
+
+def test_records_section_is_present_and_accessible() -> None:
+    html = _served_html()
+    for token in (
+        'id="records-section"',
+        'id="records-heading"',
+        'id="records-load"',
+        'id="records-export"',
+        'id="records-delete"',
+        'id="records-status"',
+        'id="records-pagination"',
+        'id="records-prev"',
+        'id="records-next"',
+        'id="records-range"',
+        'id="records-table"',
+        'id="records-tbody"',
+        'aria-labelledby="records-heading"',
+        'aria-live="polite"',
+    ):
+        assert token in html, token
+
+
+def test_records_delete_button_starts_disabled() -> None:
+    html = _served_html()
+    start = html.index('id="records-delete"')
+    open_idx = html.rfind("<button", 0, start)
+    end_idx = html.index(">", start)
+    tag = html[open_idx : end_idx + 1]
+    assert "disabled" in tag
+
+
+def test_records_selection_scope_is_explicit() -> None:
+    html = _served_html()
+    # The help text must state that selection is limited to the current page.
+    assert "current page" in html
+    # And it must warn that deleting a pending record removes the challenge.
+    assert "pending record" in html or "still pending" in html
+    assert "cannot be confirmed" in html or "cannot be confirmed or executed" in html
+
+
+def test_records_js_fetches_records_and_export_locally() -> None:
+    js = _served_js()
+    assert "/api/assistant/confirmation-records" in js
+    assert "/api/assistant/confirmation-records/export" in js
+    # No external origins referenced.
+    for forbidden in ("http://", "https://"):
+        assert forbidden not in js, forbidden
+
+
+def test_records_js_deletes_with_origin_safe_body() -> None:
+    js = _served_js()
+    assert "JSON.stringify({ record_ids: ids })" in js
+    # The deletion body must not contain any other field.
+    assert "record_ids: ids, " not in js
+    # The body must be sent with a JSON content type.
+    assert '"Content-Type": "application/json"' in js
+
+
+def test_records_js_requires_explicit_confirmation_before_delete() -> None:
+    js = _served_js()
+    # A confirmation dialog must gate the deletion request.
+    assert "window.confirm(" in js
+    # And the dialog must state the deletion is permanent.
+    assert "permanently removes" in js
+
+
+def test_records_js_reports_pending_scope_in_delete_dialog() -> None:
+    js = _served_js()
+    # The confirmation dialog for pending records must explain the challenge
+    # removal and the inability to confirm/execute afterwards.
+    assert "still pending" in js or "is still pending" in js
+    assert "Deletion is not the same as Confirm or Cancel" in js
+
+
+def test_records_js_uses_safe_dom_apis_only() -> None:
+    js = _served_js()
+    # The whole app.js has no innerHTML usage; this is enforced globally by
+    # test_page_javascript_renders_replies_without_html_injection, but we
+    # confirm the records section specifically uses textContent.
+    idx = js.index("function renderRows")
+    end = js.index("function renderPagination", idx)
+    body = js[idx:end]
+    assert "textContent" in body
+    assert "innerHTML" not in body
+    assert "insertAdjacentHTML" not in body
+
+
+def test_records_js_has_no_client_persistence() -> None:
+    js = _served_js()
+    for forbidden in ("localStorage", "sessionStorage", "indexedDB"):
+        assert forbidden not in js, forbidden
+    # Cookie writes: any document.cookie reference would be a problem;
+    # none should exist anywhere in the file.
+    assert "document.cookie" not in js
+
+
+def test_records_js_has_no_automatic_retry_or_polling() -> None:
+    js = _served_js()
+    forbidden_tokens = (
+        "setInterval",
+        "requestAnimationFrame",
+        'addEventListener("visibilitychange"',
+    )
+    for forbidden in forbidden_tokens:
+        assert forbidden not in js, forbidden
+
+
+def test_records_js_guards_duplicate_submissions() -> None:
+    js = _served_js()
+    # The records module has its own inFlight flag guarding load/export/delete.
+    # Search the whole served JS (the records IIFE is ~15k chars; the
+    # short-lived `requestInFlight` used elsewhere is a distinct variable).
+    idx = js.index("Confirmation records management")
+    tail = js[idx:]
+    end = tail.index("})();") if "})();" in tail else len(tail)
+    body = tail[:end]
+    assert "let inFlight = false" in body
+    assert "if (inFlight) return" in body
+    # And the delete button stays disabled while a request is in flight.
+    assert "updateDeleteButton" in body
+
+
+def test_records_js_truthful_export_requires_is_complete() -> None:
+    js = _served_js()
+    # An export is only presented as a download when the server says
+    # is_complete === true.
+    assert "payload.is_complete !== true" in js
+    assert "is_complete" in js
+
+
+def test_records_js_reports_http_failures_honestly() -> None:
+    js = _served_js()
+    # The load, delete, and export calls all check resp.ok and surface an
+    # error status rather than claiming success.
+    assert "HTTP " in js
+    # The delete response is only reported as a success when deleted_count is
+    # a number.
+    assert 'typeof payload.deleted_count !== "number"' in js
+
+
+def test_records_js_updates_delete_selection_scope() -> None:
+    js = _served_js()
+    # When the page changes, selection state is scoped to the visible page.
+    assert "currentRecords.some((r) => r.id === id)" in js
+    assert "selectedIds.delete(id)" in js
+
+
+def test_records_js_renders_material_state_truthfully() -> None:
+    js = _served_js()
+    # The three material states must be reported distinctly.
+    assert "Never present" in js
+    assert "Redacted by retention" in js
+    assert "Retained" in js
+
+
+def test_records_js_renders_outcome_states_truthfully() -> None:
+    js = _served_js()
+    for token in ("Not run", "Failed", "Succeeded", "Unknown after consume"):
+        assert token in js, token
+
+
+def test_existing_confirmation_card_functionality_intact() -> None:
+    """Confirm the Task 226 card and rules still exist alongside records UI."""
+    js = _served_js()
+    for token in (
+        "confirmation-card",
+        "resolveDecision",
+        "isSemanticallyValidDecision",
+        "challengeCannotExecute",
+        'payload.status === "unavailable"',
+        'payload.status === "refused"',
+    ):
+        assert token in js, token

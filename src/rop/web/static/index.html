@@ -96,6 +96,56 @@
       aria-relevant="additions"
       aria-atomic="false"></ul>
   </section>
+
+  <section id="records-section" aria-labelledby="records-heading" class="records-section">
+    <h2 id="records-heading">Confirmation records</h2>
+    <p class="help">
+      These are the durable server-side confirmation records this
+      device has stored. You can inspect, export, and delete them. This
+      surface covers confirmation records only, not conversations or
+      other personal data.
+    </p>
+
+    <div class="records-toolbar">
+      <button id="records-load" type="button">Load records</button>
+      <button id="records-export" type="button">Download complete export</button>
+      <button id="records-delete" type="button" disabled>Delete selected</button>
+    </div>
+
+    <p id="records-status" role="status" aria-live="polite" class="records-status"></p>
+
+    <div id="records-pagination" class="records-pagination" hidden>
+      <button id="records-prev" type="button">Previous</button>
+      <span id="records-range" class="records-range"></span>
+      <button id="records-next" type="button">Next</button>
+    </div>
+
+    <table id="records-table" class="records-table" hidden>
+      <caption class="visually-hidden">Stored confirmation records</caption>
+      <thead>
+        <tr>
+          <th scope="col"><span class="visually-hidden">Select</span></th>
+          <th scope="col">Operation</th>
+          <th scope="col">Status</th>
+          <th scope="col">Risk</th>
+          <th scope="col">Outcome</th>
+          <th scope="col">Material</th>
+          <th scope="col">Created</th>
+          <th scope="col">Terminal</th>
+        </tr>
+      </thead>
+      <tbody id="records-tbody"></tbody>
+    </table>
+
+    <p class="help">
+      Selection applies only to the records shown on the current page.
+      Deleting a record removes it permanently from the confirmation-record
+      store. If the record is still pending, deleting it also removes the
+      stored challenge; that challenge cannot be confirmed or executed
+      afterwards. Deletion is not the same as the Confirm or Cancel
+      decision flow.
+    </p>
+  </section>
 </main>
 
 <footer>

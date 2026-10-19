@@ -308,3 +308,86 @@ def canonical_material_values(
     return json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
+
+
+# --- Task 227: record-management contracts ---------------------------------
+
+CONFIRMATION_EXPORT_BUNDLE_FORMAT = "rop.assistant-confirmation-records.bundle"
+"""Format identifier for a complete multi-page export bundle.
+
+The single-page contract (``AssistantConfirmationExport``) is preserved
+unchanged inside the bundle. The bundle adds an envelope so a caller can
+request "every record" without having to walk pagination itself and without
+having to guess whether it received the whole store.
+"""
+
+CONFIRMATION_EXPORT_BUNDLE_VERSION = "1"
+
+MAX_DELETION_BATCH = 500
+"""Upper bound on how many records one deletion request may target.
+
+Bounding the batch keeps a single request cheap and legible; a caller that
+wants to delete more records issues more requests. The number is deliberately
+smaller than ``MAX_INSPECTION_LIMIT`` so the deletion request stays clearly
+narrower than a page read.
+"""
+
+
+class AssistantConfirmationExportBundle(BaseModel):
+    """A complete multi-page export of every stored confirmation record.
+
+    The bundle preserves each page's ``AssistantConfirmationExport`` contract
+    unchanged, so ``record_count``, ``total_record_count``, ``has_more``,
+    ``next_offset``, and per-page ``is_complete`` retain their exact existing
+    meanings on each page. Flattening is the caller's responsibility:
+
+        records = [r for page in bundle.pages for r in page.records]
+
+    ``is_complete`` on the bundle is True only when the endpoint successfully
+    walked every page and the number of records it collected equals the
+    database total at export time. A concurrent insert or delete during export
+    makes that equality fail, and the endpoint reports ``is_complete=False``
+    rather than claiming an incomplete capture is complete.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    format: Literal["rop.assistant-confirmation-records.bundle"] = (
+        CONFIRMATION_EXPORT_BUNDLE_FORMAT
+    )
+    version: Literal["1"] = CONFIRMATION_EXPORT_BUNDLE_VERSION
+    generated_at: datetime
+    retention_days: int = CONFIRMATION_RETENTION_DAYS
+    #: Number of records the database held when the export started.
+    total_record_count: int = Field(ge=0)
+    #: Number of pages the export walked.
+    page_count: int = Field(ge=0)
+    #: Per-page size used internally; never larger than MAX_INSPECTION_LIMIT.
+    page_limit: int = Field(gt=0)
+    #: True only when every record was captured and the totals agreed.
+    is_complete: bool
+    pages: tuple[AssistantConfirmationExport, ...]
+    notes: tuple[str, ...] = (
+        "The single-page AssistantConfirmationExport contract is preserved "
+        "on each page; flatten pages to read every record.",
+        "is_complete is True only when the collected count equals the "
+        "database total at export start.",
+        "Challenge identifiers, display codes, and their hashes are never "
+        "included in an export.",
+    )
+
+
+class ConfirmationRecordDeletionRequest(BaseModel):
+    """The strict body of a confirmation-record deletion request.
+
+    A request names database record UUIDs (the ``id`` field of
+    ``AssistantConfirmationView``), not confirmation challenge identifiers.
+    Unknown fields are forbidden, and the list must be non-empty and bounded
+    by ``MAX_DELETION_BATCH``. There is no path to a wildcard or
+    all-records delete: the operation is always scoped to the exact UUIDs
+    supplied.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record_ids: list[UUID] = Field(min_length=1, max_length=MAX_DELETION_BATCH)
