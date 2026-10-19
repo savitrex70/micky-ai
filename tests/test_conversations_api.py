@@ -798,3 +798,65 @@ def test_append_generic_exception_returns_503(client, monkeypatch) -> None:
     # Sanitized message only
     assert "simulated" not in response.text
     assert "RuntimeError" not in response.text
+
+
+# ============================================================================
+# Exact FK-constraint classification (Task 229 final correction)
+# ============================================================================
+
+
+def test_classify_exact_conversation_fk_unit() -> None:
+    """The exact FK constraint name is classified as ``missing_parent``."""
+    from rop.api.conversations import (
+        _INTEGRITY_CONVERSATION_FK_CONSTRAINT,
+        _classify_integrity_error,
+    )
+
+    assert _INTEGRITY_CONVERSATION_FK_CONSTRAINT == (
+        "assistant_messages_conversation_id_fkey"
+    )
+    exc = _make_integrity_error(_INTEGRITY_CONVERSATION_FK_CONSTRAINT)
+    assert _classify_integrity_error(exc) == "missing_parent"
+
+
+def test_classify_similar_fk_name_is_unknown_unit() -> None:
+    """A name that merely resembles the FK constraint is ``unknown``.
+
+    The classifier must not fall back on substring matching; a name such
+    as ``conversation_id_fkey_v2`` must NOT be treated as a missing
+    parent (which would return 404) because it identifies a different
+    constraint and would misreport the failure.
+    """
+    from rop.api.conversations import _classify_integrity_error
+
+    for name in (
+        "conversation_id_fkey",  # missing table prefix
+        "assistant_messages_conversation_id_fkey_v2",  # longer
+        "assistant_messages_conversation_id_fkey_old",  # suffix
+        "some_other_fkey",  # different column
+        "assistant_messages_conversation_id_xkey",  # not an FK
+    ):
+        assert _classify_integrity_error(_make_integrity_error(name)) == "unknown", name
+
+
+def test_append_similar_fk_name_returns_503_not_404(client, monkeypatch) -> None:
+    """A similar-but-wrong FK name produces a sanitized 503, not a 404."""
+    from rop.repositories.assistant_conversation import ConversationRepository
+
+    conv = _create(client)
+    fake = _make_integrity_error("assistant_messages_conversation_id_fkey_v2")
+
+    def boom(self, db, cid, data):
+        raise fake
+
+    monkeypatch.setattr(ConversationRepository, "append_message", boom)
+
+    response = client.post(
+        f"/api/assistant/conversations/{conv['id']}/messages",
+        headers=ORIGIN_HEADERS,
+        json={"content": "hi"},
+    )
+    assert response.status_code == 503
+    assert "simulated" not in response.text.lower()
+    # Confirm it did not leak the constraint name either
+    assert "fkey" not in response.text.lower()

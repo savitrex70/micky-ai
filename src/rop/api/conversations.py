@@ -76,6 +76,7 @@ _ERROR_SEQUENCE_CONFLICT = (
 #: ``(conversation_id, sequence)``. Must match the name used by the
 #: Task 228 migration and model.
 _INTEGRITY_SEQUENCE_CONSTRAINT = "uq_assistant_messages_conversation_sequence"
+_INTEGRITY_CONVERSATION_FK_CONSTRAINT = "assistant_messages_conversation_id_fkey"
 
 
 def _classify_integrity_error(exc: IntegrityError) -> str:
@@ -87,17 +88,26 @@ def _classify_integrity_error(exc: IntegrityError) -> str:
     as a not-found (the conversation was deleted while the append was
     racing); anything else is a genuine persistence failure that must
     not be reported as a sequence conflict.
+
+    Both the sequence-conflict and the missing-parent cases are matched by
+    exact constraint name against the names recorded in the Task 228
+    migration, not by substring, so an unrelated constraint whose name
+    merely resembles a known one is never misreported.
     """
     orig = getattr(exc, "orig", None)
     diag = getattr(orig, "diag", None)
     constraint = getattr(diag, "constraint_name", None) if diag else None
+    if constraint is None:
+        return "unknown"
     if constraint == _INTEGRITY_SEQUENCE_CONSTRAINT:
         return "sequence_conflict"
-    # PostgreSQL names foreign-key constraints ``<table>_<col>_fkey``. The
-    # only FK on ``assistant_messages`` is on ``conversation_id``; a
-    # violation therefore means the parent conversation vanished mid-append.
-    if constraint and "conversation_id" in constraint and "fkey" in constraint.lower():
+    if constraint == _INTEGRITY_CONVERSATION_FK_CONSTRAINT:
         return "missing_parent"
+    # Any other constraint name — including names that merely resemble the
+    # FK constraint — is an unclassified failure. Returning 404 for a name
+    # that merely contains ``conversation_id`` and ``fkey`` would misreport
+    # an unrelated constraint as a missing conversation; exact matching
+    # against the name recorded in the Task 228 migration is safer.
     return "unknown"
 
 
