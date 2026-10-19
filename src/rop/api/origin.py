@@ -1,14 +1,19 @@
-"""Loopback same-origin enforcement for state-changing confirmation requests.
+"""Loopback same-origin enforcement for state-changing assistant requests.
 
 The application is documented and started on loopback for a single local
-user, so a state-changing confirmation request must come from the
+user, so every state-changing assistant request must come from the
 configured local origin: the ``Origin`` header must match it, the ``Host``
 header must name that origin, and the body must be JSON. A missing or
 mismatched header is refused with a static, value-free body.
 
+Used by the confirmation decision endpoint and the confirmation-record
+management endpoints (including deletion), and by the conversation HTTP
+API for its state-changing operations (create, rename, delete, and
+append user message). Read-only endpoints do not invoke it.
+
 This is not a security boundary against code running as the same local
 user, and it is not authentication. It defends the documented loopback
-application against a cross-site page silently submitting a confirmation
+application against a cross-site page silently submitting a state-changing
 request. The trusted origin is read from configuration, never derived from
 an incoming request header, and no permissive CORS behaviour is added.
 """

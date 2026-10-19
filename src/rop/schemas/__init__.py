@@ -18,6 +18,7 @@ from rop.schemas.assistant_conversation import (
     AssistantMessageCreate,
     AssistantMessageRead,
     AssistantMessageRole,
+    AssistantUserMessageCreate,
 )
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.dataset_authorization import (
@@ -473,6 +474,7 @@ __all__ = [
     "AssistantMessageCreate",
     "AssistantMessageRead",
     "AssistantMessageRole",
+    "AssistantUserMessageCreate",
     "CandidateHypothesisRead",
     "DATASET_AUTHORIZATION_VERSION",
     "DATASET_MANIFEST_VERSION",

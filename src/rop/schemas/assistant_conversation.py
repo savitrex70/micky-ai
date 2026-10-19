@@ -80,6 +80,30 @@ class AssistantMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
 
 
+class AssistantUserMessageCreate(BaseModel):
+    """Public HTTP body for appending one user-authored message.
+
+    The role is deliberately not a caller-supplied field: the public
+    append endpoint always stores ``user`` messages. A caller cannot
+    forge an ``assistant`` message through this body and have invented
+    output appear as though Micky AI produced it. Internal code that
+    persists a genuine assistant reply uses :class:`AssistantMessageCreate`
+    instead; that contract keeps the role field for internal callers
+    only.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CONTENT_LENGTH)
+
+    @field_validator("content")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content must not be empty or whitespace-only")
+        return value
+
+
 class AssistantMessageRead(BaseModel):
     """One message as the repository returns it."""
 
@@ -99,6 +123,7 @@ __all__ = [
     "AssistantConversationUpdate",
     "AssistantMessageCreate",
     "AssistantMessageRead",
+    "AssistantUserMessageCreate",
     "AssistantMessageRole",
     "MAX_CONVERSATION_TITLE_LENGTH",
     "MAX_MESSAGE_CONTENT_LENGTH",

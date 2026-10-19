@@ -194,14 +194,15 @@ Planned capabilities (Stage 9 target):
   user-controlled persistence UI, uniform error/refusal/unsupported
   experience, and gating of data-modifying operations by the
   authorization policy.
-  - Status: `PLANNED` overall. One sub-component — durable
-    conversation-and-message persistence — is `IMPLEMENTED` as a
-    foundation (Task 228).
-  - Paths (persistence foundation only):
+  - Status: `PLANNED` overall. Two sub-components are `IMPLEMENTED` as
+    foundations: durable conversation-and-message persistence (Task 228)
+    and the conversation HTTP API (Task 229).
+  - Paths (persistence + API foundations):
     `src/rop/models/assistant_conversation.py`,
     `src/rop/models/assistant_message.py`,
     `src/rop/repositories/assistant_conversation.py`,
-    `src/rop/schemas/assistant_conversation.py`, migration
+    `src/rop/schemas/assistant_conversation.py`,
+    `src/rop/api/conversations.py`, migration
     `20261019_0018`.
   - Established (Task 228): two durable tables
     (`assistant_conversations`, `assistant_messages`), repository methods
@@ -210,11 +211,18 @@ Planned capabilities (Stage 9 target):
     a migration with a working downgrade. Conversation data is stored
     separately from clinical reasoning records — no foreign keys, no
     shared rows, no coupling.
-  - Absent: conversation HTTP endpoints, browser-side conversation
-    persistence, wiring the assistant request endpoint to save and
-    reload messages, conversation export, notes, tasks, reminders,
-    local retrieval, and any user-facing conversation UI. The
-    repository and tables exist; the user-facing conversation workflow
+  - Established (Task 229): a FastAPI router at
+    `/api/assistant/conversations` exposing list, create, read, rename,
+    delete, list-messages, and append-message. Writes are
+    local-origin-guarded. The public append endpoint accepts only
+    `user` messages and rejects caller-supplied role fields with 422.
+    Repository transaction ownership remains at the API boundary.
+    Concurrent appends that race for the same sequence produce 409
+    Conflict rather than silent retries.
+  - Absent: browser-side conversation management, wiring the assistant
+    request endpoint to save and reload messages, conversation export,
+    notes, tasks, reminders, local retrieval, and any user-facing
+    conversation UI. The API and store exist; the user-facing workflow
     does not. Target scope, boundaries, and acceptance conditions are
     defined in section B.2.
 
