@@ -18,7 +18,6 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
-    Index,
     Integer,
     String,
     Text,
@@ -59,18 +58,15 @@ class AssistantMessage(Base):
             "sequence",
             name="uq_assistant_messages_conversation_sequence",
         ),
-        Index(
-            "ix_assistant_messages_conversation_sequence",
-            "conversation_id",
-            "sequence",
-        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    #: No standalone index on ``conversation_id``: the unique composite
+    #: index created by ``uq_assistant_messages_conversation_sequence``
+    #: already serves lookups and ordered retrieval by ``conversation_id``.
     conversation_id: Mapped[UUID] = mapped_column(
         ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     #: Only ``user`` and ``assistant`` are supported; a hidden internal
     #: instruction role is not part of this domain.

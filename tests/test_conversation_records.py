@@ -425,3 +425,79 @@ def test_migration_creates_and_removes_only_the_conversation_tables(
 
     # Leave the database at head for other tests.
     command.upgrade(config, "20261019_0018")
+
+
+# ============================================================================
+# Activity ordering regression (parent updated_at must bump on append)
+# ============================================================================
+
+
+def test_append_message_bumps_parent_updated_at_and_reorders_listing(
+    db, pg_engine, repository
+) -> None:
+    """Appending a message must advance the parent's ``updated_at``.
+
+    The listing order is ``updated_at DESC, id DESC``. Before this fix,
+    ``append_message()`` assigned ``conversation.title = conversation.title``,
+    which SQLAlchemy's change detection treats as a no-op, so no ``UPDATE``
+    was emitted and the parent's ``updated_at`` never advanced. This test
+    gives the conversation to be updated an older ``updated_at`` than the
+    other, appends a message, and then asserts:
+
+      * the appending conversation's ``updated_at`` advanced;
+      * ``repository.list()`` returns the appending conversation first.
+
+    The timestamps are set explicitly (distinct datetime values) rather
+    than being measured by sleeping, so the assertions are deterministic.
+    """
+    from datetime import timedelta as _td
+
+    from sqlalchemy import update as _update
+
+    from rop.models.assistant_conversation import AssistantConversation
+
+    # Create two conversations.
+    older = repository.create(db, AssistantConversationCreate(title="older"))
+    newer = repository.create(db, AssistantConversationCreate(title="newer"))
+    db.commit()
+
+    # Make "older" genuinely older in updated_at, and "newer" the most
+    # recent. These timestamps are distinct and explicit.
+    baseline = NOW
+    db.execute(
+        _update(AssistantConversation)
+        .where(AssistantConversation.id == older.id)
+        .values(updated_at=baseline - _td(minutes=10))
+    )
+    db.execute(
+        _update(AssistantConversation)
+        .where(AssistantConversation.id == newer.id)
+        .values(updated_at=baseline)
+    )
+    db.commit()
+
+    # Sanity: "newer" is currently first in listing order.
+    before_order = repository.list(db, limit=10)
+    assert [r.id for r in before_order][0] == newer.id
+    before_updated_at = next(r.updated_at for r in before_order if r.id == older.id)
+
+    # Append a message to the older conversation.
+    repository.append_message(
+        db,
+        older.id,
+        AssistantMessageCreate(role="user", content="reviving older"),
+    )
+    db.commit()
+
+    # Reload and check the parent's updated_at advanced.
+    after_order = repository.list(db, limit=10)
+    after_older = next(r for r in after_order if r.id == older.id)
+    assert (
+        after_older.updated_at > before_updated_at
+    ), "append_message must advance the parent conversation's updated_at"
+
+    # And that the appending conversation now sorts first.
+    assert [r.id for r in after_order][0] == older.id, (
+        "after appending a message, the older conversation should move to "
+        "the top of the listing"
+    )

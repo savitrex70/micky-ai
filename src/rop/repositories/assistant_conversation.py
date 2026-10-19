@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from rop.models.assistant_conversation import AssistantConversation
@@ -158,8 +158,18 @@ class ConversationRepository:
             sequence=next_sequence,
         )
         db.add(message)
-        # Touch the parent so its updated_at reflects the new activity.
-        conversation.title = conversation.title
+        # Bump the parent conversation's activity timestamp so the listing
+        # order (updated_at desc, id desc) reflects the new message.
+        # ``conversation.title = conversation.title`` is a no-op that
+        # SQLAlchemy's change detection does not treat as a modification,
+        # so it would not reliably produce an UPDATE. An explicit UPDATE
+        # of ``updated_at`` on the conversation row is what actually moves
+        # the conversation to the top of the list.
+        db.execute(
+            update(AssistantConversation)
+            .where(AssistantConversation.id == conversation_id)
+            .values(updated_at=func.now())
+        )
         db.flush()
         db.refresh(message)
         return AssistantMessageRead.model_validate(message)

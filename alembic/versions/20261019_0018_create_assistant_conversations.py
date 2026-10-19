@@ -99,29 +99,13 @@ def upgrade() -> None:
             name="uq_assistant_messages_conversation_sequence",
         ),
     )
-    op.create_index(
-        "ix_assistant_messages_conversation_id",
-        "assistant_messages",
-        ["conversation_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_assistant_messages_conversation_sequence",
-        "assistant_messages",
-        ["conversation_id", "sequence"],
-        unique=False,
-    )
+    # No extra indexes on ``assistant_messages``: the unique constraint
+    # ``uq_assistant_messages_conversation_sequence`` already creates a
+    # unique composite index that serves both ``conversation_id`` lookups
+    # and ordered message retrieval.
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_assistant_messages_conversation_sequence",
-        table_name="assistant_messages",
-    )
-    op.drop_index(
-        "ix_assistant_messages_conversation_id",
-        table_name="assistant_messages",
-    )
     op.drop_table("assistant_messages")
     op.drop_index(
         "ix_assistant_conversations_updated_at",
