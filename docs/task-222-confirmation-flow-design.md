@@ -14,7 +14,6 @@ and its Confirm/Cancel controls (`src/rop/web/static/index.html`, `app.js`,
 `app.css`), described in §7.1. No production state-changing capability and
 no production executor are registered, so a consequential operation cannot
 run in this build.
-in this build.
 
 ## 1. What exists today
 
@@ -618,9 +617,19 @@ pending challenge must not be silently abandoned.
   request from silently abandoning an outstanding server-side challenge.
 - **Server-side state is authoritative.** The browser never claims that
   hiding the card, refreshing the page, or starting a new request
-  cancels a durable server-side challenge. Only a valid `cancelled`
-  response establishes cancellation; anything else preserves an honest
-  unknown or pending description.
+  cancels a durable server-side challenge. The response classes are
+  distinguished as follows:
+  - a semantically valid `cancelled` response with `executed: false`
+    establishes cancellation;
+  - a semantically valid `rejected` response with `executed: false`
+    establishes rejection, not cancellation;
+  - semantically consistent `executed`, `failed`, and `unknown`
+    responses establish their reported terminal outcomes; `unknown` is
+    never shown as success or definite failure;
+  - `refused` and `unavailable` are not treated as proof that the
+    challenge is terminal;
+  - missing, malformed, inconsistent, or network-failed responses leave
+    the result unverified.
 
 
 ### 7.2 Server-side verification is the boundary
@@ -925,9 +934,6 @@ Unchanged by this document: the contract as a whole remains a **draft**; H.1,
 H.3, and H.4 remain unresolved; E.2's owner decision stands as recorded; and
 nothing here marks the authorization work as complete. The recording and
 retention decision above resolves the storage half of the H.2 section. The
-server-side confirmation workflow that obtains and consumes a user approval
-was implemented in Task 224 (`src/rop/services/confirmation.py`,
-`src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`); the
 server-side confirmation workflow that obtains and consumes a user approval
 was implemented in Task 224 (`src/rop/services/confirmation.py`,
 `src/rop/api/confirmations.py`, `src/rop/authorization/executors.py`), and
