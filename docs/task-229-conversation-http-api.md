@@ -11,13 +11,13 @@ All paths are under `/api/assistant/conversations`.
 
 | Method | Path | Purpose | Status codes |
 | --- | --- | --- | --- |
-| GET | ` | List conversations | 200, 422 |
-| POST | ` | Create a conversation | 201, 403, 422, 503 |
-| GET | `/{conversation_id}` | Read one conversation | 200, 404, 422 |
-| PATCH | `/{conversation_id}` | Rename a conversation | 200, 403, 404, 422, 503 |
-| DELETE | `/{conversation_id}` | Delete a conversation | 204, 403, 404, 422, 503 |
-| GET | `/{conversation_id}/messages` | List messages | 200, 404, 422 |
-| POST | `/{conversation_id}/messages` | Append a user message | 201, 403, 404, 409, 422, 503 |
+| `GET` | `/api/assistant/conversations` | List conversations | 200, 422 |
+| `POST` | `/api/assistant/conversations` | Create a conversation | 201, 403, 422, 503 |
+| `GET` | `/api/assistant/conversations/{conversation_id}` | Read one conversation | 200, 404, 422 |
+| `PATCH` | `/api/assistant/conversations/{conversation_id}` | Rename a conversation | 200, 403, 404, 422, 503 |
+| `DELETE` | `/api/assistant/conversations/{conversation_id}` | Delete a conversation | 204, 403, 404, 422, 503 |
+| `GET` | `/api/assistant/conversations/{conversation_id}/messages` | List messages | 200, 404, 422 |
+| `POST` | `/api/assistant/conversations/{conversation_id}/messages` | Append a user message | 201, 403, 404, 409, 422, 503 |
 
 All endpoints are registered in the FastAPI application and appear in
 `/openapi.json`.
@@ -119,13 +119,22 @@ identifiers, material values, or other secret-adjacent data.
 
 ## Concurrent appends
 
-append_message computes max(sequence) + 1 and lets the database's
-uq_assistant_messages_conversation_sequence constraint arbitrate races. If
-two appends race for the same position, one succeeds and the other raises
-IntegrityError, which the handler maps to 409 Conflict with a fixed
-message. The append is not retried automatically - a silent retry could
-duplicate a visible message. The caller must reload and re-submit
-deliberately.
+`append_message` computes `max(sequence) + 1` and lets the database's
+`uq_assistant_messages_conversation_sequence` constraint arbitrate
+races. If two appends race for the same position, one succeeds and the
+other raises `IntegrityError` on that named constraint, which the
+handler maps to 409 Conflict with a fixed message. The append is not
+retried automatically - a silent retry could duplicate a visible
+message. The caller must reload and re-submit deliberately.
+
+Other integrity errors are classified by their constraint name:
+
+- A foreign-key violation on `conversation_id` means the parent
+  conversation was deleted while the append was racing; the handler
+  returns 404.
+- Any other constraint violation is treated as an unclassified
+  persistence failure and returns 503 with a sanitized message. It is
+  never reported as a sequence conflict.
 
 ## What is not exposed
 

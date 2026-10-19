@@ -72,6 +72,34 @@ _ERROR_SEQUENCE_CONFLICT = (
     "reload the conversation and try again."
 )
 
+#: The unique constraint that arbitrates concurrent appends on
+#: ``(conversation_id, sequence)``. Must match the name used by the
+#: Task 228 migration and model.
+_INTEGRITY_SEQUENCE_CONSTRAINT = "uq_assistant_messages_conversation_sequence"
+
+
+def _classify_integrity_error(exc: IntegrityError) -> str:
+    """Classify an ``IntegrityError`` into a handler-usable category.
+
+    Returns one of ``"sequence_conflict"``, ``"missing_parent"``, or
+    ``"unknown"``. Only the sequence-conflict case is treated as a
+    concurrency-conflict retryable state; the parent-FK case is treated
+    as a not-found (the conversation was deleted while the append was
+    racing); anything else is a genuine persistence failure that must
+    not be reported as a sequence conflict.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    if constraint == _INTEGRITY_SEQUENCE_CONSTRAINT:
+        return "sequence_conflict"
+    # PostgreSQL names foreign-key constraints ``<table>_<col>_fkey``. The
+    # only FK on ``assistant_messages`` is on ``conversation_id``; a
+    # violation therefore means the parent conversation vanished mid-append.
+    if constraint and "conversation_id" in constraint and "fkey" in constraint.lower():
+        return "missing_parent"
+    return "unknown"
+
 
 def _not_found() -> HTTPException:
     return HTTPException(
@@ -349,12 +377,24 @@ def append_user_message(
     except ConversationNotFoundError:
         db.rollback()
         raise _not_found() from None
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
-        logger.info("conversation message append hit a sequence conflict")
+        kind = _classify_integrity_error(exc)
+        if kind == "sequence_conflict":
+            logger.info("conversation message append hit a sequence conflict")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_ERROR_SEQUENCE_CONFLICT,
+            ) from None
+        if kind == "missing_parent":
+            logger.info("conversation message append raced a parent deletion")
+            raise _not_found() from None
+        logger.warning(
+            "conversation message append hit an unclassified integrity error"
+        )
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=_ERROR_SEQUENCE_CONFLICT,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_ERROR_WRITE_FAILED,
         ) from None
     except Exception:
         db.rollback()

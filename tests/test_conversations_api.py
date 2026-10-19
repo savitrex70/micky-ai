@@ -1,10 +1,19 @@
-"""Task 229: HTTP API tests for assistant conversations and messages.
+"""Task 229: HTTP API integration tests for assistant conversations.
 
 PostgreSQL-backed: the constraints, cascade, and concurrent-append
 behaviour the API depends on are PostgreSQL behaviour, and a SQLite
-substitute would prove none of it. Tests skip unless
-``ROP_TEST_DATABASE_URL`` identifies a database whose name ends in
-``_test``.
+substitute would prove none of it.
+
+Skip semantics:
+
+* If ``ROP_TEST_DATABASE_URL`` is absent, every test in this file skips;
+  no test in this file can run meaningfully without a real database.
+  Database-independent route and schema checks live in
+  ``tests/test_conversations_api_schema.py``.
+* If ``ROP_TEST_DATABASE_URL`` is configured but is not a PostgreSQL URL,
+  does not name a database ending in ``_test``, or cannot be reached, the
+  ``pg_engine`` fixture FAILS rather than skipping. A broken test-database
+  setup must not be concealed behind a skip.
 """
 
 from __future__ import annotations
@@ -36,16 +45,27 @@ ORIGIN = "http://127.0.0.1:8000"
 ORIGIN_HEADERS = {"origin": ORIGIN, "content-type": "application/json"}
 
 
-def _skip_reason() -> str | None:
+def _config_problem() -> str | None:
+    """Return a configuration error string if the URL is present but bad.
+
+    Absence of the URL is not a configuration problem; it means
+    ``pytest.skip`` is correct. Only a URL that IS set but is
+    non-PostgreSQL, not a ``_test`` database, or otherwise unusable is a
+    configuration problem, and the fixture must fail on those rather than
+    skip.
+    """
     if not TEST_DATABASE_URL:
-        return (
-            "ROP_TEST_DATABASE_URL is not set; PostgreSQL conversation API "
-            "tests require an explicit test database"
-        )
+        return None
     try:
-        database = make_url(TEST_DATABASE_URL).database or ""
+        url = make_url(TEST_DATABASE_URL)
     except Exception:
         return "ROP_TEST_DATABASE_URL is not a valid database URL"
+    if url.get_backend_name() != "postgresql":
+        return (
+            "ROP_TEST_DATABASE_URL must use a PostgreSQL driver; "
+            f"got scheme '{url.drivername}'"
+        )
+    database = url.database or ""
     if not database.endswith("_test"):
         return "ROP_TEST_DATABASE_URL database name must end with '_test'"
     return None
@@ -53,16 +73,24 @@ def _skip_reason() -> str | None:
 
 @pytest.fixture(scope="session")
 def pg_engine():
-    reason = _skip_reason()
-    if reason is not None:
-        pytest.skip(reason)
+    if not TEST_DATABASE_URL:
+        pytest.skip(
+            "ROP_TEST_DATABASE_URL is not set; PostgreSQL conversation "
+            "API tests require an explicit test database"
+        )
+    problem = _config_problem()
+    if problem is not None:
+        pytest.fail(problem)
     engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     try:
         with engine.connect() as connection:
             connection.execute(text("select 1"))
     except Exception as exc:
         engine.dispose()
-        pytest.skip(f"PostgreSQL test database unreachable ({type(exc).__name__})")
+        pytest.fail(
+            "ROP_TEST_DATABASE_URL is configured but the PostgreSQL test "
+            f"database is unreachable ({type(exc).__name__})"
+        )
     yield engine
     engine.dispose()
 
@@ -80,13 +108,21 @@ def clean_database(pg_engine):
     yield
 
 
-@pytest.fixture(autouse=True)
-def _real_db_override(pg_engine, clean_database):
+@pytest.fixture
+def real_db(pg_engine, clean_database):
     """Bind the app's get_db to the real PostgreSQL test database.
 
     ``tests/test_api.py`` installs a session-scoped SQLite override on the
     shared app at import time. This fixture takes precedence for the
     duration of each test and restores whatever was previously installed.
+
+    This fixture is deliberately NOT ``autouse``. Tests that do not need a
+    database must not trigger it. In this file every test that uses
+    ``client`` gets the real DB via the ``client`` fixture's dependency;
+    tests in other files that check the API contract without a database
+    (see ``tests/test_conversations_api_schema.py``) do not use
+    ``client`` and therefore run even when ``ROP_TEST_DATABASE_URL`` is
+    absent.
     """
     testing_session = sessionmaker(bind=pg_engine)
 
@@ -106,7 +142,7 @@ def _real_db_override(pg_engine, clean_database):
 
 
 @pytest.fixture
-def client():
+def client(real_db):
     return TestClient(app, base_url=ORIGIN)
 
 
@@ -572,14 +608,6 @@ def test_create_with_mismatched_host_rejected(client) -> None:
 # ============================================================================
 
 
-def test_conversations_routes_in_openapi() -> None:
-    spec = app.openapi()
-    paths = set(spec["paths"])
-    assert "/api/assistant/conversations" in paths
-    assert "/api/assistant/conversations/{conversation_id}" in paths
-    assert "/api/assistant/conversations/{conversation_id}/messages" in paths
-
-
 def test_assistant_request_endpoint_semantics_unchanged(client, pg_engine) -> None:
     """A normal assistant request must not touch the conversation tables."""
     with Session(pg_engine) as check:
@@ -618,3 +646,155 @@ def test_conversations_never_touch_reasoning_sessions(client, pg_engine) -> None
     with Session(pg_engine) as check:
         after = check.scalar(text("select count(*) from reasoning_sessions"))
     assert before == after
+
+
+# ============================================================================
+# Integrity-error classification (unit + integration)
+# ============================================================================
+
+
+def _make_integrity_error(constraint_name: str | None):
+    from types import SimpleNamespace
+
+    from sqlalchemy.exc import IntegrityError as _SAIntegrityError
+
+    exc = _SAIntegrityError("stmt", {}, Exception("synthetic"))
+    if constraint_name is None:
+        # Simulate a driver that does not expose diag metadata
+        exc.orig = SimpleNamespace()
+    else:
+        exc.orig = SimpleNamespace(
+            diag=SimpleNamespace(constraint_name=constraint_name)
+        )
+    return exc
+
+
+def test_classify_sequence_conflict_unit() -> None:
+    from rop.api.conversations import (
+        _INTEGRITY_SEQUENCE_CONSTRAINT,
+        _classify_integrity_error,
+    )
+
+    assert (
+        _classify_integrity_error(_make_integrity_error(_INTEGRITY_SEQUENCE_CONSTRAINT))
+        == "sequence_conflict"
+    )
+
+
+def test_classify_fk_violation_unit() -> None:
+    from rop.api.conversations import _classify_integrity_error
+
+    assert (
+        _classify_integrity_error(
+            _make_integrity_error("assistant_messages_conversation_id_fkey")
+        )
+        == "missing_parent"
+    )
+
+
+def test_classify_unknown_constraint_unit() -> None:
+    from rop.api.conversations import _classify_integrity_error
+
+    assert (
+        _classify_integrity_error(_make_integrity_error("some_other_constraint"))
+        == "unknown"
+    )
+
+
+def test_classify_no_diag_metadata_unit() -> None:
+    from rop.api.conversations import _classify_integrity_error
+
+    assert _classify_integrity_error(_make_integrity_error(None)) == "unknown"
+
+
+def test_append_unrelated_integrity_error_is_not_reported_as_sequence_conflict(
+    client, monkeypatch
+) -> None:
+    """An integrity error with an unrecognized constraint is a 503, not 409."""
+    from rop.repositories.assistant_conversation import ConversationRepository
+
+    conv = _create(client)
+
+    fake = _make_integrity_error("some_other_constraint")
+
+    def boom(self, db, cid, data):
+        raise fake
+
+    monkeypatch.setattr(ConversationRepository, "append_message", boom)
+
+    response = client.post(
+        f"/api/assistant/conversations/{conv['id']}/messages",
+        headers=ORIGIN_HEADERS,
+        json={"content": "hi"},
+    )
+    assert response.status_code == 503
+    body = response.json()
+    assert "sequence" not in body["detail"].lower()
+    assert "concurrent" not in body["detail"].lower()
+
+
+def test_append_fk_violation_is_reported_as_missing_parent(client, monkeypatch) -> None:
+    """An FK violation on conversation_id is a 404, not a 409."""
+    from rop.repositories.assistant_conversation import ConversationRepository
+
+    conv = _create(client)
+
+    fake = _make_integrity_error("assistant_messages_conversation_id_fkey")
+
+    def boom(self, db, cid, data):
+        raise fake
+
+    monkeypatch.setattr(ConversationRepository, "append_message", boom)
+
+    response = client.post(
+        f"/api/assistant/conversations/{conv['id']}/messages",
+        headers=ORIGIN_HEADERS,
+        json={"content": "hi"},
+    )
+    assert response.status_code == 404
+
+
+def test_append_sequence_conflict_returns_409(client, monkeypatch) -> None:
+    """The named sequence constraint returns 409 with the fixed message."""
+    from rop.api.conversations import _INTEGRITY_SEQUENCE_CONSTRAINT
+    from rop.repositories.assistant_conversation import ConversationRepository
+
+    conv = _create(client)
+
+    fake = _make_integrity_error(_INTEGRITY_SEQUENCE_CONSTRAINT)
+
+    def boom(self, db, cid, data):
+        raise fake
+
+    monkeypatch.setattr(ConversationRepository, "append_message", boom)
+
+    response = client.post(
+        f"/api/assistant/conversations/{conv['id']}/messages",
+        headers=ORIGIN_HEADERS,
+        json={"content": "hi"},
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert "reload" in body["detail"].lower()
+
+
+def test_append_generic_exception_returns_503(client, monkeypatch) -> None:
+    """A non-IntegrityError exception is a 503, never a 409 or success."""
+    from rop.repositories.assistant_conversation import ConversationRepository
+
+    conv = _create(client)
+
+    def boom(self, db, cid, data):
+        raise RuntimeError("simulated non-integrity failure")
+
+    monkeypatch.setattr(ConversationRepository, "append_message", boom)
+
+    response = client.post(
+        f"/api/assistant/conversations/{conv['id']}/messages",
+        headers=ORIGIN_HEADERS,
+        json={"content": "hi"},
+    )
+    assert response.status_code == 503
+    # Sanitized message only
+    assert "simulated" not in response.text
+    assert "RuntimeError" not in response.text
