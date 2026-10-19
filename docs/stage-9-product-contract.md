@@ -194,10 +194,29 @@ Planned capabilities (Stage 9 target):
   user-controlled persistence UI, uniform error/refusal/unsupported
   experience, and gating of data-modifying operations by the
   authorization policy.
-  - Status: `PLANNED`
-  - Paths: none - no such components exist on `main`
-  - Absent: all of the above. Target scope, boundaries, and acceptance
-    conditions are defined in section B.2.
+  - Status: `PLANNED` overall. One sub-component — durable
+    conversation-and-message persistence — is `IMPLEMENTED` as a
+    foundation (Task 228).
+  - Paths (persistence foundation only):
+    `src/rop/models/assistant_conversation.py`,
+    `src/rop/models/assistant_message.py`,
+    `src/rop/repositories/assistant_conversation.py`,
+    `src/rop/schemas/assistant_conversation.py`, migration
+    `20261019_0018`.
+  - Established (Task 228): two durable tables
+    (`assistant_conversations`, `assistant_messages`), repository methods
+    to create, retrieve, list, update-title, append-message,
+    list-messages, and delete a conversation with its owned messages, and
+    a migration with a working downgrade. Conversation data is stored
+    separately from clinical reasoning records — no foreign keys, no
+    shared rows, no coupling.
+  - Absent: conversation HTTP endpoints, browser-side conversation
+    persistence, wiring the assistant request endpoint to save and
+    reload messages, conversation export, notes, tasks, reminders,
+    local retrieval, and any user-facing conversation UI. The
+    repository and tables exist; the user-facing conversation workflow
+    does not. Target scope, boundaries, and acceptance conditions are
+    defined in section B.2.
 
 #### B.1.6 Blocked or gated capabilities
 

@@ -1,6 +1,8 @@
 """SQLAlchemy ORM models."""
 
 from rop.models.assistant_confirmation import AssistantConfirmation
+from rop.models.assistant_conversation import AssistantConversation
+from rop.models.assistant_message import AssistantMessage
 from rop.models.candidate_hypothesis import CandidateHypothesis
 from rop.models.entity import Entity
 from rop.models.evaluated_evidence import EvaluatedEvidence
@@ -15,6 +17,8 @@ from rop.models.template_match import TemplateMatch
 
 __all__ = [
     "AssistantConfirmation",
+    "AssistantConversation",
+    "AssistantMessage",
     "CandidateHypothesis",
     "Entity",
     "EvaluatedEvidence",

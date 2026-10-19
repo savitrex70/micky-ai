@@ -1,5 +1,6 @@
 """Persistence repositories."""
 
+from rop.repositories.assistant_conversation import ConversationRepository
 from rop.repositories.candidate_hypothesis import CandidateHypothesisRepository
 from rop.repositories.entity import EntityRepository
 from rop.repositories.evaluated_evidence import EvaluatedEvidenceRepository
@@ -14,6 +15,7 @@ from rop.repositories.template_match import TemplateMatchRepository
 
 __all__ = [
     "CandidateHypothesisRepository",
+    "ConversationRepository",
     "EntityRepository",
     "EvaluatedEvidenceRepository",
     "EvidenceRepository",

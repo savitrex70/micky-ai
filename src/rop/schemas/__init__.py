@@ -11,6 +11,14 @@ from rop.schemas.artifact import (
     ArtifactErrorCode,
     ArtifactManifest,
 )
+from rop.schemas.assistant_conversation import (
+    AssistantConversationCreate,
+    AssistantConversationRead,
+    AssistantConversationUpdate,
+    AssistantMessageCreate,
+    AssistantMessageRead,
+    AssistantMessageRole,
+)
 from rop.schemas.candidate_hypothesis import CandidateHypothesisRead
 from rop.schemas.dataset_authorization import (
     DATASET_AUTHORIZATION_VERSION,
@@ -459,6 +467,12 @@ from rop.schemas.tokenizer import (
 )
 
 __all__ = [
+    "AssistantConversationCreate",
+    "AssistantConversationRead",
+    "AssistantConversationUpdate",
+    "AssistantMessageCreate",
+    "AssistantMessageRead",
+    "AssistantMessageRole",
     "CandidateHypothesisRead",
     "DATASET_AUTHORIZATION_VERSION",
     "DATASET_MANIFEST_VERSION",
