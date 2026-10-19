@@ -25,9 +25,9 @@ def _openapi_schema_for_bundle() -> dict:
     # The route uses response_model=AssistantConfirmationExportBundle, so the
     # schema name is the class name.
     schemas = spec["components"]["schemas"]
-    assert "AssistantConfirmationExportBundle" in schemas, (
-        "AssistantConfirmationExportBundle missing from OpenAPI components"
-    )
+    assert (
+        "AssistantConfirmationExportBundle" in schemas
+    ), "AssistantConfirmationExportBundle missing from OpenAPI components"
     return schemas["AssistantConfirmationExportBundle"]
 
 
@@ -47,8 +47,7 @@ def test_bundle_openapi_description_describes_a_snapshot() -> None:
     lowered = description.lower()
     # The semantic point, worded loosely to survive copy-edits.
     assert "snapshot" in lowered, (
-        "description must state the export represents a snapshot; got: "
-        + description
+        "description must state the export represents a snapshot; got: " + description
     )
     # The old, contradictory claim ("concurrent insert or delete during
     # export makes that equality fail, and the endpoint reports
