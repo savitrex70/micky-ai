@@ -334,7 +334,7 @@ narrower than a page read.
 
 
 class AssistantConfirmationExportBundle(BaseModel):
-    """A complete multi-page export of every stored confirmation record.
+    """A multi-page export of one consistent database snapshot.
 
     The bundle preserves each page's ``AssistantConfirmationExport`` contract
     unchanged, so ``record_count``, ``total_record_count``, ``has_more``,
@@ -343,11 +343,28 @@ class AssistantConfirmationExportBundle(BaseModel):
 
         records = [r for page in bundle.pages for r in page.records]
 
-    ``is_complete`` on the bundle is True only when the endpoint successfully
-    walked every page and the number of records it collected equals the
-    database total at export time. A concurrent insert or delete during export
-    makes that equality fail, and the endpoint reports ``is_complete=False``
-    rather than claiming an incomplete capture is complete.
+    The endpoint that produces this bundle establishes a PostgreSQL REPEATABLE
+    READ transaction before the first record read, so every page in the bundle
+    is drawn from one snapshot of the confirmation-record store. Writes
+    committed after that snapshot began are invisible to this export, do not
+    appear in ``pages``, and do not affect ``total_record_count``. A complete
+    capture of the snapshot the endpoint actually read is the intended
+    outcome.
+
+    ``is_complete`` is True only when the endpoint successfully walked every
+    page of that snapshot and the number of collected records equals the
+    snapshot's ``total_record_count``. Post-snapshot writes do not, by
+    themselves, make the export incomplete; that is the whole point of the
+    snapshot. ``is_complete`` is False only when the endpoint's own
+    completeness checks detect that the full snapshot was not collected. In
+    normal operation the endpoint returns either a complete bundle
+    (``is_complete=True``) or an error, so a caller that receives a bundle
+    from this endpoint will typically see ``is_complete=True``.
+
+    ``generated_at`` records when the endpoint began processing the request.
+    It may be slightly earlier than the instant the snapshot became visible;
+    ``total_record_count`` is the count observed in the snapshot the export
+    actually read, not the count at the ``generated_at`` wall-clock instant.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -358,20 +375,35 @@ class AssistantConfirmationExportBundle(BaseModel):
     version: Literal["1"] = CONFIRMATION_EXPORT_BUNDLE_VERSION
     generated_at: datetime
     retention_days: int = CONFIRMATION_RETENTION_DAYS
-    #: Number of records the database held when the export started.
-    total_record_count: int = Field(ge=0)
+    total_record_count: int = Field(
+        ge=0,
+        description=(
+            "Number of records in the exported snapshot. Writes committed "
+            "after the snapshot began are invisible to this export and do "
+            "not affect this count."
+        ),
+    )
     #: Number of pages the export walked.
     page_count: int = Field(ge=0)
     #: Per-page size used internally; never larger than MAX_INSPECTION_LIMIT.
     page_limit: int = Field(gt=0)
-    #: True only when every record was captured and the totals agreed.
-    is_complete: bool
+    is_complete: bool = Field(
+        description=(
+            "True only when every record in the exported snapshot was "
+            "collected and the collected count equals the snapshot's "
+            "total_record_count. Post-snapshot writes do not, by "
+            "themselves, make the export incomplete."
+        ),
+    )
     pages: tuple[AssistantConfirmationExport, ...]
     notes: tuple[str, ...] = (
         "The single-page AssistantConfirmationExport contract is preserved "
         "on each page; flatten pages to read every record.",
-        "is_complete is True only when the collected count equals the "
-        "database total at export start.",
+        "The bundle is one consistent database snapshot. total_record_count "
+        "is the count observed in that snapshot; is_complete is True only "
+        "when every record in the snapshot was collected. Writes committed "
+        "after the snapshot began are invisible to this export and do not "
+        "make it incomplete.",
         "Challenge identifiers, display codes, and their hashes are never "
         "included in an export.",
     )
