@@ -747,3 +747,63 @@ def test_existing_confirmation_card_functionality_intact() -> None:
         'payload.status === "refused"',
     ):
         assert token in js, token
+
+
+def test_records_js_delete_refreshes_via_fetchpage() -> None:
+    """After a successful delete, the deleted row must be removed from the
+    displayed dataset.
+
+    A text-only assertion that loadPage() is called is not enough: loadPage
+    returns immediately when inFlight is true, which is exactly the bug we
+    fixed. This test asserts that the delete handler now:
+      * fetches the post-deletion page through the low-level fetchPage()
+        helper (not loadPage), and
+      * calls applyPage() to render the fresh records,
+      * and releases the inFlight guard before that fetch so the reload is
+        not short-circuited.
+    """
+    js = _served_js()
+    idx = js.index("async function deleteSelected")
+    tail = js[idx:]
+    end = tail.index("\n  }", 0) + 3
+    body = tail[:end]
+    assert "fetchPage(" in body
+    assert "applyPage(" in body
+    # The guard must be released before the refresh fetch — otherwise the
+    # regression this test protects would return.
+    guard_release = body.index("setBusy(false)")
+    fetch_idx = body.index("fetchPage(")
+    assert guard_release < fetch_idx, (
+        "setBusy(false) must precede the refresh fetch so it is not "
+        "short-circuited by the inFlight guard"
+    )
+    # loadPage must not be used for the post-delete refresh
+    assert "loadPage(" not in body
+
+
+def test_records_js_export_uses_content_disposition_filename() -> None:
+    js = _served_js()
+    idx = js.index("async function downloadExport")
+    tail = js[idx:]
+    end = tail.index("\n  }", 0) + 3
+    body = tail[:end]
+    assert 'resp.headers.get("Content-Disposition")' in body
+    assert "confirmation-records-export.json" in body
+
+
+def test_page_notice_does_not_claim_nothing_is_saved() -> None:
+    """The main notice must not blanket-claim that nothing is saved.
+
+    Confirmation records are durably stored, and the notice must distinguish
+    unsaved request text and tab history from the retention-bounded
+    confirmation records.
+    """
+    html = _served_html()
+    assert "Nothing is saved." not in html
+    # The corrected notice must be explicit about what is and isn't saved.
+    assert "not persisted" in html
+    assert "confirmation records" in html.lower()
+    # And must mention the retention/redaction lifecycle
+    assert "retention" in html.lower() or "redaction" in html.lower()
+    # And must not imply conversations/notes are persisted.
+    assert "Conversations, notes, tasks, and reminders are not persisted" in html

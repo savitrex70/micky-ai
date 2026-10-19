@@ -450,3 +450,138 @@ def test_records_api_never_touches_reasoning_sessions(
     with Session(pg_engine) as check:
         after = check.scalar(text("select count(*) from reasoning_sessions"))
     assert before == after
+
+
+# ============================================================================
+# Task 227 correction: Content-Disposition and snapshot consistency
+# ============================================================================
+
+
+def test_export_sets_content_disposition(client: TestClient, db: Session) -> None:
+    _create_records(db, 2)
+    response = client.get("/api/assistant/confirmation-records/export")
+    assert response.status_code == 200
+    cd = response.headers.get("content-disposition", "")
+    assert "attachment" in cd.lower()
+    assert 'filename="confirmation-records-export.json"' in cd
+    # Filename must not reflect record content, a challenge identifier, or
+    # any other identifier.
+    assert "challenge" not in cd.lower()
+
+
+def test_export_rejects_concurrent_count_preserving_change(
+    client: TestClient, db: Session, pg_engine, monkeypatch
+) -> None:
+    """A concurrent delete+insert that preserves the total count must not
+    let the export claim completeness via count equality alone.
+
+    The export uses REPEATABLE READ, so a write committed during the walk
+    (from a different transaction) is invisible to every page read: the
+    collected pages represent a single consistent snapshot and match the
+    initial count. This test forces the concurrent change to happen between
+    page reads and confirms the export still returns a self-consistent
+    bundle rather than silently mixing two snapshots.
+    """
+    _create_records(db, 4)
+    # Force multiple pages so a mid-walk change can affect later offsets.
+    monkeypatch.setattr(records_module, "_EXPORT_PAGE_LIMIT", 2)
+
+    changes_applied = {"done": False}
+
+    def walk_and_mutate(session, *, generated_at):
+        # Patch _walk_all_pages to run a concurrent mutation via a SEPARATE
+        # session after the first page has been read. That mutation is
+        # committed independently and should be invisible to the running
+        # REPEATABLE READ transaction.
+        pages = []
+        total = None
+        offset = 0
+        while True:
+            page = records_module._REPOSITORY.export_records(
+                session,
+                generated_at=generated_at,
+                limit=records_module._EXPORT_PAGE_LIMIT,
+                offset=offset,
+            )
+            if total is None:
+                total = page.total_record_count
+            if total == 0:
+                break
+            pages.append(page)
+            if not changes_applied["done"]:
+                # Concurrent mutation: delete one record, insert one record,
+                # same total count. Committed on a separate session.
+                from sqlalchemy.orm import sessionmaker as _sm
+
+                other = _sm(bind=session.get_bind())()
+                try:
+                    row = other.execute(
+                        text(
+                            "select id from assistant_confirmations order by "
+                            "created_at asc, id asc limit 1"
+                        )
+                    ).first()
+                    if row is not None:
+                        other.execute(
+                            text(
+                                "delete from assistant_confirmations " "where id = :rid"
+                            ),
+                            {"rid": row[0]},
+                        )
+                    # Insert a fresh row so total count is preserved.
+                    # ``id`` is ORM-defaulted (uuid4), not DB-defaulted, so
+                    # it must be supplied explicitly here.
+                    import uuid as _uuid
+
+                    other.execute(
+                        text(
+                            "insert into assistant_confirmations "
+                            "(id, challenge_id, display_code_hash, "
+                            "display_code_salt, operation_id, target, scope, "
+                            "parameters, policy_identity, policy_version, "
+                            "required_risk, required_reason, "
+                            "failed_code_attempts, status, outcome, "
+                            "material_redacted, created_at, expires_at) "
+                            "values (:rid, :cid, :dh, :ds, :op, null, null, "
+                            "'{}'::jsonb, :pid, '1', 'CONSEQUENTIAL', "
+                            "'AUTHORIZATION_REQUIRED', 0, 'PENDING', null, "
+                            "false, now(), now() + interval '5 minutes')"
+                        ),
+                        {
+                            "rid": _uuid.uuid4(),
+                            "cid": _uuid.uuid4().hex,
+                            "dh": "0" * 64,
+                            "ds": "0" * 32,
+                            "op": "demo-write",
+                            "pid": POLICY_IDENTITY,
+                        },
+                    )
+                    other.commit()
+                finally:
+                    other.close()
+                changes_applied["done"] = True
+            if not page.has_more:
+                break
+            offset = page.next_offset
+        collected = sum(len(p.records) for p in pages)
+        return pages, total or 0, collected
+
+    monkeypatch.setattr(records_module, "_walk_all_pages", walk_and_mutate)
+
+    response = client.get("/api/assistant/confirmation-records/export")
+    payload = response.json()
+    # REPEATABLE READ: the export sees the pre-mutation snapshot and
+    # reports it as complete, with every record from that snapshot.
+    assert payload["is_complete"] is True
+    assert payload["total_record_count"] == 4
+    all_ids = [r["id"] for page in payload["pages"] for r in page["records"]]
+    assert len(all_ids) == 4
+    assert len(set(all_ids)) == 4
+    assert changes_applied["done"] is True
+
+    # The store now holds a different set of 4 records (1 deleted, 1 inserted)
+    # — the number of records is unchanged but the export correctly captured
+    # the snapshot it saw.
+    with Session(pg_engine) as check:
+        live_count = check.scalar(text("select count(*) from assistant_confirmations"))
+    assert live_count == 4

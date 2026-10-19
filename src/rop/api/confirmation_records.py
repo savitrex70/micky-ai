@@ -29,7 +29,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from rop.api.origin import require_local_origin
@@ -85,9 +86,13 @@ def _walk_all_pages(db: Session, *, generated_at: datetime):
 
     Returns ``(pages, total_record_count, collected_count)``. Pagination is
     bounded by ``_EXPORT_PAGE_LIMIT``; the walk terminates only when a page
-    reports ``has_more=False``. If a concurrent insert lands between pages,
-    ``collected_count`` may not equal ``total_record_count`` and the caller
-    treats the bundle as incomplete rather than claiming a complete capture.
+    reports ``has_more=False``.
+
+    The caller is responsible for establishing a consistent snapshot
+    (REPEATABLE READ) on ``db`` before this function is invoked. Within a
+    REPEATABLE READ transaction, every read in the walk sees the same
+    snapshot, so page boundaries cannot shift under a concurrent
+    insert+delete that preserves the total row count.
     """
     pages: list[AssistantConfirmationExport] = []
     total: int | None = None
@@ -145,30 +150,50 @@ def list_records(
     response_model=AssistantConfirmationExportBundle,
 )
 def export_all_records(
+    response: Response,
     db: Session = Depends(get_db),
 ) -> AssistantConfirmationExportBundle:
     """Export every stored record as a complete, versioned bundle.
 
     Each page inside the bundle is a full ``AssistantConfirmationExport``
-    with its own metadata preserved. ``is_complete`` on the bundle is True
-    only when the export collected exactly the number of records the
-    database reported at the start of the export; a concurrent change
-    during the walk is surfaced as ``is_complete=False`` rather than
-    silently mislabelling the capture.
+    with its own metadata preserved. The export runs inside a REPEATABLE
+    READ transaction so that every page read in the walk sees the same
+    database snapshot. This is what makes count equality sufficient:
+    without a consistent snapshot, a concurrent insert+delete between page
+    reads could shift which records appear at each offset while preserving
+    the total row count, so count equality alone would not prove a
+    consistent capture. If the snapshot cannot be established, the export
+    fails closed with a sanitized 503 rather than returning a bundle that
+    might be internally inconsistent.
+
+    The response carries ``Content-Disposition: attachment`` with a fixed,
+    sanitized JSON filename so a browser download receives a predictable
+    name that never reflects record content.
     """
     generated_at = datetime.now(UTC)
+
+    # ``SET TRANSACTION`` must be the first statement in the transaction, so
+    # this runs before any repository read in this handler. The session
+    # created by ``get_db`` starts its transaction lazily on first execute,
+    # which is this SET.
+    try:
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The export could not be established as consistent.",
+        ) from None
+
     try:
         pages, total, collected = _walk_all_pages(db, generated_at=generated_at)
     except ConfirmationRecordError:
-        # A structural failure during the walk must not be reported as a
-        # successful export. There is no partial-success envelope for an
-        # export: the caller either receives a bundle or an error.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The export could not be completed.",
         ) from None
+
     is_complete = collected == total
-    return AssistantConfirmationExportBundle(
+    bundle = AssistantConfirmationExportBundle(
         format=CONFIRMATION_EXPORT_BUNDLE_FORMAT,
         generated_at=generated_at,
         total_record_count=total,
@@ -177,6 +202,10 @@ def export_all_records(
         is_complete=is_complete,
         pages=tuple(pages),
     )
+    response.headers["Content-Disposition"] = (
+        'attachment; filename="confirmation-records-export.json"'
+    )
+    return bundle
 
 
 @router.post(

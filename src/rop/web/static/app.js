@@ -613,70 +613,94 @@
     nextBtn.disabled = inFlight || end >= total;
   }
 
+  // Low-level fetch + parse. Returns {ok:true,payload} or {ok:false,reason}
+  // so callers can decide their own wording and never mistake a fetch
+  // failure for a server-reported state.
+  async function fetchPage(offset) {
+    const url =
+      "/api/assistant/confirmation-records?limit=" +
+      PAGE_SIZE +
+      "&offset=" +
+      offset;
+    let resp;
+    try {
+      resp = await fetch(url, { method: "GET" });
+    } catch (err) {
+      return { ok: false, reason: "unreachable" };
+    }
+    if (!resp.ok) {
+      return { ok: false, reason: "http " + resp.status };
+    }
+    let payload;
+    try {
+      payload = await resp.json();
+    } catch (err) {
+      return { ok: false, reason: "unreadable" };
+    }
+    if (
+      !payload ||
+      !Array.isArray(payload.records) ||
+      typeof payload.total_record_count !== "number"
+    ) {
+      return { ok: false, reason: "unexpected" };
+    }
+    return { ok: true, payload };
+  }
+
+  function applyPage(offset, payload) {
+    currentOffset = offset;
+    currentRecords = payload.records;
+    // Drop selections that are no longer on the visible page
+    for (const id of Array.from(selectedIds)) {
+      if (!currentRecords.some((r) => r.id === id)) selectedIds.delete(id);
+    }
+    table.hidden =
+      currentRecords.length === 0 && payload.total_record_count === 0;
+    renderRows(currentRecords);
+    renderPagination(
+      payload.total_record_count,
+      offset,
+      currentRecords.length
+    );
+    updateDeleteButton();
+  }
+
+  function describeFetchError(reason) {
+    if (reason === "unreachable") {
+      return (
+        "Could not reach the server to load records. " +
+        "Check that the local API is running."
+      );
+    }
+    if (reason === "unreadable") {
+      return "The server returned an unreadable response.";
+    }
+    if (reason === "unexpected") {
+      return "The server returned an unexpected response.";
+    }
+    return "The server could not return confirmation records (" + reason + ").";
+  }
+
   async function loadPage(offset) {
     if (inFlight) return;
     setBusy(true);
     setStatus("Loading records\u2026", "info");
     try {
-      const url =
-        "/api/assistant/confirmation-records?limit=" +
-        PAGE_SIZE +
-        "&offset=" +
-        offset;
-      const resp = await fetch(url, { method: "GET" });
-      if (!resp.ok) {
-        setStatus(
-          "The server could not return confirmation records (HTTP " +
-            resp.status +
-            ").",
-          "error"
-        );
+      const res = await fetchPage(offset);
+      if (!res.ok) {
+        setStatus(describeFetchError(res.reason), "error");
         return;
       }
-      let payload;
-      try {
-        payload = await resp.json();
-      } catch (err) {
-        setStatus("The server returned an unreadable response.", "error");
-        return;
-      }
-      if (
-        !payload ||
-        !Array.isArray(payload.records) ||
-        typeof payload.total_record_count !== "number"
-      ) {
-        setStatus("The server returned an unexpected response.", "error");
-        return;
-      }
-      currentOffset = offset;
-      currentRecords = payload.records;
-      // Drop selections that are no longer on the visible page
-      for (const id of Array.from(selectedIds)) {
-        if (!currentRecords.some((r) => r.id === id)) selectedIds.delete(id);
-      }
-      table.hidden = currentRecords.length === 0 && payload.total_record_count === 0;
-      renderRows(currentRecords);
-      renderPagination(
-        payload.total_record_count,
-        offset,
-        currentRecords.length
-      );
+      applyPage(offset, res.payload);
       setStatus(
         currentRecords.length === 0
           ? "No confirmation records stored."
           : "Loaded " +
               currentRecords.length +
               " of " +
-              payload.total_record_count +
+              res.payload.total_record_count +
               " records.",
         "info"
-      );
-      updateDeleteButton();
-    } catch (err) {
-      setStatus(
-        "Could not reach the server to load records. " +
-          "Check that the local API is running.",
-        "error"
       );
     } finally {
       setBusy(false);
@@ -716,10 +740,12 @@
       const blob = new Blob([JSON.stringify(payload, null, 2)], {
         type: "application/json",
       });
-      const filename =
-        "confirmation-records-" +
-        new Date().toISOString().replace(/[:.]/g, "-") +
-        ".json";
+      // Prefer the server-declared attachment filename so the browser's
+      // download and the API's response agree. Fall back to a stable local
+      // name if the header is unavailable.
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const filename = match ? match[1] : "confirmation-records-export.json";
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -811,16 +837,45 @@
       selectedIds.clear();
       setStatus(
         "Deleted " + payload.deleted_count + " record" +
-          (payload.deleted_count === 1 ? "" : "s") + ".",
+          (payload.deleted_count === 1 ? "" : "s") + ". Refreshing\u2026",
         "info"
       );
-      // Reload current page (or back one page if we emptied it)
+      // Release the guard first: the refresh below bypasses loadPage's
+      // duplicate-submission check on purpose, because it is the same
+      // logical operation that just succeeded. The refresh still guards
+      // against a concurrent user click because setBusy(true) re-blocks
+      // the buttons below.
       const remaining = currentRecords.length - payload.deleted_count;
       const nextOffset =
         remaining <= 0 && currentOffset > 0
           ? Math.max(0, currentOffset - PAGE_SIZE)
           : currentOffset;
-      await loadPage(nextOffset);
+      setBusy(false);
+      setBusy(true);
+      const res = await fetchPage(nextOffset);
+      if (res.ok) {
+        applyPage(nextOffset, res.payload);
+        setStatus(
+          "Deleted " + payload.deleted_count + " record" +
+            (payload.deleted_count === 1 ? "" : "s") + ". " +
+            (res.payload.records.length === 0
+              ? "No confirmation records stored."
+              : "Showing " +
+                res.payload.records.length +
+                " of " +
+                res.payload.total_record_count +
+                " records."),
+          "info"
+        );
+      } else {
+        setStatus(
+          "Deleted " + payload.deleted_count + " record" +
+            (payload.deleted_count === 1 ? "" : "s") +
+            ". The records table could not be refreshed; reload to see " +
+            "the current state.",
+          "error"
+        );
+      }
     } catch (err) {
       setStatus(
         "The deletion could not be completed because the server was " +

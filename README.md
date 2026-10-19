@@ -112,7 +112,9 @@ Micky AI has a local browser interface served by the existing FastAPI
 application at `GET /`. It is intentionally minimal: routing is
 deterministic and only the `help` capability is registered, so any other
 well-formed request receives an explicit `unsupported-capability`
-response and nothing is saved. A matched capability is not answered
+response and no conversation or message is saved. (Confirmation
+records for operations that require confirmation are a separate,
+durable store; see the confirmation-records section below.) A matched capability is not answered
 until the authorization policy allows it, so a request that would need
 clarification or confirmation, or that is not permitted, is stopped
 instead of run.
