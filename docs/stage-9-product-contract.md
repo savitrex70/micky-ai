@@ -240,9 +240,16 @@ Planned capabilities (Stage 9 target):
     before the new fetch. Creating a conversation treats the POST
     response as authoritative for id and title; a subsequent list
     refresh failure is a list error, not a title corruption, and a POST
-    network failure is treated as ambiguous. The API adds
-    backward-compatible `X-Total-Count` headers on its two list
-    endpoints.
+    network failure is treated as ambiguous. The Saved conversations
+    toolbar has an explicit "Refresh conversations" button that is
+    in-flight-guarded and preserves the selection, title, composer
+    mode, and ambiguity marker. A 404 for the selected conversation's
+    message fetch is treated as a confirmed deletion: it clears the
+    selection, title, messages, pagination state, and ambiguity
+    marker, and invalidates any in-flight load. Any other
+    inconclusive outcome (network, 500, 503, unreadable) preserves
+    the selection. The API adds backward-compatible `X-Total-Count`
+    headers on its two list endpoints.
   - Absent: conversation export/import, per-message editing, notes,
     tasks, reminders, local retrieval. Stage 9 owner decisions H.1, H.3,
     H.4 remain unresolved; the contract remains a draft.
