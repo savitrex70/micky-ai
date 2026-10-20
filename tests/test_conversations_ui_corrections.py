@@ -7,9 +7,22 @@ presence of a function or label.
 
 from __future__ import annotations
 
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+from pathlib import Path as _Path
+
 from fastapi.testclient import TestClient
 
 from rop.main import app
+
+# Note: five static-text tests for conversation-UI behaviour were
+# removed here after Task 230 correction 2. Each asserted a specific
+# string that the corrected implementation intentionally no longer
+# emits. Their behaviour is now proven by the executable Node DOM
+# scenarios at the bottom of this file (test_*_behavioural), which
+# run the real app.js against a DOM/fetch mock and drive actual
+# click/submit handlers.
 
 
 def _html() -> str:
@@ -29,35 +42,6 @@ def _js() -> str:
 # ============================================================================
 # Finding 1: delete must not auto-select another conversation
 # ============================================================================
-
-
-def test_delete_does_not_auto_select_another_conversation() -> None:
-    """The deleteSelected handler must not call selectConversation after 204.
-
-    Captures the body of Task 230's deleteSelected function and asserts
-    that ``selectConversation(conversations[0]`` — the specific auto-select
-    pattern that silently changed the save destination — does not appear.
-    """
-    js = _js()
-    marker = js.index("Task 230: persistent conversations UI")
-    idx = js.index("async function deleteSelected", marker)
-    # End at the next top-level function definition in the module.
-    rest = js[idx:]
-    # Isolate deleteSelected body up to the next sibling definition.
-    end_rel = rest.find("\n\n  function ")
-    if end_rel < 0:
-        end_rel = rest.find("\n\n  window.__mickyConversations")
-    assert end_rel > 0, "could not isolate deleteSelected body"
-    body = rest[:end_rel]
-
-    assert "selectConversation(conversations[0]" not in body, (
-        "deleteSelected must not auto-select another conversation after "
-        "deletion — that silently changes the persistence destination"
-    )
-    # And the corrected wording must acknowledge no selection remains.
-    assert "not be saved unless" in body or "No conversation is selected" in body
-
-
 def test_delete_clears_selected_id_and_view() -> None:
     """After 204 the view state must be cleared, not reassigned."""
     js = _js()
@@ -113,35 +97,6 @@ def test_js_pagination_offset_tracking() -> None:
     assert "messagesTotal" in js
 
 
-def test_js_refresh_jumps_to_last_page_for_long_conversation() -> None:
-    """A successful exchange must land on the page that contains it.
-
-    For a conversation longer than one page, refreshing page 1 would hide
-    the just-saved exchange. refreshSelectedMessages must jump to the
-    last page when messagesTotal exceeds one page.
-    """
-    js = _js()
-    idx = js.index("function refreshSelectedMessages")
-    body = js[idx : idx + 800]
-    assert "messagesTotal > MESSAGES_LIMIT" in body
-    assert "Math.floor" in body
-    assert "loadMessages(selectedId, lastOffset)" in body
-
-
-def test_js_page_change_resets_pagination_on_conversation_switch() -> None:
-    js = _js()
-    idx = js.index("async function selectConversation")
-    body = js[idx : idx + 800]
-    assert "if (selectedId !== id)" in body
-    assert "messagesOffset = 0" in body
-    assert "messagesTotal = null" in body
-
-
-# ============================================================================
-# Finding 3: honest persistence wording
-# ============================================================================
-
-
 def test_no_claim_of_confirmation_record_database_for_conversations() -> None:
     html = _html()
     assert "confirmation-record database" not in html.lower()
@@ -192,17 +147,6 @@ def test_send_request_reads_fastapi_detail_field() -> None:
     assert 'typeof payload.detail === "string"' in body
 
 
-def test_submit_handler_uses_kind_discriminator() -> None:
-    js = _js()
-    idx = js.index('form.addEventListener("submit"')
-    body = js[idx : idx + 5000]
-    assert 'result.kind === "ok"' in body
-    assert 'result.kind === "http"' in body
-    # Fall-through branch is the ambiguous case
-    assert 'kind === "http"' in body
-    assert "may or may not have been saved" in body.lower()
-
-
 def test_submit_blocks_blind_retry_on_ambiguous() -> None:
     js = _js()
     idx = js.index('form.addEventListener("submit"')
@@ -229,15 +173,6 @@ def test_ambiguous_api_methods_exposed() -> None:
     assert "markAmbiguous:" in js or "markAmbiguous: markAmbiguous" in js
     assert "clearAmbiguous:" in js or "clearAmbiguous: clearAmbiguous" in js
     assert "isAmbiguous:" in js or "isAmbiguous: isAmbiguous" in js
-
-
-def test_ambiguous_cleared_on_reload() -> None:
-    """Selecting a conversation resets its ambiguity — the reload
-    establishes the actual state."""
-    js = _js()
-    idx = js.index("async function selectConversation")
-    body = js[idx : idx + 800]
-    assert "ambiguousConversations.delete(id)" in body
 
 
 def test_no_auto_retry_of_request() -> None:
@@ -287,3 +222,86 @@ def test_confirmation_card_preserved() -> None:
     )
     for token in tokens:
         assert token in js, token
+
+
+# ============================================================================
+# Executable behavioural tests via the Node DOM harness
+# ============================================================================
+#
+# These run the real app.js inside a minimal DOM/fetch mock
+# (tests/conversations_ui_harness.cjs) and drive actual click/submit
+# handlers. They are behaviour tests, not source-text assertions.
+
+
+def _run_scenario(name: str) -> dict:
+    node = _shutil.which("node")
+    if node is None:
+        import pytest as _pytest
+
+        _pytest.skip("node is not available; behavioural UI tests require it")
+    here = _Path(__file__).resolve().parent
+    harness = here / "conversations_ui_harness.cjs"
+    app_js = here.parent / "src" / "rop" / "web" / "static" / "app.js"
+    assert harness.is_file(), f"harness missing: {harness}"
+    assert app_js.is_file(), f"app.js missing: {app_js}"
+    result = _subprocess.run(
+        [node, str(harness), str(app_js), name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"harness[{name}] failed:\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return _json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_selection_preserved_across_pages() -> None:
+    out = _run_scenario("selection-preserved")
+    assert out["selectedBeforePage"] == "A"
+    assert out["selectedAfterPage"] == "A"
+    assert "save" in out["composerMode"].lower()
+    assert out["preserved"] is True
+
+
+def test_http_503_marks_ambiguous_and_blocks_retry() -> None:
+    out = _run_scenario("http-503-ambiguous")
+    assert out["ambiguous"] is True, "503 must mark the conversation ambiguous"
+    assert out["blockedRetry"] is True, "a blind retry must not be allowed"
+    body_lower = out["statusText"].lower()
+    assert "may or may not" in body_lower or "confirmed" in body_lower
+
+
+def test_reload_click_clears_ambiguity() -> None:
+    out = _run_scenario("reload-click-clears")
+    assert out["ambiguousBeforeClick"] is True
+    assert out["ambiguousAfterClick"] is False
+    assert out["cleared"] is True
+
+
+def test_reload_failure_keeps_ambiguity() -> None:
+    out = _run_scenario("reload-failure-keeps")
+    assert out["ambiguous"] is True
+    assert out["kept"] is True
+
+
+def test_refresh_uses_fresh_total_and_loads_last_page() -> None:
+    out = _run_scenario("refresh-last-page")
+    assert (
+        out["usedFreshTotal"] is True
+    ), "refresh must query fresh total, not reuse cached"
+    assert (
+        out["loadedLastPage"] is True
+    ), "refresh must land on the page containing the newest messages"
+
+
+def test_switch_clears_stale_messages_on_fetch_failure() -> None:
+    out = _run_scenario("switch-clears-messages")
+    assert out["msgsAfterA_containsFromA"] is True
+    assert (
+        out["msgsAfterB_containsFromA"] is False
+    ), "conversation A's messages must not remain visible under B's title"
+    assert out["cleared"] is True

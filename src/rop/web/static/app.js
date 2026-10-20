@@ -434,10 +434,24 @@
       window.__mickyConversations.isAmbiguous(selectedConversationId)
     ) {
       setStatus(
-        "A previous request may or may not have been saved. Reload this " +
-          "conversation (click its title in the list to reload it) to " +
-          "establish the actual state before retrying.",
+        "A previous request's save could not be confirmed. Click the " +
+          "selected conversation's title in the list to reload its history " +
+          "and establish the actual state before retrying.",
         "error"
+      );
+      return;
+    }
+    // Also block while a reload of the selected conversation is running:
+    // sending before the reload completes would defeat the recovery.
+    if (
+      selectedConversationId &&
+      window.__mickyConversations &&
+      window.__mickyConversations.isLoadingMessages()
+    ) {
+      setStatus(
+        "The conversation is still loading. Wait for it to finish before " +
+          "sending.",
+        "info"
       );
       return;
     }
@@ -476,10 +490,34 @@
           }
         }
       } else if (result.kind === "http") {
-        // Server responded with a definite error. The persist path either
-        // did not run or rolled back. Show the sanitized detail. Keep the
-        // typed text so the user can retry deliberately.
-        setStatus(result.detail, "error");
+        const isSelectedConv = !!selectedConversationId;
+        if (isSelectedConv && result.status === 409) {
+          // Recognized sequence conflict: the pair was rolled back and is
+          // NOT stored. Still require a reload before a retry, so the user
+          // verifies the visible history rather than trusting the error
+          // category alone.
+          window.__mickyConversations.markAmbiguous(selectedConversationId);
+          setStatus(
+            "The save was rejected because of a concurrent update and " +
+              "nothing was stored. Reload the conversation to inspect the " +
+              "actual history before retrying.",
+            "error"
+          );
+        } else if (isSelectedConv && result.status === 503) {
+          // Persistence failure around commit. The save may or may not
+          // have completed. Must be treated as ambiguous, not definite.
+          window.__mickyConversations.markAmbiguous(selectedConversationId);
+          setStatus(
+            "The exchange could not be confirmed as saved. It may or may " +
+              "not have been stored. Reload the conversation to establish " +
+              "the actual state before retrying.",
+            "ambiguous"
+          );
+        } else {
+          // Definite non-persistence rejection (validation, refusal,
+          // missing conversation). Safe to show and allow retry.
+          setStatus(result.detail, "error");
+        }
       } else {
         // Ambiguous outcome (network / unreadable / unexpected). We cannot
         // establish whether the exchange was saved. Mark the selected
@@ -1014,6 +1052,7 @@
 
   let conversations = [];
   let selectedId = null;
+  let selectedTitle = null;
   let listInFlight = false;
   let listOffset = 0;
   let listTotal = null;
@@ -1070,7 +1109,13 @@
       titleBtn.textContent = conv.title;
       titleBtn.setAttribute("aria-current", conv.id === selectedId ? "true" : "false");
       titleBtn.addEventListener("click", () => {
-        if (conv.id === selectedId) return;
+        if (conv.id === selectedId) {
+          // Clicking the already-selected conversation reloads its history.
+          // This is the advertised ambiguity-recovery action, so it must
+          // actually trigger a reload even when the id is unchanged.
+          reloadSelected();
+          return;
+        }
         selectConversation(conv.id);
       });
       li.appendChild(titleBtn);
@@ -1085,6 +1130,16 @@
       li.appendChild(updated);
 
       listEl.appendChild(li);
+    }
+    // If the selected conversation is not on this page, say so rather than
+    // silently dropping the selection.
+    if (selectedId && !findConversation(selectedId)) {
+      const note = document.createElement("li");
+      note.className = "conv-off-page";
+      note.textContent =
+        "The selected conversation is on another page; its title remains " +
+        "active and the composer will still save to it.";
+      listEl.appendChild(note);
     }
   }
 
@@ -1136,17 +1191,24 @@
       listTotal = headerTotal !== null ? Number(headerTotal) : null;
       listOffset = offset;
       conversations = payload;
-      // If the previously selected conversation disappeared, clear the view.
-      if (selectedId && !findConversation(selectedId)) {
-        selectedId = null;
-        view.hidden = true;
-      }
+      // A missing row on the currently loaded page is not evidence that the
+      // selected conversation was deleted — with pagination the row may
+      // simply be on another page. Preserve the selection. Only an explicit
+      // delete (204) or a confirmed 404 for the exact conversation clears it.
       renderList();
       renderConvPagination();
       updateComposerMode();
       setStatus(statusEl, "", null);
+      // If the selected conversation is on this page, refresh its title in
+      // case another client renamed it. Do not call selectConversation: that
+      // would reload messages (and possibly fail) merely because the list
+      // page changed.
       if (selectedId) {
-        await selectConversation(selectedId, { preserveStatus: true });
+        const sel = findConversation(selectedId);
+        if (sel) {
+          selectedTitle = sel.title;
+          currentTitleEl.textContent = sel.title;
+        }
       }
     } catch (err) {
       setStatus(
@@ -1231,25 +1293,35 @@
 
   async function selectConversation(id, opts) {
     opts = opts || {};
-    if (selectedId !== id) {
+    const isSwitch = selectedId !== id;
+    if (isSwitch) {
+      // Clear prior messages BEFORE the fetch. If the fetch fails, the user
+      // must not see one conversation's messages under another's title.
       messagesOffset = 0;
       messagesTotal = null;
+      while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+      msgsEmpty.hidden = true;
+      renderMsgsPagination();
     }
-    // Reloading a conversation establishes the actual persisted state from
-    // the server's response, so any prior ambiguity for this conversation
-    // is now resolved. We do not claim a specific outcome — the user
-    // inspects what the messages actually show.
-    ambiguousConversations.delete(id);
     selectedId = id;
+    // Preserve the current title when we cannot find the conversation in
+    // the loaded page (pagination); fall back to empty only on a truly
+    // unknown conversation.
     const conv = findConversation(id);
-    currentTitleEl.textContent = conv ? conv.title : "";
+    selectedTitle = conv ? conv.title : selectedTitle || "";
+    currentTitleEl.textContent = selectedTitle;
     view.hidden = false;
     renderList();
     updateComposerMode();
     if (!opts.preserveStatus) {
       setStatus(statusEl, "", null);
     }
-    await loadMessages(id, 0);
+    // Only clear the ambiguity marker after the message load for THIS
+    // conversation has successfully established the persisted state.
+    const ok = await loadMessages(id, 0);
+    if (ok && selectedId === id) {
+      ambiguousConversations.delete(id);
+    }
   }
 
   function renderMsgsPagination() {
@@ -1266,6 +1338,9 @@
     msgsNext.disabled = messagesInFlight || end >= messagesTotal;
   }
 
+  // Returns true only when the fetch succeeded, the body was valid, and
+  // the response was for the current conversation/load token. A false
+  // result must NOT be interpreted as "the conversation is empty".
   async function loadMessages(id, offset) {
     if (typeof offset !== "number") offset = 0;
     const token = ++messagesLoadToken;
@@ -1281,27 +1356,27 @@
           offset,
         { method: "GET" }
       );
-      if (token !== messagesLoadToken) return; // stale
+      if (token !== messagesLoadToken) return false; // stale
       if (!resp.ok) {
         setStatus(
           msgsStatus,
           "Could not load messages (HTTP " + resp.status + ").",
           "error"
         );
-        return;
+        return false;
       }
       let payload;
       try {
         payload = await resp.json();
       } catch (err) {
-        if (token !== messagesLoadToken) return;
+        if (token !== messagesLoadToken) return false;
         setStatus(msgsStatus, "The message list response was unreadable.", "error");
-        return;
+        return false;
       }
-      if (token !== messagesLoadToken) return; // stale
+      if (token !== messagesLoadToken) return false; // stale
       if (!Array.isArray(payload)) {
         setStatus(msgsStatus, "The message list response was unexpected.", "error");
-        return;
+        return false;
       }
       const headerTotal = resp.headers.get("X-Total-Count");
       messagesTotal = headerTotal !== null ? Number(headerTotal) : null;
@@ -1309,18 +1384,47 @@
       renderMessages(payload);
       renderMsgsPagination();
       setStatus(msgsStatus, "", null);
+      return true;
     } catch (err) {
-      if (token !== messagesLoadToken) return;
+      if (token !== messagesLoadToken) return false;
       setStatus(
         msgsStatus,
         "Messages could not be loaded because the server was unreachable.",
         "error"
       );
+      return false;
     } finally {
       if (token === messagesLoadToken) {
         messagesInFlight = false;
         renderMsgsPagination();
       }
+    }
+  }
+
+  // Explicit "reload the selected conversation" action. This is the
+  // advertised recovery for an ambiguous save, so it must work even when
+  // the conversation is already selected. It does not touch selection
+  // state, and it clears the ambiguity marker only after a successful load.
+  async function reloadSelected() {
+    if (!selectedId) return;
+    const id = selectedId;
+    // Clear prior messages up front so a failed reload cannot leave the
+    // previous content visible under the title.
+    messagesOffset = 0;
+    messagesTotal = null;
+    while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+    msgsEmpty.hidden = true;
+    renderMsgsPagination();
+    const ok = await loadMessages(id, 0);
+    if (ok && selectedId === id) {
+      ambiguousConversations.delete(id);
+    } else if (!ok && selectedId === id) {
+      setStatus(
+        msgsStatus,
+        "The conversation could not be reloaded, so the actual persisted " +
+          "state is still unknown. Do not resend until reload succeeds.",
+        "error"
+      );
     }
   }
 
@@ -1443,18 +1547,60 @@
     return selectedId;
   }
 
-  function refreshSelectedMessages() {
+  // After a saved exchange, jump to the page that actually contains the
+  // newest messages. The saved user/assistant pair has just been added on
+  // the server, so we must read a FRESH total from the server rather than
+  // recomputing from a cached one: other writers may also have appended,
+  // and page boundaries depend on the true current total.
+  async function refreshSelectedMessages() {
     if (!selectedId) return;
-    // When the conversation fits on one page, just reload page 1. When it
-    // exceeds one page, jump to the last page so the freshly-saved
-    // exchange is visible without requiring the user to page forward.
-    if (messagesTotal !== null && messagesTotal > MESSAGES_LIMIT) {
-      const lastOffset =
-        Math.floor((messagesTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
-      loadMessages(selectedId, lastOffset);
-    } else {
-      loadMessages(selectedId, 0);
+    const id = selectedId;
+    const token = ++messagesLoadToken;
+    let freshTotal;
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations/" +
+          encodeURIComponent(id) +
+          "/messages?limit=1&offset=0",
+        { method: "GET" }
+      );
+      if (token !== messagesLoadToken || selectedId !== id) return;
+      if (!resp.ok) {
+        setStatus(
+          msgsStatus,
+          "The exchange could not be confirmed in the conversation " +
+            "history (HTTP " + resp.status + "). Reload the conversation to " +
+            "verify.",
+          "error"
+        );
+        return;
+      }
+      const headerTotal = resp.headers.get("X-Total-Count");
+      if (headerTotal === null) {
+        // Fall back to the cached total — bounded, still safe.
+        freshTotal = messagesTotal;
+      } else {
+        freshTotal = Number(headerTotal);
+        messagesTotal = freshTotal;
+      }
+    } catch (err) {
+      if (token !== messagesLoadToken || selectedId !== id) return;
+      setStatus(
+        msgsStatus,
+        "The exchange could not be confirmed in the conversation history " +
+          "because the server was unreachable. Reload to verify.",
+        "error"
+      );
+      return;
     }
+    if (token !== messagesLoadToken || selectedId !== id) return;
+    let targetOffset = 0;
+    if (freshTotal && freshTotal > MESSAGES_LIMIT) {
+      // Page containing the newest message (index freshTotal - 1).
+      targetOffset =
+        Math.floor((freshTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
+    }
+    await loadMessages(id, targetOffset);
   }
 
   function markAmbiguous(id) {
@@ -1475,6 +1621,10 @@
     markAmbiguous: markAmbiguous,
     clearAmbiguous: clearAmbiguous,
     isAmbiguous: isAmbiguous,
+    reloadSelected: reloadSelected,
+    isLoadingMessages: function () {
+      return messagesInFlight;
+    },
   };
 
   newBtn.addEventListener("click", createConversation);

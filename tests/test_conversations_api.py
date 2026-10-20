@@ -860,3 +860,93 @@ def test_append_similar_fk_name_returns_503_not_404(client, monkeypatch) -> None
     assert "simulated" not in response.text.lower()
     # Confirm it did not leak the constraint name either
     assert "fkey" not in response.text.lower()
+
+
+# ============================================================================
+# Task 230 correction 2: X-Total-Count header on list endpoints
+# ============================================================================
+
+
+def test_conversations_list_reports_total_count(client) -> None:
+    """X-Total-Count is the full-set count, not the current page length."""
+    for i in range(5):
+        _create(client, title=f"t{i}")
+    resp = client.get(
+        "/api/assistant/conversations?limit=2&offset=0",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Total-Count") == "5"
+    assert len(resp.json()) == 2
+
+
+def test_conversations_list_empty_total_count(client) -> None:
+    resp = client.get(
+        "/api/assistant/conversations?limit=10&offset=0",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Total-Count") == "0"
+    assert resp.json() == []
+
+
+def test_conversations_list_offset_beyond_total(client) -> None:
+    """Offset past the end returns an empty page with a non-zero total."""
+    for i in range(3):
+        _create(client, title=f"t{i}")
+    resp = client.get(
+        "/api/assistant/conversations?limit=10&offset=100",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+    assert resp.headers.get("X-Total-Count") == "3"
+
+
+def test_messages_list_reports_total_count(client) -> None:
+    conv = _create(client)
+    for i in range(4):
+        client.post(
+            f"/api/assistant/conversations/{conv['id']}/messages",
+            headers=ORIGIN_HEADERS,
+            json={"content": f"m{i}"},
+        )
+    resp = client.get(
+        f"/api/assistant/conversations/{conv['id']}/messages?limit=2&offset=0",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Total-Count") == "4"
+    assert len(resp.json()) == 2
+
+
+def test_messages_list_empty_total_count(client) -> None:
+    conv = _create(client)
+    resp = client.get(
+        f"/api/assistant/conversations/{conv['id']}/messages?limit=10&offset=0",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Total-Count") == "0"
+    assert resp.json() == []
+
+
+def test_messages_list_missing_conversation_404(client) -> None:
+    resp = client.get(
+        f"/api/assistant/conversations/{uuid4()}/messages",
+        headers={"origin": ORIGIN},
+    )
+    assert resp.status_code == 404
+    assert "X-Total-Count" not in resp.headers
+
+
+def test_conversation_list_response_is_still_plain_array(client) -> None:
+    """The JSON shape must remain an array; only a header was added."""
+    _create(client, title="shape")
+    payload = client.get(
+        "/api/assistant/conversations",
+        headers={"origin": ORIGIN},
+    ).json()
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    assert set(payload[0].keys()) == {"id", "title", "created_at", "updated_at"}
