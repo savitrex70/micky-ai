@@ -34,6 +34,18 @@ offline-capable.
 - **Delete.** `DELETE /api/assistant/conversations/{id}` after an
   explicit `window.confirm`. The row is removed from the list only after
   a `204 No Content` response. Cancelling the dialog performs no API call.
+  After a confirmed deletion the selection is cleared; the interface does
+  not auto-select another conversation, so a subsequent exchange is never
+  silently saved to a conversation the user did not choose.
+- **Pagination.** The conversation list and the message list each expose
+  Previous / Next controls with a visible range. The API's
+  `X-Total-Count` header (added by this task, backward-compatible) is the
+  source of truth for the total.
+- **Selection across pages.** Navigating the conversation-list pagination
+  does not deselect the active conversation. A row missing from the
+  currently visible page is not evidence of deletion; the selection and
+  composer mode are preserved. Only an explicit delete (204) or a
+  confirmed 404 clears the selection.
 
 ## Persistence semantics
 
@@ -54,8 +66,12 @@ offline-capable.
   only when the final response status is `success` - appends the user's
   exact message and the assistant's actual reply in one transaction,
   committed once.
-- After a successful persisted turn the interface refreshes the message
-  list from the API. It never POSTs the user message separately and never
+- After a successful persisted turn the interface calls a single
+  authoritative helper (`reloadLatest`) that reads the server's
+  `X-Total-Count` for the conversation, then fetches the page containing
+  the newest messages. This is correct even at page boundaries (totals
+  199, 200, 201, 399, 400, 401) and under concurrent appends by other
+  writers. It never POSTs the user message separately and never
   fabricates an assistant message.
 - A failure during the second append or the commit rolls back the entire
   pair: no half-saved successful exchange is possible. Sequence conflicts
@@ -82,6 +98,46 @@ offline-capable.
   is established.
 - No automatic retry is performed on either the client or the server.
   Retrying is a deliberate user action.
+
+**Definite vs ambiguous failures.** A non-2xx HTTP response is treated
+as a definite rejection only when it does not represent a
+commit-outcome-uncertain persistence failure. Two cases are deliberately
+treated as ambiguous on the selected-conversation path:
+
+- `503` from the persist path: a commit failure may or may not have
+  saved the pair. The interface states that the exchange may or may not
+  have been stored.
+- `409` for a concurrent sequence conflict: the pair was rolled back, but
+  the user is still directed to reload before retrying so they verify
+  the visible history.
+
+Both mark the conversation ambiguous.
+
+**Explicit recovery.** Clicking the selected conversation's title (or
+the reload control) triggers `reloadLatest`, which reads a fresh
+`X-Total-Count` and then fetches the page containing the newest
+messages. The ambiguity marker clears only after that fetch succeeds and
+renders for the same conversation under the same generation token. A
+failed total fetch, a failed page fetch, or a stale response leaves the
+marker set and the composer blocked, so the user cannot blind-resubmit
+until the reload succeeds and they have inspected the actual persisted
+history. The interface never claims the reload proves a particular
+request was or was not saved.
+
+**Switch clears stale messages.** When the user selects a different
+conversation, the previous conversation's rendered messages are cleared
+before the new fetch begins. A failed fetch shows an error and no stale
+content; the previous conversation's messages never appear under the new
+title.
+
+**Create is decoupled from list refresh.** The POST response is the
+authority for the new conversation's id and title. That id and title are
+applied immediately; a subsequent list-refresh failure cannot leave the
+previous title displayed under the new selection. A list-refresh failure
+is reported as a list error with a reload path. A network failure during
+the POST is treated as ambiguous: the server may have created the
+conversation, the interface does not repeat the request, and the user is
+directed to reload the list.
 
 ## Privacy and separation
 

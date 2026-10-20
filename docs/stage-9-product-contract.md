@@ -226,7 +226,23 @@ Planned capabilities (Stage 9 target):
     user/assistant pair through `POST /api/assistant/requests` with a
     `conversation_id`. Non-success outcomes are shown transiently and
     not saved. Requests without a `conversation_id` retain their
-    historical database-free behaviour.
+    historical database-free behaviour. Deleting the selected
+    conversation clears the selection without auto-selecting another,
+    so future persistence never lands on a conversation the user did
+    not choose. Navigating the conversation-list pagination preserves
+    the selection. Post-success refresh and ambiguous-save recovery both
+    use one authoritative helper that reads a fresh `X-Total-Count` and
+    then loads the page containing the newest messages; the ambiguity
+    marker clears only after a successful, valid message load for that
+    same conversation. `503` from the persist path and `409` sequence
+    conflicts are treated as ambiguous and block blind resubmission.
+    Switching conversations clears the prior conversation's messages
+    before the new fetch. Creating a conversation treats the POST
+    response as authoritative for id and title; a subsequent list
+    refresh failure is a list error, not a title corruption, and a POST
+    network failure is treated as ambiguous. The API adds
+    backward-compatible `X-Total-Count` headers on its two list
+    endpoints.
   - Absent: conversation export/import, per-message editing, notes,
     tasks, reminders, local retrieval. Stage 9 owner decisions H.1, H.3,
     H.4 remain unresolved; the contract remains a draft.

@@ -1229,11 +1229,28 @@
     newBtn.disabled = true;
     setStatus(statusEl, "Creating conversation\u2026", "info");
     try {
-      const resp = await fetch("/api/assistant/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "New conversation" }),
-      });
+      let resp;
+      try {
+        resp = await fetch("/api/assistant/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "New conversation" }),
+        });
+      } catch (err) {
+        // Network failure: the server may have created the conversation
+        // before the browser lost the response. Treat as ambiguous: do not
+        // claim definite failure, do not repeat the POST, and tell the
+        // user to reload the list to establish what actually happened.
+        setStatus(
+          statusEl,
+          "The conversation creation could not be confirmed. The server " +
+            "may have created it before the response was lost. Reload the " +
+            "page to verify the actual saved conversations before " +
+            "creating another.",
+          "ambiguous"
+        );
+        return;
+      }
       if (!resp.ok) {
         setStatus(
           statusEl,
@@ -1246,23 +1263,74 @@
       try {
         payload = await resp.json();
       } catch (err) {
-        setStatus(statusEl, "The conversation response was unreadable.", "error");
+        // Server did respond, but we cannot parse it — treat as ambiguous.
+        setStatus(
+          statusEl,
+          "The conversation creation response could not be read. The " +
+            "server may have created the conversation. Reload the page to " +
+            "verify the actual saved conversations.",
+          "ambiguous"
+        );
         return;
       }
-      if (!payload || typeof payload.id !== "string") {
-        setStatus(statusEl, "The conversation response was unexpected.", "error");
+      // Validate the fields the UI relies on. Both must be present for us
+      // to trust this as the authority for the new conversation.
+      if (
+        !payload ||
+        typeof payload.id !== "string" ||
+        typeof payload.title !== "string"
+      ) {
+        setStatus(
+          statusEl,
+          "The conversation creation response was unexpected. The server " +
+            "may have created it. Reload the page to verify.",
+          "ambiguous"
+        );
         return;
       }
+      // The POST response is authoritative for id and title. Record the
+      // title directly BEFORE any list refresh, so that even a failed
+      // refresh cannot leave us showing the previous conversation's title
+      // or a blank one.
+      const createdId = payload.id;
+      const createdTitle = payload.title;
+      selectedId = createdId;
+      selectedTitle = createdTitle;
+      currentTitleEl.textContent = createdTitle;
+      view.hidden = false;
+      updateComposerMode();
+      renderList();
+      // Now try to refresh the list so the new row is visible. Failure
+      // here is a list-refresh failure, not a creation failure: the row
+      // and selection remain valid from the POST response.
       listOffset = 0;
       await loadConversations(0);
-      selectConversation(payload.id);
-    } catch (err) {
-      setStatus(
-        statusEl,
-        "The conversation could not be created because the server was " +
-          "unreachable.",
-        "error"
-      );
+      if (!findConversation(createdId)) {
+        // Refresh failed (or list page didn't include it). Keep the
+        // selection and title from the POST response; surface a list
+        // error the user can recover from.
+        setStatus(
+          statusEl,
+          "The conversation was created, but the list could not be " +
+            "refreshed. Its title and selection are kept. Click " +
+            "\u201CLoad records\u201D in the conversation list toolbar " +
+            "to retry the refresh.",
+          "error"
+        );
+        return;
+      }
+      // Refresh succeeded and the row is present; load latest messages.
+      setStatus(statusEl, "", null);
+      setStatus(msgsStatus, "Loading messages\u2026", "info");
+      const ok = await reloadLatest(createdId);
+      if (!ok && selectedId === createdId) {
+        setStatus(
+          msgsStatus,
+          "The latest conversation history could not be loaded. Reload " +
+            "to try again.",
+          "error"
+        );
+      }
     } finally {
       createInFlight = false;
       newBtn.disabled = false;
@@ -1291,6 +1359,48 @@
     }
   }
 
+  // Reload the LATEST persisted messages for `id`, using a fresh total
+  // count rather than assuming page zero is sufficient. For a conversation
+  // longer than MESSAGES_LIMIT, the newest messages — including a possibly
+  // saved exchange — are at the end. This is the recovery path for an
+  // ambiguous save and the ordinary-load path for any selection.
+  //
+  // Returns true only when a fresh total was obtained, the page it points
+  // at was fetched successfully, and the result was rendered for `id`
+  // under the same generation token. Any failure returns false and the
+  // caller must NOT clear the ambiguity marker.
+  async function reloadLatest(id) {
+    const token = ++messagesLoadToken;
+    // Ask for a single record to obtain a fresh total.
+    let freshTotal;
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations/" +
+          encodeURIComponent(id) +
+          "/messages?limit=1&offset=0",
+        { method: "GET" }
+      );
+      if (token !== messagesLoadToken || selectedId !== id) return false;
+      if (!resp.ok) return false;
+      const headerTotal = resp.headers.get("X-Total-Count");
+      if (headerTotal === null) return false;
+      freshTotal = Number(headerTotal);
+      if (!Number.isFinite(freshTotal) || freshTotal < 0) return false;
+    } catch (err) {
+      return false;
+    }
+    if (token !== messagesLoadToken || selectedId !== id) return false;
+    let targetOffset = 0;
+    if (freshTotal > MESSAGES_LIMIT) {
+      targetOffset =
+        Math.floor((freshTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
+    }
+    // Now load the actual page containing the newest messages.
+    const ok = await loadMessages(id, targetOffset, token);
+    if (!ok) return false;
+    return true;
+  }
+
   async function selectConversation(id, opts) {
     opts = opts || {};
     const isSwitch = selectedId !== id;
@@ -1304,11 +1414,15 @@
       renderMsgsPagination();
     }
     selectedId = id;
-    // Preserve the current title when we cannot find the conversation in
-    // the loaded page (pagination); fall back to empty only on a truly
-    // unknown conversation.
+    // Prefer the title from the loaded list. When the selected conversation
+    // is not on the current page, fall back to the previously known title
+    // rather than reusing another conversation's title or showing blank.
     const conv = findConversation(id);
-    selectedTitle = conv ? conv.title : selectedTitle || "";
+    if (conv) {
+      selectedTitle = conv.title;
+    } else if (!selectedTitle) {
+      selectedTitle = "";
+    }
     currentTitleEl.textContent = selectedTitle;
     view.hidden = false;
     renderList();
@@ -1316,11 +1430,18 @@
     if (!opts.preserveStatus) {
       setStatus(statusEl, "", null);
     }
-    // Only clear the ambiguity marker after the message load for THIS
-    // conversation has successfully established the persisted state.
-    const ok = await loadMessages(id, 0);
+    setStatus(msgsStatus, "Loading messages\u2026", "info");
+    const ok = await reloadLatest(id);
     if (ok && selectedId === id) {
       ambiguousConversations.delete(id);
+    } else if (selectedId === id) {
+      setStatus(
+        msgsStatus,
+        "The latest conversation history could not be loaded. The " +
+          "actual persisted state is not confirmed; do not resend until " +
+          "reloading succeeds.",
+        "error"
+      );
     }
   }
 
@@ -1341,9 +1462,13 @@
   // Returns true only when the fetch succeeded, the body was valid, and
   // the response was for the current conversation/load token. A false
   // result must NOT be interpreted as "the conversation is empty".
-  async function loadMessages(id, offset) {
+  async function loadMessages(id, offset, externalToken) {
     if (typeof offset !== "number") offset = 0;
-    const token = ++messagesLoadToken;
+    const token =
+      typeof externalToken === "number" ? externalToken : ++messagesLoadToken;
+    // Only the token owner can bump the token; if a token was supplied, we
+    // do not bump it again (the caller already established the generation).
+    if (typeof externalToken !== "number") messagesLoadToken = token;
     messagesInFlight = true;
     setStatus(msgsStatus, "Loading messages\u2026", "info");
     try {
@@ -1415,14 +1540,16 @@
     while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
     msgsEmpty.hidden = true;
     renderMsgsPagination();
-    const ok = await loadMessages(id, 0);
+    setStatus(msgsStatus, "Loading messages\u2026", "info");
+    const ok = await reloadLatest(id);
     if (ok && selectedId === id) {
       ambiguousConversations.delete(id);
     } else if (!ok && selectedId === id) {
       setStatus(
         msgsStatus,
-        "The conversation could not be reloaded, so the actual persisted " +
-          "state is still unknown. Do not resend until reload succeeds.",
+        "The latest conversation history could not be loaded. The " +
+          "actual persisted state is not confirmed; do not resend until " +
+          "reloading succeeds.",
         "error"
       );
     }
@@ -1547,60 +1674,22 @@
     return selectedId;
   }
 
-  // After a saved exchange, jump to the page that actually contains the
-  // newest messages. The saved user/assistant pair has just been added on
-  // the server, so we must read a FRESH total from the server rather than
-  // recomputing from a cached one: other writers may also have appended,
-  // and page boundaries depend on the true current total.
+  // After a saved exchange, reload the latest persisted history via the
+  // same authoritative path used for recovery: fresh total, then the page
+  // containing the newest messages. Delegating here keeps the post-success
+  // refresh and the ambiguous-save recovery behaviourally identical.
   async function refreshSelectedMessages() {
     if (!selectedId) return;
     const id = selectedId;
-    const token = ++messagesLoadToken;
-    let freshTotal;
-    try {
-      const resp = await fetch(
-        "/api/assistant/conversations/" +
-          encodeURIComponent(id) +
-          "/messages?limit=1&offset=0",
-        { method: "GET" }
-      );
-      if (token !== messagesLoadToken || selectedId !== id) return;
-      if (!resp.ok) {
-        setStatus(
-          msgsStatus,
-          "The exchange could not be confirmed in the conversation " +
-            "history (HTTP " + resp.status + "). Reload the conversation to " +
-            "verify.",
-          "error"
-        );
-        return;
-      }
-      const headerTotal = resp.headers.get("X-Total-Count");
-      if (headerTotal === null) {
-        // Fall back to the cached total — bounded, still safe.
-        freshTotal = messagesTotal;
-      } else {
-        freshTotal = Number(headerTotal);
-        messagesTotal = freshTotal;
-      }
-    } catch (err) {
-      if (token !== messagesLoadToken || selectedId !== id) return;
+    const ok = await reloadLatest(id);
+    if (!ok && selectedId === id) {
       setStatus(
         msgsStatus,
-        "The exchange could not be confirmed in the conversation history " +
-          "because the server was unreachable. Reload to verify.",
+        "The exchange could not be confirmed in the conversation history. " +
+          "Reload the conversation to verify the actual persisted state.",
         "error"
       );
-      return;
     }
-    if (token !== messagesLoadToken || selectedId !== id) return;
-    let targetOffset = 0;
-    if (freshTotal && freshTotal > MESSAGES_LIMIT) {
-      // Page containing the newest message (index freshTotal - 1).
-      targetOffset =
-        Math.floor((freshTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
-    }
-    await loadMessages(id, targetOffset);
   }
 
   function markAmbiguous(id) {

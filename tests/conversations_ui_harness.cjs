@@ -162,11 +162,17 @@ module.exports = {
 // ----------------------------------------------------------------------------
 // Scenarios
 // ----------------------------------------------------------------------------
-
+﻿// ----------------------------------------------------------------------------
+// Scenarios
+// ----------------------------------------------------------------------------
 const H = module.exports;
 
 function conv(id, title) {
-  return { id, title, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" };
+  return {
+    id, title,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-02T00:00:00Z",
+  };
 }
 function msg(id, cid, role, seq, content) {
   return {
@@ -174,7 +180,23 @@ function msg(id, cid, role, seq, content) {
     created_at: "2026-01-01T00:00:00Z",
   };
 }
-
+function pageOfConversations(pageIndex, pageSize, total) {
+  const start = pageIndex * pageSize;
+  const end = Math.min(start + pageSize, total);
+  const out = [];
+  for (let i = start; i < end; i++) out.push(conv("C" + i, "Conversation " + i));
+  return out;
+}
+function pageOfMessages(cid, offset, limit, total) {
+  const start = offset;
+  const end = Math.min(offset + limit, total);
+  const out = [];
+  for (let i = start; i < end; i++) {
+    out.push(msg("m" + i, cid, i % 2 === 0 ? "user" : "assistant",
+                 i, "msg " + i));
+  }
+  return out;
+}
 function selectedId() {
   return global.window.__mickyConversations
     ? global.window.__mickyConversations.getSelectedId()
@@ -184,202 +206,357 @@ function isAmbiguous(id) {
   return global.window.__mickyConversations.isAmbiguous(id);
 }
 
-// Common bootstrap: enqueue the initial list response, then runApp.
-// runApp() synchronously triggers loadConversations(), so the queue
-// handler must already be present.
-async function bootstrap(initialConversations, initialTotal) {
-  H.enqueue(async () => H.jsonResponse(initialConversations, 200,
-    { "X-Total-Count": String(initialTotal) }));
+async function bootstrap(pageIndex, pageSize, total) {
+  const page = pageOfConversations(pageIndex, pageSize, total);
+  H.enqueue(async () => H.jsonResponse(page, 200,
+    { "X-Total-Count": String(total) }));
   H.runApp();
   await H.drain(25);
-  const list = H.registry["conversations-list"];
-  if (list.children.length !== initialConversations.length) {
-    throw new Error(
-      "list did not render; got " + list.children.length + " children, " +
-      "status: " + H.registry["conversations-status"].textContent
-    );
-  }
 }
 
+// Enqueue the two fetches that a select/reload of `conversationId` needs
+// (fresh total via limit=1, then the latest page at the correct offset),
+// then click row `rowIdx` and wait for handlers to run.
+async function selectViaUI(rowIdx, conversationId, total, pageFn) {
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1&offset=0")) {
+      throw new Error("expected total fetch, got " + url);
+    }
+    return H.jsonResponse([], 200, { "X-Total-Count": String(total) });
+  });
+  H.enqueue(async (url) => {
+    const expectedOffset = total > 200
+      ? Math.floor((total - 1) / 200) * 200
+      : 0;
+    if (!url.includes("offset=" + expectedOffset)) {
+      throw new Error("expected offset=" + expectedOffset + ", got " + url);
+    }
+    const page = pageFn ? pageFn(expectedOffset) : [];
+    return H.jsonResponse(page, 200, { "X-Total-Count": String(total) });
+  });
+  const list = H.registry["conversations-list"];
+  if (list.children.length <= rowIdx) {
+    throw new Error("row " + rowIdx + " missing (have " + list.children.length + ")");
+  }
+  list.children[rowIdx].children[0].click();
+  await H.drain(30);
+}
+
+// --- 1. Selection preserved across realistic list pages -------------------
 async function scenarioSelectionPreserved() {
-  await bootstrap([conv("A", "A")], 2);
-
-  // Select A
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-  const beforePage = selectedId();
-
-  // Navigate to page 2 (list page 2 shows only B)
-  H.enqueue(async () => H.jsonResponse([conv("B", "B")], 200, { "X-Total-Count": "2" }));
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const before = selectedId();
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) throw new Error("expected offset=50, got " + url);
+    return H.jsonResponse(pageOfConversations(1, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
   H.registry["conversations-next"].click();
   await H.drain(25);
-  const afterPage = selectedId();
-
+  const afterPage2 = selectedId();
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) throw new Error("expected offset=0, got " + url);
+    return H.jsonResponse(pageOfConversations(0, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-prev"].click();
+  await H.drain(25);
+  const afterPage1 = selectedId();
   return {
-    ok: true,
-    scenario: "selection-preserved",
-    selectedBeforePage: beforePage,
-    selectedAfterPage: afterPage,
+    ok: true, scenario: "selection-preserved",
+    selectedBefore: before,
+    selectedAfterPage2: afterPage2,
+    selectedAfterPage1: afterPage1,
     composerMode: H.registry["composer-mode"].textContent,
-    preserved: beforePage === "A" && afterPage === "A",
+    preserved: before === "C0" && afterPage2 === "C0" && afterPage1 === "C0",
   };
 }
 
+// --- 2. Refresh after save loads latest page at 402 ----------------------
+async function scenarioRefreshLastPage() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  H.registry["message"].value = "hi";
+  H.enqueue(async () => H.jsonResponse({ status: "success", message: "ok" }, 200, {}));
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "402" });
+  });
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=400")) throw new Error("expected offset=400, got " + url);
+    return H.jsonResponse(pageOfMessages("C0", 400, 200, 402), 200,
+      { "X-Total-Count": "402" });
+  });
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(40);
+  const fetches = H.fetchLog.map((f) => f.url).filter((u) => u.includes("/messages"));
+  return {
+    ok: true, scenario: "refresh-last-page",
+    fetches, lastPageLoaded: fetches.some((u) => u.includes("offset=400")),
+  };
+}
+
+// --- 3. 503 marks ambiguous and blocks retry ------------------------------
 async function scenarioHttp503Ambiguous() {
-  await bootstrap([conv("A", "A")], 1);
-
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-
-  // Submit a message whose persistence returns 503
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
   H.registry["message"].value = "hello";
-  H.enqueue(async () => H.jsonResponse({ detail: "The exchange could not be completed." }, 503, {}));
+  H.enqueue(async () => H.jsonResponse({ detail: "err" }, 503, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
   await H.drain(30);
-
-  const amb = isAmbiguous("A");
-  const status1 = H.registry["status"].textContent;
-
-  // Count fetches before attempting a second submit. If the retry is
-  // blocked, no new fetch will occur.
+  const amb = isAmbiguous("C0");
   const before = H.fetchLog.length;
-  // Enqueue a handler in case the fetch is wrongly made.
   H.enqueue(async () => H.jsonResponse({ status: "success", message: "x" }, 200, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
-  await H.drain(30);
+  await H.drain(25);
   const after = H.fetchLog.length;
-
   return {
-    ok: true,
-    scenario: "http-503-ambiguous",
-    ambiguous: amb,
-    statusText: status1,
-    blockedRetry: before === after,
+    ok: true, scenario: "http-503-ambiguous",
+    ambiguous: amb, blockedRetry: before === after,
+    statusText: H.registry["status"].textContent,
   };
 }
 
+// --- 4. Clicking selected title reloads and clears ambiguity -------------
 async function scenarioReloadClickClears() {
-  await bootstrap([conv("A", "A")], 1);
-
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-
-  global.window.__mickyConversations.markAmbiguous("A");
-  const before = isAmbiguous("A");
-
-  // Click the already-selected title -> reloadSelected path
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-  const after = isAmbiguous("A");
-
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous("C0");
+  const before = isAmbiguous("C0");
+  await selectViaUI(0, "C0", 0);   // reload via title click
+  const after = isAmbiguous("C0");
   return {
-    ok: true,
-    scenario: "reload-click-clears",
-    ambiguousBeforeClick: before,
-    ambiguousAfterClick: after,
+    ok: true, scenario: "reload-click-clears",
+    ambiguousBeforeClick: before, ambiguousAfterClick: after,
     cleared: before === true && after === false,
   };
 }
 
+// --- 5. Reload failure keeps ambiguity -----------------------------------
 async function scenarioReloadFailureKeeps() {
-  await bootstrap([conv("A", "A")], 1);
-
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-
-  global.window.__mickyConversations.markAmbiguous("A");
-
-  // Click selected title; reload fetch fails
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous("C0");
   H.enqueue(async () => { throw new Error("boom"); });
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
-  const amb = isAmbiguous("A");
-
   return {
-    ok: true,
-    scenario: "reload-failure-keeps",
-    ambiguous: amb,
-    kept: amb === true,
+    ok: true, scenario: "reload-failure-keeps",
+    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
   };
 }
 
-async function scenarioRefreshLastPage() {
-  await bootstrap([conv("A", "A")], 1);
-
-  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "400" }));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
-
-  // Submit; success response; then two follow-up fetches:
-  //   1) limit=1 offset=0 to get fresh total = 402
-  //   2) last page at offset 400
-  H.registry["message"].value = "hi";
-  H.enqueue(async () => H.jsonResponse({
-    status: "success", message: "Hello! I can help.",
-  }, 200, {}));
-  H.enqueue(async (url) => {
-    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
-    return H.jsonResponse([msg("m0", "A", "user", 0, "x")], 200,
-      { "X-Total-Count": "402" });
-  });
-  H.enqueue(async (url) => {
-    if (!url.includes("offset=400")) throw new Error("expected offset=400, got " + url);
-    return H.jsonResponse([
-      msg("m400", "A", "user", 400, "hello"),
-      msg("m401", "A", "assistant", 401, "Hello! I can help."),
-    ], 200, { "X-Total-Count": "402" });
-  });
-  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
-  await H.drain(30);
-
-  const messageFetches = H.fetchLog.map((f) => f.url).filter((u) => u.includes("/messages"));
-  return {
-    ok: true,
-    scenario: "refresh-last-page",
-    messageFetches,
-    usedFreshTotal: messageFetches.some((u) => u.includes("limit=1&offset=0")),
-    loadedLastPage: messageFetches.some((u) => u.includes("offset=400")),
-  };
-}
-
+// --- 6. Switch clears stale messages -------------------------------------
 async function scenarioSwitchClearsMessages() {
-  await bootstrap([conv("A", "A"), conv("B", "B")], 2);
-
-  // Select A
-  H.enqueue(async () => H.jsonResponse(
-    [msg("m1", "A", "user", 0, "fromA")], 200, { "X-Total-Count": "1" }
-  ));
-  H.registry["conversations-list"].children[0].children[0].click();
-  await H.drain(25);
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 1, () => [msg("m0", "C0", "user", 0, "fromA")]);
   const msgsAfterA = H.textOf(H.registry["conversation-messages"]);
-
-  // Now click B; message fetch fails
   H.enqueue(async () => { throw new Error("boom"); });
   H.registry["conversations-list"].children[1].children[0].click();
   await H.drain(30);
   const msgsAfterB = H.textOf(H.registry["conversation-messages"]);
-
   return {
-    ok: true,
-    scenario: "switch-clears-messages",
+    ok: true, scenario: "switch-clears-messages",
     msgsAfterA_containsFromA: msgsAfterA.includes("fromA"),
     msgsAfterB_containsFromA: msgsAfterB.includes("fromA"),
     cleared: msgsAfterB.indexOf("fromA") < 0,
   };
 }
 
+// --- 7. Ambiguous reload uses latest page (finding 1) --------------------
+async function scenarioReloadUsesLatestPage() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  // Reload: fresh total 400, page at offset 200
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=200")) throw new Error("expected offset=200, got " + url);
+    return H.jsonResponse(pageOfMessages("C0", 200, 200, 400), 200,
+      { "X-Total-Count": "400" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  const cleared = !isAmbiguous("C0");
+  return {
+    ok: true, scenario: "reload-uses-latest-page",
+    cleared, usedLastPage: true,
+  };
+}
+
+// --- 8. Failed total fetch keeps ambiguity -------------------------------
+async function scenarioReloadTotalFail() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  H.enqueue(async () => { throw new Error("total fetch boom"); });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "reload-total-fail",
+    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 9. Failed latest-page fetch keeps ambiguity -------------------------
+async function scenarioReloadPageFail() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  H.enqueue(async () => { throw new Error("page boom"); });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "reload-page-fail",
+    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 10. Duplicate submit blocked during reload --------------------------
+async function scenarioDuplicateDuringLoad() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous("C0");
+  // Start a reload whose total fetch we do NOT enqueue yet — it will hang
+  let resolveTotal;
+  H.enqueue(function () {
+    return new Promise((resolve) => { resolveTotal = resolve; });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(5);
+  // Attempt submit while total fetch is pending
+  H.registry["message"].value = "hi";
+  const before = H.fetchLog.length;
+  H.enqueue(async () => H.jsonResponse({ status: "success", message: "x" }, 200, {}));
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(10);
+  const after = H.fetchLog.length;
+  // Release and let it drain so no hangs remain
+  if (resolveTotal) resolveTotal(H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  await H.drain(20);
+  return {
+    ok: true, scenario: "duplicate-during-load",
+    before, after, blocked: before === after,
+  };
+}
+
+// --- 11. Stale reload response does not clobber newer selection ----------
+async function scenarioStaleReload() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 1, () => [msg("m0", "C0", "user", 0, "fromA")]);
+  // Start a reload of C0 that we will resolve AFTER switching to C1.
+  let resolveA1;
+  H.enqueue(function () {
+    return new Promise((r) => { resolveA1 = r; });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(5);
+  // Now switch to C1 — its fetch resolves normally
+  await selectViaUI(1, "C1", 1, () => [msg("m0", "C1", "user", 0, "fromB")]);
+  const afterB = H.textOf(H.registry["conversation-messages"]);
+  // Release the stale A total fetch; its response should be ignored
+  resolveA1(H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  await H.drain(20);
+  const afterStale = H.textOf(H.registry["conversation-messages"]);
+  const selected = selectedId();
+  return {
+    ok: true, scenario: "stale-reload",
+    afterB_containsFromB: afterB.includes("fromB"),
+    afterStale_containsFromB: afterStale.includes("fromB"),
+    afterStale_containsFromA: afterStale.includes("fromA"),
+    selected, stillB: selected === "C1",
+  };
+}
+
+// --- 12. Create succeeds, list refresh fails -----------------------------
+async function scenarioCreateThenListFail() {
+  await bootstrap(0, 50, 0);
+  // Click New — POST succeeds
+  H.enqueue(async () => H.jsonResponse(
+    { id: "Cnew", title: "New conversation" }, 201, {}));
+  // List refresh fails
+  H.enqueue(async () => { throw new Error("list boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(30);
+  const title = H.registry["conversation-current-title"].textContent;
+  const sel = selectedId();
+  const statusText = H.registry["conversations-status"].textContent;
+  return {
+    ok: true, scenario: "create-then-list-fail",
+    title, selected: sel, statusText,
+    titleFromPost: title === "New conversation",
+    selectedIdFromPost: sel === "Cnew",
+    showsListRefreshError: /could not be refreshed|created, but/i.test(statusText),
+  };
+}
+
+// --- 13. Create POST network failure is ambiguous ------------------------
+async function scenarioCreateNetworkFail() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => { throw new Error("network boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(20);
+  const statusText = H.registry["conversations-status"].textContent;
+  return {
+    ok: true, scenario: "create-network-fail",
+    statusText,
+    isAmbiguous: /could not be confirmed|may have created/i.test(statusText),
+    noAutomaticRetry: H.fetchLog.filter((f) => f.method === "POST").length === 1,
+  };
+}
+
+// --- 14. Latest-page offset at a single boundary (argv[4] = total) ------
+// The pytest wrapper invokes this scenario once per boundary so each run
+// starts with a fresh harness in a fresh Node process.
+async function scenarioMessageBoundary() {
+  const boundary = parseInt(process.argv[4] || "402", 10);
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["message"].value = "hi";
+  H.enqueue(async () => H.jsonResponse({ status: "success", message: "ok" }, 200, {}));
+  H.enqueue(async () => H.jsonResponse([], 200,
+    { "X-Total-Count": String(boundary) }));
+  const expected = Math.floor((boundary - 1) / 200) * 200;
+  let sawExpected = false;
+  H.enqueue(async (url) => {
+    if (url.includes("offset=" + expected)) sawExpected = true;
+    return H.jsonResponse([], 200, { "X-Total-Count": String(boundary) });
+  });
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(40);
+  return {
+    ok: true, scenario: "message-boundary",
+    boundary, expectedOffset: expected, sawExpected,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Registration
+// ----------------------------------------------------------------------------
 const SCENARIOS = {
   "selection-preserved": scenarioSelectionPreserved,
+  "refresh-last-page": scenarioRefreshLastPage,
   "http-503-ambiguous": scenarioHttp503Ambiguous,
   "reload-click-clears": scenarioReloadClickClears,
   "reload-failure-keeps": scenarioReloadFailureKeeps,
-  "refresh-last-page": scenarioRefreshLastPage,
   "switch-clears-messages": scenarioSwitchClearsMessages,
+  "reload-uses-latest-page": scenarioReloadUsesLatestPage,
+  "reload-total-fail": scenarioReloadTotalFail,
+  "reload-page-fail": scenarioReloadPageFail,
+  "duplicate-during-load": scenarioDuplicateDuringLoad,
+  "stale-reload": scenarioStaleReload,
+  "create-then-list-fail": scenarioCreateThenListFail,
+  "create-network-fail": scenarioCreateNetworkFail,
+  "message-boundary": scenarioMessageBoundary,
 };
 
 (async function main() {

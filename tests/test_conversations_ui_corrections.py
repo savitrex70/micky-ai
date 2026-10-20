@@ -12,6 +12,7 @@ import shutil as _shutil
 import subprocess as _subprocess
 from pathlib import Path as _Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from rop.main import app
@@ -227,27 +228,29 @@ def test_confirmation_card_preserved() -> None:
 # ============================================================================
 # Executable behavioural tests via the Node DOM harness
 # ============================================================================
-#
+
 # These run the real app.js inside a minimal DOM/fetch mock
 # (tests/conversations_ui_harness.cjs) and drive actual click/submit
 # handlers. They are behaviour tests, not source-text assertions.
 
 
-def _run_scenario(name: str) -> dict:
+def _run_scenario(name: str, extra_arg: str | None = None) -> dict:
     node = _shutil.which("node")
     if node is None:
-        import pytest as _pytest
-
-        _pytest.skip("node is not available; behavioural UI tests require it")
+        pytest.skip("node is not available; behavioural UI tests require it")
     here = _Path(__file__).resolve().parent
     harness = here / "conversations_ui_harness.cjs"
     app_js = here.parent / "src" / "rop" / "web" / "static" / "app.js"
     assert harness.is_file(), f"harness missing: {harness}"
     assert app_js.is_file(), f"app.js missing: {app_js}"
+    cmd = [node, str(harness), str(app_js), name]
+    if extra_arg is not None:
+        cmd.append(str(extra_arg))
     result = _subprocess.run(
-        [node, str(harness), str(app_js), name],
+        cmd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     if result.returncode != 0:
@@ -259,20 +262,36 @@ def _run_scenario(name: str) -> dict:
     return _json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def test_selection_preserved_across_pages() -> None:
+# --- Core behavioural scenarios ---------------------------------------------
+
+
+def test_selection_preserved_across_realistic_pages() -> None:
     out = _run_scenario("selection-preserved")
-    assert out["selectedBeforePage"] == "A"
-    assert out["selectedAfterPage"] == "A"
-    assert "save" in out["composerMode"].lower()
+    assert out["selectedBefore"] == "C0"
+    assert out["selectedAfterPage2"] == "C0"
+    assert out["selectedAfterPage1"] == "C0"
     assert out["preserved"] is True
+    assert "save" in out["composerMode"].lower()
+
+
+def test_refresh_after_save_loads_latest_page() -> None:
+    """The post-success refresh must fetch the page containing the newest
+    messages at offset 400 for a 402-message conversation, not page zero."""
+    out = _run_scenario("refresh-last-page")
+    assert out["lastPageLoaded"] is True
+    fetches = out["fetches"]
+    assert any(
+        "limit=1&offset=0" in u for u in fetches
+    ), "refresh must query a fresh total"
+    assert any("offset=400" in u for u in fetches), "refresh must load the last page"
 
 
 def test_http_503_marks_ambiguous_and_blocks_retry() -> None:
     out = _run_scenario("http-503-ambiguous")
-    assert out["ambiguous"] is True, "503 must mark the conversation ambiguous"
-    assert out["blockedRetry"] is True, "a blind retry must not be allowed"
+    assert out["ambiguous"] is True
+    assert out["blockedRetry"] is True
     body_lower = out["statusText"].lower()
-    assert "may or may not" in body_lower or "confirmed" in body_lower
+    assert "could not be confirmed" in body_lower or "may have" in body_lower
 
 
 def test_reload_click_clears_ambiguity() -> None:
@@ -288,20 +307,85 @@ def test_reload_failure_keeps_ambiguity() -> None:
     assert out["kept"] is True
 
 
-def test_refresh_uses_fresh_total_and_loads_last_page() -> None:
-    out = _run_scenario("refresh-last-page")
-    assert (
-        out["usedFreshTotal"] is True
-    ), "refresh must query fresh total, not reuse cached"
-    assert (
-        out["loadedLastPage"] is True
-    ), "refresh must land on the page containing the newest messages"
-
-
 def test_switch_clears_stale_messages_on_fetch_failure() -> None:
     out = _run_scenario("switch-clears-messages")
     assert out["msgsAfterA_containsFromA"] is True
-    assert (
-        out["msgsAfterB_containsFromA"] is False
-    ), "conversation A's messages must not remain visible under B's title"
+    assert out["msgsAfterB_containsFromA"] is False
     assert out["cleared"] is True
+
+
+# --- Finding 1: ambiguous-save recovery uses the LATEST page ----------------
+
+
+def test_ambiguous_recovery_uses_latest_page_not_page_zero() -> None:
+    """A reload of a long conversation must fetch the last page containing
+    the newest messages, not page zero. Otherwise the guard could clear
+    while the possibly-saved exchange is still off-screen."""
+    out = _run_scenario("reload-uses-latest-page")
+    assert out["cleared"] is True
+    assert out["usedLastPage"] is True
+
+
+def test_reload_total_fetch_failure_keeps_ambiguity() -> None:
+    out = _run_scenario("reload-total-fail")
+    assert out["ambiguous"] is True
+    assert out["kept"] is True
+
+
+def test_reload_page_fetch_failure_keeps_ambiguity() -> None:
+    out = _run_scenario("reload-page-fail")
+    assert out["ambiguous"] is True
+    assert out["kept"] is True
+
+
+# --- Finding 2: reload-in-flight and stale-response protections -------------
+
+
+def test_duplicate_submit_blocked_while_reload_in_flight() -> None:
+    """Submitting while the ambiguous-recovery reload is in flight must not
+    issue a new POST."""
+    out = _run_scenario("duplicate-during-load")
+    assert out["blocked"] is True, (
+        "a submit during reload issued a new fetch: before="
+        + str(out["before"])
+        + " after="
+        + str(out["after"])
+    )
+
+
+def test_stale_reload_response_does_not_clobber_selection() -> None:
+    """A reload response for conversation A that arrives after the user has
+    selected B must not appear under B's title."""
+    out = _run_scenario("stale-reload")
+    assert out["afterStale_containsFromB"] is True
+    assert out["afterStale_containsFromA"] is False
+    assert out["stillB"] is True
+
+
+# --- Finding 4: create/list-refresh decoupling ------------------------------
+
+
+def test_create_then_list_refresh_failure_keeps_consistent_selection() -> None:
+    out = _run_scenario("create-then-list-fail")
+    assert out["titleFromPost"] is True
+    assert out["selectedIdFromPost"] is True
+    assert out["showsListRefreshError"] is True
+
+
+def test_create_network_failure_is_ambiguous() -> None:
+    out = _run_scenario("create-network-fail")
+    assert out["isAmbiguous"] is True
+    assert out["noAutomaticRetry"] is True
+
+
+# --- Finding 3: pagination boundary offsets --------------------------------
+
+
+@pytest.mark.parametrize("boundary", [199, 200, 201, 399, 400, 401])
+def test_message_boundary_offsets(boundary: int) -> None:
+    out = _run_scenario("message-boundary", str(boundary))
+    assert out["boundary"] == boundary
+    assert out["sawExpected"] is True, (
+        f"boundary {boundary}: expected offset "
+        f"{out['expectedOffset']} was not requested"
+    )
