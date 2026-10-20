@@ -14,9 +14,14 @@ display values; otherwise it returns an honest non-success. A challenge is
 only ever persisted from the configured local origin.
 """
 
-from fastapi import APIRouter, Request
+import logging
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 
 from rop import database as database_module
+from rop.api.integrity import classify_integrity_error
 from rop.api.origin import enforce_local_origin
 from rop.authorization.dispatch import authorize_capability_dispatch
 from rop.authorization.executors import (
@@ -34,11 +39,16 @@ from rop.capabilities.registry import (
     build_default_registry,
 )
 from rop.repositories.assistant_confirmation import AssistantConfirmationRepository
+from rop.repositories.assistant_conversation import (
+    ConversationNotFoundError,
+    ConversationRepository,
+)
 from rop.schemas.assistant import (
     AssistantConfirmationChallenge,
     AssistantRequest,
     AssistantResponse,
 )
+from rop.schemas.assistant_conversation import AssistantMessageCreate
 from rop.schemas.authorization import AuthorizationOutcome, ProposedOperation
 from rop.services.confirmation import (
     ChallengeIssueOutcome,
@@ -46,9 +56,13 @@ from rop.services.confirmation import (
     issue_challenge,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 _REGISTRY: CapabilityRegistry = build_default_registry()
+
+_CONVERSATION_REPOSITORY = ConversationRepository()
 
 _POLICY: AuthorizationPolicy = build_default_policy()
 """The explicitly configured policy the dispatch boundary consults.
@@ -150,6 +164,107 @@ def _dispatch(capability: Capability, http_request: Request) -> AssistantRespons
     return authorize_capability_dispatch(capability, policy=_POLICY)
 
 
+_ERROR_CONVERSATION_NOT_FOUND = "The conversation does not exist."
+_ERROR_SAVE_FAILED = (
+    "The request was answered but the exchange could not be saved to the "
+    "conversation. The response above was not stored."
+)
+_ERROR_SAVE_CONFLICT = (
+    "The exchange could not be saved because of a concurrent update; "
+    "reload the conversation and try again."
+)
+
+
+def _verify_conversation(conversation_id: UUID) -> None:
+    """Raise 404 if the conversation does not exist; open no session on success.
+
+    The verification session is opened and closed here, not held open across
+    dispatch. That keeps the no-conversation path database-free and avoids
+    holding a connection while the capability and policy run.
+    """
+    session = database_module.SessionLocal()
+    try:
+        record = _CONVERSATION_REPOSITORY.get(session, conversation_id)
+    finally:
+        session.close()
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_ERROR_CONVERSATION_NOT_FOUND,
+        )
+
+
+def _persist_successful_turn(
+    conversation_id: UUID,
+    user_message: str,
+    assistant_message: str,
+) -> None:
+    """Atomically append the user/assistant pair and commit once.
+
+    On any failure — sequence conflict, FK violation, or an unexpected
+    exception — the session is rolled back and the pair is not written.
+    Integrity errors are classified exactly per ``classify_integrity_error``
+    so a sequence conflict maps to 409, a missing parent to 404, and any
+    other constraint failure to a sanitized 503.
+    """
+    session = database_module.SessionLocal()
+    try:
+        _CONVERSATION_REPOSITORY.append_message(
+            session,
+            conversation_id,
+            AssistantMessageCreate(role="user", content=user_message),
+        )
+        _CONVERSATION_REPOSITORY.append_message(
+            session,
+            conversation_id,
+            AssistantMessageCreate(role="assistant", content=assistant_message),
+        )
+        session.commit()
+    except ConversationNotFoundError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_ERROR_CONVERSATION_NOT_FOUND,
+        ) from None
+    except IntegrityError as exc:
+        session.rollback()
+        kind = classify_integrity_error(exc)
+        if kind == "sequence_conflict":
+            logger.info("assistant turn persistence hit a sequence conflict")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=_ERROR_SAVE_CONFLICT,
+            ) from None
+        if kind == "missing_parent":
+            logger.info("assistant turn persistence raced a conversation delete")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=_ERROR_CONVERSATION_NOT_FOUND,
+            ) from None
+        logger.warning("assistant turn persistence hit an unclassified integrity error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_ERROR_SAVE_FAILED,
+        ) from None
+    except Exception:
+        session.rollback()
+        logger.warning("assistant turn persistence failed; rolled back")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_ERROR_SAVE_FAILED,
+        ) from None
+    finally:
+        session.close()
+
+
+def _enforce_persistence_origin(http_request: Request) -> None:
+    """Enforce the trusted local origin before reading or writing a
+    persisted conversation. Reuses the exact same helper the confirmation
+    flow already uses; nothing about the origin contract changes.
+    """
+    enforce_local_origin(http_request)
+
+
 @router.post(
     "/requests",
     response_model=AssistantResponse,
@@ -163,8 +278,26 @@ def _dispatch(capability: Capability, http_request: Request) -> AssistantRespons
         },
         403: {
             "description": (
-                "A challenge would be persisted but the request did not come "
-                "from the configured local origin."
+                "A state-changing operation was requested but the request "
+                "did not come from the configured local origin."
+            ),
+        },
+        404: {
+            "description": (
+                "A conversation_id was supplied but does not identify an "
+                "existing conversation."
+            ),
+        },
+        409: {
+            "description": (
+                "A successful exchange could not be saved because of a "
+                "concurrent sequence conflict; the response was not stored."
+            ),
+        },
+        503: {
+            "description": (
+                "A successful exchange could not be saved due to a "
+                "persistence failure; the response was not stored."
             ),
         },
     },
@@ -187,10 +320,34 @@ def submit_request(
     this endpoint cannot be talked into treating a request as already
     approved.
     """
+    conversation_id = request.conversation_id
+
+    if conversation_id is not None:
+        # Persistence path: enforce origin and verify the conversation
+        # before doing any dispatch or DB work.
+        _enforce_persistence_origin(http_request)
+        _verify_conversation(conversation_id)
+
     capability = _REGISTRY.match(request.message)
     if capability is None:
+        # Unsupported requests are transient, not saved.
         return AssistantResponse(
             status="unsupported-capability",
             message=_UNSUPPORTED_MESSAGE,
         )
-    return _dispatch(capability, http_request)
+    response = _dispatch(capability, http_request)
+
+    # Only a genuinely successful turn is persisted, and only when a
+    # conversation was supplied. Non-success outcomes and no-conversation
+    # requests do not touch the conversation store.
+    if (
+        conversation_id is not None
+        and response.status == "success"
+        and response.challenge is None
+    ):
+        _persist_successful_turn(
+            conversation_id,
+            request.message,
+            response.message,
+        )
+    return response

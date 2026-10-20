@@ -35,6 +35,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from rop.api.integrity import (
+    CONVERSATION_FK_CONSTRAINT,
+    SEQUENCE_CONSTRAINT,
+    classify_integrity_error,
+)
 from rop.api.origin import require_local_origin
 from rop.database import get_db
 from rop.repositories.assistant_conversation import (
@@ -75,40 +80,13 @@ _ERROR_SEQUENCE_CONFLICT = (
 #: The unique constraint that arbitrates concurrent appends on
 #: ``(conversation_id, sequence)``. Must match the name used by the
 #: Task 228 migration and model.
-_INTEGRITY_SEQUENCE_CONSTRAINT = "uq_assistant_messages_conversation_sequence"
-_INTEGRITY_CONVERSATION_FK_CONSTRAINT = "assistant_messages_conversation_id_fkey"
-
-
-def _classify_integrity_error(exc: IntegrityError) -> str:
-    """Classify an ``IntegrityError`` into a handler-usable category.
-
-    Returns one of ``"sequence_conflict"``, ``"missing_parent"``, or
-    ``"unknown"``. Only the sequence-conflict case is treated as a
-    concurrency-conflict retryable state; the parent-FK case is treated
-    as a not-found (the conversation was deleted while the append was
-    racing); anything else is a genuine persistence failure that must
-    not be reported as a sequence conflict.
-
-    Both the sequence-conflict and the missing-parent cases are matched by
-    exact constraint name against the names recorded in the Task 228
-    migration, not by substring, so an unrelated constraint whose name
-    merely resembles a known one is never misreported.
-    """
-    orig = getattr(exc, "orig", None)
-    diag = getattr(orig, "diag", None)
-    constraint = getattr(diag, "constraint_name", None) if diag else None
-    if constraint is None:
-        return "unknown"
-    if constraint == _INTEGRITY_SEQUENCE_CONSTRAINT:
-        return "sequence_conflict"
-    if constraint == _INTEGRITY_CONVERSATION_FK_CONSTRAINT:
-        return "missing_parent"
-    # Any other constraint name — including names that merely resemble the
-    # FK constraint — is an unclassified failure. Returning 404 for a name
-    # that merely contains ``conversation_id`` and ``fkey`` would misreport
-    # an unrelated constraint as a missing conversation; exact matching
-    # against the name recorded in the Task 228 migration is safer.
-    return "unknown"
+#: Backwards-compatible aliases for names that Task 229 tests import
+#: from this module. The implementation lives in ``rop.api.integrity``
+#: so both this router and ``rop.api.assistant`` share one exact
+#: constraint classifier instead of maintaining parallel heuristics.
+_INTEGRITY_SEQUENCE_CONSTRAINT = SEQUENCE_CONSTRAINT
+_INTEGRITY_CONVERSATION_FK_CONSTRAINT = CONVERSATION_FK_CONSTRAINT
+_classify_integrity_error = classify_integrity_error
 
 
 def _not_found() -> HTTPException:

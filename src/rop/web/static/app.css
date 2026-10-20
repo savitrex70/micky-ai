@@ -309,3 +309,157 @@ footer {
   .records-table th,
   .records-table td { padding: 0.3rem 0.35rem; }
 }
+
+/* ---------- Task 230: persistent conversations ---------- */
+
+.conversations-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+}
+
+.conversations-status,
+.conversation-messages-status {
+  min-height: 1.5rem;
+  margin: 0.5rem 0;
+}
+.conversations-status[data-kind="error"],
+.conversation-messages-status[data-kind="error"] { color: var(--error); }
+.conversations-status[data-kind="info"],
+.conversation-messages-status[data-kind="info"] { color: var(--muted); }
+
+.conversations-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.conversations-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card);
+}
+
+.conversations-list li[data-selected="true"] {
+  border-color: var(--accent);
+  border-left: 4px solid var(--accent);
+}
+
+.conversations-list .conv-title {
+  flex: 1 1 auto;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0;
+  overflow-wrap: anywhere;
+}
+.conversations-list .conv-title:focus-visible,
+.conversations-list .conv-title:hover {
+  text-decoration: underline;
+}
+
+.conversations-list .conv-updated {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.conversations-empty { font-style: italic; }
+
+#conversation-view {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1.25rem 0;
+}
+
+.conversation-title-row {
+  margin-bottom: 0.75rem;
+}
+.conversation-current-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.conversation-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.conversation-actions input[type="text"] {
+  flex: 1 1 12rem;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+#conversation-delete {
+  background: var(--card);
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+
+.conversation-messages {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.conversation-messages li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg);
+}
+
+.conversation-messages li[data-role="user"] {
+  border-left: 4px solid var(--accent);
+}
+
+.conversation-messages li[data-role="assistant"] {
+  border-left: 4px solid var(--ok);
+}
+
+.conversation-messages .msg-role {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.conversation-messages .msg-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer-mode { margin-top: 0.35rem; }
+.composer-mode[data-kind="persist"] { color: var(--ok); }
+
+@media (max-width: 480px) {
+  .conversations-list li { flex-direction: column; align-items: flex-start; }
+  .conversation-actions { flex-direction: column; }
+  .conversation-actions button { width: 100%; }
+}

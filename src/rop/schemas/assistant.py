@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -40,6 +41,15 @@ class AssistantRequest(BaseModel):
         min_length=1,
         max_length=ASSISTANT_REQUEST_MAX_MESSAGE_LENGTH,
     )
+    #: Optional saved conversation this turn belongs to. When ``None`` (the
+    #: default), the endpoint preserves its historical behaviour exactly:
+    #: no database session is created and nothing is persisted. When set,
+    #: the endpoint verifies the conversation, dispatches the request, and
+    #: persists the user/assistant pair atomically iff the response is
+    #: ``success``. A caller cannot supply a role, sequence, authorization,
+    #: or persistence metadata here — ``extra="forbid"`` on the model
+    #: rejects any such field before the handler runs.
+    conversation_id: UUID | None = None
 
     @field_validator("message")
     @classmethod

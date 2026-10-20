@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 (function () {
   const form = document.getElementById("request-form");
@@ -194,11 +194,15 @@
     card.focus();
   }
 
-  async function sendRequest(text) {
+  async function sendRequest(text, conversationId) {
+    const body = { message: text };
+    if (conversationId) {
+      body.conversation_id = conversationId;
+    }
     const response = await fetch("/api/assistant/requests", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify(body),
     });
     let payload = null;
     try {
@@ -398,11 +402,15 @@
       return;
     }
 
+    const selectedConversationId = window.__mickyConversations
+      ? window.__mickyConversations.getSelectedId()
+      : null;
+
     setRequestBusy(true);
     setStatus("Sending\u2026", "pending");
 
     try {
-      const payload = await sendRequest(text);
+      const payload = await sendRequest(text, selectedConversationId);
       addHistory(text, payload.message, payload.status);
       if (payload.status === "confirmation-required") {
         if (isValidChallenge(payload.challenge)) {
@@ -419,6 +427,14 @@
         setStatus(describeStatus(payload.status), "info");
       }
       input.value = "";
+      // After a successful persisted turn, refresh the message list so
+      // the just-saved user/assistant pair is visible. The server owns
+      // that persistence; we do not POST the pair ourselves.
+      if (selectedConversationId && payload.status === "success") {
+        if (window.__mickyConversations) {
+          window.__mickyConversations.refreshSelectedMessages();
+        }
+      }
     } catch (err) {
       const message =
         err && err.message ? err.message : "Something went wrong.";
@@ -901,4 +917,424 @@
   nextBtn.addEventListener("click", function () {
     loadPage(currentOffset + PAGE_SIZE);
   });
+})();
+
+// ============================================================================
+// Task 230: persistent conversations UI
+// ============================================================================
+(function () {
+  const LIST_LIMIT = 50;
+  const MESSAGES_LIMIT = 200;
+
+  const section = document.getElementById("conversations-section");
+  const newBtn = document.getElementById("conversations-new");
+  const statusEl = document.getElementById("conversations-status");
+  const listEl = document.getElementById("conversations-list");
+  const emptyEl = document.getElementById("conversations-empty");
+  const view = document.getElementById("conversation-view");
+  const currentTitleEl = document.getElementById("conversation-current-title");
+  const renameInput = document.getElementById("conversation-rename-input");
+  const renameBtn = document.getElementById("conversation-rename");
+  const deleteBtn = document.getElementById("conversation-delete");
+  const msgsStatus = document.getElementById("conversation-messages-status");
+  const msgsEl = document.getElementById("conversation-messages");
+  const msgsEmpty = document.getElementById("conversation-messages-empty");
+  const composerMode = document.getElementById("composer-mode");
+
+  if (!section || !listEl) return;
+
+  let conversations = [];
+  let selectedId = null;
+  let listInFlight = false;
+  let createInFlight = false;
+  let messagesInFlight = false;
+  let renameInFlight = false;
+  let deleteInFlight = false;
+  // Monotonic token to reject stale message responses.
+  let messagesLoadToken = 0;
+
+  function setStatus(el, text, kind) {
+    el.textContent = text;
+    if (kind) el.setAttribute("data-kind", kind);
+    else el.removeAttribute("data-kind");
+  }
+
+  function updateComposerMode() {
+    if (!composerMode) return;
+    if (selectedId) {
+      composerMode.textContent =
+        "Sending will save this exchange to the selected conversation.";
+      composerMode.setAttribute("data-kind", "persist");
+    } else {
+      composerMode.textContent =
+        "No conversation is selected. This turn will not be saved.";
+      composerMode.removeAttribute("data-kind");
+    }
+  }
+
+  function findConversation(id) {
+    return conversations.find((c) => c.id === id) || null;
+  }
+
+  function renderList() {
+    while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+    if (conversations.length === 0) {
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    for (const conv of conversations) {
+      const li = document.createElement("li");
+      li.dataset.selected = conv.id === selectedId ? "true" : "false";
+
+      const titleBtn = document.createElement("button");
+      titleBtn.type = "button";
+      titleBtn.className = "conv-title";
+      titleBtn.textContent = conv.title;
+      titleBtn.setAttribute("aria-current", conv.id === selectedId ? "true" : "false");
+      titleBtn.addEventListener("click", () => {
+        if (conv.id === selectedId) return;
+        selectConversation(conv.id);
+      });
+      li.appendChild(titleBtn);
+
+      const updated = document.createElement("span");
+      updated.className = "conv-updated";
+      try {
+        updated.textContent = new Date(conv.updated_at).toLocaleString();
+      } catch (err) {
+        updated.textContent = "";
+      }
+      li.appendChild(updated);
+
+      listEl.appendChild(li);
+    }
+  }
+
+  async function loadConversations() {
+    if (listInFlight) return;
+    listInFlight = true;
+    setStatus(statusEl, "Loading conversations\u2026", "info");
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations?limit=" + LIST_LIMIT + "&offset=0",
+        { method: "GET" }
+      );
+      if (!resp.ok) {
+        setStatus(
+          statusEl,
+          "Could not load conversations (HTTP " + resp.status + "). " +
+            "Reload the page to try again.",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus(statusEl, "The conversation list response was unreadable.", "error");
+        return;
+      }
+      if (!Array.isArray(payload)) {
+        setStatus(statusEl, "The conversation list response was unexpected.", "error");
+        return;
+      }
+      conversations = payload;
+      // If the previously selected conversation disappeared, clear the view.
+      if (selectedId && !findConversation(selectedId)) {
+        selectedId = null;
+        view.hidden = true;
+      }
+      renderList();
+      updateComposerMode();
+      setStatus(statusEl, "", null);
+      if (selectedId) {
+        await selectConversation(selectedId, { preserveStatus: true });
+      }
+    } catch (err) {
+      setStatus(
+        statusEl,
+        "The conversation list could not be loaded because the server " +
+          "was unreachable.",
+        "error"
+      );
+    } finally {
+      listInFlight = false;
+    }
+  }
+
+  async function createConversation() {
+    if (createInFlight) return;
+    createInFlight = true;
+    newBtn.disabled = true;
+    setStatus(statusEl, "Creating conversation\u2026", "info");
+    try {
+      const resp = await fetch("/api/assistant/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "New conversation" }),
+      });
+      if (!resp.ok) {
+        setStatus(
+          statusEl,
+          "The conversation could not be created (HTTP " + resp.status + ").",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus(statusEl, "The conversation response was unreadable.", "error");
+        return;
+      }
+      if (!payload || typeof payload.id !== "string") {
+        setStatus(statusEl, "The conversation response was unexpected.", "error");
+        return;
+      }
+      await loadConversations();
+      selectConversation(payload.id);
+    } catch (err) {
+      setStatus(
+        statusEl,
+        "The conversation could not be created because the server was " +
+          "unreachable.",
+        "error"
+      );
+    } finally {
+      createInFlight = false;
+      newBtn.disabled = false;
+    }
+  }
+
+  function renderMessages(messages) {
+    while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+    if (messages.length === 0) {
+      msgsEmpty.hidden = false;
+      return;
+    }
+    msgsEmpty.hidden = true;
+    for (const m of messages) {
+      const li = document.createElement("li");
+      li.dataset.role = m.role;
+      const roleEl = document.createElement("span");
+      roleEl.className = "msg-role";
+      roleEl.textContent = m.role;
+      li.appendChild(roleEl);
+      const contentEl = document.createElement("p");
+      contentEl.className = "msg-content";
+      contentEl.textContent = m.content;
+      li.appendChild(contentEl);
+      msgsEl.appendChild(li);
+    }
+  }
+
+  async function selectConversation(id, opts) {
+    opts = opts || {};
+    selectedId = id;
+    const conv = findConversation(id);
+    currentTitleEl.textContent = conv ? conv.title : "";
+    view.hidden = false;
+    renderList();
+    updateComposerMode();
+    if (!opts.preserveStatus) {
+      setStatus(statusEl, "", null);
+    }
+    await loadMessages(id);
+  }
+
+  async function loadMessages(id) {
+    if (messagesInFlight && id === selectedId) {
+      // A refresh for the current selection was requested while one is
+      // already in flight; let it finish and force a fresh pass instead
+      // of dropping the refresh silently.
+    }
+    const token = ++messagesLoadToken;
+    messagesInFlight = true;
+    setStatus(msgsStatus, "Loading messages\u2026", "info");
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations/" +
+          encodeURIComponent(id) +
+          "/messages?limit=" +
+          MESSAGES_LIMIT +
+          "&offset=0",
+        { method: "GET" }
+      );
+      if (token !== messagesLoadToken) return; // stale
+      if (!resp.ok) {
+        setStatus(
+          msgsStatus,
+          "Could not load messages (HTTP " + resp.status + ").",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        if (token !== messagesLoadToken) return;
+        setStatus(msgsStatus, "The message list response was unreadable.", "error");
+        return;
+      }
+      if (token !== messagesLoadToken) return; // stale
+      if (!Array.isArray(payload)) {
+        setStatus(msgsStatus, "The message list response was unexpected.", "error");
+        return;
+      }
+      renderMessages(payload);
+      setStatus(msgsStatus, "", null);
+    } catch (err) {
+      if (token !== messagesLoadToken) return;
+      setStatus(
+        msgsStatus,
+        "Messages could not be loaded because the server was unreachable.",
+        "error"
+      );
+    } finally {
+      if (token === messagesLoadToken) messagesInFlight = false;
+    }
+  }
+
+  async function renameSelected() {
+    if (renameInFlight || !selectedId) return;
+    const newTitle = renameInput.value.trim();
+    if (!newTitle) {
+      setStatus(msgsStatus, "Enter a title before renaming.", "error");
+      renameInput.focus();
+      return;
+    }
+    renameInFlight = true;
+    renameBtn.disabled = true;
+    setStatus(msgsStatus, "Renaming\u2026", "info");
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations/" + encodeURIComponent(selectedId),
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: newTitle }),
+        }
+      );
+      if (!resp.ok) {
+        setStatus(
+          msgsStatus,
+          "The conversation could not be renamed (HTTP " + resp.status + ").",
+          "error"
+        );
+        return;
+      }
+      let payload;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        setStatus(msgsStatus, "The rename response was unreadable.", "error");
+        return;
+      }
+      // Update local state only after the server confirmed.
+      const conv = findConversation(selectedId);
+      if (conv && payload && typeof payload.title === "string") {
+        conv.title = payload.title;
+      }
+      currentTitleEl.textContent = conv ? conv.title : "";
+      renderList();
+      renameInput.value = "";
+      setStatus(msgsStatus, "Renamed.", "info");
+    } catch (err) {
+      setStatus(
+        msgsStatus,
+        "Rename failed because the server was unreachable.",
+        "error"
+      );
+    } finally {
+      renameInFlight = false;
+      renameBtn.disabled = false;
+    }
+  }
+
+  async function deleteSelected() {
+    if (deleteInFlight || !selectedId) return;
+    const conv = findConversation(selectedId);
+    const title = conv ? conv.title : "this conversation";
+    const ok = window.confirm(
+      'Delete "' +
+        title +
+        '"?\n\nThis permanently removes the conversation and its messages.'
+    );
+    if (!ok) return;
+    deleteInFlight = true;
+    deleteBtn.disabled = true;
+    const deletingId = selectedId;
+    setStatus(msgsStatus, "Deleting\u2026", "info");
+    try {
+      const resp = await fetch(
+        "/api/assistant/conversations/" + encodeURIComponent(deletingId),
+        { method: "DELETE" }
+      );
+      if (resp.status !== 204) {
+        setStatus(
+          msgsStatus,
+          "The conversation could not be deleted (HTTP " + resp.status + ").",
+          "error"
+        );
+        return;
+      }
+      conversations = conversations.filter((c) => c.id !== deletingId);
+      if (selectedId === deletingId) {
+        selectedId = null;
+        view.hidden = true;
+        currentTitleEl.textContent = "";
+        while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+        msgsEmpty.hidden = true;
+      }
+      renderList();
+      updateComposerMode();
+      setStatus(msgsStatus, "Conversation deleted.", "info");
+      // Optionally select the next conversation, if any remain.
+      if (!selectedId && conversations.length > 0) {
+        await selectConversation(conversations[0].id, { preserveStatus: true });
+      }
+    } catch (err) {
+      setStatus(
+        msgsStatus,
+        "Deletion failed because the server was unreachable. The " +
+          "conversation may or may not still exist; reload to verify.",
+        "error"
+      );
+    } finally {
+      deleteInFlight = false;
+      deleteBtn.disabled = false;
+    }
+  }
+
+  function getSelectedId() {
+    return selectedId;
+  }
+
+  function refreshSelectedMessages() {
+    if (selectedId) {
+      loadMessages(selectedId);
+    }
+  }
+
+  window.__mickyConversations = {
+    getSelectedId: getSelectedId,
+    refreshSelectedMessages: refreshSelectedMessages,
+  };
+
+  newBtn.addEventListener("click", createConversation);
+  renameBtn.addEventListener("click", renameSelected);
+  deleteBtn.addEventListener("click", deleteSelected);
+  renameInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      renameSelected();
+    }
+  });
+
+  // Initial load
+  loadConversations();
 })();

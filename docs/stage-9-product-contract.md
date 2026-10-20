@@ -219,12 +219,17 @@ Planned capabilities (Stage 9 target):
     Repository transaction ownership remains at the API boundary.
     Concurrent appends that race for the same sequence produce 409
     Conflict rather than silent retries.
-  - Absent: browser-side conversation management, wiring the assistant
-    request endpoint to save and reload messages, conversation export,
-    notes, tasks, reminders, local retrieval, and any user-facing
-    conversation UI. The API and store exist; the user-facing workflow
-    does not. Target scope, boundaries, and acceptance conditions are
-    defined in section B.2.
+  - Established (Task 230): a persistent-conversation interface in the
+    existing browser page: list, create, select, rename, delete
+    conversations; load message history; and, when a conversation is
+    selected, persist each `success` exchange as an atomic
+    user/assistant pair through `POST /api/assistant/requests` with a
+    `conversation_id`. Non-success outcomes are shown transiently and
+    not saved. Requests without a `conversation_id` retain their
+    historical database-free behaviour.
+  - Absent: conversation export/import, per-message editing, notes,
+    tasks, reminders, local retrieval. Stage 9 owner decisions H.1, H.3,
+    H.4 remain unresolved; the contract remains a draft.
 
 #### B.1.6 Blocked or gated capabilities
 

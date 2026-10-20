@@ -32,6 +32,42 @@
     </p>
   </section>
 
+
+  <section id="conversations-section" aria-labelledby="conversations-heading">
+    <h2 id="conversations-heading">Saved conversations</h2>
+    <p class="help">
+      Exchanges made while a conversation is selected are stored locally
+      in the confirmation-record database and can be revisited after a
+      refresh. Requests without a selected conversation are not saved.
+    </p>
+    <div class="conversations-toolbar">
+      <button id="conversations-new" type="button">New conversation</button>
+    </div>
+    <p id="conversations-status" role="status" aria-live="polite" class="conversations-status"></p>
+    <ul id="conversations-list" class="conversations-list" aria-label="Saved conversations"></ul>
+    <p id="conversations-empty" class="help conversations-empty" hidden>
+      No saved conversations yet. Choose "New conversation" to create one.
+    </p>
+  </section>
+
+  <section id="conversation-view" aria-labelledby="conversation-view-heading" hidden>
+    <h2 id="conversation-view-heading">Conversation</h2>
+    <div class="conversation-title-row">
+      <span id="conversation-current-title" class="conversation-current-title"></span>
+    </div>
+    <div class="conversation-actions">
+      <label for="conversation-rename-input" class="visually-hidden">New title</label>
+      <input id="conversation-rename-input" type="text" maxlength="200" placeholder="New title">
+      <button id="conversation-rename" type="button">Rename</button>
+      <button id="conversation-delete" type="button">Delete conversation</button>
+    </div>
+    <p id="conversation-messages-status" role="status" aria-live="polite" class="conversation-messages-status"></p>
+    <ol id="conversation-messages" class="conversation-messages"></ol>
+    <p id="conversation-messages-empty" class="help" hidden>
+      No messages in this conversation yet.
+    </p>
+  </section>
+
   <form id="request-form" novalidate>
     <label for="message">Your request</label>
     <textarea
@@ -45,6 +81,7 @@
       Maximum 2000 characters. Submitting sends the request to the local
       server; it is not stored.
     </p>
+    <p id="composer-mode" class="help composer-mode" aria-live="polite"></p>
     <button id="submit" type="submit">Send request</button>
   </form>
 
