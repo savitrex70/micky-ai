@@ -22,13 +22,15 @@
       confirmation, or is not permitted is stopped instead of run.
     </p>
     <p>
-      Your request text and this tab's history are not persisted by the
-      conversation interface. Confirmation records that the confirmation
-      lifecycle needs are stored locally and are available through the
-      confirmation-records section below; those records follow their own
-      thirty-day retention and redaction rules, are kept separately from
-      conversations, and can be inspected, exported, and deleted.
-      Conversations, notes, tasks, and reminders are not persisted.
+      Your request text and this tab's history are transient unless you
+      have selected a saved conversation: only a successful exchange in a
+      selected conversation is saved locally, and only after the server
+      confirms it. Confirmation records are a separate local store with
+      their own thirty-day retention and redaction rules; they are
+      available through the confirmation-records section below and can be
+      inspected, exported, and deleted. Conversations, confirmation
+      records, and clinical reasoning data are kept in separate
+      application stores. Notes, tasks, and reminders are not persisted.
     </p>
   </section>
 
@@ -36,15 +38,23 @@
   <section id="conversations-section" aria-labelledby="conversations-heading">
     <h2 id="conversations-heading">Saved conversations</h2>
     <p class="help">
-      Exchanges made while a conversation is selected are stored locally
-      in the confirmation-record database and can be revisited after a
-      refresh. Requests without a selected conversation are not saved.
+      A successful exchange is saved when you have selected a
+      conversation; you can reopen it after a refresh. Requests without a
+      selected conversation stay transient. Saved conversations are kept
+      separately from confirmation records and from clinical reasoning
+      data; they are not clinical records.
     </p>
     <div class="conversations-toolbar">
       <button id="conversations-new" type="button">New conversation</button>
     </div>
     <p id="conversations-status" role="status" aria-live="polite" class="conversations-status"></p>
     <ul id="conversations-list" class="conversations-list" aria-label="Saved conversations"></ul>
+
+    <div id="conversations-pagination" class="conversations-pagination" hidden>
+      <button id="conversations-prev" type="button">Previous</button>
+      <span id="conversations-range" class="conversations-range"></span>
+      <button id="conversations-next" type="button">Next</button>
+    </div>
     <p id="conversations-empty" class="help conversations-empty" hidden>
       No saved conversations yet. Choose "New conversation" to create one.
     </p>
@@ -63,6 +73,12 @@
     </div>
     <p id="conversation-messages-status" role="status" aria-live="polite" class="conversation-messages-status"></p>
     <ol id="conversation-messages" class="conversation-messages"></ol>
+
+    <div id="messages-pagination" class="messages-pagination" hidden>
+      <button id="messages-prev" type="button">Previous</button>
+      <span id="messages-range" class="messages-range"></span>
+      <button id="messages-next" type="button">Next</button>
+    </div>
     <p id="conversation-messages-empty" class="help" hidden>
       No messages in this conversation yet.
     </p>
@@ -78,8 +94,9 @@
       required
       aria-describedby="message-help"></textarea>
     <p id="message-help" class="help">
-      Maximum 2000 characters. Submitting sends the request to the local
-      server; it is not stored.
+      Maximum 2000 characters. The exchange is only saved when a
+      conversation is selected and the server confirms the save; otherwise
+      it stays transient.
     </p>
     <p id="composer-mode" class="help composer-mode" aria-live="polite"></p>
     <button id="submit" type="submit">Send request</button>

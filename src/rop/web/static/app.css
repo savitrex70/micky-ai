@@ -463,3 +463,25 @@ footer {
   .conversation-actions { flex-direction: column; }
   .conversation-actions button { width: 100%; }
 }
+
+.conversations-pagination,
+.messages-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+}
+.conversations-pagination[hidden],
+.messages-pagination[hidden] { display: none; }
+.conversations-range,
+.messages-range {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Ambiguous request outcome banner */
+#status[data-kind="ambiguous"] {
+  color: var(--error);
+  font-weight: 600;
+}

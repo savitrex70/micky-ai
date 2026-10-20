@@ -31,7 +31,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,8 @@ from rop.api.integrity import (
 )
 from rop.api.origin import require_local_origin
 from rop.database import get_db
+from rop.models.assistant_conversation import AssistantConversation
+from rop.models.assistant_message import AssistantMessage
 from rop.repositories.assistant_conversation import (
     DEFAULT_CONVERSATION_LIST_LIMIT,
     DEFAULT_MESSAGE_LIST_LIMIT,
@@ -106,6 +109,7 @@ def _not_found() -> HTTPException:
     response_model=list[AssistantConversationRead],
 )
 def list_conversations(
+    response: Response,
     limit: int = Query(
         default=DEFAULT_CONVERSATION_LIST_LIMIT,
         ge=1,
@@ -120,7 +124,15 @@ def list_conversations(
     descending, then ``id`` descending. This means the most recently
     active conversation sorts first, and a new message appended to an
     older conversation moves it to the top.
+
+    Backward-compatible pagination metadata: the JSON body is the same
+    list callers already expect. The total count of conversations is
+    exposed via the ``X-Total-Count`` response header so a paginating
+    client can determine whether more pages exist without changing the
+    response shape.
     """
+    total = db.scalar(select(func.count()).select_from(AssistantConversation))
+    response.headers["X-Total-Count"] = str(total or 0)
     return _REPOSITORY.list(db, offset=offset, limit=limit)
 
 
@@ -297,6 +309,7 @@ def delete_conversation(
 )
 def list_messages(
     conversation_id: UUID,
+    response: Response,
     limit: int = Query(
         default=DEFAULT_MESSAGE_LIST_LIMIT,
         ge=1,
@@ -309,10 +322,22 @@ def list_messages(
 
     A caller referencing a conversation that does not exist receives 404
     rather than an empty list; the missing parent is surfaced explicitly.
+
+    Backward-compatible pagination metadata: the JSON body remains a
+    list. The total number of messages in the conversation is exposed via
+    the ``X-Total-Count`` response header. This lets a paginating client
+    know the total without changing the response shape for existing
+    callers.
     """
     conversation = _REPOSITORY.get(db, conversation_id)
     if conversation is None:
         raise _not_found()
+    total = db.scalar(
+        select(func.count())
+        .select_from(AssistantMessage)
+        .where(AssistantMessage.conversation_id == conversation_id)
+    )
+    response.headers["X-Total-Count"] = str(total or 0)
     return _REPOSITORY.list_messages(db, conversation_id, offset=offset, limit=limit)
 
 

@@ -796,21 +796,30 @@ def test_records_js_export_uses_content_disposition_filename() -> None:
 
 
 def test_page_notice_does_not_claim_nothing_is_saved() -> None:
-    """The main notice must not blanket-claim that nothing is saved.
+    """The main notice must accurately describe what is and is not saved.
 
-    Confirmation records are durably stored, and the notice must distinguish
-    unsaved request text and tab history from the retention-bounded
-    confirmation records.
+    After Task 230 the notice distinguishes three cases:
+      * a successful exchange in a selected conversation IS saved;
+      * confirmation records are a separate store with their own retention;
+      * notes, tasks, and reminders are not persisted.
+
+    It must not revert to the older blanket claim that nothing is saved
+    (false once confirmation records and conversations existed), nor to
+    claiming conversations are never persisted (false once Task 230
+    wired persistence).
     """
     html = _served_html()
     assert "Nothing is saved." not in html
-    # The corrected notice must be explicit about what is and isn't saved.
     assert "not persisted" in html
     assert "confirmation records" in html.lower()
-    # And must mention the retention/redaction lifecycle
     assert "retention" in html.lower() or "redaction" in html.lower()
-    # And must not imply conversations/notes are persisted.
-    assert "Conversations, notes, tasks, and reminders are not persisted" in html
+    # The correct scoping — notes/tasks/reminders unpersisted, conversations
+    # handled separately — must be present.
+    assert "notes, tasks, and reminders are not persisted" in html.lower()
+    # Conversations must be described as persisting on success, not as
+    # permanently unpersisted.
+    assert "selected conversation" in html.lower()
+    assert "Conversations, notes, tasks, and reminders are not persisted." not in html
 
 
 # ============================================================================

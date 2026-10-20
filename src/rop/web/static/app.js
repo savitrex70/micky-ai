@@ -194,16 +194,30 @@
     card.focus();
   }
 
+  // Structured result so callers can distinguish what actually happened.
+  //
+  //   kind = "ok"         server responded 2xx with a usable body
+  //   kind = "http"       server responded non-2xx (definite rejection)
+  //   kind = "network"    fetch threw (server may or may not have processed)
+  //   kind = "unreadable" body could not be parsed (server did respond)
+  //   kind = "unexpected" body was structurally invalid (server did respond)
+  //
+  // The last three do NOT establish whether the exchange was saved.
   async function sendRequest(text, conversationId) {
     const body = { message: text };
     if (conversationId) {
       body.conversation_id = conversationId;
     }
-    const response = await fetch("/api/assistant/requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let response;
+    try {
+      response = await fetch("/api/assistant/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      return { kind: "network" };
+    }
     let payload = null;
     try {
       payload = await response.json();
@@ -211,16 +225,22 @@
       payload = null;
     }
     if (!response.ok) {
-      const detail =
-        payload && typeof payload.message === "string"
-          ? payload.message
-          : "The server rejected the request (HTTP " + response.status + ").";
-      throw new Error(detail);
+      // FastAPI errors put a sanitized string in ``detail``; some assistant
+      // responses use ``message``. Prefer whichever is present.
+      let detail = null;
+      if (payload && typeof payload.detail === "string") {
+        detail = payload.detail;
+      } else if (payload && typeof payload.message === "string") {
+        detail = payload.message;
+      } else {
+        detail = "The server rejected the request (HTTP " + response.status + ").";
+      }
+      return { kind: "http", status: response.status, detail: detail };
     }
     if (!payload || typeof payload.status !== "string") {
-      throw new Error("The server returned an unexpected response.");
+      return { kind: "unreadable" };
     }
-    return payload;
+    return { kind: "ok", payload: payload };
   }
 
   async function sendDecision(challengeId, decision, code) {
@@ -406,34 +426,75 @@
       ? window.__mickyConversations.getSelectedId()
       : null;
 
+    // Refuse a blind re-submit when a previous send's outcome was not
+    // established. The user must reload the conversation first.
+    if (
+      selectedConversationId &&
+      window.__mickyConversations &&
+      window.__mickyConversations.isAmbiguous(selectedConversationId)
+    ) {
+      setStatus(
+        "A previous request may or may not have been saved. Reload this " +
+          "conversation (click its title in the list to reload it) to " +
+          "establish the actual state before retrying.",
+        "error"
+      );
+      return;
+    }
+
     setRequestBusy(true);
     setStatus("Sending\u2026", "pending");
 
     try {
-      const payload = await sendRequest(text, selectedConversationId);
-      addHistory(text, payload.message, payload.status);
-      if (payload.status === "confirmation-required") {
-        if (isValidChallenge(payload.challenge)) {
-          showConfirmationCard(payload.challenge);
-          setStatus(describeStatus(payload.status), "info");
+      const result = await sendRequest(text, selectedConversationId);
+
+      if (result.kind === "ok") {
+        const payload = result.payload;
+        addHistory(text, payload.message, payload.status);
+        if (payload.status === "confirmation-required") {
+          if (isValidChallenge(payload.challenge)) {
+            showConfirmationCard(payload.challenge);
+            setStatus(describeStatus(payload.status), "info");
+          } else {
+            setStatus(
+              "The server asked for confirmation but did not provide a " +
+                "usable challenge. Nothing can be confirmed here.",
+              "error"
+            );
+          }
         } else {
-          setStatus(
-            "The server asked for confirmation but did not provide a " +
-              "usable challenge. Nothing can be confirmed here.",
-            "error"
-          );
+          setStatus(describeStatus(payload.status), "info");
         }
+        input.value = "";
+        // After a successful persisted turn, refresh the message list so
+        // the just-saved user/assistant pair is visible. The server owns
+        // that persistence; we do not POST the pair ourselves.
+        if (selectedConversationId && payload.status === "success") {
+          if (window.__mickyConversations) {
+            window.__mickyConversations.clearAmbiguous();
+            window.__mickyConversations.refreshSelectedMessages();
+          }
+        }
+      } else if (result.kind === "http") {
+        // Server responded with a definite error. The persist path either
+        // did not run or rolled back. Show the sanitized detail. Keep the
+        // typed text so the user can retry deliberately.
+        setStatus(result.detail, "error");
       } else {
-        setStatus(describeStatus(payload.status), "info");
-      }
-      input.value = "";
-      // After a successful persisted turn, refresh the message list so
-      // the just-saved user/assistant pair is visible. The server owns
-      // that persistence; we do not POST the pair ourselves.
-      if (selectedConversationId && payload.status === "success") {
-        if (window.__mickyConversations) {
-          window.__mickyConversations.refreshSelectedMessages();
+        // Ambiguous outcome (network / unreadable / unexpected). We cannot
+        // establish whether the exchange was saved. Mark the selected
+        // conversation as ambiguous so the next send is blocked until a
+        // reload establishes the actual state.
+        if (selectedConversationId && window.__mickyConversations) {
+          window.__mickyConversations.markAmbiguous(selectedConversationId);
         }
+        setStatus(
+          "The server's response could not be established. The exchange " +
+            "may or may not have been saved. Reload the selected " +
+            "conversation (click its title in the list) to verify the " +
+            "actual state before retrying.",
+          "ambiguous"
+        );
       }
     } catch (err) {
       const message =
@@ -938,6 +999,14 @@
   const deleteBtn = document.getElementById("conversation-delete");
   const msgsStatus = document.getElementById("conversation-messages-status");
   const msgsEl = document.getElementById("conversation-messages");
+  const convPager = document.getElementById("conversations-pagination");
+  const convPrev = document.getElementById("conversations-prev");
+  const convNext = document.getElementById("conversations-next");
+  const convRange = document.getElementById("conversations-range");
+  const msgsPager = document.getElementById("messages-pagination");
+  const msgsPrev = document.getElementById("messages-prev");
+  const msgsNext = document.getElementById("messages-next");
+  const msgsRange = document.getElementById("messages-range");
   const msgsEmpty = document.getElementById("conversation-messages-empty");
   const composerMode = document.getElementById("composer-mode");
 
@@ -946,6 +1015,14 @@
   let conversations = [];
   let selectedId = null;
   let listInFlight = false;
+  let listOffset = 0;
+  let listTotal = null;
+  let messagesOffset = 0;
+  let messagesTotal = null;
+  // Conversations whose last request produced an outcome we could not
+  // establish. While a conversation is in this set the composer refuses a
+  // blind resubmit until the user reloads the conversation.
+  const ambiguousConversations = new Set();
   let createInFlight = false;
   let messagesInFlight = false;
   let renameInFlight = false;
@@ -1011,13 +1088,28 @@
     }
   }
 
-  async function loadConversations() {
+  function renderConvPagination() {
+    if (listTotal === null || listTotal === 0) {
+      convPager.hidden = true;
+      return;
+    }
+    convPager.hidden = false;
+    const end = listOffset + conversations.length;
+    convRange.textContent =
+      "Showing " + (listTotal === 0 ? 0 : listOffset + 1) + "\u2013" + end +
+      " of " + listTotal;
+    convPrev.disabled = listInFlight || listOffset <= 0;
+    convNext.disabled = listInFlight || end >= listTotal;
+  }
+
+  async function loadConversations(offset) {
     if (listInFlight) return;
+    if (typeof offset !== "number") offset = listOffset;
     listInFlight = true;
     setStatus(statusEl, "Loading conversations\u2026", "info");
     try {
       const resp = await fetch(
-        "/api/assistant/conversations?limit=" + LIST_LIMIT + "&offset=0",
+        "/api/assistant/conversations?limit=" + LIST_LIMIT + "&offset=" + offset,
         { method: "GET" }
       );
       if (!resp.ok) {
@@ -1040,6 +1132,9 @@
         setStatus(statusEl, "The conversation list response was unexpected.", "error");
         return;
       }
+      const headerTotal = resp.headers.get("X-Total-Count");
+      listTotal = headerTotal !== null ? Number(headerTotal) : null;
+      listOffset = offset;
       conversations = payload;
       // If the previously selected conversation disappeared, clear the view.
       if (selectedId && !findConversation(selectedId)) {
@@ -1047,6 +1142,7 @@
         view.hidden = true;
       }
       renderList();
+      renderConvPagination();
       updateComposerMode();
       setStatus(statusEl, "", null);
       if (selectedId) {
@@ -1061,6 +1157,7 @@
       );
     } finally {
       listInFlight = false;
+      renderConvPagination();
     }
   }
 
@@ -1094,7 +1191,8 @@
         setStatus(statusEl, "The conversation response was unexpected.", "error");
         return;
       }
-      await loadConversations();
+      listOffset = 0;
+      await loadConversations(0);
       selectConversation(payload.id);
     } catch (err) {
       setStatus(
@@ -1133,6 +1231,15 @@
 
   async function selectConversation(id, opts) {
     opts = opts || {};
+    if (selectedId !== id) {
+      messagesOffset = 0;
+      messagesTotal = null;
+    }
+    // Reloading a conversation establishes the actual persisted state from
+    // the server's response, so any prior ambiguity for this conversation
+    // is now resolved. We do not claim a specific outcome — the user
+    // inspects what the messages actually show.
+    ambiguousConversations.delete(id);
     selectedId = id;
     const conv = findConversation(id);
     currentTitleEl.textContent = conv ? conv.title : "";
@@ -1142,15 +1249,25 @@
     if (!opts.preserveStatus) {
       setStatus(statusEl, "", null);
     }
-    await loadMessages(id);
+    await loadMessages(id, 0);
   }
 
-  async function loadMessages(id) {
-    if (messagesInFlight && id === selectedId) {
-      // A refresh for the current selection was requested while one is
-      // already in flight; let it finish and force a fresh pass instead
-      // of dropping the refresh silently.
+  function renderMsgsPagination() {
+    if (messagesTotal === null || messagesTotal === 0) {
+      msgsPager.hidden = true;
+      return;
     }
+    msgsPager.hidden = false;
+    const end = messagesOffset + msgsEl.children.length;
+    msgsRange.textContent =
+      "Showing " + (messagesOffset + 1) + "\u2013" + end +
+      " of " + messagesTotal;
+    msgsPrev.disabled = messagesInFlight || messagesOffset <= 0;
+    msgsNext.disabled = messagesInFlight || end >= messagesTotal;
+  }
+
+  async function loadMessages(id, offset) {
+    if (typeof offset !== "number") offset = 0;
     const token = ++messagesLoadToken;
     messagesInFlight = true;
     setStatus(msgsStatus, "Loading messages\u2026", "info");
@@ -1160,7 +1277,8 @@
           encodeURIComponent(id) +
           "/messages?limit=" +
           MESSAGES_LIMIT +
-          "&offset=0",
+          "&offset=" +
+          offset,
         { method: "GET" }
       );
       if (token !== messagesLoadToken) return; // stale
@@ -1185,7 +1303,11 @@
         setStatus(msgsStatus, "The message list response was unexpected.", "error");
         return;
       }
+      const headerTotal = resp.headers.get("X-Total-Count");
+      messagesTotal = headerTotal !== null ? Number(headerTotal) : null;
+      messagesOffset = offset;
       renderMessages(payload);
+      renderMsgsPagination();
       setStatus(msgsStatus, "", null);
     } catch (err) {
       if (token !== messagesLoadToken) return;
@@ -1195,7 +1317,10 @@
         "error"
       );
     } finally {
-      if (token === messagesLoadToken) messagesInFlight = false;
+      if (token === messagesLoadToken) {
+        messagesInFlight = false;
+        renderMsgsPagination();
+      }
     }
   }
 
@@ -1292,11 +1417,15 @@
       }
       renderList();
       updateComposerMode();
-      setStatus(msgsStatus, "Conversation deleted.", "info");
-      // Optionally select the next conversation, if any remain.
-      if (!selectedId && conversations.length > 0) {
-        await selectConversation(conversations[0].id, { preserveStatus: true });
-      }
+      setStatus(
+        msgsStatus,
+        "Conversation deleted. No conversation is selected; the next " +
+          "request will not be saved unless you select one.",
+        "info"
+      );
+      // Do not auto-select another conversation after deletion. Silently
+      // picking a new save destination would let subsequent exchanges be
+      // persisted to a conversation the user did not choose.
     } catch (err) {
       setStatus(
         msgsStatus,
@@ -1315,19 +1444,66 @@
   }
 
   function refreshSelectedMessages() {
-    if (selectedId) {
-      loadMessages(selectedId);
+    if (!selectedId) return;
+    // When the conversation fits on one page, just reload page 1. When it
+    // exceeds one page, jump to the last page so the freshly-saved
+    // exchange is visible without requiring the user to page forward.
+    if (messagesTotal !== null && messagesTotal > MESSAGES_LIMIT) {
+      const lastOffset =
+        Math.floor((messagesTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
+      loadMessages(selectedId, lastOffset);
+    } else {
+      loadMessages(selectedId, 0);
     }
+  }
+
+  function markAmbiguous(id) {
+    if (id) ambiguousConversations.add(id);
+  }
+
+  function clearAmbiguous() {
+    if (selectedId) ambiguousConversations.delete(selectedId);
+  }
+
+  function isAmbiguous(id) {
+    return !!id && ambiguousConversations.has(id);
   }
 
   window.__mickyConversations = {
     getSelectedId: getSelectedId,
     refreshSelectedMessages: refreshSelectedMessages,
+    markAmbiguous: markAmbiguous,
+    clearAmbiguous: clearAmbiguous,
+    isAmbiguous: isAmbiguous,
   };
 
   newBtn.addEventListener("click", createConversation);
   renameBtn.addEventListener("click", renameSelected);
   deleteBtn.addEventListener("click", deleteSelected);
+  convPrev.addEventListener("click", function () {
+    if (listOffset > 0) {
+      loadConversations(Math.max(0, listOffset - LIST_LIMIT));
+    }
+  });
+  convNext.addEventListener("click", function () {
+    if (listTotal !== null && listOffset + conversations.length < listTotal) {
+      loadConversations(listOffset + LIST_LIMIT);
+    }
+  });
+  msgsPrev.addEventListener("click", function () {
+    if (selectedId && messagesOffset > 0) {
+      loadMessages(selectedId, Math.max(0, messagesOffset - MESSAGES_LIMIT));
+    }
+  });
+  msgsNext.addEventListener("click", function () {
+    if (
+      selectedId &&
+      messagesTotal !== null &&
+      messagesOffset + msgsEl.children.length < messagesTotal
+    ) {
+      loadMessages(selectedId, messagesOffset + MESSAGES_LIMIT);
+    }
+  });
   renameInput.addEventListener("keydown", function (event) {
     if (event.key === "Enter") {
       event.preventDefault();
