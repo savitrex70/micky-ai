@@ -26,6 +26,15 @@ from rop.main import app
 # click/submit handlers.
 
 
+# Note: `test_ambiguous_recovery_uses_latest_page_not_page_zero` was
+# removed here. Its assertions targeted the old harness field
+# `usedLastPage`, which was replaced by `sawLatestPage` and
+# `sawNewest`. The superseding test is
+# `test_ambiguous_recovery_renders_newest_before_clear`, which
+# asserts the same fetch AND that the newest message is actually
+# rendered before the guard clears.
+
+
 def _html() -> str:
     with TestClient(app) as client:
         r = client.get("/")
@@ -320,10 +329,16 @@ def test_switch_clears_stale_messages_on_fetch_failure() -> None:
 def test_ambiguous_recovery_uses_latest_page_not_page_zero() -> None:
     """A reload of a long conversation must fetch the last page containing
     the newest messages, not page zero. Otherwise the guard could clear
-    while the possibly-saved exchange is still off-screen."""
+    while the possibly-saved exchange is still off-screen.
+
+    Also asserts the newest message is actually rendered before the guard
+    clears (the older `usedLastPage` field was replaced by `sawLatestPage`
+    and `sawNewest` when the harness strengthened its checks).
+    """
     out = _run_scenario("reload-uses-latest-page")
     assert out["cleared"] is True
-    assert out["usedLastPage"] is True
+    assert out["sawLatestPage"] is True
+    assert out["sawNewest"] is True
 
 
 def test_reload_total_fetch_failure_keeps_ambiguity() -> None:
@@ -383,9 +398,62 @@ def test_create_network_failure_is_ambiguous() -> None:
 
 @pytest.mark.parametrize("boundary", [199, 200, 201, 399, 400, 401])
 def test_message_boundary_offsets(boundary: int) -> None:
+    """The post-success refresh must make its OWN fresh-total and latest-page
+    requests. The initial selection load does not count as evidence.
+    """
     out = _run_scenario("message-boundary", str(boundary))
     assert out["boundary"] == boundary
-    assert out["sawExpected"] is True, (
-        f"boundary {boundary}: expected offset "
-        f"{out['expectedOffset']} was not requested"
+    # Isolate post-submit fetches (the harness reports them separately).
+    assert out["sawFreshTotal"] is True, (
+        f"boundary {boundary}: post-submit refresh did not fetch a fresh "
+        f"total; fetches: {out.get('postSubmitFetches')}"
     )
+    assert out["sawLatestPage"] is True, (
+        f"boundary {boundary}: post-submit refresh did not request offset "
+        f"{out['expectedOffset']}; fetches: {out.get('postSubmitFetches')}"
+    )
+    assert (
+        out["sawNewestRendered"] is True
+    ), f"boundary {boundary}: newest message was not rendered"
+
+
+# --- Correction 4: refresh control + 404 handling + stronger tests -------
+
+
+def test_refresh_conversations_button_preserves_selection() -> None:
+    out = _run_scenario("refresh-button-preserves-selection")
+    assert out["preserved"] is True, out
+
+
+def test_refresh_conversations_button_error_then_success() -> None:
+    out = _run_scenario("refresh-failure-then-success")
+    assert out["firstShowsError"] is True, out
+    assert out["secondCleared"] is True, out
+
+
+def test_confirmed_404_clears_selection() -> None:
+    out = _run_scenario("404-clears-selection")
+    assert out["cleared"] is True
+    assert out["titleBlank"] is True
+    assert out["msgsEmpty"] is True
+    assert out["mentionsNoLongerExists"] is True
+    assert out["modeIsTransient"] is True
+
+
+def test_network_error_preserves_selection() -> None:
+    out = _run_scenario("network-error-preserves-selection")
+    assert out["preserved"] is True, out
+
+
+def test_stale_404_for_other_conversation_does_not_clear() -> None:
+    out = _run_scenario("stale-404-cannot-clear")
+    assert out["preserved"] is True, out
+
+
+def test_ambiguous_recovery_renders_newest_before_clear() -> None:
+    out = _run_scenario("reload-uses-latest-page")
+    assert out["cleared"] is True
+    assert out["sawLatestPage"] is True
+    assert (
+        out["sawNewest"] is True
+    ), "the newest message must be rendered before the ambiguity clears"

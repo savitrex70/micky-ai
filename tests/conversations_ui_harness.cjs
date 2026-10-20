@@ -76,7 +76,8 @@ const ids = [
   "records-load", "records-export", "records-delete", "records-status",
   "records-pagination", "records-prev", "records-next", "records-range",
   "records-table", "records-tbody",
-  "conversations-section", "conversations-new", "conversations-status",
+  "conversations-section", "conversations-new", "conversations-refresh",
+  "conversations-status",
   "conversations-list", "conversations-empty",
   "conversations-pagination", "conversations-prev", "conversations-next",
   "conversations-range",
@@ -369,7 +370,7 @@ async function scenarioReloadUsesLatestPage() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
   global.window.__mickyConversations.markAmbiguous("C0");
-  // Reload: fresh total 400, page at offset 200
+  const fetchPosBefore = H.fetchLog.length;
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
     return H.jsonResponse([], 200, { "X-Total-Count": "400" });
@@ -382,9 +383,18 @@ async function scenarioReloadUsesLatestPage() {
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
   const cleared = !isAmbiguous("C0");
+  // Only fetches after the reload click count.
+  const postReload = H.fetchLog
+    .slice(fetchPosBefore)
+    .map((f) => f.url)
+    .filter((u) => u.includes("/messages"));
+  const sawLatestPage = postReload.some((u) => u.includes("offset=200"));
+  // Verify the newest message (seq 399) is rendered before the guard cleared.
+  const rendered = H.textOf(H.registry["conversation-messages"]);
+  const sawNewest = rendered.indexOf("msg 399") >= 0;
   return {
     ok: true, scenario: "reload-uses-latest-page",
-    cleared, usedLastPage: true,
+    cleared, sawLatestPage, sawNewest,
   };
 }
 
@@ -522,20 +532,176 @@ async function scenarioMessageBoundary() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);
   H.registry["message"].value = "hi";
+  // Capture fetch-log position BEFORE submit so we can prove the
+  // refresh did its own total + page fetches, rather than being
+  // satisfied by the earlier selectViaUI's offset=0 page load.
+  const fetchPosBeforeSubmit = H.fetchLog.length;
   H.enqueue(async () => H.jsonResponse({ status: "success", message: "ok" }, 200, {}));
-  H.enqueue(async () => H.jsonResponse([], 200,
-    { "X-Total-Count": String(boundary) }));
-  const expected = Math.floor((boundary - 1) / 200) * 200;
-  let sawExpected = false;
+  // Refresh: fresh total
   H.enqueue(async (url) => {
-    if (url.includes("offset=" + expected)) sawExpected = true;
+    if (!url.includes("limit=1&offset=0")) {
+      throw new Error("refresh should query fresh total, got " + url);
+    }
     return H.jsonResponse([], 200, { "X-Total-Count": String(boundary) });
+  });
+  const expected = Math.floor((boundary - 1) / 200) * 200;
+  // Refresh: latest page
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=" + expected)) {
+      throw new Error("expected offset=" + expected + ", got " + url);
+    }
+    return H.jsonResponse(
+      pageOfMessages("C0", expected, 200, boundary),
+      200,
+      { "X-Total-Count": String(boundary) },
+    );
   });
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
   await H.drain(40);
+  // Only fetches made AFTER the submit count as proof of refresh.
+  const postSubmit = H.fetchLog
+    .slice(fetchPosBeforeSubmit)
+    .map((f) => f.url)
+    .filter((u) => u.includes("/messages"));
+  const sawFreshTotal = postSubmit.some((u) => u.includes("limit=1&offset=0"));
+  const sawLatestPage = postSubmit.some(
+    (u) => u.includes("offset=" + expected)
+  );
+  // Verify the newest message is actually rendered, not just requested.
+  const rendered = H.textOf(H.registry["conversation-messages"]);
+  const newestIndex = boundary - 1;
+  const sawNewestRendered = rendered.indexOf("msg " + newestIndex) >= 0;
   return {
-    ok: true, scenario: "message-boundary",
-    boundary, expectedOffset: expected, sawExpected,
+    ok: true,
+    scenario: "message-boundary",
+    boundary,
+    expectedOffset: expected,
+    postSubmitFetches: postSubmit,
+    sawFreshTotal,
+    sawLatestPage,
+    sawNewestRendered,
+  };
+}
+
+
+// --- 15. Refresh conversations button preserves selection ---------------
+async function scenarioRefreshButtonPreservesSelection() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  const before = selectedId();
+  const beforeTitle = H.registry["conversation-current-title"].textContent;
+  const beforeMode = H.registry["composer-mode"].textContent;
+  // Click Refresh conversations — enqueued before click.
+  // Use the SAME titles the bootstrap used so the app's legitimate
+  // title-sync (server is authority) does not change the displayed title.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) throw new Error("refresh must request offset=0, got " + url);
+    return H.jsonResponse(
+      [conv("C0", "Conversation 0"), conv("C1", "Conversation 1")],
+      200,
+      { "X-Total-Count": "2" }
+    );
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const after = selectedId();
+  const afterTitle = H.registry["conversation-current-title"].textContent;
+  const afterMode = H.registry["composer-mode"].textContent;
+  return {
+    ok: true, scenario: "refresh-button-preserves-selection",
+    before, after, beforeTitle, afterTitle, beforeMode, afterMode,
+    preserved: before === "C0" && after === "C0" &&
+               beforeTitle === afterTitle && beforeMode === afterMode,
+  };
+}
+
+// --- 16. Refresh failure then success, error visible in between ----------
+async function scenarioRefreshFailureThenSuccess() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // First refresh fails
+  H.enqueue(async () => { throw new Error("refresh boom"); });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const errStatus = H.registry["conversations-status"].textContent;
+  const errKind = H.registry["conversations-status"].getAttribute("data-kind");
+  // Second refresh succeeds
+  H.enqueue(async () => H.jsonResponse([conv("C0", "C0"), conv("C1", "C1")], 200,
+    { "X-Total-Count": "2" }));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const okStatus = H.registry["conversations-status"].textContent;
+  return {
+    ok: true, scenario: "refresh-failure-then-success",
+    errStatus, errKind, okStatus,
+    firstShowsError: errKind === "error" && /could not/i.test(errStatus),
+    secondCleared: okStatus === "" || !/could not/i.test(okStatus),
+  };
+}
+
+// --- 17. Confirmed 404 for selected conversation clears selection --------
+async function scenario404ClearsSelection() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Trigger a reload that returns 404 (total fetch 404)
+  H.enqueue(async () => H.jsonResponse({ detail: "The conversation does not exist." }, 404, {}));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  const sel = selectedId();
+  const title = H.registry["conversation-current-title"].textContent;
+  const msgs = H.textOf(H.registry["conversation-messages"]);
+  const statusText = H.registry["conversation-messages-status"].textContent;
+  const mode = H.registry["composer-mode"].textContent;
+  return {
+    ok: true, scenario: "404-clears-selection",
+    sel, title, msgs,
+    statusText, mode,
+    cleared: sel === null,
+    titleBlank: title === "",
+    msgsEmpty: msgs.trim() === "",
+    mentionsNoLongerExists: /no longer exists/i.test(statusText),
+    modeIsTransient: /not be saved|transient/i.test(mode),
+  };
+}
+
+// --- 18. Network failure preserves selection ----------------------------
+async function scenarioNetworkErrorPreservesSelection() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Trigger a reload that throws
+  H.enqueue(async () => { throw new Error("net boom"); });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  const sel = selectedId();
+  const title = H.registry["conversation-current-title"].textContent;
+  return {
+    ok: true, scenario: "network-error-preserves-selection",
+    sel, title,
+    preserved: sel === "C0" && title === "Conversation 0",
+  };
+}
+
+// --- 19. Stale 404 for another conversation cannot clear ----------------
+async function scenarioStaleOtherConv404CannotClear() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Start a reload of C0 that we will resolve with 404 AFTER switching to C1.
+  let resolveA;
+  H.enqueue(function () {
+    return new Promise((r) => { resolveA = r; });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(5);
+  // Switch to C1 — normal response
+  await selectViaUI(1, "C1", 0);
+  // Release A's stale 404
+  resolveA(H.jsonResponse({ detail: "gone" }, 404, {}));
+  await H.drain(20);
+  const sel = selectedId();
+  return {
+    ok: true, scenario: "stale-404-cannot-clear",
+    sel,
+    preserved: sel === "C1",
   };
 }
 
@@ -557,6 +723,11 @@ const SCENARIOS = {
   "create-then-list-fail": scenarioCreateThenListFail,
   "create-network-fail": scenarioCreateNetworkFail,
   "message-boundary": scenarioMessageBoundary,
+  "refresh-button-preserves-selection": scenarioRefreshButtonPreservesSelection,
+  "refresh-failure-then-success": scenarioRefreshFailureThenSuccess,
+  "404-clears-selection": scenario404ClearsSelection,
+  "network-error-preserves-selection": scenarioNetworkErrorPreservesSelection,
+  "stale-404-cannot-clear": scenarioStaleOtherConv404CannotClear,
 };
 
 (async function main() {

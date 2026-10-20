@@ -1027,6 +1027,7 @@
 
   const section = document.getElementById("conversations-section");
   const newBtn = document.getElementById("conversations-new");
+  const refreshBtn = document.getElementById("conversations-refresh");
   const statusEl = document.getElementById("conversations-status");
   const listEl = document.getElementById("conversations-list");
   const emptyEl = document.getElementById("conversations-empty");
@@ -1161,6 +1162,7 @@
     if (listInFlight) return;
     if (typeof offset !== "number") offset = listOffset;
     listInFlight = true;
+    if (refreshBtn) refreshBtn.disabled = true;
     setStatus(statusEl, "Loading conversations\u2026", "info");
     try {
       const resp = await fetch(
@@ -1219,6 +1221,7 @@
       );
     } finally {
       listInFlight = false;
+      if (refreshBtn) refreshBtn.disabled = false;
       renderConvPagination();
     }
   }
@@ -1313,8 +1316,8 @@
           statusEl,
           "The conversation was created, but the list could not be " +
             "refreshed. Its title and selection are kept. Click " +
-            "\u201CLoad records\u201D in the conversation list toolbar " +
-            "to retry the refresh.",
+            "\u201CRefresh conversations\u201D in the Saved conversations " +
+            "toolbar to retry the refresh.",
           "error"
         );
         return;
@@ -1323,7 +1326,11 @@
       setStatus(statusEl, "", null);
       setStatus(msgsStatus, "Loading messages\u2026", "info");
       const ok = await reloadLatest(createdId);
-      if (!ok && selectedId === createdId) {
+      if (ok === "not_found") {
+        clearSelectionBecauseMissing(createdId);
+        return;
+      }
+      if (ok !== true && selectedId === createdId) {
         setStatus(
           msgsStatus,
           "The latest conversation history could not be loaded. Reload " +
@@ -1381,6 +1388,7 @@
         { method: "GET" }
       );
       if (token !== messagesLoadToken || selectedId !== id) return false;
+      if (resp.status === 404) return "not_found";
       if (!resp.ok) return false;
       const headerTotal = resp.headers.get("X-Total-Count");
       if (headerTotal === null) return false;
@@ -1397,8 +1405,37 @@
     }
     // Now load the actual page containing the newest messages.
     const ok = await loadMessages(id, targetOffset, token);
+    if (ok === "not_found") return "not_found";
     if (!ok) return false;
     return true;
+  }
+
+  // Called when the server confirms (via 404) that the selected
+  // conversation no longer exists. Clears all UI state tied to it so it
+  // cannot remain an active save destination, and invalidates any
+  // in-flight message load so a stale response cannot resurrect it.
+  function clearSelectionBecauseMissing(id) {
+    if (selectedId !== id) return;
+    messagesLoadToken++; // invalidate in-flight loads for this id
+    selectedId = null;
+    selectedTitle = null;
+    currentTitleEl.textContent = "";
+    while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+    msgsEmpty.hidden = true;
+    messagesOffset = 0;
+    messagesTotal = null;
+    renderMsgsPagination();
+    view.hidden = true;
+    ambiguousConversations.delete(id);
+    renderList();
+    updateComposerMode();
+    setStatus(
+      msgsStatus,
+      "The selected conversation no longer exists on the server; it has " +
+        "been cleared. Future turns are transient unless you select " +
+        "another conversation.",
+      "error"
+    );
   }
 
   async function selectConversation(id, opts) {
@@ -1432,7 +1469,11 @@
     }
     setStatus(msgsStatus, "Loading messages\u2026", "info");
     const ok = await reloadLatest(id);
-    if (ok && selectedId === id) {
+    if (ok === "not_found") {
+      clearSelectionBecauseMissing(id);
+      return;
+    }
+    if (ok === true && selectedId === id) {
       ambiguousConversations.delete(id);
     } else if (selectedId === id) {
       setStatus(
@@ -1482,6 +1523,11 @@
         { method: "GET" }
       );
       if (token !== messagesLoadToken) return false; // stale
+      if (resp.status === 404) {
+        // A confirmed 404 for this exact conversation means it no longer
+        // exists. Callers translate that to a cleared selection.
+        return "not_found";
+      }
       if (!resp.ok) {
         setStatus(
           msgsStatus,
@@ -1542,9 +1588,13 @@
     renderMsgsPagination();
     setStatus(msgsStatus, "Loading messages\u2026", "info");
     const ok = await reloadLatest(id);
-    if (ok && selectedId === id) {
+    if (ok === "not_found") {
+      clearSelectionBecauseMissing(id);
+      return;
+    }
+    if (ok === true && selectedId === id) {
       ambiguousConversations.delete(id);
-    } else if (!ok && selectedId === id) {
+    } else if (selectedId === id) {
       setStatus(
         msgsStatus,
         "The latest conversation history could not be loaded. The " +
@@ -1682,7 +1732,11 @@
     if (!selectedId) return;
     const id = selectedId;
     const ok = await reloadLatest(id);
-    if (!ok && selectedId === id) {
+    if (ok === "not_found") {
+      clearSelectionBecauseMissing(id);
+      return;
+    }
+    if (ok !== true && selectedId === id) {
       setStatus(
         msgsStatus,
         "The exchange could not be confirmed in the conversation history. " +
@@ -1717,6 +1771,12 @@
   };
 
   newBtn.addEventListener("click", createConversation);
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function () {
+      listOffset = 0;
+      loadConversations(0);
+    });
+  }
   renameBtn.addEventListener("click", renameSelected);
   deleteBtn.addEventListener("click", deleteSelected);
   convPrev.addEventListener("click", function () {

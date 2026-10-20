@@ -485,3 +485,5 @@ footer {
   color: var(--error);
   font-weight: 600;
 }
+
+.conversations-toolbar button[disabled] { opacity: 0.6; cursor: progress; }

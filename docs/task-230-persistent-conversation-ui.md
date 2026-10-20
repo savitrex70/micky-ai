@@ -139,6 +139,27 @@ the POST is treated as ambiguous: the server may have created the
 conversation, the interface does not repeat the request, and the user is
 directed to reload the list.
 
+**Refresh conversations.** The Saved conversations toolbar has an
+explicit "Refresh conversations" button. Clicking it always requests
+offset zero, is disabled while an in-flight list fetch is running, and
+preserves the selected conversation, the displayed title, the composer
+mode, and any ambiguity marker. A successful refresh updates the list; a
+failed refresh shows a distinct error state (not an empty list) that can
+be retried by clicking the same button.
+
+**Confirmed-404 clears the selected conversation.** If the server
+returns 404 for the selected conversation's message fetch, the interface
+treats that as proof the conversation no longer exists. It clears
+`selectedId`, `selectedTitle`, the displayed title, rendered messages,
+pagination state, and any ambiguity marker for that conversation, and
+invalidates any in-flight message load so a stale response cannot
+resurrect it. The composer becomes transient ("No conversation is
+selected"). A network error, 500, 503, or another inconclusive outcome
+does NOT clear the selection; the conversation stays selected with its
+title intact and an error message is shown. A 404 that arrives for a
+conversation other than the currently selected one does not clear the
+current selection.
+
 ## Privacy and separation
 
 - The browser continues to load only local static assets; no remote
