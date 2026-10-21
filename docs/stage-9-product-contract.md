@@ -248,8 +248,21 @@ Planned capabilities (Stage 9 target):
     selection, title, messages, pagination state, and ambiguity
     marker, and invalidates any in-flight load. Any other
     inconclusive outcome (network, 500, 503, unreadable) preserves
-    the selection. The API adds backward-compatible `X-Total-Count`
-    headers on its two list endpoints.
+    the selection. List requests are serialized so overlapping
+    pagination and refresh actions cannot start a second request while
+    one is in flight. A confirmed-404 submission is sent without a
+    `conversation_id`, proving no other conversation was silently
+    selected. Recovery only clears the ambiguity marker when the
+    fetched page validates against `AssistantMessageRead` (UUID
+    identifiers, matching `conversation_id`, permitted role, integer
+    `sequence`, ISO 8601 timestamp), its `X-Total-Count` is a
+    non-negative integer via the shared strict parser, and the page
+    ends at the reported total. Conversation-list responses are
+    validated against `AssistantConversationRead` with the same strict
+    count parser before any list state is committed; a malformed list
+    response preserves the previous rows, offset, total, and selection.
+    The API adds backward-compatible `X-Total-Count` headers on its two
+    list endpoints.
   - Absent: conversation export/import, per-message editing, notes,
     tasks, reminders, local retrieval. Stage 9 owner decisions H.1, H.3,
     H.4 remain unresolved; the contract remains a draft.
