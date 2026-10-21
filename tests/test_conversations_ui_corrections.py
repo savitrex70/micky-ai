@@ -496,3 +496,59 @@ def test_malformed_latest_page_response_keeps_ambiguity() -> None:
     ambiguity guard."""
     out = _run_scenario("recovery-malformed-page")
     assert out["kept"] is True, out
+
+
+# --- Correction 6: list serialization + strict message validation + 404
+#     submission body assertion -----------------------------------------
+
+
+def test_list_requests_serialize_while_loading() -> None:
+    """Multiple refresh clicks while a request is in flight must produce
+    one request at a time, not overlapping requests."""
+    out = _run_scenario("list-serialization")
+    assert out["oneAtATime"] is True, out
+    assert out["fetchesWhilePending"] == 1, out
+    assert out["fetchesAfterFirst"] == 2, out
+    assert out["fetchesAfterSecond"] == 3, out
+    assert out["fetchesFinal"] == 3, out
+
+
+def test_ambiguous_404_post_is_transient_no_conversation_id() -> None:
+    """After a confirmed 404 clears the selection, the next submission must
+    be sent WITHOUT conversation_id, proving no other conversation was
+    silently selected."""
+    out = _run_scenario("ambiguous-404-blocks-repost")
+    assert out["selectionCleared"] is True
+    assert out["ambiguityCleared"] is True
+    assert out["postCount"] == 1, out
+    assert out["hasConversationId"] is False, out
+    assert out["submissionIsTransient"] is True, out
+    assert "conversation_id" not in (out["postBody"] or {})
+
+
+def test_recovery_malformed_records_keeps_ambiguity() -> None:
+    out = _run_scenario("recovery-malformed-records")
+    assert out["kept"] is True, out
+
+
+def test_recovery_missing_total_keeps_ambiguity() -> None:
+    out = _run_scenario("recovery-missing-total")
+    assert out["kept"] is True, out
+
+
+def test_recovery_invalid_total_keeps_ambiguity() -> None:
+    out = _run_scenario("recovery-invalid-total")
+    assert out["kept"] is True, out
+
+
+def test_recovery_empty_page_inconsistent_with_total_keeps_ambiguity() -> None:
+    out = _run_scenario("recovery-empty-inconsistent")
+    assert out["kept"] is True, out
+
+
+def test_recovery_empty_legitimate_clears_ambiguity() -> None:
+    """A genuinely empty conversation (total 0, empty page) must recover
+    successfully."""
+    out = _run_scenario("recovery-empty-legitimate")
+    assert out["ambBefore"] is True
+    assert out["cleared"] is True

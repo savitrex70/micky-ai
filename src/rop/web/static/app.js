@@ -1060,6 +1060,7 @@
   let listTotal = null;
   let messagesOffset = 0;
   let messagesTotal = null;
+  let messagesRenderedCount = 0;
   // Conversations whose last request produced an outcome we could not
   // establish. While a conversation is in this set the composer refuses a
   // blind resubmit until the user reloads the conversation.
@@ -1159,6 +1160,35 @@
     convNext.disabled = listInFlight || end >= listTotal;
   }
 
+  // Validate a single message record against the API read contract.
+  // Reject anything that could not have been produced by a valid
+  // successful response, so a malformed body cannot be mistaken for
+  // successfully-established history.
+  function isValidMessageRecord(m, expectedConversationId) {
+    if (!m || typeof m !== "object") return false;
+    if (typeof m.id !== "string" || !m.id) return false;
+    if (typeof m.conversation_id !== "string" || !m.conversation_id) return false;
+    if (expectedConversationId && m.conversation_id !== expectedConversationId) {
+      return false;
+    }
+    if (m.role !== "user" && m.role !== "assistant") return false;
+    if (typeof m.content !== "string") return false;
+    if (!Number.isInteger(m.sequence) || m.sequence < 0) return false;
+    if (typeof m.created_at !== "string" || !m.created_at) return false;
+    return true;
+  }
+
+  // Parse the X-Total-Count header. Returns null for missing or invalid
+  // values so a caller cannot mistake an absent count for zero.
+  function parseTotalCount(headerValue) {
+    if (headerValue === null || headerValue === undefined) return null;
+    const trimmed = String(headerValue).trim();
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null;
+    return n;
+  }
+
   // Fetch one page of conversations. Returns { ok: true } on success and
   // { ok: false, reason } otherwise. The committed list state (listOffset,
   // conversations, listTotal) is only mutated AFTER a valid response has
@@ -1172,16 +1202,23 @@
   // function is therefore guaranteed to observe a real result of *its*
   // request, not of an unrelated earlier one.
   async function loadConversations(offset) {
-    if (listInFlight && listInFlightPromise) {
+    // Serialize: wait until no request is in flight, rechecking after
+    // each wait. Single-threaded JS guarantees this while loop is the
+    // only place that flips listInFlight from false to true, so multiple
+    // callers cannot start overlapping requests.
+    while (listInFlight && listInFlightPromise) {
       try {
         await listInFlightPromise;
       } catch (err) {
-        // ignore: we start our own request below
+        // ignore: our own request below will surface any real failure
       }
     }
     if (typeof offset !== "number") offset = listOffset;
     listInFlight = true;
     if (refreshBtn) refreshBtn.disabled = true;
+    // Update pagination button states immediately so a user cannot queue
+    // overlapping clicks while the request is being prepared.
+    renderConvPagination();
     setStatus(statusEl, "Loading conversations\u2026", "info");
     listInFlightPromise = (async () => {
       try {
@@ -1254,6 +1291,10 @@
     try {
       return await listInFlightPromise;
     } finally {
+      // Only clear the reference if another caller has not already
+      // started its own request. The IIFE's own finally resets
+      // listInFlight; this guard prevents a late waiter from wiping a
+      // newer caller's promise.
       listInFlightPromise = null;
     }
   }
@@ -1453,6 +1494,25 @@
     const ok = await loadMessages(id, targetOffset, token);
     if (ok === "not_found") return "not_found";
     if (!ok) return false;
+    // Recovery is only established when the rendered page ends exactly
+    // at the current total for the same conversation and generation.
+    // This catches the case where records were added between the
+    // fresh-total fetch and the page fetch (our offset is no longer the
+    // last page) and the case where records were deleted (offset might
+    // be past the end).
+    if (token !== messagesLoadToken || selectedId !== id) return false;
+    if (messagesTotal !== null && messagesTotal > 0) {
+      const pageEnd = messagesOffset + messagesRenderedCount;
+      if (pageEnd !== messagesTotal) {
+        setStatus(
+          msgsStatus,
+          "The latest conversation history shifted while loading; " +
+            "reload again to establish the current state.",
+          "error"
+        );
+        return false;
+      }
+    }
     return true;
   }
 
@@ -1595,9 +1655,54 @@
         setStatus(msgsStatus, "The message list response was unexpected.", "error");
         return false;
       }
-      const headerTotal = resp.headers.get("X-Total-Count");
-      messagesTotal = headerTotal !== null ? Number(headerTotal) : null;
+      // Validate every record against the read contract. A malformed
+      // record (missing required field, wrong role, wrong conversation,
+      // non-integer sequence) invalidates the response.
+      for (const m of payload) {
+        if (!isValidMessageRecord(m, id)) {
+          setStatus(
+            msgsStatus,
+            "The message list response contained a malformed record; " +
+              "history could not be established.",
+            "error"
+          );
+          return false;
+        }
+      }
+      // Require a valid X-Total-Count header. Missing or invalid totals
+      // are rejected so a caller cannot treat an unverified page as
+      // successful recovery.
+      const headerTotal = parseTotalCount(resp.headers.get("X-Total-Count"));
+      if (headerTotal === null) {
+        setStatus(
+          msgsStatus,
+          "The message list response did not include a valid total count.",
+          "error"
+        );
+        return false;
+      }
+      // Consistency: offset + rendered must not exceed the total, and a
+      // short page (fewer records than MESSAGES_LIMIT) whose end is still
+      // short of the total is inconsistent.
+      if (offset + payload.length > headerTotal) {
+        setStatus(
+          msgsStatus,
+          "The message list response was inconsistent with its total.",
+          "error"
+        );
+        return false;
+      }
+      if (payload.length < MESSAGES_LIMIT && offset + payload.length < headerTotal) {
+        setStatus(
+          msgsStatus,
+          "The message list response was shorter than the reported total.",
+          "error"
+        );
+        return false;
+      }
+      messagesTotal = headerTotal;
       messagesOffset = offset;
+      messagesRenderedCount = payload.length;
       renderMessages(payload);
       renderMsgsPagination();
       setStatus(msgsStatus, "", null);
@@ -1827,11 +1932,13 @@
   renameBtn.addEventListener("click", renameSelected);
   deleteBtn.addEventListener("click", deleteSelected);
   convPrev.addEventListener("click", function () {
+    if (listInFlight) return;
     if (listOffset > 0) {
       loadConversations(Math.max(0, listOffset - LIST_LIMIT));
     }
   });
   convNext.addEventListener("click", function () {
+    if (listInFlight) return;
     if (listTotal !== null && listOffset + conversations.length < listTotal) {
       loadConversations(listOffset + LIST_LIMIT);
     }

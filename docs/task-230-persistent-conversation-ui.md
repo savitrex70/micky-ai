@@ -147,6 +147,15 @@ mode, and any ambiguity marker. A successful refresh updates the list; a
 failed refresh shows a distinct error state (not an empty list) that can
 be retried by clicking the same button.
 
+List requests are serialized: if another list request is in flight, a
+new caller awaits its completion (rechecking the state after each wait)
+before starting its own request. Pagination buttons check the in-flight
+state and are disabled while a request is pending, so multiple clicks
+cannot start overlapping requests. A successful response commits the
+list, total, and offset together as one atomic step; any failure — HTTP
+error, unreadable body, structurally invalid body, or network error —
+leaves the previous rows, offset, and pagination range intact.
+
 **Confirmed-404 clears the selected conversation.** If the server
 returns 404 for the selected conversation's message fetch, the interface
 treats that as proof the conversation no longer exists. It clears
@@ -158,7 +167,29 @@ selected"). A network error, 500, 503, or another inconclusive outcome
 does NOT clear the selection; the conversation stays selected with its
 title intact and an error message is shown. A 404 that arrives for a
 conversation other than the currently selected one does not clear the
-current selection.
+current selection. A submission after a confirmed-404 clears the
+selection is sent as a transient request — its POST body contains no
+`conversation_id` — proving no other conversation was silently chosen
+as the destination.
+
+**Strict message validation on recovery.** `reloadLatest` accepts a
+message fetch as establishing the conversation's history only when:
+
+- every record validates against the message read contract (`id`,
+  `conversation_id`, `role` in `{user, assistant}`, `content` string,
+  non-negative integer `sequence`, `created_at` string);
+- the `X-Total-Count` header is present and parses as a finite
+  non-negative integer;
+- the rendered page does not exceed the reported total, and is not
+  shorter than `MESSAGES_LIMIT` while ending before the total; and
+- the page ends exactly at the current total (which is what makes the
+  loaded page the actual last page containing the newest messages).
+
+A malformed record, a missing or invalid total, an empty page
+inconsistent with a non-zero total, or a page whose end does not match
+the fresh total all leave the ambiguity marker set so the composer
+remains blocked for that conversation. A genuinely empty conversation
+(total 0, empty page, header 0) recovers normally.
 
 ## Privacy and separation
 

@@ -109,7 +109,11 @@ const queue = [];
 const fetchLog = [];
 function enqueue(fn) { queue.push(fn); }
 async function fetchMock(url, opts) {
-  fetchLog.push({ url: String(url), method: (opts && opts.method) || "GET" });
+  fetchLog.push({
+    url: String(url),
+    method: (opts && opts.method) || "GET",
+    body: opts && typeof opts.body === "string" ? opts.body : null,
+  });
   const h = queue.shift();
   if (!h) throw new Error("unexpected fetch: " + url);
   return h(String(url), opts);
@@ -797,21 +801,30 @@ async function scenarioAmbiguous404BlocksRepost() {
   H.enqueue(async () => H.jsonResponse({ status: "success", message: "ok" }, 200, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
   await H.drain(20);
-  // Find the POST made by the submit; its body must not include
-  // conversation_id.
+  // Find the POST made by the submit.
   let postBody = null;
+  let postCount = 0;
   for (let i = fetchLogBeforeSubmit; i < H.fetchLog.length; i++) {
-    // Fetch log captures method + url; body not captured, but the
-    // sendRequest function only includes conversation_id if selectedId
-    // was truthy. Since selection is cleared, no conversation_id.
+    if (H.fetchLog[i].method === "POST") {
+      postCount++;
+      if (H.fetchLog[i].body) {
+        try { postBody = JSON.parse(H.fetchLog[i].body); } catch (e) { postBody = null; }
+      }
+    }
   }
+  const hasConversationId = postBody !== null &&
+    Object.prototype.hasOwnProperty.call(postBody, "conversation_id");
   return {
     ok: true, scenario: "ambiguous-404-blocks-repost",
     ambBefore,
     selAfter404,
     ambAfter404,
+    postCount,
+    postBody,
+    hasConversationId,
     selectionCleared: selAfter404 === null,
     ambiguityCleared: ambAfter404 === false,
+    submissionIsTransient: postCount === 1 && !hasConversationId,
   };
 }
 
@@ -834,6 +847,161 @@ async function scenarioRecoveryMalformedPage() {
   return {
     ok: true, scenario: "recovery-malformed-page",
     amb, kept: amb === true,
+  };
+}
+
+
+// --- 24. Malformed message records keep ambiguity -----------------------
+async function scenarioRecoveryMalformedRecords() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  // Total fetch OK
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  // Page fetch returns array containing a malformed record (missing id).
+  H.enqueue(async () => {
+    const bad = pageOfMessages("C0", 200, 200, 400);
+    bad[0] = { id: null, conversation_id: "C0", role: "user",
+               content: "x", sequence: 200, created_at: "x" };
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "400" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-malformed-records",
+    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 25. Missing total header keeps ambiguity ---------------------------
+async function scenarioRecoveryMissingTotal() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  // Page response has no X-Total-Count header at all.
+  H.enqueue(async () => H.jsonResponse(
+    pageOfMessages("C0", 200, 200, 400), 200, {}
+  ));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-missing-total",
+    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 26. Invalid total value keeps ambiguity ---------------------------
+async function scenarioRecoveryInvalidTotal() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  // Page fetch returns valid records but bogus total header.
+  H.enqueue(async () => H.jsonResponse(
+    pageOfMessages("C0", 200, 200, 400), 200, { "X-Total-Count": "not-a-number" }
+  ));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-invalid-total",
+    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 27. Empty page with non-zero total keeps ambiguity ----------------
+async function scenarioRecoveryEmptyInconsistent() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  // Empty array but header total is still 400 — inconsistent.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "400" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-empty-inconsistent",
+    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+  };
+}
+
+// --- 28. Legitimate empty conversation recovers ------------------------
+async function scenarioRecoveryEmptyLegitimate() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);  // 0 messages
+  global.window.__mickyConversations.markAmbiguous("C0");
+  const ambBefore = isAmbiguous("C0");
+  // Reload: total 0, page empty with header 0.
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "0" });
+  });
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-empty-legitimate",
+    ambBefore,
+    ambAfter: isAmbiguous("C0"),
+    cleared: ambBefore === true && isAmbiguous("C0") === false,
+  };
+}
+
+// --- 29. List request serialization ------------------------------------
+async function scenarioListSerialization() {
+  await bootstrap(0, 50, 51);
+  const fetchCountAfterBootstrap = H.fetchLog.length;
+  // Hold three list responses via resolvers.
+  let r1, r2, r3;
+  H.enqueue(function () { return new Promise((res) => { r1 = res; }); });
+  H.enqueue(function () { return new Promise((res) => { r2 = res; }); });
+  H.enqueue(function () { return new Promise((res) => { r3 = res; }); });
+  // Fire three refresh clicks.
+  H.registry["conversations-refresh"].click();
+  H.registry["conversations-refresh"].click();
+  H.registry["conversations-refresh"].click();
+  await H.drain(20);
+  const fetchesWhilePending = H.fetchLog.length - fetchCountAfterBootstrap;
+
+  // Resolve the first response; only one more fetch should start.
+  r1(H.jsonResponse(pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "51" }));
+  await H.drain(25);
+  const fetchesAfterFirst = H.fetchLog.length - fetchCountAfterBootstrap;
+
+  // Resolve the second; one more.
+  r2(H.jsonResponse(pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "51" }));
+  await H.drain(25);
+  const fetchesAfterSecond = H.fetchLog.length - fetchCountAfterBootstrap;
+
+  // Resolve the third.
+  r3(H.jsonResponse(pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "51" }));
+  await H.drain(25);
+  const fetchesFinal = H.fetchLog.length - fetchCountAfterBootstrap;
+
+  return {
+    ok: true, scenario: "list-serialization",
+    fetchesWhilePending,
+    fetchesAfterFirst,
+    fetchesAfterSecond,
+    fetchesFinal,
+    // Serialised: only one request in flight at a time. While pending only
+    // the first fetch should have started.
+    oneAtATime: fetchesWhilePending === 1 &&
+                fetchesAfterFirst === 2 &&
+                fetchesAfterSecond === 3 &&
+                fetchesFinal === 3,
   };
 }
 
@@ -864,6 +1032,12 @@ const SCENARIOS = {
   "create-during-refresh": scenarioCreateDuringRefresh,
   "ambiguous-404-blocks-repost": scenarioAmbiguous404BlocksRepost,
   "recovery-malformed-page": scenarioRecoveryMalformedPage,
+  "recovery-malformed-records": scenarioRecoveryMalformedRecords,
+  "recovery-missing-total": scenarioRecoveryMissingTotal,
+  "recovery-invalid-total": scenarioRecoveryInvalidTotal,
+  "recovery-empty-inconsistent": scenarioRecoveryEmptyInconsistent,
+  "recovery-empty-legitimate": scenarioRecoveryEmptyLegitimate,
+  "list-serialization": scenarioListSerialization,
 };
 
 (async function main() {
