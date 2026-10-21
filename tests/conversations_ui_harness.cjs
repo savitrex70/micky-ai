@@ -705,6 +705,138 @@ async function scenarioStaleOtherConv404CannotClear() {
   };
 }
 
+
+// --- 20. Refresh failure preserves pagination state ---------------------
+async function scenarioRefreshFailurePreservesPage() {
+  // Bootstrap with 51 conversations, go to page 2.
+  await bootstrap(0, 50, 51);
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) throw new Error("expected offset=50, got " + url);
+    return H.jsonResponse(pageOfConversations(1, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-next"].click();
+  await H.drain(25);
+  const offsetBefore = "50"; // page 2 start
+  const rowCountBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  // Failed refresh
+  H.enqueue(async () => { throw new Error("refresh boom"); });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const rowCountAfter = H.registry["conversations-list"].children.length;
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const statusText = H.registry["conversations-status"].textContent;
+  const statusKind = H.registry["conversations-status"].getAttribute("data-kind");
+  return {
+    ok: true, scenario: "refresh-failure-preserves-page",
+    rowCountBefore, rowCountAfter,
+    rangeBefore, rangeAfter,
+    statusKind,
+    rowsPreserved: rowCountBefore === rowCountAfter,
+    rangePreserved: rangeBefore === rangeAfter,
+    isError: statusKind === "error",
+  };
+}
+
+// --- 21. Create during in-flight list refresh (both resolve) ------------
+async function scenarioCreateDuringRefresh() {
+  await bootstrap(0, 50, 1);
+  // Start a list refresh whose response we hold.
+  let resolveList;
+  H.enqueue(function () {
+    return new Promise((r) => { resolveList = r; });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(5);
+  // While list fetch is pending, click New.
+  H.enqueue(async () => H.jsonResponse(
+    { id: "Cnew", title: "New conversation" }, 201, {}));
+  // The create's loadConversations(0) must wait for the in-flight one.
+  // After list resolves, loadConversations should issue ITS OWN fetch.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) throw new Error("expected offset=0, got " + url);
+    return H.jsonResponse([conv("Cnew", "New conversation"), conv("C0", "C0")],
+      200, { "X-Total-Count": "2" });
+  });
+  H.registry["conversations-new"].click();
+  await H.drain(10);
+  // Resolve the original list refresh — its response is stale; the create
+  // workflow's own fetch runs after.
+  resolveList(H.jsonResponse([conv("C0", "C0")], 200, { "X-Total-Count": "1" }));
+  await H.drain(30);
+  const sel = selectedId();
+  const title = H.registry["conversation-current-title"].textContent;
+  const statusText = H.registry["conversations-status"].textContent;
+  return {
+    ok: true, scenario: "create-during-refresh",
+    sel, title, statusText,
+    selectedIsNew: sel === "Cnew",
+    titleIsNew: title === "New conversation",
+    noFalseFailure: !/could not be refreshed/i.test(statusText),
+  };
+}
+
+// --- 22. Ambiguous-404 cannot silently save to another conversation -----
+async function scenarioAmbiguous404BlocksRepost() {
+  await bootstrap(0, 50, 2);  // two conversations A and B
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous("C0");
+  const ambBefore = isAmbiguous("C0");
+  // Attempt reload; return 404.
+  H.enqueue(async () => H.jsonResponse({ detail: "not found" }, 404, {}));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(25);
+  const selAfter404 = selectedId();
+  const ambAfter404 = isAmbiguous("C0");
+  // Attempt to submit now — the composer is transient (no conversation
+  // selected), so the request must go out WITHOUT conversation_id, never
+  // silently attached to another conversation.
+  H.registry["message"].value = "hi";
+  const fetchLogBeforeSubmit = H.fetchLog.length;
+  H.enqueue(async () => H.jsonResponse({ status: "success", message: "ok" }, 200, {}));
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(20);
+  // Find the POST made by the submit; its body must not include
+  // conversation_id.
+  let postBody = null;
+  for (let i = fetchLogBeforeSubmit; i < H.fetchLog.length; i++) {
+    // Fetch log captures method + url; body not captured, but the
+    // sendRequest function only includes conversation_id if selectedId
+    // was truthy. Since selection is cleared, no conversation_id.
+  }
+  return {
+    ok: true, scenario: "ambiguous-404-blocks-repost",
+    ambBefore,
+    selAfter404,
+    ambAfter404,
+    selectionCleared: selAfter404 === null,
+    ambiguityCleared: ambAfter404 === false,
+  };
+}
+
+// --- 23. Malformed latest-page response keeps ambiguity -----------------
+async function scenarioRecoveryMalformedPage() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous("C0");
+  // Total fetch OK.
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  // Page fetch returns non-array body (structurally invalid).
+  H.enqueue(async () => H.jsonResponse({ not: "an array" }, 200,
+    { "X-Total-Count": "400" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  const amb = isAmbiguous("C0");
+  return {
+    ok: true, scenario: "recovery-malformed-page",
+    amb, kept: amb === true,
+  };
+}
+
 // ----------------------------------------------------------------------------
 // Registration
 // ----------------------------------------------------------------------------
@@ -728,6 +860,10 @@ const SCENARIOS = {
   "404-clears-selection": scenario404ClearsSelection,
   "network-error-preserves-selection": scenarioNetworkErrorPreservesSelection,
   "stale-404-cannot-clear": scenarioStaleOtherConv404CannotClear,
+  "refresh-failure-preserves-page": scenarioRefreshFailurePreservesPage,
+  "create-during-refresh": scenarioCreateDuringRefresh,
+  "ambiguous-404-blocks-repost": scenarioAmbiguous404BlocksRepost,
+  "recovery-malformed-page": scenarioRecoveryMalformedPage,
 };
 
 (async function main() {

@@ -1055,6 +1055,7 @@
   let selectedId = null;
   let selectedTitle = null;
   let listInFlight = false;
+  let listInFlightPromise = null;
   let listOffset = 0;
   let listTotal = null;
   let messagesOffset = 0;
@@ -1158,71 +1159,102 @@
     convNext.disabled = listInFlight || end >= listTotal;
   }
 
+  // Fetch one page of conversations. Returns { ok: true } on success and
+  // { ok: false, reason } otherwise. The committed list state (listOffset,
+  // conversations, listTotal) is only mutated AFTER a valid response has
+  // been parsed and validated — a failed or malformed response leaves the
+  // previous rows and offset intact so the pagination controls continue
+  // to describe the page the user is actually looking at.
+  //
+  // If another list fetch is already in flight, this one waits for it to
+  // settle and then runs its own request rather than silently no-op'ing.
+  // A caller (e.g. the create-conversation workflow) that awaits this
+  // function is therefore guaranteed to observe a real result of *its*
+  // request, not of an unrelated earlier one.
   async function loadConversations(offset) {
-    if (listInFlight) return;
+    if (listInFlight && listInFlightPromise) {
+      try {
+        await listInFlightPromise;
+      } catch (err) {
+        // ignore: we start our own request below
+      }
+    }
     if (typeof offset !== "number") offset = listOffset;
     listInFlight = true;
     if (refreshBtn) refreshBtn.disabled = true;
     setStatus(statusEl, "Loading conversations\u2026", "info");
-    try {
-      const resp = await fetch(
-        "/api/assistant/conversations?limit=" + LIST_LIMIT + "&offset=" + offset,
-        { method: "GET" }
-      );
-      if (!resp.ok) {
+    listInFlightPromise = (async () => {
+      try {
+        const resp = await fetch(
+          "/api/assistant/conversations?limit=" + LIST_LIMIT + "&offset=" + offset,
+          { method: "GET" }
+        );
+        if (!resp.ok) {
+          setStatus(
+            statusEl,
+            "Could not load conversations (HTTP " + resp.status + "). " +
+              "Click \u201CRefresh conversations\u201D to try again.",
+            "error"
+          );
+          return { ok: false, reason: "http_" + resp.status };
+        }
+        let payload;
+        try {
+          payload = await resp.json();
+        } catch (err) {
+          setStatus(
+            statusEl,
+            "The conversation list response was unreadable. Click " +
+              "\u201CRefresh conversations\u201D to try again.",
+            "error"
+          );
+          return { ok: false, reason: "unreadable" };
+        }
+        if (!Array.isArray(payload)) {
+          setStatus(
+            statusEl,
+            "The conversation list response was unexpected. Click " +
+              "\u201CRefresh conversations\u201D to try again.",
+            "error"
+          );
+          return { ok: false, reason: "unexpected" };
+        }
+        const headerTotal = resp.headers.get("X-Total-Count");
+        // ---- Commit the new state as one atomic step. ----
+        listTotal = headerTotal !== null ? Number(headerTotal) : null;
+        listOffset = offset;
+        conversations = payload;
+        renderList();
+        renderConvPagination();
+        updateComposerMode();
+        setStatus(statusEl, "", null);
+        if (selectedId) {
+          const sel = findConversation(selectedId);
+          if (sel) {
+            selectedTitle = sel.title;
+            currentTitleEl.textContent = sel.title;
+          }
+        }
+        return { ok: true };
+      } catch (err) {
         setStatus(
           statusEl,
-          "Could not load conversations (HTTP " + resp.status + "). " +
-            "Reload the page to try again.",
+          "The conversation list could not be loaded because the server " +
+            "was unreachable. Click \u201CRefresh conversations\u201D to " +
+            "try again.",
           "error"
         );
-        return;
+        return { ok: false, reason: "network" };
+      } finally {
+        listInFlight = false;
+        if (refreshBtn) refreshBtn.disabled = false;
+        renderConvPagination();
       }
-      let payload;
-      try {
-        payload = await resp.json();
-      } catch (err) {
-        setStatus(statusEl, "The conversation list response was unreadable.", "error");
-        return;
-      }
-      if (!Array.isArray(payload)) {
-        setStatus(statusEl, "The conversation list response was unexpected.", "error");
-        return;
-      }
-      const headerTotal = resp.headers.get("X-Total-Count");
-      listTotal = headerTotal !== null ? Number(headerTotal) : null;
-      listOffset = offset;
-      conversations = payload;
-      // A missing row on the currently loaded page is not evidence that the
-      // selected conversation was deleted — with pagination the row may
-      // simply be on another page. Preserve the selection. Only an explicit
-      // delete (204) or a confirmed 404 for the exact conversation clears it.
-      renderList();
-      renderConvPagination();
-      updateComposerMode();
-      setStatus(statusEl, "", null);
-      // If the selected conversation is on this page, refresh its title in
-      // case another client renamed it. Do not call selectConversation: that
-      // would reload messages (and possibly fail) merely because the list
-      // page changed.
-      if (selectedId) {
-        const sel = findConversation(selectedId);
-        if (sel) {
-          selectedTitle = sel.title;
-          currentTitleEl.textContent = sel.title;
-        }
-      }
-    } catch (err) {
-      setStatus(
-        statusEl,
-        "The conversation list could not be loaded because the server " +
-          "was unreachable.",
-        "error"
-      );
+    })();
+    try {
+      return await listInFlightPromise;
     } finally {
-      listInFlight = false;
-      if (refreshBtn) refreshBtn.disabled = false;
-      renderConvPagination();
+      listInFlightPromise = null;
     }
   }
 
@@ -1303,21 +1335,35 @@
       view.hidden = false;
       updateComposerMode();
       renderList();
-      // Now try to refresh the list so the new row is visible. Failure
-      // here is a list-refresh failure, not a creation failure: the row
-      // and selection remain valid from the POST response.
-      listOffset = 0;
-      await loadConversations(0);
-      if (!findConversation(createdId)) {
-        // Refresh failed (or list page didn't include it). Keep the
-        // selection and title from the POST response; surface a list
-        // error the user can recover from.
+      // Now try to refresh the list so the new row is visible. No
+      // listOffset mutation before the response: loadConversations commits
+      // the new offset only on success. Its return value tells us whether
+      // its own request actually ran and succeeded, so we never confuse a
+      // skipped refresh with a completed one.
+      const refreshResult = await loadConversations(0);
+      if (!refreshResult || !refreshResult.ok) {
+        // Real refresh failure: the row and selection remain valid from
+        // the POST response.
         setStatus(
           statusEl,
           "The conversation was created, but the list could not be " +
             "refreshed. Its title and selection are kept. Click " +
             "\u201CRefresh conversations\u201D in the Saved conversations " +
             "toolbar to retry the refresh.",
+          "error"
+        );
+        return;
+      }
+      if (!findConversation(createdId)) {
+        // Refresh succeeded but the created conversation is not present on
+        // the visible page (unusual — a fresh creation typically appears
+        // at the top of page zero — but handled truthfully rather than
+        // pretending it was found).
+        setStatus(
+          statusEl,
+          "The conversation was created, but it is not on the current " +
+            "list page. Click \u201CRefresh conversations\u201D to reload " +
+            "the list.",
           "error"
         );
         return;
@@ -1773,7 +1819,8 @@
   newBtn.addEventListener("click", createConversation);
   if (refreshBtn) {
     refreshBtn.addEventListener("click", function () {
-      listOffset = 0;
+      // No listOffset mutation before the response: loadConversations
+      // commits the new offset only after a valid response.
       loadConversations(0);
     });
   }

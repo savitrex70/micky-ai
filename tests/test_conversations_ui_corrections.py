@@ -457,3 +457,42 @@ def test_ambiguous_recovery_renders_newest_before_clear() -> None:
     assert (
         out["sawNewest"] is True
     ), "the newest message must be rendered before the ambiguity clears"
+
+
+# --- Correction 5: pagination transactional, create coordination, safety -
+
+
+def test_refresh_failure_preserves_pagination_state() -> None:
+    """A failed refresh must not corrupt the displayed page or offset."""
+    out = _run_scenario("refresh-failure-preserves-page")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_create_during_inflight_refresh_waits_for_real_result() -> None:
+    """Clicking New while a list refresh is in flight must not treat the
+    skipped refresh as a real failure. The created conversation must be
+    the selected destination, and no false 'list could not be refreshed'
+    error may be shown."""
+    out = _run_scenario("create-during-refresh")
+    assert out["selectedIsNew"] is True, out
+    assert out["titleIsNew"] is True, out
+    assert out["noFalseFailure"] is True, out
+
+
+def test_ambiguous_404_clears_selection_and_clears_ambiguity() -> None:
+    """When a selected ambiguous conversation 404s during recovery, the
+    selection and its ambiguity marker are both cleared. No other
+    conversation is silently selected."""
+    out = _run_scenario("ambiguous-404-blocks-repost")
+    assert out["ambBefore"] is True, out
+    assert out["selectionCleared"] is True, out
+    assert out["ambiguityCleared"] is True, out
+
+
+def test_malformed_latest_page_response_keeps_ambiguity() -> None:
+    """A structurally-invalid latest-page response must not clear the
+    ambiguity guard."""
+    out = _run_scenario("recovery-malformed-page")
+    assert out["kept"] is True, out
