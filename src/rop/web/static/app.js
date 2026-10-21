@@ -1160,21 +1160,49 @@
     convNext.disabled = listInFlight || end >= listTotal;
   }
 
+  // UUID v1-v5 shape check (8-4-4-4-12 hex, case-insensitive). Matches
+  // the string form produced by Pydantic's UUID serializer, which is the
+  // only form the API emits in practice.
+  const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function isUuid(value) {
+    return typeof value === "string" && _UUID_RE.test(value);
+  }
+  // ISO 8601 datetime with a 4-digit year and a T separator, and that
+  // Date.parse can interpret. Permissive enough for the offset/Z forms
+  // produced by the API, strict enough to reject non-date strings.
+  const _ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}T/;
+  function isIsoDateTime(value) {
+    if (typeof value !== "string") return false;
+    if (!_ISO_DATE_PREFIX.test(value)) return false;
+    return !Number.isNaN(Date.parse(value));
+  }
+
+  // Validate a single conversation record against the AssistantConversationRead
+  // contract: UUID id, string title, and parseable datetime timestamps.
+  function isValidConversationRecord(c) {
+    if (!c || typeof c !== "object") return false;
+    if (!isUuid(c.id)) return false;
+    if (typeof c.title !== "string") return false;
+    if (!isIsoDateTime(c.created_at)) return false;
+    if (!isIsoDateTime(c.updated_at)) return false;
+    return true;
+  }
+
   // Validate a single message record against the API read contract.
   // Reject anything that could not have been produced by a valid
   // successful response, so a malformed body cannot be mistaken for
   // successfully-established history.
   function isValidMessageRecord(m, expectedConversationId) {
     if (!m || typeof m !== "object") return false;
-    if (typeof m.id !== "string" || !m.id) return false;
-    if (typeof m.conversation_id !== "string" || !m.conversation_id) return false;
+    if (!isUuid(m.id)) return false;
+    if (!isUuid(m.conversation_id)) return false;
     if (expectedConversationId && m.conversation_id !== expectedConversationId) {
       return false;
     }
     if (m.role !== "user" && m.role !== "assistant") return false;
     if (typeof m.content !== "string") return false;
     if (!Number.isInteger(m.sequence) || m.sequence < 0) return false;
-    if (typeof m.created_at !== "string" || !m.created_at) return false;
+    if (!isIsoDateTime(m.created_at)) return false;
     return true;
   }
 
@@ -1256,9 +1284,31 @@
           );
           return { ok: false, reason: "unexpected" };
         }
-        const headerTotal = resp.headers.get("X-Total-Count");
+        // Validate every record before committing any state.
+        for (const c of payload) {
+          if (!isValidConversationRecord(c)) {
+            setStatus(
+              statusEl,
+              "The conversation list response contained a malformed " +
+                "record. Click \u201CRefresh conversations\u201D to try " +
+                "again.",
+              "error"
+            );
+            return { ok: false, reason: "malformed_record" };
+          }
+        }
+        const totalCount = parseTotalCount(resp.headers.get("X-Total-Count"));
+        if (totalCount === null) {
+          setStatus(
+            statusEl,
+            "The conversation list response did not include a valid total " +
+              "count. Click \u201CRefresh conversations\u201D to try again.",
+            "error"
+          );
+          return { ok: false, reason: "invalid_total" };
+        }
         // ---- Commit the new state as one atomic step. ----
-        listTotal = headerTotal !== null ? Number(headerTotal) : null;
+        listTotal = totalCount;
         listOffset = offset;
         conversations = payload;
         renderList();
@@ -1477,10 +1527,8 @@
       if (token !== messagesLoadToken || selectedId !== id) return false;
       if (resp.status === 404) return "not_found";
       if (!resp.ok) return false;
-      const headerTotal = resp.headers.get("X-Total-Count");
-      if (headerTotal === null) return false;
-      freshTotal = Number(headerTotal);
-      if (!Number.isFinite(freshTotal) || freshTotal < 0) return false;
+      freshTotal = parseTotalCount(resp.headers.get("X-Total-Count"));
+      if (freshTotal === null) return false;
     } catch (err) {
       return false;
     }

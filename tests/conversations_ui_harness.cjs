@@ -161,7 +161,7 @@ function drain(n) {
 
 module.exports = {
   runApp, drain, enqueue, jsonResponse, fetchLog,
-  registry, documentMock, textOf, confirmQueue,
+  registry, documentMock, textOf, confirmQueue, uuidFrom,
 };
 
 // ----------------------------------------------------------------------------
@@ -172,16 +172,46 @@ module.exports = {
 // ----------------------------------------------------------------------------
 const H = module.exports;
 
+// Deterministic UUID-shape value derived from a short name. The app's
+// validator only requires 8-4-4-4-12 hex; producing it deterministically
+// keeps fixture IDs stable across runs while satisfying the contract.
+function uuidFrom(name) {
+  // FNV-1a 32-bit seeded twice with different offsets, concatenated to
+  // produce 64 bits of hex. Enough distinctness that "C0" and "C1" are
+  // visibly different.
+  const s = String(name);
+  function fnv(seed) {
+    let h = seed >>> 0;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return h >>> 0;
+  }
+  const a = fnv(0x811c9dc5);
+  const b = fnv(0x050c5d1f);
+  const hex = "0123456789abcdef";
+  let out = "";
+  for (let i = 0; i < 8; i++) out += hex[(a >>> (i * 4)) & 0xf];
+  for (let i = 0; i < 8; i++) out += hex[(b >>> (i * 4)) & 0xf];
+  // Pad with additional derived bits if needed to reach 32 hex chars.
+  while (out.length < 32) out += hex[out.length % 16];
+  return out.slice(0,8) + "-" + out.slice(8,12) + "-" + out.slice(12,16)
+    + "-" + out.slice(16,20) + "-" + out.slice(20,32);
+}
 function conv(id, title) {
   return {
-    id, title,
+    id: uuidFrom(id),
+    title,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
   };
 }
 function msg(id, cid, role, seq, content) {
   return {
-    id, conversation_id: cid, role, content, sequence: seq,
+    id: uuidFrom(id),
+    conversation_id: uuidFrom(cid),
+    role, content, sequence: seq,
     created_at: "2026-01-01T00:00:00Z",
   };
 }
@@ -274,7 +304,7 @@ async function scenarioSelectionPreserved() {
     selectedAfterPage2: afterPage2,
     selectedAfterPage1: afterPage1,
     composerMode: H.registry["composer-mode"].textContent,
-    preserved: before === "C0" && afterPage2 === "C0" && afterPage1 === "C0",
+    preserved: before === uuidFrom("C0") && afterPage2 === uuidFrom("C0") && afterPage1 === uuidFrom("C0"),
   };
 }
 
@@ -310,7 +340,7 @@ async function scenarioHttp503Ambiguous() {
   H.enqueue(async () => H.jsonResponse({ detail: "err" }, 503, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
   await H.drain(30);
-  const amb = isAmbiguous("C0");
+  const amb = isAmbiguous(uuidFrom("C0"));
   const before = H.fetchLog.length;
   H.enqueue(async () => H.jsonResponse({ status: "success", message: "x" }, 200, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
@@ -327,10 +357,10 @@ async function scenarioHttp503Ambiguous() {
 async function scenarioReloadClickClears() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);
-  global.window.__mickyConversations.markAmbiguous("C0");
-  const before = isAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const before = isAmbiguous(uuidFrom("C0"));
   await selectViaUI(0, "C0", 0);   // reload via title click
-  const after = isAmbiguous("C0");
+  const after = isAmbiguous(uuidFrom("C0"));
   return {
     ok: true, scenario: "reload-click-clears",
     ambiguousBeforeClick: before, ambiguousAfterClick: after,
@@ -342,13 +372,13 @@ async function scenarioReloadClickClears() {
 async function scenarioReloadFailureKeeps() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async () => { throw new Error("boom"); });
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
   return {
     ok: true, scenario: "reload-failure-keeps",
-    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    ambiguous: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -373,7 +403,7 @@ async function scenarioSwitchClearsMessages() {
 async function scenarioReloadUsesLatestPage() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   const fetchPosBefore = H.fetchLog.length;
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
@@ -386,7 +416,7 @@ async function scenarioReloadUsesLatestPage() {
   });
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
-  const cleared = !isAmbiguous("C0");
+  const cleared = !isAmbiguous(uuidFrom("C0"));
   // Only fetches after the reload click count.
   const postReload = H.fetchLog
     .slice(fetchPosBefore)
@@ -406,13 +436,13 @@ async function scenarioReloadUsesLatestPage() {
 async function scenarioReloadTotalFail() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async () => { throw new Error("total fetch boom"); });
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
   return {
     ok: true, scenario: "reload-total-fail",
-    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    ambiguous: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -420,7 +450,7 @@ async function scenarioReloadTotalFail() {
 async function scenarioReloadPageFail() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
     return H.jsonResponse([], 200, { "X-Total-Count": "400" });
@@ -430,7 +460,7 @@ async function scenarioReloadPageFail() {
   await H.drain(30);
   return {
     ok: true, scenario: "reload-page-fail",
-    ambiguous: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    ambiguous: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -438,7 +468,7 @@ async function scenarioReloadPageFail() {
 async function scenarioDuplicateDuringLoad() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   // Start a reload whose total fetch we do NOT enqueue yet — it will hang
   let resolveTotal;
   H.enqueue(function () {
@@ -487,7 +517,7 @@ async function scenarioStaleReload() {
     afterB_containsFromB: afterB.includes("fromB"),
     afterStale_containsFromB: afterStale.includes("fromB"),
     afterStale_containsFromA: afterStale.includes("fromA"),
-    selected, stillB: selected === "C1",
+    selected, stillB: selected === uuidFrom("C1"),
   };
 }
 
@@ -496,7 +526,7 @@ async function scenarioCreateThenListFail() {
   await bootstrap(0, 50, 0);
   // Click New — POST succeeds
   H.enqueue(async () => H.jsonResponse(
-    { id: "Cnew", title: "New conversation" }, 201, {}));
+    { id: uuidFrom("Cnew"), title: "New conversation" }, 201, {}));
   // List refresh fails
   H.enqueue(async () => { throw new Error("list boom"); });
   H.registry["conversations-new"].click();
@@ -508,7 +538,7 @@ async function scenarioCreateThenListFail() {
     ok: true, scenario: "create-then-list-fail",
     title, selected: sel, statusText,
     titleFromPost: title === "New conversation",
-    selectedIdFromPost: sel === "Cnew",
+    selectedIdFromPost: sel === uuidFrom("Cnew"),
     showsListRefreshError: /could not be refreshed|created, but/i.test(statusText),
   };
 }
@@ -614,7 +644,7 @@ async function scenarioRefreshButtonPreservesSelection() {
   return {
     ok: true, scenario: "refresh-button-preserves-selection",
     before, after, beforeTitle, afterTitle, beforeMode, afterMode,
-    preserved: before === "C0" && after === "C0" &&
+    preserved: before === uuidFrom("C0") && after === uuidFrom("C0") &&
                beforeTitle === afterTitle && beforeMode === afterMode,
   };
 }
@@ -681,7 +711,7 @@ async function scenarioNetworkErrorPreservesSelection() {
   return {
     ok: true, scenario: "network-error-preserves-selection",
     sel, title,
-    preserved: sel === "C0" && title === "Conversation 0",
+    preserved: sel === uuidFrom("C0") && title === "Conversation 0",
   };
 }
 
@@ -705,7 +735,7 @@ async function scenarioStaleOtherConv404CannotClear() {
   return {
     ok: true, scenario: "stale-404-cannot-clear",
     sel,
-    preserved: sel === "C1",
+    preserved: sel === uuidFrom("C1"),
   };
 }
 
@@ -755,7 +785,7 @@ async function scenarioCreateDuringRefresh() {
   await H.drain(5);
   // While list fetch is pending, click New.
   H.enqueue(async () => H.jsonResponse(
-    { id: "Cnew", title: "New conversation" }, 201, {}));
+    { id: uuidFrom("Cnew"), title: "New conversation" }, 201, {}));
   // The create's loadConversations(0) must wait for the in-flight one.
   // After list resolves, loadConversations should issue ITS OWN fetch.
   H.enqueue(async (url) => {
@@ -775,7 +805,7 @@ async function scenarioCreateDuringRefresh() {
   return {
     ok: true, scenario: "create-during-refresh",
     sel, title, statusText,
-    selectedIsNew: sel === "Cnew",
+    selectedIsNew: sel === uuidFrom("Cnew"),
     titleIsNew: title === "New conversation",
     noFalseFailure: !/could not be refreshed/i.test(statusText),
   };
@@ -785,14 +815,14 @@ async function scenarioCreateDuringRefresh() {
 async function scenarioAmbiguous404BlocksRepost() {
   await bootstrap(0, 50, 2);  // two conversations A and B
   await selectViaUI(0, "C0", 0);
-  global.window.__mickyConversations.markAmbiguous("C0");
-  const ambBefore = isAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
   // Attempt reload; return 404.
   H.enqueue(async () => H.jsonResponse({ detail: "not found" }, 404, {}));
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(25);
   const selAfter404 = selectedId();
-  const ambAfter404 = isAmbiguous("C0");
+  const ambAfter404 = isAmbiguous(uuidFrom("C0"));
   // Attempt to submit now — the composer is transient (no conversation
   // selected), so the request must go out WITHOUT conversation_id, never
   // silently attached to another conversation.
@@ -832,7 +862,7 @@ async function scenarioAmbiguous404BlocksRepost() {
 async function scenarioRecoveryMalformedPage() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   // Total fetch OK.
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
@@ -843,7 +873,7 @@ async function scenarioRecoveryMalformedPage() {
     { "X-Total-Count": "400" }));
   H.registry["conversations-list"].children[0].children[0].click();
   await H.drain(30);
-  const amb = isAmbiguous("C0");
+  const amb = isAmbiguous(uuidFrom("C0"));
   return {
     ok: true, scenario: "recovery-malformed-page",
     amb, kept: amb === true,
@@ -855,7 +885,7 @@ async function scenarioRecoveryMalformedPage() {
 async function scenarioRecoveryMalformedRecords() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   // Total fetch OK
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
@@ -872,7 +902,7 @@ async function scenarioRecoveryMalformedRecords() {
   await H.drain(30);
   return {
     ok: true, scenario: "recovery-malformed-records",
-    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    amb: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -880,7 +910,7 @@ async function scenarioRecoveryMalformedRecords() {
 async function scenarioRecoveryMissingTotal() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
     return H.jsonResponse([], 200, { "X-Total-Count": "400" });
@@ -893,7 +923,7 @@ async function scenarioRecoveryMissingTotal() {
   await H.drain(30);
   return {
     ok: true, scenario: "recovery-missing-total",
-    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    amb: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -901,7 +931,7 @@ async function scenarioRecoveryMissingTotal() {
 async function scenarioRecoveryInvalidTotal() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
     return H.jsonResponse([], 200, { "X-Total-Count": "400" });
@@ -914,7 +944,7 @@ async function scenarioRecoveryInvalidTotal() {
   await H.drain(30);
   return {
     ok: true, scenario: "recovery-invalid-total",
-    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    amb: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -922,7 +952,7 @@ async function scenarioRecoveryInvalidTotal() {
 async function scenarioRecoveryEmptyInconsistent() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
-  global.window.__mickyConversations.markAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
     return H.jsonResponse([], 200, { "X-Total-Count": "400" });
@@ -933,7 +963,7 @@ async function scenarioRecoveryEmptyInconsistent() {
   await H.drain(30);
   return {
     ok: true, scenario: "recovery-empty-inconsistent",
-    amb: isAmbiguous("C0"), kept: isAmbiguous("C0") === true,
+    amb: isAmbiguous(uuidFrom("C0")), kept: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 
@@ -941,8 +971,8 @@ async function scenarioRecoveryEmptyInconsistent() {
 async function scenarioRecoveryEmptyLegitimate() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);  // 0 messages
-  global.window.__mickyConversations.markAmbiguous("C0");
-  const ambBefore = isAmbiguous("C0");
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
   // Reload: total 0, page empty with header 0.
   H.enqueue(async (url) => {
     if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
@@ -954,8 +984,8 @@ async function scenarioRecoveryEmptyLegitimate() {
   return {
     ok: true, scenario: "recovery-empty-legitimate",
     ambBefore,
-    ambAfter: isAmbiguous("C0"),
-    cleared: ambBefore === true && isAmbiguous("C0") === false,
+    ambAfter: isAmbiguous(uuidFrom("C0")),
+    cleared: ambBefore === true && isAmbiguous(uuidFrom("C0")) === false,
   };
 }
 
@@ -1005,6 +1035,150 @@ async function scenarioListSerialization() {
   };
 }
 
+
+// --- 30. Invalid message UUID keeps ambiguity ---------------------------
+async function scenarioRecoveryInvalidMessageUuid() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  H.enqueue(async () => {
+    const bad = pageOfMessages("C0", 200, 200, 400);
+    bad[0].id = "not-a-uuid";  // invalid id format
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "400" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-invalid-message-uuid",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+// --- 31. Invalid message timestamp keeps ambiguity ----------------------
+async function scenarioRecoveryInvalidTimestamp() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400" });
+  });
+  H.enqueue(async () => {
+    const bad = pageOfMessages("C0", 200, 200, 400);
+    bad[0].created_at = "not-a-date";  // invalid timestamp
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "400" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-invalid-timestamp",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+// --- 32. Fractional fresh-total keeps ambiguity ------------------------
+async function scenarioRecoveryFractionalFreshTotal() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  // Fresh-total fetch returns a fractional header.
+  H.enqueue(async (url) => {
+    if (!url.includes("limit=1")) throw new Error("expected limit=1, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "400.5" });
+  });
+  // No second fetch is expected — reloadLatest should abort after the
+  // invalid fresh total. If a second fetch does run, this queue handler
+  // ensures we catch it and mark the test as failing.
+  H.enqueue(async () => {
+    throw new Error("unexpected second fetch after invalid fresh total");
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-fractional-fresh-total",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+// --- 33. Malformed conversation record preserves committed state ------
+async function scenarioRefreshMalformedRecord() {
+  await bootstrap(0, 50, 51);
+  const rowCountBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  // Refresh returns an array with one malformed record.
+  H.enqueue(async () => {
+    const good = pageOfConversations(0, 50, 51);
+    good[0].id = "not-a-uuid";
+    return H.jsonResponse(good, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const rowCountAfter = H.registry["conversations-list"].children.length;
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const statusKind = H.registry["conversations-status"].getAttribute("data-kind");
+  return {
+    ok: true, scenario: "refresh-malformed-record",
+    rowCountBefore, rowCountAfter, rangeBefore, rangeAfter,
+    rowsPreserved: rowCountBefore === rowCountAfter,
+    rangePreserved: rangeBefore === rangeAfter,
+    isError: statusKind === "error",
+  };
+}
+
+// --- 34. Invalid list-total preserves committed state ------------------
+async function scenarioRefreshInvalidListTotal() {
+  await bootstrap(0, 50, 51);
+  const rowCountBefore = H.registry["conversations-list"].children.length;
+  // Refresh: valid records but header is fractional.
+  H.enqueue(async () => H.jsonResponse(
+    pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "51.5" }
+  ));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const rowCountAfter = H.registry["conversations-list"].children.length;
+  const statusKind = H.registry["conversations-status"].getAttribute("data-kind");
+  return {
+    ok: true, scenario: "refresh-invalid-list-total",
+    rowCountBefore, rowCountAfter,
+    rowsPreserved: rowCountBefore === rowCountAfter,
+    isError: statusKind === "error",
+  };
+}
+
+// --- 35. Malformed refresh then valid recovery succeeds ---------------
+async function scenarioRefreshMalformedThenValid() {
+  await bootstrap(0, 50, 51);
+  // First refresh fails: malformed record.
+  H.enqueue(async () => {
+    const good = pageOfConversations(0, 50, 51);
+    good[0].id = "bad";
+    return H.jsonResponse(good, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const afterFail = H.registry["conversations-status"].getAttribute("data-kind");
+  // Second refresh succeeds.
+  H.enqueue(async () => H.jsonResponse(
+    pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "51" }
+  ));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const afterOK = H.registry["conversations-status"].getAttribute("data-kind");
+  const statusText = H.registry["conversations-status"].textContent;
+  return {
+    ok: true, scenario: "refresh-malformed-then-valid",
+    failed: afterFail === "error",
+    recovered: afterOK !== "error" && statusText === "",
+  };
+}
+
 // ----------------------------------------------------------------------------
 // Registration
 // ----------------------------------------------------------------------------
@@ -1038,6 +1212,12 @@ const SCENARIOS = {
   "recovery-empty-inconsistent": scenarioRecoveryEmptyInconsistent,
   "recovery-empty-legitimate": scenarioRecoveryEmptyLegitimate,
   "list-serialization": scenarioListSerialization,
+  "recovery-invalid-message-uuid": scenarioRecoveryInvalidMessageUuid,
+  "recovery-invalid-timestamp": scenarioRecoveryInvalidTimestamp,
+  "recovery-fractional-fresh-total": scenarioRecoveryFractionalFreshTotal,
+  "refresh-malformed-record": scenarioRefreshMalformedRecord,
+  "refresh-invalid-list-total": scenarioRefreshInvalidListTotal,
+  "refresh-malformed-then-valid": scenarioRefreshMalformedThenValid,
 };
 
 (async function main() {

@@ -275,10 +275,18 @@ def _run_scenario(name: str, extra_arg: str | None = None) -> dict:
 
 
 def test_selection_preserved_across_realistic_pages() -> None:
+    """Selection survives navigating between realistic list pages.
+
+    Compares the selected ID against itself across the page changes rather
+    than against a fixed literal — the harness fixture now produces UUIDs,
+    and the preservation property is that the ID is unchanged, not that it
+    equals a specific string.
+    """
     out = _run_scenario("selection-preserved")
-    assert out["selectedBefore"] == "C0"
-    assert out["selectedAfterPage2"] == "C0"
-    assert out["selectedAfterPage1"] == "C0"
+    before = out["selectedBefore"]
+    assert before, "no conversation was selected initially"
+    assert out["selectedAfterPage2"] == before
+    assert out["selectedAfterPage1"] == before
     assert out["preserved"] is True
     assert "save" in out["composerMode"].lower()
 
@@ -552,3 +560,50 @@ def test_recovery_empty_legitimate_clears_ambiguity() -> None:
     out = _run_scenario("recovery-empty-legitimate")
     assert out["ambBefore"] is True
     assert out["cleared"] is True
+
+
+# --- Correction 7: full API schema validation --------------------------
+
+
+def test_recovery_invalid_message_uuid_keeps_ambiguity() -> None:
+    """A record with a non-UUID id must be rejected; ambiguity stays set."""
+    out = _run_scenario("recovery-invalid-message-uuid")
+    assert out["kept"] is True, out
+
+
+def test_recovery_invalid_timestamp_keeps_ambiguity() -> None:
+    """A record with a non-ISO created_at must be rejected; ambiguity stays
+    set."""
+    out = _run_scenario("recovery-invalid-timestamp")
+    assert out["kept"] is True, out
+
+
+def test_recovery_fractional_fresh_total_keeps_ambiguity() -> None:
+    """A fractional fresh-total header (e.g. 400.5) must not be accepted and
+    must not be used to compute the target offset."""
+    out = _run_scenario("recovery-fractional-fresh-total")
+    assert out["kept"] is True, out
+
+
+def test_refresh_malformed_record_preserves_state() -> None:
+    """A list response containing a malformed conversation record must not
+    overwrite committed pagination state."""
+    out = _run_scenario("refresh-malformed-record")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_refresh_invalid_list_total_preserves_state() -> None:
+    """A list response with a fractional X-Total-Count must not commit any
+    new state."""
+    out = _run_scenario("refresh-invalid-list-total")
+    assert out["rowsPreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_refresh_malformed_then_valid_recovers() -> None:
+    """A malformed refresh followed by a valid refresh succeeds cleanly."""
+    out = _run_scenario("refresh-malformed-then-valid")
+    assert out["failed"] is True, out
+    assert out["recovered"] is True, out

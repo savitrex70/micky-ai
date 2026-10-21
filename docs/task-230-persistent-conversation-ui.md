@@ -175,21 +175,34 @@ as the destination.
 **Strict message validation on recovery.** `reloadLatest` accepts a
 message fetch as establishing the conversation's history only when:
 
-- every record validates against the message read contract (`id`,
-  `conversation_id`, `role` in `{user, assistant}`, `content` string,
-  non-negative integer `sequence`, `created_at` string);
+- every record validates against the message read contract
+  (`AssistantMessageRead`): `id` is a UUID, `conversation_id` is a UUID
+  matching the selected conversation, `role` is `user` or `assistant`,
+  `content` is a string, `sequence` is a non-negative integer, and
+  `created_at` is an ISO 8601 datetime parseable by `Date.parse`;
 - the `X-Total-Count` header is present and parses as a finite
-  non-negative integer;
+  non-negative integer — the same `parseTotalCount()` helper is used
+  for both the fresh-total request and the page request, so a
+  fractional or non-numeric value cannot influence the computed offset;
 - the rendered page does not exceed the reported total, and is not
   shorter than `MESSAGES_LIMIT` while ending before the total; and
 - the page ends exactly at the current total (which is what makes the
   loaded page the actual last page containing the newest messages).
 
-A malformed record, a missing or invalid total, an empty page
-inconsistent with a non-zero total, or a page whose end does not match
-the fresh total all leave the ambiguity marker set so the composer
-remains blocked for that conversation. A genuinely empty conversation
-(total 0, empty page, header 0) recovers normally.
+A malformed record (invalid UUID, invalid timestamp, wrong role, etc.), a
+missing or fractional total, an empty page inconsistent with a non-zero
+total, or a page whose end does not match the fresh total all leave the
+ambiguity marker set so the composer remains blocked for that
+conversation. A genuinely empty conversation (total 0, empty page, header
+0) recovers normally.
+
+**Strict conversation-list validation.** `loadConversations` validates
+each returned row against `AssistantConversationRead` (`id` is a UUID,
+`title` is a string, `created_at` and `updated_at` are ISO 8601
+datetimes) and validates the total via `parseTotalCount`. Any malformed
+row or invalid total leaves the previously committed list state — rows,
+offset, total, pagination range — intact and shows an error. A
+subsequent valid refresh resets the view normally.
 
 ## Privacy and separation
 
