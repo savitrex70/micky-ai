@@ -107,9 +107,12 @@ def test_js_submit_handler_reads_selected_conversation() -> None:
 def test_js_success_triggers_message_refresh() -> None:
     js = _served_js()
     idx = js.index('form.addEventListener("submit"')
-    body = js[idx : idx + 4000]
-    assert "refreshSelectedMessages" in body
-    # Only on success
+    marker = js.index('cardConfirm.addEventListener("click"', idx)
+    body = js[idx:marker]
+    assert "refreshMessagesFor" in body
+    # The refresh is scoped to the original conversation and happens only
+    # after an explicitly successful response.
+    assert "refreshMessagesFor(selectedConversationId)" in body
     assert 'payload.status === "success"' in body
 
 
@@ -179,11 +182,31 @@ def test_js_uses_textcontent_for_message_and_title() -> None:
     assert "insertAdjacentHTML" not in tail
 
 
-def test_js_has_no_client_persistence() -> None:
+def test_js_has_no_client_content_persistence() -> None:
+    """Only a non-content ambiguity bit may survive reload; no user data or IDs."""
     js = _served_js()
-    for forbidden in ("localStorage", "sessionStorage", "indexedDB"):
-        assert forbidden not in js, forbidden
+    marker = js.index("Task 230: persistent conversations UI")
+    assistant_shell = js[:marker]
+    conversations_ui = js[marker:]
+
+    assert "localStorage" not in js
+    assert "indexedDB" not in js
+    assert "sessionStorage" not in conversations_ui
     assert "document.cookie" not in js
+
+    # The one allowed sessionStorage use preserves a boolean safety guard.
+    guard_start = assistant_shell.index("const REQUEST_OUTCOME_UNRESOLVED_KEY")
+    guard_end = assistant_shell.index("const STATUS_TEXT", guard_start)
+    guard = assistant_shell[guard_start:guard_end]
+    assert "micky.ai.request-outcome-unresolved.v1" in guard
+    assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in guard
+    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in guard
+    assert (
+        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)"
+        not in guard
+    )
+    assert "sessionStorage" not in assistant_shell[:guard_start]
+    assert "sessionStorage" not in assistant_shell[guard_end:]
 
 
 def test_js_has_no_automatic_retry_loop() -> None:
