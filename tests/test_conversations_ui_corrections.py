@@ -921,10 +921,12 @@ def test_delete_one_item_updates_total_and_range() -> None:
 
 def test_list_in_flight_does_not_reintroduce_deleted() -> None:
     """A list refresh resolving after a confirmed delete must not commit the
-    deleted conversation back into the list."""
+    deleted conversation back into the list. Asserts by rendered title
+    (not by a data-id attribute the UI does not set)."""
     out = _run_scenario("list-in-flight-does-not-reintroduce-deleted")
     assert out["deletedNotReintroduced"] is True, out
     assert out["rowCountCoherent"] is True, out
+    assert out["hasC0"] is False, out
 
 
 def test_list_response_rejects_oversize_page() -> None:
@@ -949,10 +951,17 @@ def test_list_response_rejects_empty_at_nonzero_offset() -> None:
 
 def test_switch_while_delete_pending_keeps_b_selected() -> None:
     """Deleting A while the user has switched to B must not clear B's
-    selection or message state."""
+    selection or message state, must clear A's ambiguity marker, must
+    remove A from the rendered list, and must not claim that no
+    conversation is selected while B is active."""
     out = _run_scenario("switch-while-delete-pending")
     assert out["bStillSelected"] is True, out
     assert out["bStateIntact"] is True, out
+    assert out["ambC0BeforeDelete"] is True, out
+    assert out["ambC0WhilePending"] is True, out
+    assert out["markerCleared"] is True, out
+    assert out["c0Absent"] is True, out
+    assert out["statusHonest"] is True, out
 
 
 def test_stale_invalidated_resolves_after_new_fail_keeps_b() -> None:
@@ -968,3 +977,72 @@ def test_recovery_rejects_out_of_order_sequence() -> None:
     in ascending sequence order must not clear ambiguity."""
     out = _run_scenario("recovery-rejects-out-of-order-sequence")
     assert out["kept"] is True, out
+
+
+# ---- Batch 13.4: F1b/F2/F3/F6/F7 regression tests ----
+
+
+def test_create_ambiguous_old_response_does_not_clear() -> None:
+    out = _run_scenario("create-ambiguous-old-response-does-not-clear")
+    assert out["ambiguousAfterFail"] is True, out
+    assert out["guardHeldAfterStaleResponse"] is True, out
+
+
+def test_create_ambiguous_nonzero_offset_does_not_clear() -> None:
+    out = _run_scenario("create-ambiguous-nonzero-offset-does-not-clear")
+    assert out["ambiguousAfterFail"] is True, out
+    assert out["guardHeldAfterPagination"] is True, out
+
+
+def test_recovery_rejects_oversize_message_page() -> None:
+    out = _run_scenario("recovery-rejects-oversize-message-page")
+    assert out["kept"] is True, out
+
+
+def test_recovery_rejects_wrong_slice_position() -> None:
+    out = _run_scenario("recovery-rejects-wrong-slice-position")
+    assert out["kept"] is True, out
+
+
+def test_rename_network_loss_reconciles_via_list() -> None:
+    out = _run_scenario("rename-network-loss-reconciles-via-list")
+    assert out["reconciled"] is True, out
+
+
+def test_rename_404_clears_selection() -> None:
+    out = _run_scenario("rename-404-clears-selection")
+    assert out["selectionCleared"] is True, out
+    assert out["rowRemoved"] is True, out
+
+
+def test_rename_404_preserves_other_selection() -> None:
+    out = _run_scenario("rename-404-preserves-other-selection")
+    assert out["bPreserved"] is True, out
+    assert out["c0Removed"] is True, out
+
+
+def test_list_rejects_hex_total() -> None:
+    out = _run_scenario("list-rejects-hex-total")
+    assert out["rowsPreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_list_rejects_exponent_total() -> None:
+    out = _run_scenario("list-rejects-exponent-total")
+    assert out["rowsPreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_send_unknown_status_marks_ambiguous() -> None:
+    out = _run_scenario("send-unknown-status-marks-ambiguous")
+    assert out["markedAmbiguous"] is True, out
+
+
+def test_send_missing_message_marks_ambiguous() -> None:
+    out = _run_scenario("send-missing-message-marks-ambiguous")
+    assert out["markedAmbiguous"] is True, out
+
+
+def test_send_invalid_challenge_marks_ambiguous() -> None:
+    out = _run_scenario("send-invalid-challenge-marks-ambiguous")
+    assert out["markedAmbiguous"] is True, out

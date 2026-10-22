@@ -2080,7 +2080,8 @@ async function scenarioDeleteOneItemUpdatesTotal() {
 async function scenarioListInFlightDoesNotReintroduceDeleted() {
   await bootstrap(0, 50, 51);
   await selectViaUI(0, "C0", 0);
-  // Start a list refresh; hold its response (which still includes C0).
+  // Start a list refresh; hold its response (still contains C0 -- this is
+  // the STALE pre-delete response that must NOT be committed after delete).
   let releaseRefresh;
   const refreshGate = new Promise((r) => { releaseRefresh = r; });
   H.enqueue(async () => {
@@ -2093,23 +2094,36 @@ async function scenarioListInFlightDoesNotReintroduceDeleted() {
   // Delete C0 while refresh is pending.
   H.confirmQueue.push(true);
   H.enqueue(async () => H.jsonResponse({}, 204, {}));
-  // deleteSelected's reconciliation fetch happens AFTER the in-flight
-  // refresh resolves (serialized).
+  // After delete: accurate server state is C1..C50 (50 rows, total 50).
+  // Build this explicitly -- pageOfConversations(0, 50, 50) would return
+  // C0..C49, i.e. re-introduce the deleted row via the fixture itself.
   H.enqueue(async () => {
-    return H.jsonResponse(pageOfConversations(0, 50, 50), 200,
-      { "X-Total-Count": "50" });
+    const remaining = [];
+    for (let i = 1; i <= 50; i++) {
+      remaining.push(conv("C" + i, "Conversation " + i));
+    }
+    return H.jsonResponse(remaining, 200, { "X-Total-Count": "50" });
   });
   H.registry["conversation-delete"].click();
   await H.drain(15);
-  // Release stale refresh response (would reintroduce C0 if not rejected).
+  // Release stale refresh response (would reintroduce C0 if not rejected
+  // by the listLoadToken guard).
   releaseRefresh();
   await H.drain(40);
+  // Read rendered titles via the .conv-title button textContent -- renderList
+  // does not set a data-id attribute, so dataset lookup is unreliable.
   const rows = H.registry["conversations-list"].children;
-  const ids = rows.map((r) => r.dataset.id || "");
-  const hasC0 = ids.includes(uuidFrom("C0"));
+  const titles = rows.map(function (li) {
+    for (let i = 0; i < li.children.length; i++) {
+      if (li.children[i].textContent) return li.children[i].textContent;
+    }
+    return "";
+  });
+  const hasC0 = titles.indexOf("Conversation 0") !== -1;
   return {
     ok: true, scenario: "list-in-flight-does-not-reintroduce-deleted",
     rowCount: rows.length,
+    titles: titles.slice(0, 3),
     hasC0,
     deletedNotReintroduced: hasC0 === false,
     rowCountCoherent: rows.length === 50,
@@ -2172,6 +2186,9 @@ Object.assign(SCENARIOS, {
 async function scenarioSwitchWhileDeletePending() {
   await bootstrap(0, 50, 2);
   await selectViaUI(0, "C0", 0);
+  // Mark C0 ambiguous so we can observe its marker being cleared on delete.
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambC0BeforeDelete = isAmbiguous(uuidFrom("C0"));
   // Start DELETE for C0; hold response on a gate.
   H.confirmQueue.push(true);
   let releaseDelete;
@@ -2185,21 +2202,46 @@ async function scenarioSwitchWhileDeletePending() {
   H.registry["conversations-list"].children[1].children[0].click();
   await H.drain(25);
   const selAfterSwitch = selectedId();
-  // Delete resolves -- enqueue list reconciliation fetch first.
+  // C0 must still be marked ambiguous while its DELETE is unresolved.
+  const ambC0WhilePending = isAmbiguous(uuidFrom("C0"));
+  // Delete resolves -- post-delete list reconciliation returns ONLY C1
+  // (accurate server state: C0 was actually deleted).
   H.enqueue(async () => H.jsonResponse(
-    pageOfConversations(0, 50, 1), 200, { "X-Total-Count": "1" }));
+    [conv("C1", "Conversation 1")], 200, { "X-Total-Count": "1" }));
   releaseDelete();
   await H.drain(35);
+  // Aftermath: C0 absent from list; marker cleared; status honest.
+  const rows = H.registry["conversations-list"].children;
+  const titles = rows.map(function (li) {
+    var btn = li.querySelector ? li.querySelector(".conv-title") : null;
+    if (btn) return btn.textContent;
+    for (var i = 0; i < li.children.length; i++) {
+      if (li.children[i].textContent) return li.children[i].textContent;
+    }
+    return "";
+  });
+  const hasC0 = titles.indexOf("Conversation 0") !== -1;
+  const statusText = H.registry["conversation-messages-status"].textContent;
   return {
     ok: true, scenario: "switch-while-delete-pending",
     selAfterSwitch,
     finalSelected: selectedId(),
     state: global.window.__mickyConversations.messagesState(),
+    ambC0BeforeDelete,
+    ambC0WhilePending,
+    ambC0AfterDelete: isAmbiguous(uuidFrom("C0")),
     bStillSelected:
       selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
     bStateIntact:
       global.window.__mickyConversations.messagesState().offset === 0 &&
       global.window.__mickyConversations.messagesState().total === 0,
+    hasC0,
+    c0Absent: hasC0 === false,
+    markerCleared: isAmbiguous(uuidFrom("C0")) === false,
+    statusHonest:
+      !/no conversation is selected/i.test(statusText) &&
+      !/no conversation is selected/i.test(
+        H.registry["conversations-status"].textContent),
   };
 }
 
@@ -2256,6 +2298,284 @@ async function scenarioRecoveryRejectsOutOfOrderSequence() {
   return {
     ok: true, scenario: "recovery-rejects-out-of-order-sequence",
     kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+Object.assign(SCENARIOS, {
+  // F1b: creation reconciliation scoped
+  "create-ambiguous-old-response-does-not-clear": scenarioCreateAmbiguousOldResponseDoesNotClear,
+  "create-ambiguous-nonzero-offset-does-not-clear": scenarioCreateAmbiguousNonzeroOffsetDoesNotClear,
+  // F2: strict slice validation
+  "recovery-rejects-oversize-message-page": scenarioRecoveryRejectsOversizeMessagePage,
+  "recovery-rejects-wrong-slice-position": scenarioRecoveryRejectsWrongSlicePosition,
+  // F3: rename reconciliation
+  "rename-network-loss-reconciles-via-list": scenarioRenameNetworkLossReconcilesViaList,
+  "rename-404-clears-selection": scenarioRename404ClearsSelection,
+  "rename-404-preserves-other-selection": scenarioRename404PreservesOtherSelection,
+  // F6: strict decimal total header
+  "list-rejects-hex-total": scenarioListRejectsHexTotal,
+  "list-rejects-exponent-total": scenarioListRejectsExponentTotal,
+  // F7: send response validation
+  "send-unknown-status-marks-ambiguous": scenarioSendUnknownStatusMarksAmbiguous,
+  "send-missing-message-marks-ambiguous": scenarioSendMissingMessageMarksAmbiguous,
+  "send-invalid-challenge-marks-ambiguous": scenarioSendInvalidChallengeMarksAmbiguous,
+});
+
+// ---- F1b: creation reconciliation is scoped to fresh offset-0 refreshes ----
+
+async function scenarioCreateAmbiguousOldResponseDoesNotClear() {
+  await bootstrap(0, 50, 0);
+  // Start a list refresh whose response we hold.
+  let releaseRefresh;
+  const refreshGate = new Promise((r) => { releaseRefresh = r; });
+  H.enqueue(async () => {
+    await refreshGate;
+    return H.jsonResponse([], 200, { "X-Total-Count": "0" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(5);
+  // Trigger creation network failure: sets ambiguity + captures the
+  // current listLoadToken (which is the token of the pending refresh).
+  H.enqueue(async () => { throw new Error("create network boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(15);
+  const ambiguousAfterFail = global.window.__mickyConversations.createState().ambiguous;
+  // Release the OLD refresh: it must NOT clear the guard.
+  releaseRefresh();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "create-ambiguous-old-response-does-not-clear",
+    ambiguousAfterFail,
+    ambiguousAfterOldRefresh: global.window.__mickyConversations.createState().ambiguous,
+    guardHeldAfterStaleResponse:
+      ambiguousAfterFail === true &&
+      global.window.__mickyConversations.createState().ambiguous === true,
+  };
+}
+
+async function scenarioCreateAmbiguousNonzeroOffsetDoesNotClear() {
+  await bootstrap(0, 50, 51);
+  // Trigger creation network failure.
+  H.enqueue(async () => { throw new Error("create network boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(15);
+  const ambiguousAfterFail = global.window.__mickyConversations.createState().ambiguous;
+  // Now do a NONZERO-offset list fetch -- this must NOT reconcile.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) throw new Error("expected offset=50, got " + url);
+    return H.jsonResponse(pageOfConversations(1, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-next"].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "create-ambiguous-nonzero-offset-does-not-clear",
+    ambiguousAfterFail,
+    ambiguousAfterPagination: global.window.__mickyConversations.createState().ambiguous,
+    guardHeldAfterPagination:
+      ambiguousAfterFail === true &&
+      global.window.__mickyConversations.createState().ambiguous === true,
+  };
+}
+
+// ---- F2: strict slice validation ----
+
+async function scenarioRecoveryRejectsOversizeMessagePage() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "201" }));
+  H.enqueue(async () => {
+    // Build 201 records at offset 0. Exceeds MESSAGES_LIMIT (200).
+    const oversized = [];
+    for (let i = 0; i < 201; i++) {
+      oversized.push(msg("m" + i, "C0", i % 2 === 0 ? "user" : "assistant",
+                         i, "msg " + i));
+    }
+    return H.jsonResponse(oversized, 200, { "X-Total-Count": "201" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-rejects-oversize-message-page",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryRejectsWrongSlicePosition() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "3" }));
+  H.enqueue(async () => {
+    // Ordered, unique, individually valid -- but sequences 100,101,102
+    // at offset 0 (must be 0,1,2 for a valid slice).
+    const wrongSlice = [];
+    for (let i = 0; i < 3; i++) {
+      wrongSlice.push(msg("m" + i, "C0", i % 2 === 0 ? "user" : "assistant",
+                          100 + i, "msg " + i));
+    }
+    return H.jsonResponse(wrongSlice, 200, { "X-Total-Count": "3" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-rejects-wrong-slice-position",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+// ---- F3: rename reconciliation ----
+
+async function scenarioRenameNetworkLossReconcilesViaList() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["conversation-rename-input"].value = "Renamed";
+  // PATCH throws network error.
+  H.enqueue(async () => { throw new Error("patch network boom"); });
+  // Then list refresh (reconciliation) succeeds with the NEW title.
+  H.enqueue(async () => {
+    const updated = conv("C0", "Renamed");
+    return H.jsonResponse([updated], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversation-rename"].click();
+  await H.drain(40);
+  const convs = global.window.__mickyConversations.conversationsState();
+  const c0 = convs.find((c) => c.id === uuidFrom("C0"));
+  return {
+    ok: true, scenario: "rename-network-loss-reconciles-via-list",
+    c0Title: c0 ? c0.title : null,
+    reconciled: c0 !== undefined && c0.title === "Renamed",
+  };
+}
+
+async function scenarioRename404ClearsSelection() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["conversation-rename-input"].value = "Renamed";
+  H.enqueue(async () => H.jsonResponse({ detail: "not found" }, 404, {}));
+  H.registry["conversation-rename"].click();
+  await H.drain(30);
+  const rows = H.registry["conversations-list"].children;
+  return {
+    ok: true, scenario: "rename-404-clears-selection",
+    selected: selectedId(),
+    rowCount: rows.length,
+    selectionCleared: selectedId() === null,
+    rowRemoved: rows.length === 0,
+  };
+}
+
+async function scenarioRename404PreservesOtherSelection() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  H.registry["conversation-rename-input"].value = "Renamed";
+  // Hold PATCH response on a gate.
+  let releasePatch;
+  const patchGate = new Promise((r) => { releasePatch = r; });
+  H.enqueue(async () => {
+    await patchGate;
+    return H.jsonResponse({ detail: "not found" }, 404, {});
+  });
+  H.registry["conversation-rename"].click();
+  await H.drain(10);
+  // Switch to C1 while PATCH pending.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(25);
+  const selAfterSwitch = selectedId();
+  // Release the PATCH 404.
+  releasePatch();
+  await H.drain(30);
+  const convs = global.window.__mickyConversations.conversationsState();
+  const c0 = convs.find((c) => c.id === uuidFrom("C0"));
+  return {
+    ok: true, scenario: "rename-404-preserves-other-selection",
+    selAfterSwitch,
+    finalSelected: selectedId(),
+    c0Removed: c0 === undefined,
+    bPreserved:
+      selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
+  };
+}
+
+// ---- F6: strict decimal total header ----
+
+async function scenarioListRejectsHexTotal() {
+  await bootstrap(0, 50, 51);
+  const rowCountBefore = H.registry["conversations-list"].children.length;
+  H.enqueue(async () => H.jsonResponse(
+    pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "0x10" }));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "list-rejects-hex-total",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowCountBefore,
+    isError: H.registry["conversations-status"].getAttribute("data-kind") === "error",
+  };
+}
+
+async function scenarioListRejectsExponentTotal() {
+  await bootstrap(0, 50, 51);
+  const rowCountBefore = H.registry["conversations-list"].children.length;
+  H.enqueue(async () => H.jsonResponse(
+    pageOfConversations(0, 50, 51), 200, { "X-Total-Count": "1e2" }));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "list-rejects-exponent-total",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowCountBefore,
+    isError: H.registry["conversations-status"].getAttribute("data-kind") === "error",
+  };
+}
+
+// ---- F7: send response validation ----
+
+async function scenarioSendUnknownStatusMarksAmbiguous() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["message"].value = "hello";
+  H.enqueue(async () => H.jsonResponse(
+    { status: "totally-unknown", message: "x" }, 200, {}));
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-unknown-status-marks-ambiguous",
+    ambiguous: isAmbiguous(uuidFrom("C0")),
+    markedAmbiguous: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioSendMissingMessageMarksAmbiguous() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["message"].value = "hello";
+  H.enqueue(async () => H.jsonResponse({ status: "success" }, 200, {}));
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-missing-message-marks-ambiguous",
+    ambiguous: isAmbiguous(uuidFrom("C0")),
+    markedAmbiguous: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioSendInvalidChallengeMarksAmbiguous() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.registry["message"].value = "hello";
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Please confirm",
+    challenge: { challenge_id: "short" },
+  }, 200, {}));
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-invalid-challenge-marks-ambiguous",
+    ambiguous: isAmbiguous(uuidFrom("C0")),
+    markedAmbiguous: isAmbiguous(uuidFrom("C0")) === true,
   };
 }
 

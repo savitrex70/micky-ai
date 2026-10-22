@@ -1,4 +1,4 @@
-﻿# Task 230 - Persistent Conversations in the Existing Micky AI Interface
+# Task 230 - Persistent Conversations in the Existing Micky AI Interface
 
 Integrates the Task 228 store and Task 229 HTTP API into the existing
 vanilla-JS browser interface. Adds a saved-conversations panel, an explicit
@@ -179,7 +179,14 @@ message fetch as establishing the conversation's history only when:
   (`AssistantMessageRead`): `id` is a UUID, `conversation_id` is a UUID
   matching the selected conversation, `role` is `user` or `assistant`,
   `content` is a string, `sequence` is a non-negative integer, and
-  `created_at` is an ISO 8601 datetime parseable by `Date.parse`;
+  `created_at` is an ISO 8601 datetime with a mandatory timezone offset
+(`Z` or `±HH:MM`). The client validates the actual calendar and clock
+components (year ≥ 1, month 1–12, day within the real days-in-month with
+leap-year awareness, hour ≤ 23, minute ≤ 59, second ≤ 59, offset hours
+≤ 23, offset minutes ≤ 59) and accepts at most six fractional-second
+digits to match Python `datetime`'s microsecond precision. A naive
+timestamp (no offset) is rejected, because the backend stores all
+timestamps as `DateTime(timezone=True)` and cannot emit naive values.;
 - the `X-Total-Count` header is present and parses as a finite
   non-negative integer — the same `parseTotalCount()` helper is used
   for both the fresh-total request and the page request, so a
@@ -199,10 +206,65 @@ conversation. A genuinely empty conversation (total 0, empty page, header
 **Strict conversation-list validation.** `loadConversations` validates
 each returned row against `AssistantConversationRead` (`id` is a UUID,
 `title` is a string, `created_at` and `updated_at` are ISO 8601
-datetimes) and validates the total via `parseTotalCount`. Any malformed
+datetimes with required timezone offsets and validated components) and
+validates the total via `parseTotalCount`. The header must be a plain
+non-negative decimal integer: alternate numeric notations such as
+`1e2` or `0x10` and values exceeding `Number.MAX_SAFE_INTEGER` are
+rejected. Any malformed
 row or invalid total leaves the previously committed list state — rows,
 offset, total, pagination range — intact and shows an error. A
 subsequent valid refresh resets the view normally.
+
+## Request ownership and lifecycle invariants
+
+The conversation UI uses monotonic generation tokens to reject stale
+responses. A response can only mutate state if its token still matches
+the live token at commit time; otherwise it is discarded without effect.
+
+- **`messagesLoadToken`** is bumped by `reloadLatest`, `selectConversation`,
+  `clearSelectionBecauseMissing`, `deleteSelected`, and `createConversation`
+  when the selection changes. A message load started before the bump can
+  never recommit its result.
+- **`listLoadToken`** is bumped by `loadConversations` on entry and by
+  `deleteSelected` on confirmed deletion. A list refresh started before
+  a delete can never reintroduce the deleted row.
+- **`creationAmbiguityToken`** captures `listLoadToken` at the moment
+  `creationAmbiguous` was set. Only a subsequent offset-zero list fetch
+  whose token is strictly greater can clear the guard; a nonzero-offset
+  pagination fetch or a request that began before the ambiguity was
+  recorded cannot.
+
+**Deletion contract.** Confirmed 204 always clears the deleted
+conversation's ambiguity marker, removes the row, decrements `listTotal`,
+recovers `listOffset` from `max(0, listOffset - LIST_LIMIT)` if the
+current page emptied, and reconciles via a bounded `loadConversations`.
+Confirmed 404 is treated as confirmation the target no longer exists and
+follows the same reconciliation. `selectedId` is cleared only if the
+deleted conversation was still selected; a switch to B during A's DELETE
+preserves B's selection and message state.
+
+**Rename uncertainty.** A network failure or unreadable response during
+PATCH does not establish that the rename failed. The handler reconciles
+via a list refresh rather than asserting failure; if that reconciliation
+also fails, the outcome is marked unverified and the user is told to
+reload. A 404 during PATCH reconciles the missing target: the row is
+removed and the selection is cleared only if that target remained
+selected.
+
+**Assistant-response validation.** A successful `POST /api/assistant/requests`
+response is validated against the backend contract: the status must be
+one of `success`, `clarification-required`, `confirmation-required`, or
+`refused`, and must carry a string `message`. A `confirmation-required`
+payload must include a valid challenge per `isValidChallenge`. Anything
+else is classified as unexpected, so the ambiguity guard is set rather
+than a blind re-submit being permitted.
+
+**Message-slice validation.** A page of messages at offset O must have
+`payload.length ≤ MESSAGES_LIMIT` and `payload[i].sequence === O + i`
+for every i, because the repository allocates sequences contiguously
+from zero and exposes no per-message deletion. This rejects a page of
+sequences `100, 101, 102` presented as the page at offset 0, as well
+as any oversized response.
 
 ## Privacy and separation
 
