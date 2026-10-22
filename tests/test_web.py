@@ -195,6 +195,25 @@ def _served_js() -> str:
     return r.text
 
 
+def _assert_no_client_content_persistence(js: str) -> None:
+    """Allow only the non-content request-outcome safety bit in sessionStorage."""
+    for forbidden in ("localStorage", "indexedDB", "document.cookie"):
+        assert forbidden not in js, forbidden
+
+    key_start = js.index("const REQUEST_OUTCOME_UNRESOLVED_KEY")
+    key_end = js.index("const STATUS_TEXT", key_start)
+    guard = js[key_start:key_end]
+    assert "micky.ai.request-outcome-unresolved.v1" in guard
+    assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in guard
+    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in guard
+    assert (
+        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)"
+        not in guard
+    )
+    assert "sessionStorage" not in js[:key_start]
+    assert "sessionStorage" not in js[key_end:]
+
+
 def _served_html() -> str:
     with TestClient(app) as client:
         r = client.get("/")
@@ -302,10 +321,8 @@ def test_page_javascript_validates_challenge_before_rendering() -> None:
     assert "usable challenge" in js
 
 
-def test_page_javascript_has_no_client_side_persistence() -> None:
-    js = _served_js()
-    for forbidden in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
-        assert forbidden not in js, forbidden
+def test_page_javascript_has_no_client_content_persistence() -> None:
+    _assert_no_client_content_persistence(_served_js())
 
 
 def test_page_javascript_never_prefills_code_input() -> None:
@@ -360,22 +377,24 @@ def test_page_javascript_handles_unknown_decision_outcome() -> None:
 
 def test_page_javascript_blocks_new_request_while_card_pending() -> None:
     js = _served_js()
-    # A new request must not silently abandon a pending or unresolved
-    # confirmation. The submit handler must refuse to proceed while a card is
-    # visible, and must not call hideConfirmationCard() from the submit path.
+    # A visible challenge blocks ordinary requests. If a decision outcome is
+    # uncertain, a separate explicit acknowledgement may dismiss the local
+    # card, but that acknowledgement must not send a new POST itself.
     idx = js.index('form.addEventListener("submit"')
-    # Grab a generous window covering the entire submit handler
-    tail = js[idx:]
-    marker = "cardConfirm.addEventListener"
-    window_end = tail.index(marker) if marker in tail else len(tail)
-    body = tail[:window_end]
+    marker = 'cardConfirm.addEventListener("click"'
+    body = js[idx : js.index(marker, idx)]
     assert "if (!card.hidden || challengeUnresolved)" in body
     assert "Resolve the pending confirmation first" in body
-    assert (
-        "hideConfirmationCard()" not in body
-    ), "submit handler must not hide the card without a server decision"
-    # Also verify the new-request guard comes before the message value is
-    # read, so an empty-message submission cannot slip past it.
+    assert "const acknowledged = window.confirm(" in body
+    assert "if (!acknowledged)" in body
+    ack = body.index("const acknowledged = window.confirm(")
+    hide = body.index("hideConfirmationCard()", ack)
+    clear = body.index("clearRequestOutcomeUnresolved()", ack)
+    send = body.index("const result = await sendRequest", ack)
+    assert ack < hide < clear < send
+    # This code path returns before sendRequest; the next user click is
+    # required to submit any new request.
+    assert "This click did not send " in body
     guard = body.index("if (!card.hidden || challengeUnresolved)")
     value_read = body.index("const text = input.value;")
     assert guard < value_read
@@ -384,7 +403,8 @@ def test_page_javascript_blocks_new_request_while_card_pending() -> None:
 def test_page_javascript_shows_card_only_for_confirmation_required() -> None:
     js = _served_js()
     idx = js.index('form.addEventListener("submit"')
-    body = js[idx : idx + 3000]
+    marker = 'cardConfirm.addEventListener("click"'
+    body = js[idx : js.index(marker, idx)]
     assert 'payload.status === "confirmation-required"' in body
     assert "showConfirmationCard(payload.challenge)" in body
 
@@ -665,13 +685,11 @@ def test_records_js_uses_safe_dom_apis_only() -> None:
     assert "insertAdjacentHTML" not in body
 
 
-def test_records_js_has_no_client_persistence() -> None:
-    js = _served_js()
-    for forbidden in ("localStorage", "sessionStorage", "indexedDB"):
-        assert forbidden not in js, forbidden
-    # Cookie writes: any document.cookie reference would be a problem;
-    # none should exist anywhere in the file.
-    assert "document.cookie" not in js
+def test_records_js_has_no_client_content_persistence() -> None:
+    # The entire app has a single, non-content request-outcome guard. The
+    # confirmation-record interface must not persist record content, IDs,
+    # material values, or other state in browser storage.
+    _assert_no_client_content_persistence(_served_js())
 
 
 def test_records_js_has_no_automatic_retry_or_polling() -> None:
