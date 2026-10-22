@@ -1611,6 +1611,91 @@ async function scenarioSwitchFailureRenderedCountCoherent() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "delete-stale-response-cannot-repopulate": scenarioDeleteStaleResponseCannotRepopulate,
+  "delete-resets-pagination-state": scenarioDeleteResetsPaginationState,
+});
+
+async function scenarioDeleteStaleResponseCannotRepopulate() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 5, (off) => pageOfMessages("C0", off, 200, 5));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+
+  // Start a fresh reload that BLOCKS on the page fetch.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "5" }));
+  let releasePage;
+  const pageGate = new Promise((r) => { releasePage = r; });
+  H.enqueue(async () => {
+    await pageGate;
+    return H.jsonResponse(pageOfMessages("C0", 0, 200, 5), 200,
+      { "X-Total-Count": "5" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(20);
+
+  // While the reload's page fetch is pending, delete the conversation.
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  H.registry["conversation-delete"].click();
+  await H.drain(30);
+
+  const stateAfterDelete = global.window.__mickyConversations.messagesState();
+  const ambAfterDelete = isAmbiguous(uuidFrom("C0"));
+  const selectedAfterDelete = selectedId();
+
+  // Now release the stale page response.
+  releasePage();
+  await H.drain(40);
+
+  const stateAfterStale = global.window.__mickyConversations.messagesState();
+  const msgsEl = H.registry["messages-list"];
+  const domAfterStale = msgsEl ? msgsEl.children.length : 0;
+  const ambAfterStale = isAmbiguous(uuidFrom("C0"));
+
+  return {
+    ok: true, scenario: "delete-stale-response-cannot-repopulate",
+    ambBefore,
+    stateAfterDelete,
+    ambAfterDelete,
+    selectedAfterDelete,
+    stateAfterStale,
+    domAfterStale,
+    ambAfterStale,
+    clearedOnDelete:
+      stateAfterDelete.offset === 0 &&
+      stateAfterDelete.total === null &&
+      stateAfterDelete.rendered === 0,
+    staleBlocked:
+      stateAfterStale.offset === 0 &&
+      stateAfterStale.total === null &&
+      stateAfterStale.rendered === 0 &&
+      domAfterStale === 0,
+    ambiguityCleared: ambBefore === true && ambAfterDelete === false &&
+      ambAfterStale === false,
+    selectionCleared: selectedAfterDelete === null,
+  };
+}
+
+async function scenarioDeleteResetsPaginationState() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 5, (off) => pageOfMessages("C0", off, 200, 5));
+  const before = global.window.__mickyConversations.messagesState();
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  H.registry["conversation-delete"].click();
+  await H.drain(30);
+  const after = global.window.__mickyConversations.messagesState();
+  return {
+    ok: true, scenario: "delete-resets-pagination-state",
+    before, after,
+    offsetReset: after.offset === 0,
+    totalReset: after.total === null,
+    renderedReset: after.rendered === 0,
+    selectedCleared: selectedId() === null,
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

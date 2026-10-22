@@ -2006,11 +2006,22 @@
       }
       conversations = conversations.filter((c) => c.id !== deletingId);
       if (selectedId === deletingId) {
+        // Invalidate any outstanding message load BEFORE clearing state so a
+        // stale response cannot repopulate the deleted conversation. Mirror
+        // of clearSelectionBecauseMissing: token bump, full pagination reset,
+        // coherent empty state, ambiguity cleared for the deleted id.
+        messagesLoadToken++;
         selectedId = null;
+        selectedTitle = null;
         view.hidden = true;
         currentTitleEl.textContent = "";
         while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
         msgsEmpty.hidden = true;
+        messagesOffset = 0;
+        messagesTotal = null;
+        messagesRenderedCount = 0;
+        renderMsgsPagination();
+        ambiguousConversations.delete(deletingId);
       }
       renderList();
       updateComposerMode();

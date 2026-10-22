@@ -770,3 +770,35 @@ def test_switch_failure_rendered_count_matches_dom() -> None:
     assert out["renderedMatchesDom"] is True, out
     assert out["state"]["rendered"] == 0, out
     assert out["totalUnverified"] is True, out
+
+
+# ---- Correction 11: deletion invalidates stale message loads ----
+
+
+def test_delete_stale_response_cannot_repopulate() -> None:
+    """A message-load response that resolves AFTER the conversation has been
+    deleted via confirmed 204 must be rejected by the token bump and must
+    not repopulate message state or the DOM."""
+    out = _run_scenario("delete-stale-response-cannot-repopulate")
+    assert out["ambBefore"] is True, out
+    assert out["clearedOnDelete"] is True, out
+    assert out["selectionCleared"] is True, out
+    assert out["ambiguityCleared"] is True, out
+    assert out["staleBlocked"] is True, out
+    assert out["stateAfterStale"]["offset"] == 0, out
+    assert out["stateAfterStale"]["total"] is None, out
+    assert out["stateAfterStale"]["rendered"] == 0, out
+    assert out["domAfterStale"] == 0, out
+
+
+def test_delete_resets_pagination_state() -> None:
+    """Confirmed conversation deletion must reset offset, total, and rendered
+    count, and clear the selection."""
+    out = _run_scenario("delete-resets-pagination-state")
+    assert out["offsetReset"] is True, out
+    assert out["totalReset"] is True, out
+    assert out["renderedReset"] is True, out
+    assert out["selectedCleared"] is True, out
+    assert out["after"]["offset"] == 0, out
+    assert out["after"]["total"] is None, out
+    assert out["after"]["rendered"] == 0, out
