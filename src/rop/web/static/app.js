@@ -171,7 +171,18 @@
   }
 
   function isValidChallenge(challenge) {
-    if (!challenge || typeof challenge !== "object") return false;
+    if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
+      return false;
+    }
+    const allowedFields = new Set([
+      "challenge_id",
+      "summary",
+      "display_code",
+      "expires_at",
+    ]);
+    if (Object.keys(challenge).some((key) => !allowedFields.has(key))) {
+      return false;
+    }
     const id = challenge.challenge_id;
     const summary = challenge.summary;
     const code = challenge.display_code;
@@ -286,8 +297,25 @@
     if (!validStatuses.has(payload.status)) {
       return { kind: "unexpected", reason: "unknown_status" };
     }
+
+    // Every documented non-success AssistantStatus guarantees that no
+    // conversation exchange was persisted. Preserve that distinction even
+    // if the optional message/challenge shape is malformed.
+    const noConversationSave = payload.status !== "success";
+    const allowedResponseFields = new Set(["status", "message", "challenge"]);
+    if (Object.keys(payload).some((key) => !allowedResponseFields.has(key))) {
+      return {
+        kind: "unexpected",
+        reason: "unexpected_field",
+        noConversationSave: noConversationSave,
+      };
+    }
     if (typeof payload.message !== "string") {
-      return { kind: "unexpected", reason: "missing_message" };
+      return {
+        kind: "unexpected",
+        reason: "missing_message",
+        noConversationSave: noConversationSave,
+      };
     }
 
     const challengePresent =
@@ -298,12 +326,20 @@
       // Validate it when present, because a malformed challenge may already
       // have been persisted even though the browser cannot safely display it.
       if (challengePresent && !isValidChallenge(payload.challenge)) {
-        return { kind: "unexpected", reason: "invalid_challenge" };
+        return {
+          kind: "unexpected",
+          reason: "invalid_challenge",
+          noConversationSave: true,
+        };
       }
     } else if (challengePresent) {
       // A challenge on another status contradicts the server response
       // contract; do not discard the possibility it was persisted.
-      return { kind: "unexpected", reason: "unexpected_challenge" };
+      return {
+        kind: "unexpected",
+        reason: "unexpected_challenge",
+        noConversationSave: noConversationSave,
+      };
     }
     return { kind: "ok", payload: payload };
   }
@@ -625,13 +661,19 @@
         // Network, unreadable, and structurally invalid responses do not
         // establish whether dispatch completed or whether a challenge was
         // created. Lock new POSTs globally, including transient requests.
-        if (selectedConversationId && window.__mickyConversations) {
+        if (
+          selectedConversationId &&
+          !result.noConversationSave &&
+          window.__mickyConversations
+        ) {
           window.__mickyConversations.markAmbiguous(selectedConversationId);
         }
         markRequestOutcomeUnresolved();
-        const persistenceNote = selectedConversationId
-          ? "The conversation exchange may or may not have been saved. "
-          : "This request had no conversation_id and was not saved to a conversation. ";
+        const persistenceNote = result.noConversationSave
+          ? "The server status indicates that no conversation exchange was saved. "
+          : selectedConversationId
+            ? "The conversation exchange may or may not have been saved. "
+            : "This request had no conversation_id and was not saved to a conversation. ";
         setStatus(
           "The server's response could not be established. " +
             persistenceNote +
