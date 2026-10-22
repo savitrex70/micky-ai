@@ -212,6 +212,7 @@ def _assert_no_client_content_persistence(js: str) -> None:
         ("removeItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
     ]
 
+
 def _served_html() -> str:
     with TestClient(app) as client:
         r = client.get("/")

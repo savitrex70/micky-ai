@@ -209,6 +209,7 @@ def test_js_has_no_client_content_persistence() -> None:
         ("removeItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
     ]
 
+
 def test_js_has_no_automatic_retry_loop() -> None:
     js = _served_js()
     for forbidden in ("setInterval", "requestAnimationFrame"):
