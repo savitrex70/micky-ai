@@ -2321,6 +2321,10 @@
   }
 
   async function _reconcileMissingRenameTarget(targetId) {
+    // Save the page the user was viewing before local cleanup potentially
+    // backs up an emptied last page. A confirmed 404 means the server's
+    // authoritative total may now be smaller than that offset.
+    const preferredOffset = listOffset;
     const targetWasSelected = selectedId === targetId;
     const targetWasKnown =
       targetWasSelected || !!findConversation(targetId);
@@ -2361,7 +2365,26 @@
 
     let syncResult = null;
     try {
-      syncResult = await loadConversations(listOffset);
+      // Always refresh page zero first. Reusing a last-page offset before
+      // learning the new total can request offset === total after the
+      // missing target is removed; loadConversations correctly rejects that
+      // empty page and would otherwise leave stale pagination committed.
+      syncResult = await loadConversations(0);
+      // Preserve the user's page where it remains valid under the new total.
+      // If it is now out of range, the successful page-zero refresh remains
+      // the authoritative, coherent view.
+      if (
+        syncResult &&
+        syncResult.ok &&
+        preferredOffset > 0 &&
+        listTotal !== null &&
+        preferredOffset < listTotal
+      ) {
+        const restoredPage = await loadConversations(preferredOffset);
+        if (restoredPage && restoredPage.ok) {
+          syncResult = restoredPage;
+        }
+      }
     } catch (err) {
       syncResult = null;
     }
@@ -2450,14 +2473,23 @@
         return;
       }
       if (response && !response.ok) {
-        renameAmbiguousConversations.delete(targetId);
-        _setRenameStatus(
-          targetId,
-          "The conversation could not be renamed (HTTP " +
-            response.status + ").",
-          "error"
-        );
-        return;
+        if (response.status >= 500) {
+          // A server error may be generated after the update committed (for
+          // example, while building the response). Read the target record
+          // before declaring failure or permitting another PATCH.
+          needsReconcile = true;
+        } else {
+          // A 4xx response other than the confirmed-missing 404 is a
+          // definite rejection of this update under the API contract.
+          renameAmbiguousConversations.delete(targetId);
+          _setRenameStatus(
+            targetId,
+            "The conversation could not be renamed (HTTP " +
+              response.status + ").",
+            "error"
+          );
+          return;
+        }
       }
 
       if (response && response.ok) {
