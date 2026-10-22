@@ -1046,3 +1046,73 @@ def test_send_missing_message_marks_ambiguous() -> None:
 def test_send_invalid_challenge_marks_ambiguous() -> None:
     out = _run_scenario("send-invalid-challenge-marks-ambiguous")
     assert out["markedAmbiguous"] is True, out
+
+
+# ---- Batch 14: fix rename lock, actual response schema, and POST ambiguity ----
+
+
+def test_rename_controls_reset_and_second_rename_works() -> None:
+    out = _run_scenario("rename-controls-reset-after-success")
+    assert out["enabledAfterFirst"] is True, out
+    assert out["enabledAfterSecond"] is True, out
+    assert out["secondRenameSent"] is True, out
+    assert out["secondTitleApplied"] is True, out
+
+
+def test_rename_unknown_outcome_blocks_retry() -> None:
+    out = _run_scenario("rename-unknown-outcome-blocks-retry")
+    assert out["retryBlocked"] is True, out
+    assert out["buttonReenabled"] is True, out
+    assert out["statusWarns"] is True, out
+
+
+def test_rename_404_reconciles_pagination() -> None:
+    out = _run_scenario("rename-404-clears-selection")
+    assert out["selectionCleared"] is True, out
+    assert out["rowRemoved"] is True, out
+    assert out["totalIsZero"] is True, out
+    assert out["offsetIsZero"] is True, out
+    assert out["pagerHidden"] is True, out
+    assert out["rangeCoherent"] is True, out
+    assert out["renameButtonEnabled"] is True, out
+
+
+def test_send_unsupported_capability_is_valid() -> None:
+    out = _run_scenario("send-unsupported-capability-valid")
+    assert out["noAmbiguity"] is True, out
+    assert out["responseNotRetried"] is True, out
+    assert out["cardHidden"] is True, out
+
+
+def test_confirmation_required_without_challenge_is_valid() -> None:
+    out = _run_scenario("confirmation-required-no-challenge-valid")
+    assert out["noAmbiguity"] is True, out
+    assert out["noUsableChallengeCard"] is True, out
+    assert out["serverMessageShown"] is True, out
+    assert out["postCount"] == 1, out
+
+
+def test_confirmation_required_with_valid_challenge_is_shown() -> None:
+    out = _run_scenario("confirmation-required-valid-challenge-shown")
+    assert out["cardShown"] is True, out
+    assert out["exactlyOnePost"] is True, out
+
+
+def test_ambiguous_request_guard_survives_conversation_switch() -> None:
+    out = _run_scenario("ambiguous-request-blocks-after-switch")
+    assert out["selectedIsB"] is True, out
+    assert out["flagPersisted"] is True, out
+    assert out["secondPostBlocked"] is True, out
+
+
+def test_ambiguous_transient_request_does_not_blindly_retry() -> None:
+    out = _run_scenario("ambiguous-transient-request-blocks-retry")
+    assert out["noConversationId"] is True, out
+    assert out["flagPersisted"] is True, out
+    assert out["secondPostBlocked"] is True, out
+
+
+def test_persisted_ambiguous_guard_blocks_after_reload() -> None:
+    out = _run_scenario("persisted-ambiguous-guard-blocks-request")
+    assert out["noNewPost"] is True, out
+    assert out["flagStillPresent"] is True, out
