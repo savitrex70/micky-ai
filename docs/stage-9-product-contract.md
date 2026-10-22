@@ -1,6 +1,6 @@
-﻿# Stage 9 Product Contract - Micky AI
+# Stage 9 Product Contract - Micky AI
 
-**Status: DRAFT - PENDING PROJECT-OWNER REVIEW**
+**Status: DRAFT - SCOPE AGREED; IMPLEMENTATION IN PROGRESS**
 
 This document defines the product boundary for Stage 9 of Micky AI, the
 personal-assistant product being built on top of the existing Reasoning
@@ -39,20 +39,22 @@ API endpoint is not an end-user feature merely because it exists.
     `src/rop/logging_config.py`
   - Establishes: a running HTTP application, a system health check, and
     environment-driven settings validated at startup.
-  - Absent: no conversational endpoint, no capability routing, no
-    personal-assistant UI.
+  - Absent within this foundational capability: no conversation domain
+    endpoint, no capability-routed request endpoint, no personal-assistant
+    browser UI. These exist as separate capabilities (see B.1.5).
 
 - **Capability:** Persistence layer (SQLAlchemy 2 + Alembic +
   PostgreSQL).
   - Status: `IMPLEMENTED`
   - Paths: `src/rop/database.py`, `alembic/env.py`, and the migration
-    chain under `alembic/versions/` (15 revisions).
+    chain under `alembic/versions/` (17 revisions).
   - Establishes: declarative ORM base, session lifecycle, migration
     chain covering sessions, observations, entities, hypotheses,
     evidence, missing information, template matches, reasoning steps,
     candidate hypotheses, evaluated evidence, and reasoning run receipts.
-  - Absent: no conversation/message tables, no user-profile tables, no
-    notes/tasks/reminders tables.
+  - Absent: no user-profile tables, no notes/tasks/reminders tables.
+    Conversation/message tables exist in migration `20261019_0018` (see
+    B.1.5).
 
 #### B.1.2 Reasoning and evidence services
 
@@ -135,8 +137,9 @@ Implemented foundation:
     and a truthful envelope of `success`, `unsupported-capability`,
     `clarification-required`, `confirmation-required`, or `refused`.
     Only `success` means a capability answered.
-  - Absent: no conversation or message persistence; history lives in the
-    current browser tab only and is cleared on reload.
+  - Absent: no notes/tasks/reminders UI, no local-retrieval UI, no
+    persistent user-profile UI. Conversation and message persistence
+    exist as separate capabilities (see the next bullet).
 
 - **Capability:** Deterministic capability routing with `help` as the
   only registered capability.
@@ -151,9 +154,11 @@ Implemented foundation:
 - **Capability:** Risk-based authorization policy, per-operation
   confirmation lifecycle, and the at-most-once executor boundary.
   - Status: `IMPLEMENTED` for the evaluator, the dispatch boundary, the
-    durable confirmation record (Task 223), and the server-side
-    confirmation lifecycle (Task 224). The browser confirmation UI is
-    not implemented.
+    durable confirmation record (Task 223), the server-side confirmation
+    lifecycle (Task 224), the browser confirmation card (Task 226), and
+    the inspect/export/delete surface for confirmation records (Task 227).
+    The production executor registry is empty, so no production
+    state-changing capability executes in this build.
   - Paths: `src/rop/authorization/policy.py`,
     `src/rop/schemas/authorization.py`,
     `src/rop/authorization/dispatch.py`,
@@ -284,11 +289,17 @@ Planned capabilities (Stage 9 target):
 
 #### B.1.7 Not established
 
-- **Capability:** End-to-end personal-assistant capability.
+- **Capability:** End-to-end personal-assistant capability covering
+  notes, tasks, reminders, local retrieval, and integrated ROP reasoning
+  through a single conversational workflow.
   - Status: `NOT ESTABLISHED`
-  - Paths: none - no code path in the repository supports this claim.
-  - Absent: no conversational workflow, no capability routing, no
-    user-facing persistence controls, no assistant UI.
+  - Paths: none - no code path currently supports the full claim.
+  - Absent: no notes/tasks/reminders implementation, no local retrieval,
+    no integrated ROP reasoning through the conversation workflow. The
+    foundational components these will build on do exist: conversation
+    persistence (B.1.5), the local browser UI (B.1.5), deterministic
+    capability routing with `help` (B.1.5), and the authorization
+    infrastructure (B.1.5).
 
 - **Capability:** Clinical validity of any Stage 8 artifact.
   - Status: `NOT ESTABLISHED`
@@ -304,7 +315,9 @@ and a measurable acceptance condition. The security invariant in
 section E.1 applies to every entry below.
 
 1. **Local browser UI**
-   - Status: Planned
+   - Status: PARTIALLY IMPLEMENTED - the locally served page at `GET /`
+     exists and can submit a request and display a truthful response. No
+     notes/tasks/reminders/retrieval UI exists yet.
    - Outcome: user interacts with the assistant through a locally
      served page on the same machine.
    - Dependencies: a new `src/rop/web/` (or equivalent) served by the
@@ -313,7 +326,11 @@ section E.1 applies to every entry below.
      can submit a request and display a truthful response.
 
 2. **Conversational requests and session continuity**
-   - Status: Planned
+   - Status: PARTIALLY IMPLEMENTED - durable conversation/message
+     persistence (Task 228), the HTTP API (Task 229), and the persistent
+     UI (Task 230) exist. The end-to-end conversational workflow is only
+     complete for the `help` capability; notes, tasks, reminders, and
+     retrieval are not wired through it yet.
    - Outcome: a user can hold a conversation; messages persist and can
      be revisited.
    - Dependencies: new conversation domain (`conversation`, `message`)
@@ -324,7 +341,7 @@ section E.1 applies to every entry below.
      delete - all verifiable via tests and via the UI.
 
 3. **Deterministic capability routing**
-   - Status: Planned
+   - Status: IMPLEMENTED (routing and the single `help` capability only).
    - Outcome: each supported request is matched to an explicitly
      registered capability; unsupported requests return an explicit
      "unsupported" response, never a fabricated success.
@@ -385,7 +402,10 @@ section E.1 applies to every entry below.
      semantics preserved.
 
 7. **User-controlled persistence**
-   - Status: Planned
+   - Status: PARTIALLY IMPLEMENTED - confirmation records support
+     inspect/export/delete (Task 227); conversations support
+     create/list/rename/delete (Tasks 228-230). Notes, tasks, reminders,
+     and full conversation export/import are not implemented.
    - Outcome: the user can inspect, edit, delete, and export their
      permitted personal information from the UI.
    - Dependencies: existing repositories; an export path using a
@@ -405,7 +425,6 @@ section E.1 applies to every entry below.
 9. **Permission boundary for data-modifying operations**
    - Status: Partially implemented. Policy evaluation, the
      authorization-enforced dispatch boundary, the durable confirmation
-     record, and the server-side confirmation lifecycle are implemented.
      record, and the server-side confirmation lifecycle are implemented,
      as are the browser confirmation card and the user-facing
      inspect/export/delete surface for confirmation records. A
@@ -488,6 +507,40 @@ section E.1 applies to every entry below.
            production executor is registered, so an authorized
            protected operation cannot be shown completing. The workflow
            is exercised end to end only with test-only executors.
+
+### B.3 Agreed Stage 9 capability roadmap
+
+Task 231 (Stage 9.1) freezes the following sequence as the working
+roadmap. This is a roadmap, not a claim that the capabilities are
+already implemented. Each stage requires defined acceptance criteria
+and independent review before progression.
+
+- **Stage 9.1:** Contract reconciliation and scope freeze (this task).
+- **Stage 9.2:** Complete the assistant interaction engine, including
+  explicit capability selection, clarification, safe execution
+  boundaries, and truthful outcomes.
+- **Stage 9.3:** Implement notes and tasks end to end through the
+  existing interface.
+- **Stage 9.4:** Implement reliable reminders.
+- **Stage 9.5:** Implement private retrieval from explicitly selected
+  local files or folders.
+- **Stage 9.6:** Integrate suitable existing ROP reasoning services
+  through explicit, auditable workflows.
+- **Stage 9.7:** Evaluate optional native intelligence only after its
+  authorization, data-governance, evaluation, and acceptance gates are
+  satisfied.
+- **Stage 9.8:** Verify the complete product through end-to-end tests,
+  privacy and security checks, offline-boundary tests, recovery tests,
+  resource measurements, and a manual walkthrough.
+
+Each stage is a bounded commitment. Progressing to a stage does not
+imply that later stages are approved. Stage 9.7 is explicitly gated on
+Stage 8 acceptance, which remains incomplete.
+
+The Stage 9 interface remains the existing FastAPI application and its
+current locally served vanilla-JavaScript browser page. No replacement
+UI framework or separate service is planned without separately reviewed
+approval.
 
 ## C. Architecture and intelligence boundaries
 
@@ -763,17 +816,58 @@ commitments:
 - No owner decision in sections H.1, H.3, or H.4 is resolved by this one,
   and the contract as a whole remains a draft.
 
-### H.3 Reminders (see section B.2 entry 4)
-- Due-time and timezone interpretation, including ambiguous local
-  times and daylight-saving transitions.
-- How a due reminder is surfaced to the user.
-- Behaviour when the application is closed or restarted while a
-  reminder becomes due.
+### H.3 Reminders (see section B.2 entry 4 and Stage 9.4)
+
+**Approved defaults (Task 231):**
+
+- Reminders surface **inside the Micky AI interface while the
+  application is running**. No operating-system notifications and no
+  separate background notification service are included in the initial
+  scope.
+- Reminders that become due while the application is closed are
+  surfaced as **overdue** when the application next starts.
+- Due-time interpretation must **preserve the intended timezone**.
+  Ambiguous daylight-saving-time local times require **clarification**
+  rather than a guessed interpretation.
+- Persistence and restart behaviour must **prevent reminders from
+  being silently dropped or duplicated**.
+
+**Still deferred to the Stage 9.4 reminder design task:**
+
+- The exact parsing rules (accepted date/time expressions).
+- The exact storage schema and recovery algorithm.
+- The exact UI affordance for surfacing and dismissing reminders.
+- Acceptance tests for the above.
+
+Do not implement reminders in Task 231.
 
 ### H.4 Retrieval and offline boundary
-- Retrieval boundary: which paths are allowed by default (none, by
-  owner confirmation).
-- Offline boundary: what is permitted during install vs. run.
+**Approved defaults (Task 231):**
+
+- **No filesystem paths are authorized automatically.** The user
+  explicitly selects the paths or folders from which Micky AI may
+  retrieve information.
+- Retrieval must remain **inside the authorized paths** and must not
+  scan the whole disk.
+- Ordinary retrieval must **not access the network** or implicitly
+  fetch external material.
+- Only an explicitly documented, tested **allowlist of document
+  formats** may be read. The exact initial format allowlist must be
+  resolved in the Stage 9.5 retrieval design task **before** retrieval
+  implementation begins. Do not invent a final allowlist in Task 231.
+- Unsupported formats, inaccessible paths, invalid inputs, and
+  unauthorized path access must be handled **honestly and safely**.
+
+**Offline boundary:**
+
+- **Installation / initial setup:** may require internet for dependency
+  resolution.
+- **Normal startup:** must not require network.
+- **Ordinary supported use:** must not depend on internet
+  connectivity, remote inference, or a model artifact.
+
+Do not claim full offline compliance without appropriate evidence and
+tests. Do not implement retrieval in Task 231.
 
 This contract does not duplicate or supersede Stage 8's acceptance
 process, and it does not treat Stage 8 approval as granted.

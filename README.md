@@ -1,4 +1,4 @@
-﻿# Reasoning Operating Platform
+# Reasoning Operating Platform
 
 The Reasoning Operating Platform (ROP) is being built incrementally. Its deterministic reasoning infrastructure includes rule-based recognition, missing-information detection, staged reasoning runs, and deterministic release certification. Stage 7 implementation and integration coverage through Task 200 has been completed. The Task 200 checkpoint itself was not fully gate-green: its targeted run had two Task 200 integration-test failures and a Black failure. Those gate failures were corrected in the Stage 7 post-validation fixes merged through PR #15, which are now part of main; the project owner reported that the final local pytest, Ruff, and Black gates passed on that remediated Stage 7 tree. ROP has no concrete third-party model integration and performs no network inference.
 
@@ -510,22 +510,35 @@ git commit -m "Initialize ROP project foundation"
 Stage 9 begins the move from ROP's technical components to a single,
 local-first personal assistant product, Micky AI.
 
-The Stage 9 product contract is a **draft pending project-owner review**
-and defines the intended scope, boundaries, offline target, privacy
-stance, and measurable definition of done for the stage:
+The Stage 9 product contract is a **draft with an agreed scope and
+implementation in progress** and defines the intended scope, boundaries,
+offline target, privacy stance, and measurable definition of done for
+the stage:
 
 - [Stage 9 product contract](docs/stage-9-product-contract.md)
 
 The contract does **not** imply that the personal-assistant features
-described within it have already been implemented. The local assistant
-interface, deterministic capability routing, the single `help`
-capability, the policy-enforced authorization check on capability
-dispatch, the durable confirmation record, the server-side
-confirmation lifecycle, and the browser confirmation card with its
-Confirm/Cancel controls all exist. The conversational workflow,
-notes/tasks/reminders, local retrieval, user-facing persistence
-controls beyond the confirmation card, a user-facing
-inspect/export/delete surface for confirmation records, and any
-production state-changing capability or executor do not exist. The
-FastAPI-generated `/docs` developer interface is not a
+described within it have all been implemented. Implemented foundations
+on `main` include: the locally served browser interface, the
+capability-routed request endpoint with the single `help` capability,
+the policy-enforced authorization check on capability dispatch, the
+durable confirmation record and its server-side lifecycle, the browser
+confirmation card with its Confirm/Cancel controls, the user-facing
+inspect/export/delete surface for confirmation records, and durable
+conversation/message persistence with an HTTP API and a working
+conversation UI (create, list, select, rename, delete, load history,
+save exchanges as atomic user/assistant pairs).
+
+Not yet implemented: notes, tasks, reminders, local retrieval from
+user-selected data, integrated ROP reasoning through the conversation
+workflow, and any production state-changing capability or executor.
+The production executor registry is intentionally empty, so no
+consequential operation executes in this build. Stage 8 acceptance
+remains incomplete, and the native model is not wired into API request
+handling. The FastAPI-generated `/docs` developer interface is not a
 personal-assistant product.
+
+The Stage 9.1 task (Task 231) reconciles this contract with the code and
+freezes the Stage 9.2-9.8 roadmap described in §B.3 of the contract. See
+[`docs/task-231-stage-9-contract-reconciliation.md`](docs/task-231-stage-9-contract-reconciliation.md)
+for the reconciliation record.
