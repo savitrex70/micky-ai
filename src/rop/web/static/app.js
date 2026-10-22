@@ -240,6 +240,29 @@
     if (!payload || typeof payload.status !== "string") {
       return { kind: "unreadable" };
     }
+    // Validate the complete assistant response against the actual backend
+    // contract. The backend only emits these status values (see
+    // src/rop/authorization/dispatch.py), and each carries required
+    // payload fields. Anything else is an unexpected outcome whose
+    // persistence semantics are unknown -- classify as unexpected, so the
+    // caller marks ambiguity rather than pretending the outcome is usable.
+    const _VALID_ASSISTANT_STATUSES = new Set([
+      "success",
+      "clarification-required",
+      "confirmation-required",
+      "refused",
+    ]);
+    if (!_VALID_ASSISTANT_STATUSES.has(payload.status)) {
+      return { kind: "unexpected", reason: "unknown_status" };
+    }
+    if (typeof payload.message !== "string") {
+      return { kind: "unexpected", reason: "missing_message" };
+    }
+    if (payload.status === "confirmation-required") {
+      if (!isValidChallenge(payload.challenge)) {
+        return { kind: "unexpected", reason: "invalid_challenge" };
+      }
+    }
     return { kind: "ok", payload: payload };
   }
 
@@ -1076,6 +1099,10 @@
   // Set when a prior creation's outcome is unknown; blocks a second POST
   // until the user reconciles via a list refresh or page reload.
   let creationAmbiguous = false;
+  // The value of listLoadToken at the moment creationAmbiguous was set.
+  // Only a list response whose token is strictly greater (i.e. a request
+  // started after the ambiguity was recorded) can clear the flag.
+  let creationAmbiguityToken = 0;
   let messagesInFlight = false;
   let renameInFlight = false;
   let deleteInFlight = false;
@@ -1274,8 +1301,12 @@
     if (headerValue === null || headerValue === undefined) return null;
     const trimmed = String(headerValue).trim();
     if (trimmed === "") return null;
+    // The API emits a plain non-negative decimal integer. Reject alternate
+    // numeric notations (exponent "1e2", hex "0x10", signs) that Number()
+    // would otherwise accept.
+    if (!/^[0-9]+$/.test(trimmed)) return null;
     const n = Number(trimmed);
-    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return null;
+    if (!Number.isSafeInteger(n)) return null;
     return n;
   }
 
@@ -1439,9 +1470,17 @@
         listTotal = totalCount;
         listOffset = offset;
         conversations = payload;
-        // A successful list refresh reconciles an ambiguous creation: the
-        // actual server state is now visible, so the guard clears.
-        creationAmbiguous = false;
+        // Reconcile an ambiguous creation ONLY when this list response was
+        // (a) an offset-zero refresh, and (b) initiated after the ambiguity
+        // was recorded. A pre-existing in-flight request cannot reconcile
+        // the outcome it predates; a pagination fetch cannot either.
+        if (
+          creationAmbiguous &&
+          offset === 0 &&
+          token > creationAmbiguityToken
+        ) {
+          creationAmbiguous = false;
+        }
         renderList();
         renderConvPagination();
         updateComposerMode();
@@ -1509,6 +1548,7 @@
         // claim definite failure, do not repeat the POST, and tell the
         // user to reload the list to establish what actually happened.
         creationAmbiguous = true;
+        creationAmbiguityToken = listLoadToken;
         setStatus(
           statusEl,
           "The conversation creation could not be confirmed. The server " +
@@ -1533,6 +1573,7 @@
       } catch (err) {
         // Server did respond, but we cannot parse it — treat as ambiguous.
         creationAmbiguous = true;
+        creationAmbiguityToken = listLoadToken;
         setStatus(
           statusEl,
           "The conversation creation response could not be read. The " +
@@ -1548,6 +1589,7 @@
       // is not a reliable authority for the new conversation.
       if (!isValidConversationRecord(payload)) {
         creationAmbiguous = true;
+        creationAmbiguityToken = listLoadToken;
         setStatus(
           statusEl,
           "The conversation creation response was unexpected. The server " +
@@ -1614,8 +1656,15 @@
         );
         return;
       }
-      // Refresh succeeded and the row is present; load latest messages.
+      // Refresh succeeded and the row is present. Before starting a
+      // message reload for the created conversation, verify the user has
+      // not switched to a different conversation while the refresh was
+      // pending: a reload here would invalidate the new selection's
+      // in-flight message request on behalf of an earlier create.
       setStatus(statusEl, "", null);
+      if (selectedId !== createdId) {
+        return;
+      }
       setStatus(msgsStatus, "Loading messages\u2026", "info");
       const ok = await reloadLatest(createdId);
       if (ok === "not_found") {
@@ -1964,6 +2013,33 @@
         }
         _prevSequence = m.sequence;
       }
+      // Strict ordered-slice validation. The repository allocates
+      // sequence numbers contiguously from zero (append = max + 1) and
+      // exposes no individual-message deletion, so a well-formed page at
+      // offset O must have payload[i].sequence === O + i for all i, and
+      // payload.length must not exceed MESSAGES_LIMIT. This is stricter
+      // than "unique ascending": it rejects a page of sequences
+      // 100,101,102 pretending to be the page at offset 0.
+      if (payload.length > MESSAGES_LIMIT) {
+        setStatus(
+          msgsStatus,
+          "The message list response contained more records than " +
+            "requested; history could not be established.",
+          "error"
+        );
+        return false;
+      }
+      for (let _i = 0; _i < payload.length; _i++) {
+        if (payload[_i].sequence !== offset + _i) {
+          setStatus(
+            msgsStatus,
+            "The message list response was not the expected ordered " +
+              "slice; history could not be established.",
+            "error"
+          );
+          return false;
+        }
+      }
       // Require a valid X-Total-Count header. Missing or invalid totals
       // are rejected so a caller cannot treat an unverified page as
       // successful recovery.
@@ -2084,6 +2160,52 @@
     }
   }
 
+  // Apply a server-confirmed title to the target record only. A response
+  // for A must never mutate B's title, even if B is selected when the
+  // response arrives; the visible heading is updated only if the target
+  // is still selected.
+  function _applyRenameResult(targetId, title) {
+    const conv = findConversation(targetId);
+    if (conv) {
+      conv.title = title;
+    }
+    if (selectedId === targetId) {
+      selectedTitle = title;
+      currentTitleEl.textContent = title;
+    }
+    renderList();
+  }
+
+  // Reconcile a confirmed-404 rename target: remove from list; clear the
+  // selection only if that target remains selected (never clear B
+  // because A is missing).
+  function _reconcileMissingRenameTarget(targetId) {
+    conversations = conversations.filter((c) => c.id !== targetId);
+    if (selectedId === targetId) {
+      messagesLoadToken++;
+      messagesInFlight = false;
+      selectedId = null;
+      selectedTitle = null;
+      view.hidden = true;
+      currentTitleEl.textContent = "";
+      while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+      msgsEmpty.hidden = true;
+      messagesOffset = 0;
+      messagesTotal = null;
+      messagesRenderedCount = 0;
+      renderMsgsPagination();
+      ambiguousConversations.delete(targetId);
+    }
+    renderList();
+    updateComposerMode();
+    setStatus(
+      msgsStatus,
+      "The conversation no longer exists on the server; it has been " +
+        "removed from the list.",
+      "error"
+    );
+  }
+
   async function renameSelected() {
     if (renameInFlight || !selectedId) return;
     const newTitle = renameInput.value.trim();
@@ -2092,13 +2214,11 @@
       renameInput.focus();
       return;
     }
-    // Capture the target conversation now: the user may switch selection
-    // while the request is pending, and a response for A must never
-    // mutate B's title or heading.
     const targetId = selectedId;
     renameInFlight = true;
     renameBtn.disabled = true;
     setStatus(msgsStatus, "Renaming\u2026", "info");
+    let needsReconcile = false;
     try {
       const resp = await fetch(
         "/api/assistant/conversations/" + encodeURIComponent(targetId),
@@ -2108,6 +2228,11 @@
           body: JSON.stringify({ title: newTitle }),
         }
       );
+      if (resp.status === 404) {
+        // Confirmed missing target.
+        _reconcileMissingRenameTarget(targetId);
+        return;
+      }
       if (!resp.ok) {
         setStatus(
           msgsStatus,
@@ -2120,43 +2245,63 @@
       try {
         payload = await resp.json();
       } catch (err) {
-        setStatus(msgsStatus, "The rename response was unreadable.", "error");
-        return;
+        needsReconcile = true;
+        payload = null;
       }
-      // Validate the response against AssistantConversationRead and
-      // confirm it refers to the conversation we asked to rename.
-      if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+      if (!needsReconcile) {
+        if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+          needsReconcile = true;
+        } else {
+          _applyRenameResult(targetId, payload.title);
+          renameInput.value = "";
+          setStatus(msgsStatus, "Renamed.", "info");
+          return;
+        }
+      }
+    } catch (err) {
+      needsReconcile = true;
+    }
+
+    // The PATCH outcome is not definitive: the server may or may not have
+    // stored the new title. Reconcile via a list refresh (which is the
+    // only per-conversation read path exposed). Never retry the PATCH.
+    if (needsReconcile) {
+      setStatus(
+        msgsStatus,
+        "The rename could not be confirmed; reconciling\u2026",
+        "info"
+      );
+      const res = await loadConversations(0);
+      if (!res || !res.ok) {
         setStatus(
           msgsStatus,
-          "The rename response was unexpected. Reload the conversation " +
-            "to verify the actual title.",
-          "error"
+          "The rename outcome is unverified and the list could not be " +
+            "reloaded. Do not retry until you reload the page.",
+          "ambiguous"
         );
         return;
       }
-      // Apply only to the target record. A response for A must never
-      // mutate B's title, even if B is selected when the response arrives.
-      const conv = findConversation(targetId);
-      if (conv) {
-        conv.title = payload.title;
+      const found = findConversation(targetId);
+      if (!found) {
+        setStatus(
+          msgsStatus,
+          "The rename outcome is unverified; the conversation is not on " +
+            "the refreshed page. Reload the page to verify before " +
+            "retrying.",
+          "ambiguous"
+        );
+        return;
       }
-      // Update the visible heading only if the target is still selected.
       if (selectedId === targetId) {
-        selectedTitle = payload.title;
-        currentTitleEl.textContent = payload.title;
+        selectedTitle = found.title;
+        currentTitleEl.textContent = found.title;
       }
-      renderList();
-      renameInput.value = "";
-      setStatus(msgsStatus, "Renamed.", "info");
-    } catch (err) {
       setStatus(
         msgsStatus,
-        "Rename failed because the server was unreachable.",
-        "error"
+        "The rename could not be confirmed directly; the server reports " +
+          "the current title as \u201C" + found.title + "\u201D.",
+        "info"
       );
-    } finally {
-      renameInFlight = false;
-      renameBtn.disabled = false;
     }
   }
 
@@ -2179,7 +2324,12 @@
         "/api/assistant/conversations/" + encodeURIComponent(deletingId),
         { method: "DELETE" }
       );
-      if (resp.status !== 204) {
+      // Documented API response: 204 is a confirmed delete; 404 is
+      // confirmation that the target no longer exists. Both are treated as
+      // confirmed. Any other status is inconclusive and must not perform
+      // confirmed-deletion cleanup.
+      const confirmed = resp.status === 204 || resp.status === 404;
+      if (!confirmed) {
         setStatus(
           msgsStatus,
           "The conversation could not be deleted (HTTP " + resp.status + ").",
@@ -2199,11 +2349,14 @@
       if (conversations.length === 0 && listOffset > 0) {
         listOffset = Math.max(0, listOffset - LIST_LIMIT);
       }
+      // The deleted conversation's ambiguity marker is always removed on
+      // confirmed deletion, regardless of whether the user has switched to
+      // a different conversation while the DELETE was pending.
+      ambiguousConversations.delete(deletingId);
       if (selectedId === deletingId) {
-        // Invalidate any outstanding message load BEFORE clearing state so a
-        // stale response cannot repopulate the deleted conversation. Mirror
-        // of clearSelectionBecauseMissing: token bump, full pagination reset,
-        // coherent empty state, ambiguity cleared for the deleted id.
+        // Only clear the current selection's message state when the deleted
+        // conversation is still selected. If the user switched to B, B's
+        // state must survive.
         messagesLoadToken++;
         messagesInFlight = false;
         selectedId = null;
@@ -2216,7 +2369,6 @@
         messagesTotal = null;
         messagesRenderedCount = 0;
         renderMsgsPagination();
-        ambiguousConversations.delete(deletingId);
       }
       renderList();
       renderConvPagination();
@@ -2232,6 +2384,15 @@
             "refreshed. Click \u201CRefresh conversations\u201D to " +
             "reconcile.",
           "error"
+        );
+      } else if (selectedId !== null) {
+        // A different conversation is still selected; do not claim that no
+        // conversation is selected.
+        setStatus(
+          msgsStatus,
+          "Conversation deleted. The previously-selected conversation " +
+            "remains active.",
+          "info"
         );
       } else {
         setStatus(
