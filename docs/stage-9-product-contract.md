@@ -4,8 +4,21 @@
 
 This document defines the product boundary for Stage 9 of Micky AI, the
 personal-assistant product being built on top of the existing Reasoning
-Operating Platform (ROP). It is a contract, not an implementation. No
-personal-assistant feature described here is claimed to exist.
+Operating Platform (ROP). It is a contract, not a finished product.
+
+Stage 9 is **in progress**. Several foundational capabilities are already
+implemented on `main` (see §B.1.5): the locally served browser interface,
+deterministic capability routing with a single registered `help`
+capability, policy-enforced authorization dispatch, the durable
+confirmation record and its server-side lifecycle, the browser
+confirmation card, the user-facing confirmation-record inspect/export/
+delete surface, and durable conversation/message persistence with an
+HTTP API and a working conversation UI. Those implemented foundations
+are **distinct from the complete Stage 9 product**, which remains
+unfinished. Notes, tasks, reminders, local retrieval, integrated ROP
+reasoning through the conversation workflow, and any production
+state-changing capability or executor do not exist yet. The Stage 9.2-9.8
+roadmap in §B.3 defines the remaining work.
 
 ## A. Product identity and purpose
 
@@ -148,8 +161,11 @@ Implemented foundation:
   - Establishes: exact matching after normalizing case, whitespace, and
     trailing punctuation to one registered capability; anything else is
     `unsupported-capability` and is never guessed into a capability.
-  - Absent: no conversational requests, no session continuity, no notes,
-    tasks, reminders, or retrieval.
+  - Absent: no conversational interaction engine beyond the single
+    `help` capability; no notes, tasks, reminders, or local retrieval.
+    Persistent conversation storage, the conversation HTTP API, and the
+    persistent conversation UI exist as separate capabilities (Tasks
+    228-230). The registered capability set is `help` only.
 
 - **Capability:** Risk-based authorization policy, per-operation
   confirmation lifecycle, and the at-most-once executor boundary.
@@ -269,8 +285,11 @@ Planned capabilities (Stage 9 target):
     The API adds backward-compatible `X-Total-Count` headers on its two
     list endpoints.
   - Absent: conversation export/import, per-message editing, notes,
-    tasks, reminders, local retrieval. Stage 9 owner decisions H.1, H.3,
-    H.4 remain unresolved; the contract remains a draft.
+    tasks, reminders, local retrieval. Stage 9 owner decisions H.1 (scope,
+    UI, and conversation/clinical separation), H.3 (reminder defaults),
+    and H.4 (retrieval and offline boundary defaults) are recorded in
+    §H. Stage-specific implementation details remain deferred to their
+    respective stages. Stage 9 is not complete.
 
 #### B.1.6 Blocked or gated capabilities
 
@@ -320,8 +339,10 @@ section E.1 applies to every entry below.
      notes/tasks/reminders/retrieval UI exists yet.
    - Outcome: user interacts with the assistant through a locally
      served page on the same machine.
-   - Dependencies: a new `src/rop/web/` (or equivalent) served by the
-     existing FastAPI app; no new external services.
+   - Dependencies: `src/rop/web/` and its FastAPI-served page already
+     exist. Remaining interface work is the notes/tasks UI (Stage 9.3),
+     reminders UI (Stage 9.4), and retrieval UI (Stage 9.5). No new
+     external services are planned.
    - Acceptance: a documented local URL loads a working page; the page
      can submit a request and display a truthful response.
 
@@ -333,10 +354,12 @@ section E.1 applies to every entry below.
      retrieval are not wired through it yet.
    - Outcome: a user can hold a conversation; messages persist and can
      be revisited.
-   - Dependencies: new conversation domain (`conversation`, `message`)
-     models and repositories, distinct from the clinical
-     `reasoning_sessions` domain. Existing `reasoning_sessions` must not
-     be overloaded.
+   - Dependencies: the conversation domain (`AssistantConversation`,
+     `AssistantMessage`, repositories, HTTP API, and persistent UI) is
+     already implemented (Tasks 228-230) and remains separate from the
+     clinical `reasoning_sessions` domain. Remaining product work is
+     wiring the larger interaction engine and additional capabilities
+     through the existing conversation workflow.
    - Acceptance: create conversation, add messages, list, reopen,
      delete - all verifiable via tests and via the UI.
 
@@ -345,8 +368,12 @@ section E.1 applies to every entry below.
    - Outcome: each supported request is matched to an explicitly
      registered capability; unsupported requests return an explicit
      "unsupported" response, never a fabricated success.
-   - Dependencies: a capability registry and a deterministic matcher
-     following the existing template-matching style.
+   - Dependencies: `src/rop/capabilities/registry.py` and the
+     deterministic matcher already exist and route the single `help`
+     capability. Remaining work is the larger interaction engine
+     (Stage 9.2): additional registered capabilities, clarification
+     rules, safe execution boundaries, and truthful outcome taxonomy.
+     Current limitation: only `help` is registered.
    - Acceptance: routing tests covering supported, ambiguous, and
      unsupported inputs; no hidden LLM or model selection on this path.
 
@@ -360,25 +387,34 @@ section E.1 applies to every entry below.
      through an explicitly chosen mechanism. Actual reminder behaviour
      is a Stage 9 deliverable and is not assumed by this contract.
    - Dependencies: new persistence models and repositories; reuse the
-     existing service/repository pattern.
-   - Owner decisions still required before the reminder mechanism is
-     implemented (see section H.3):
-       * Due-time and timezone interpretation, including ambiguous
-         local times and daylight-saving transitions.
-       * How a due reminder is surfaced to the user.
-       * Behaviour when the application is closed or restarted while a
-         reminder becomes due.
-   - Acceptance (after the owner decisions in section H.3 are resolved):
+     existing service/repository pattern. No new external services.
+   - Approved reminder defaults (recorded in §H.3):
+       * Reminders surface inside the Micky AI interface while the
+         application is running. No OS notifications and no separate
+         background notification service in the initial scope.
+       * Reminders that become due while the application is closed are
+         surfaced as overdue at the next start.
+       * Due-time interpretation preserves the intended timezone;
+         ambiguous daylight-saving-time local times require
+         clarification rather than a guessed interpretation.
+       * Persistence and restart recovery must prevent reminders from
+         being silently dropped or duplicated.
+   - Deferred to the Stage 9.4 reminder design task:
+       * The exact accepted date/time expression grammar.
+       * The exact storage schema and recovery algorithm.
+       * The exact in-app UI affordance for surfacing and dismissing
+         reminders.
+       * Concrete acceptance tests.
+   - Acceptance (once Stage 9.4 design is reviewed and approved):
        (a) end-to-end user workflow demonstrated for notes, tasks, and
            reminders, including create/list/edit/delete;
        (b) explicit refusal on unparsable input for every item type;
        (c) reminder due-time and timezone interpretation matches the
-           agreed rule;
-       (d) surfacing behaviour matches the agreed mechanism;
-       (e) closed/restarted-application behaviour matches the agreed
-           rule, and no reminder is silently dropped or duplicated.
-   - Until H.3 is resolved, this contract does not promise any specific
-     notification mechanism or background delivery.
+           approved defaults in §H.3;
+       (d) in-app surfacing and overdue-on-restart behaviour match the
+           approved defaults in §H.3;
+       (e) persistence and restart recovery demonstrate that no
+           reminder is silently dropped or duplicated.
 
 5. **Local retrieval from explicitly selected user data**
    - Status: Planned
@@ -433,8 +469,16 @@ section E.1 applies to every entry below.
    - Outcome: any operation classified as protected by the agreed
      security policy requires effective authorization before it may
      execute. No protected state-changing operation may run silently.
-   - Dependencies: a thin permission check layer in the conversation /
-     capability layer. Existing ROP services remain unchanged.
+   - Dependencies: the policy evaluator, dispatch boundary, durable
+     confirmation record, server-side confirmation lifecycle, browser
+     confirmation card, and confirmation-record inspect/export/delete
+     surface already exist. The actual remaining gap is that
+     `build_default_executor_registry()` in
+     `src/rop/authorization/executors.py` returns an empty registry by
+     design, so no production state-changing capability can execute in
+     this build. Any future protected capability must be integrated
+     through the established authorization boundary and verified
+     end-to-end.
    - Owner decision recorded (section H.2, principles in section E.2):
      risk-based per-operation confirmation. Session-scoped authorization
      was not chosen.
@@ -723,12 +767,13 @@ claimed as already achieved.
      type.
    - Evidence: tests plus a manual walkthrough.
 
-4. **Reminder behaviour (after section H.3 is resolved)** - reminders
-   behave according to the agreed due-time, timezone, surfacing, and
-   closed/restarted-application rules.
+4. **Reminder behaviour (Stage 9.4 implementation, verified against
+   the §H.3 defaults)** - reminders behave according to the approved
+   due-time, timezone, surfacing, and closed/restarted-application
+   defaults recorded in §H.3.
    - Verification: tests covering due-time parsing, timezone edges
-     (ambiguous local times and DST transitions), surfacing through the
-     agreed mechanism, and closed/restarted behaviour.
+     (ambiguous local times and DST transitions), in-app surfacing,
+     overdue-on-restart, and no-silent-drop-or-duplicate behaviour.
    - Evidence: test output plus a manual walkthrough.
 
 5. **Verified capability workflows** - every core capability claimed in
@@ -777,11 +822,29 @@ Decisions in this contract guide the later Stage 9.2-9.8 roadmap.
 Owner-review items required before the corresponding implementation
 commitments:
 
-### H.1 Capability scope
-- Scope confirmation of the capability list in section B.2
-  (add / remove).
-- Choice of local UI technology within existing dependencies.
-- Conversation vs reasoning-session separation approach.
+### H.1 Capability scope - RESOLVED (Task 231)
+
+The project owner approved the following decisions before Task 231
+began. They are recorded here so that they are not treated as
+outstanding:
+
+- **Capability scope:** the working capability roadmap is the
+  Stage 9.2-9.8 sequence recorded in §B.3. Adding or removing a stage
+  requires a separately reviewed change to this contract.
+- **Local UI technology:** the existing FastAPI application and its
+  current locally served vanilla-JavaScript browser interface remain
+  the interface. No replacement UI framework or separate service is
+  planned without separately reviewed approval.
+- **Conversation vs reasoning-session separation:** conversation and
+  message persistence remain a separate domain from clinical
+  reasoning sessions and records. No foreign keys, shared identifiers,
+  joins, or hidden mappings between conversation IDs and clinical
+  session IDs are permitted.
+
+**Deferred to individual stages:** the detailed design of each stage's
+own capability (for example, the notes/tasks data model, the reminder
+schema, the retrieval algorithm) is not part of H.1 and remains the
+responsibility of the corresponding Stage 9.x design task.
 
 ### H.2 Authorization and permissions
 - RESOLVED - Authorization interaction mechanism: **risk-based
@@ -813,8 +876,10 @@ commitments:
   was implemented in Task 227.
 - The security invariant in section E.1 is not part of this decision;
   it must hold regardless of the chosen mechanism.
-- No owner decision in sections H.1, H.3, or H.4 is resolved by this one,
-  and the contract as a whole remains a draft.
+- This decision does not resolve stage-specific implementation details
+  in H.1, H.3, or H.4. The overall roadmap, UI choice, conversation/
+  clinical separation, reminder defaults, and retrieval/offline defaults
+  recorded in §H and §B.3 are agreed by the project owner.
 
 ### H.3 Reminders (see section B.2 entry 4 and Stage 9.4)
 
