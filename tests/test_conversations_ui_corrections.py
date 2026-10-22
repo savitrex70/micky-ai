@@ -1143,3 +1143,12 @@ def test_send_response_rejects_extra_fields() -> None:
     out = _run_scenario("send-response-extra-field-guarded")
     assert out["globalGuarded"] is True, out
     assert out["postCount"] == 1, out
+
+
+def test_uncertain_decision_acknowledgement_clears_locked_card_only() -> None:
+    out = _run_scenario("decision-unknown-ack-clears-locked-card")
+    assert out["lockedBeforeAck"] is True, out
+    assert out["cardDismissedAfterAck"] is True, out
+    assert out["guardClearedAfterAck"] is True, out
+    assert out["noRequestSentByAck"] is True, out
+    assert out["acknowledgementStatus"] is True, out
