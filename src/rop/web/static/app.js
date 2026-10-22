@@ -507,8 +507,8 @@
       );
       if (!acknowledged) {
         setStatus(
-          "A prior request remains unresolved. No request was sent or " +
-            "retried; review the confirmation records before proceeding.",
+          "The previous request's outcome could not be confirmed. No request " +
+            "was sent or retried; review the confirmation records before proceeding.",
           "ambiguous"
         );
         return;
@@ -609,8 +609,8 @@
           } else {
             setStatus(
               payload.message +
-                " The response did not include a usable confirmation " +
-                "challenge, so this page cannot complete confirmation.",
+                " The server did not provide a usable challenge, so this page cannot " +
+                "complete confirmation.",
               "error"
             );
           }
