@@ -1895,6 +1895,115 @@ async function scenarioRenameThenSwitchToB() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "send-pending-switch-to-b": scenarioSendPendingSwitchToB,
+  "send-during-reload-blocked": scenarioSendDuringReloadBlocked,
+  "delete-invalidated-load-not-stuck": scenarioDeleteInvalidatedLoadNotStuck,
+});
+
+async function scenarioSendPendingSwitchToB() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Submit a send; hold its POST response.
+  H.registry["message"].value = "hello A";
+  let releaseSend;
+  const sendGate = new Promise((r) => { releaseSend = r; });
+  H.enqueue(async () => {
+    await sendGate;
+    return H.jsonResponse({ status: "success", message: "ok" }, 200, {});
+  });
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(15);
+  // Switch to B while the send is in flight.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(25);
+  const selAfterSwitch = selectedId();
+  const fetchCountAfterSwitch = H.fetchLog.length;
+  // Release the send response: A's success must NOT trigger a fetch for B.
+  releaseSend();
+  await H.drain(30);
+  const fetchCountAfterSend = H.fetchLog.length;
+  return {
+    ok: true, scenario: "send-pending-switch-to-b",
+    selAfterSwitch,
+    finalSelected: selectedId(),
+    bStillSelected:
+      selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
+    noRefreshForA: fetchCountAfterSend === fetchCountAfterSwitch,
+    fetchCountAfterSwitch, fetchCountAfterSend,
+  };
+}
+
+async function scenarioSendDuringReloadBlocked() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  // Start a reload; hold its total-fetch response.
+  let releaseTotal;
+  const totalGate = new Promise((r) => { releaseTotal = r; });
+  H.enqueue(async () => {
+    await totalGate;
+    return H.jsonResponse([], 200, { "X-Total-Count": "0" });
+  });
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(10);
+  const loadingDuringFetch = global.window.__mickyConversations.isLoadingMessages();
+  // Try to submit while the total fetch is pending.
+  H.registry["message"].value = "hello";
+  const fetchCountBeforeSend = H.fetchLog.length;
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+  await H.drain(10);
+  const fetchCountAfterSend = H.fetchLog.length;
+  // Release the total fetch and let the reload finish.
+  releaseTotal();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-during-reload-blocked",
+    loadingDuringFetch,
+    fetchCountBeforeSend,
+    fetchCountAfterSend,
+    sendBlocked: fetchCountAfterSend === fetchCountBeforeSend,
+    loadingCoversWholeOperation: loadingDuringFetch === true,
+  };
+}
+
+async function scenarioDeleteInvalidatedLoadNotStuck() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 5, (off) => pageOfMessages("C0", off, 200, 5));
+  // Start a reload; hold its page fetch.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "5" }));
+  let releasePage;
+  const pageGate = new Promise((r) => { releasePage = r; });
+  H.enqueue(async () => {
+    await pageGate;
+    return H.jsonResponse(pageOfMessages("C0", 0, 200, 5), 200,
+      { "X-Total-Count": "5" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(15);
+  const midLoad = global.window.__mickyConversations.isLoadingMessages();
+  // Delete C0: invalidates token, must clear the in-flight flag.
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  H.registry["conversation-delete"].click();
+  await H.drain(25);
+  const afterDelete = global.window.__mickyConversations.isLoadingMessages();
+  const selAfterDelete = selectedId();
+  // Release the stale page response.
+  releasePage();
+  await H.drain(30);
+  const afterStale = global.window.__mickyConversations.isLoadingMessages();
+  return {
+    ok: true, scenario: "delete-invalidated-load-not-stuck",
+    midLoad, afterDelete, afterStale, selAfterDelete,
+    flagClearedOnDelete: midLoad === true && afterDelete === false,
+    stillClearAfterStale: afterStale === false,
+    selectionCleared: selAfterDelete === null,
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

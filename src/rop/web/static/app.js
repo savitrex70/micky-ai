@@ -485,8 +485,12 @@
         // that persistence; we do not POST the pair ourselves.
         if (selectedConversationId && payload.status === "success") {
           if (window.__mickyConversations) {
-            window.__mickyConversations.clearAmbiguous();
-            window.__mickyConversations.refreshSelectedMessages();
+            // Scope both operations to the conversation that actually
+            // received the send. If the user has switched to B while A's
+            // response was in flight, A's success must not clear B's
+            // ambiguity or trigger a reload of B.
+            window.__mickyConversations.clearAmbiguousFor(selectedConversationId);
+            window.__mickyConversations.refreshMessagesFor(selectedConversationId);
           }
         }
       } else if (result.kind === "http") {
@@ -1491,6 +1495,7 @@
       // presented. Without this, a stale response from the previous
       // selection could repopulate the display under the new title.
       messagesLoadToken++;
+      messagesInFlight = false;
       messagesOffset = 0;
       messagesTotal = null;
       messagesRenderedCount = 0;
@@ -1616,6 +1621,24 @@
 
   async function reloadLatest(id) {
     const token = ++messagesLoadToken;
+    // messagesInFlight covers the WHOLE latest-history operation (total
+    // fetch, page fetch, and bounded retry), so a user cannot slip a send
+    // in during the preliminary total-fetch window.
+    messagesInFlight = true;
+    renderMsgsPagination();
+    try {
+      return await _reloadLatestInner(id, token);
+    } finally {
+      // Only the current generation owns the loading flag; an invalidated
+      // request (e.g. by deleteSelected) must not clear it.
+      if (token === messagesLoadToken) {
+        messagesInFlight = false;
+        renderMsgsPagination();
+      }
+    }
+  }
+
+  async function _reloadLatestInner(id, token) {
     // Ask for a single record to obtain a fresh total.
     let freshTotal;
     try {
@@ -1682,6 +1705,9 @@
   function clearSelectionBecauseMissing(id) {
     if (selectedId !== id) return;
     messagesLoadToken++; // invalidate in-flight loads for this id
+    // The invalidated load will not clear the flag in its own finally
+    // (token mismatch); reset it here so the UI does not stay "loading".
+    messagesInFlight = false;
     selectedId = null;
     selectedTitle = null;
     currentTitleEl.textContent = "";
@@ -1779,7 +1805,11 @@
     // Only the token owner can bump the token; if a token was supplied, we
     // do not bump it again (the caller already established the generation).
     if (typeof externalToken !== "number") messagesLoadToken = token;
-    messagesInFlight = true;
+    // Only the token owner manages the loading flag. When a caller supplies
+    // an externalToken (reloadLatest), that caller owns the whole operation
+    // and loadMessages must not clear the flag for it.
+    const ownsLoading = typeof externalToken !== "number";
+    if (ownsLoading) messagesInFlight = true;
     setStatus(msgsStatus, "Loading messages\u2026", "info");
     try {
       const resp = await fetch(
@@ -1911,7 +1941,7 @@
       );
       return false;
     } finally {
-      if (token === messagesLoadToken) {
+      if (ownsLoading && token === messagesLoadToken) {
         messagesInFlight = false;
         renderMsgsPagination();
       }
@@ -2062,6 +2092,7 @@
         // of clearSelectionBecauseMissing: token bump, full pagination reset,
         // coherent empty state, ambiguity cleared for the deleted id.
         messagesLoadToken++;
+        messagesInFlight = false;
         selectedId = null;
         selectedTitle = null;
         view.hidden = true;
@@ -2106,15 +2137,18 @@
   // same authoritative path used for recovery: fresh total, then the page
   // containing the newest messages. Delegating here keeps the post-success
   // refresh and the ambiguous-save recovery behaviourally identical.
-  async function refreshSelectedMessages() {
-    if (!selectedId) return;
-    const id = selectedId;
-    const ok = await reloadLatest(id);
+  // Refresh messages for a specific conversation. No-op if the caller's
+  // target is no longer selected -- a send's success must not trigger a
+  // reload of a conversation the user has since switched to.
+  async function refreshMessagesFor(expectedId) {
+    if (!expectedId) return;
+    if (selectedId !== expectedId) return;
+    const ok = await reloadLatest(expectedId);
     if (ok === "not_found") {
-      clearSelectionBecauseMissing(id);
+      clearSelectionBecauseMissing(expectedId);
       return;
     }
-    if (ok !== true && selectedId === id) {
+    if (ok !== true && selectedId === expectedId) {
       setStatus(
         msgsStatus,
         "The exchange could not be confirmed in the conversation history. " +
@@ -2124,8 +2158,17 @@
     }
   }
 
+  async function refreshSelectedMessages() {
+    if (!selectedId) return;
+    await refreshMessagesFor(selectedId);
+  }
+
   function markAmbiguous(id) {
     if (id) ambiguousConversations.add(id);
+  }
+
+  function clearAmbiguousFor(id) {
+    if (id) ambiguousConversations.delete(id);
   }
 
   function clearAmbiguous() {
@@ -2141,6 +2184,8 @@
     refreshSelectedMessages: refreshSelectedMessages,
     markAmbiguous: markAmbiguous,
     clearAmbiguous: clearAmbiguous,
+    clearAmbiguousFor: clearAmbiguousFor,
+    refreshMessagesFor: refreshMessagesFor,
     isAmbiguous: isAmbiguous,
     reloadSelected: reloadSelected,
     isLoadingMessages: function () {

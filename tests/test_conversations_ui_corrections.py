@@ -867,3 +867,32 @@ def test_rename_response_for_previous_target_does_not_touch_new_selection() -> N
     assert out["bStillSelected"] is True, out
     assert out["bTitleUnchanged"] is True, out
     assert out["aTitleUpdated"] is True, out
+
+
+# ---- Batch C: send/refresh scoping and in-flight lifecycle ----
+
+
+def test_send_pending_switch_to_b_does_not_refresh_b() -> None:
+    """A send for A resolving after the user switched to B must not trigger
+    a refresh of B on A's behalf, and must leave B selected."""
+    out = _run_scenario("send-pending-switch-to-b")
+    assert out["bStillSelected"] is True, out
+    assert out["noRefreshForA"] is True, out
+
+
+def test_send_during_reload_blocked() -> None:
+    """Submitting while a reload's total-count fetch is pending must be
+    blocked, because messagesInFlight covers the whole operation."""
+    out = _run_scenario("send-during-reload-blocked")
+    assert out["loadingCoversWholeOperation"] is True, out
+    assert out["sendBlocked"] is True, out
+
+
+def test_delete_invalidated_load_not_stuck() -> None:
+    """Deleting a conversation with a message load in flight must clear
+    messagesInFlight, and a subsequently-resolving stale response must not
+    re-set it."""
+    out = _run_scenario("delete-invalidated-load-not-stuck")
+    assert out["flagClearedOnDelete"] is True, out
+    assert out["stillClearAfterStale"] is True, out
+    assert out["selectionCleared"] is True, out
