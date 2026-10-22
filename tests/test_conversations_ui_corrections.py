@@ -896,3 +896,49 @@ def test_delete_invalidated_load_not_stuck() -> None:
     assert out["flagClearedOnDelete"] is True, out
     assert out["stillClearAfterStale"] is True, out
     assert out["selectionCleared"] is True, out
+
+
+# ---- Batch D: list lifecycle, delete sync, page-shape validation ----
+
+
+def test_delete_last_item_on_last_page_recovers_offset() -> None:
+    """Deleting the only item on a non-first page must recover to offset 0
+    and commit a coherent range."""
+    out = _run_scenario("delete-last-item-on-last-page")
+    assert out["offsetRecovered"] is True, out
+    assert out["rowsCoherent"] is True, out
+    assert out["rangeCoherent"] is True, out
+    assert out["selectedAfter"] is None, out
+
+
+def test_delete_one_item_updates_total_and_range() -> None:
+    """Deleting a single item from a 51-row total must update the range and
+    row count coherently after reconciliation."""
+    out = _run_scenario("delete-one-item-updates-total")
+    assert out["rangeUpdated"] is True, out
+    assert out["rowsCoherent"] is True, out
+
+
+def test_list_in_flight_does_not_reintroduce_deleted() -> None:
+    """A list refresh resolving after a confirmed delete must not commit the
+    deleted conversation back into the list."""
+    out = _run_scenario("list-in-flight-does-not-reintroduce-deleted")
+    assert out["deletedNotReintroduced"] is True, out
+    assert out["rowCountCoherent"] is True, out
+
+
+def test_list_response_rejects_oversize_page() -> None:
+    """A response with more rows than LIST_LIMIT must not be committed."""
+    out = _run_scenario("list-rejects-oversize-page")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["isError"] is True, out
+
+
+def test_list_response_rejects_empty_at_nonzero_offset() -> None:
+    """An empty page at a nonzero offset with a positive total is impossible
+    and must not be committed."""
+    out = _run_scenario("list-rejects-empty-at-nonzero-offset")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["isError"] is True, out

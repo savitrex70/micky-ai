@@ -2004,6 +2004,165 @@ async function scenarioDeleteInvalidatedLoadNotStuck() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "delete-last-item-on-last-page": scenarioDeleteLastItemOnLastPage,
+  "delete-one-item-updates-total": scenarioDeleteOneItemUpdatesTotal,
+  "list-in-flight-does-not-reintroduce-deleted": scenarioListInFlightDoesNotReintroduceDeleted,
+  "list-rejects-oversize-page": scenarioListRejectsOversizePage,
+  "list-rejects-empty-at-nonzero-offset": scenarioListRejectsEmptyAtNonzeroOffset,
+});
+
+async function scenarioDeleteLastItemOnLastPage() {
+  await bootstrap(0, 50, 51);
+  // Go to page 2 (offset 50, 1 item = C50)
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) throw new Error("expected offset=50, got " + url);
+    return H.jsonResponse(pageOfConversations(1, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-next"].click();
+  await H.drain(25);
+  // Select C50 (the only item on this page)
+  await selectViaUI(0, "C50", 0);
+  const selBeforeDelete = selectedId();
+  const fetchCountBeforeDelete = H.fetchLog.length;
+  // Delete C50
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  // Post-delete loadConversations must fetch from the recovered offset (0)
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) throw new Error("expected recovered offset=0, got " + url);
+    return H.jsonResponse(pageOfConversations(0, 50, 50), 200,
+      { "X-Total-Count": "50" });
+  });
+  H.registry["conversation-delete"].click();
+  await H.drain(40);
+  const rowsAfter = H.registry["conversations-list"].children.length;
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const urlsAfter = H.fetchLog.slice(fetchCountBeforeDelete).map((x) => x.url);
+  const fetchedOffset0 = urlsAfter.some((u) => /offset=0(?:\D|$)/.test(u) && !/limit=1/.test(u));
+  return {
+    ok: true, scenario: "delete-last-item-on-last-page",
+    rowsAfter, rangeAfter,
+    fetchedOffset0,
+    selBeforeDelete,
+    selectedAfter: selectedId(),
+    offsetRecovered: fetchedOffset0,
+    rowsCoherent: rowsAfter === 50,
+    rangeCoherent: rangeAfter === "Showing 1\u201350 of 50",
+  };
+}
+
+async function scenarioDeleteOneItemUpdatesTotal() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  // Delete C0
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) throw new Error("expected offset=0, got " + url);
+    return H.jsonResponse(pageOfConversations(0, 50, 50), 200,
+      { "X-Total-Count": "50" });
+  });
+  H.registry["conversation-delete"].click();
+  await H.drain(40);
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const rowsAfter = H.registry["conversations-list"].children.length;
+  return {
+    ok: true, scenario: "delete-one-item-updates-total",
+    rangeBefore, rangeAfter, rowsAfter,
+    rangeUpdated: rangeAfter === "Showing 1\u201350 of 50",
+    rowsCoherent: rowsAfter === 50,
+  };
+}
+
+async function scenarioListInFlightDoesNotReintroduceDeleted() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  // Start a list refresh; hold its response (which still includes C0).
+  let releaseRefresh;
+  const refreshGate = new Promise((r) => { releaseRefresh = r; });
+  H.enqueue(async () => {
+    await refreshGate;
+    return H.jsonResponse(pageOfConversations(0, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(5);
+  // Delete C0 while refresh is pending.
+  H.confirmQueue.push(true);
+  H.enqueue(async () => H.jsonResponse({}, 204, {}));
+  // deleteSelected's reconciliation fetch happens AFTER the in-flight
+  // refresh resolves (serialized).
+  H.enqueue(async () => {
+    return H.jsonResponse(pageOfConversations(0, 50, 50), 200,
+      { "X-Total-Count": "50" });
+  });
+  H.registry["conversation-delete"].click();
+  await H.drain(15);
+  // Release stale refresh response (would reintroduce C0 if not rejected).
+  releaseRefresh();
+  await H.drain(40);
+  const rows = H.registry["conversations-list"].children;
+  const ids = rows.map((r) => r.dataset.id || "");
+  const hasC0 = ids.includes(uuidFrom("C0"));
+  return {
+    ok: true, scenario: "list-in-flight-does-not-reintroduce-deleted",
+    rowCount: rows.length,
+    hasC0,
+    deletedNotReintroduced: hasC0 === false,
+    rowCountCoherent: rows.length === 50,
+  };
+}
+
+async function scenarioListRejectsOversizePage() {
+  await bootstrap(0, 50, 51);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  // 51 rows when LIST_LIMIT is 50 is impossible.
+  H.enqueue(async () => {
+    const oversize = pageOfConversations(0, 50, 51);
+    oversize.push(conv("C1000", "Extra"));
+    return H.jsonResponse(oversize, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const rowsAfter = H.registry["conversations-list"].children.length;
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const statusKind = H.registry["conversations-status"].getAttribute("data-kind");
+  return {
+    ok: true, scenario: "list-rejects-oversize-page",
+    rowsBefore, rowsAfter, rangeBefore, rangeAfter,
+    rowsPreserved: rowsBefore === rowsAfter,
+    rangePreserved: rangeBefore === rangeAfter,
+    isError: statusKind === "error",
+  };
+}
+
+async function scenarioListRejectsEmptyAtNonzeroOffset() {
+  await bootstrap(0, 50, 51);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  // Click next: server responds with an impossible empty page at offset 50.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) throw new Error("expected offset=50, got " + url);
+    return H.jsonResponse([], 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-next"].click();
+  await H.drain(25);
+  const rowsAfter = H.registry["conversations-list"].children.length;
+  const rangeAfter = H.registry["conversations-range"].textContent;
+  const statusKind = H.registry["conversations-status"].getAttribute("data-kind");
+  return {
+    ok: true, scenario: "list-rejects-empty-at-nonzero-offset",
+    rowsBefore, rowsAfter, rangeBefore, rangeAfter,
+    rowsPreserved: rowsBefore === rowsAfter,
+    rangePreserved: rangeBefore === rangeAfter,
+    isError: statusKind === "error",
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

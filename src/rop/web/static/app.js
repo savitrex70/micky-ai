@@ -1060,6 +1060,9 @@
   let selectedTitle = null;
   let listInFlight = false;
   let listInFlightPromise = null;
+  // Monotonic token to reject stale list responses (mirrors the message
+  // token pattern).
+  let listLoadToken = 0;
   let listOffset = 0;
   let listTotal = null;
   let messagesOffset = 0;
@@ -1154,7 +1157,11 @@
   }
 
   function renderConvPagination() {
-    if (listTotal === null || listTotal === 0) {
+    // Hide on empty total OR empty current page. The second condition covers
+    // transient states (post-delete before reconciliation) where the local
+    // rows have been cleared but the server-side total is still positive;
+    // rendering "Showing 1-0 of 50" in that window is incoherent.
+    if (listTotal === null || listTotal === 0 || conversations.length === 0) {
       convPager.hidden = true;
       return;
     }
@@ -1297,6 +1304,7 @@
       }
     }
     if (typeof offset !== "number") offset = listOffset;
+    const token = ++listLoadToken;
     listInFlight = true;
     if (refreshBtn) refreshBtn.disabled = true;
     // Update pagination button states immediately so a user cannot queue
@@ -1361,6 +1369,71 @@
             "error"
           );
           return { ok: false, reason: "invalid_total" };
+        }
+        // Page-shape validation. Reject responses that cannot represent a
+        // coherent page under the API's LIST_LIMIT and total contract.
+        if (payload.length > LIST_LIMIT) {
+          setStatus(
+            statusEl,
+            "The conversation list response contained more records than " +
+              "requested. Click \u201CRefresh conversations\u201D to try " +
+              "again.",
+            "error"
+          );
+          return { ok: false, reason: "oversize_page" };
+        }
+        if (totalCount === 0) {
+          if (offset !== 0 || payload.length !== 0) {
+            setStatus(
+              statusEl,
+              "The conversation list response was inconsistent with its " +
+                "total. Click \u201CRefresh conversations\u201D to try again.",
+              "error"
+            );
+            return { ok: false, reason: "impossible_page" };
+          }
+        } else {
+          if (offset >= totalCount) {
+            setStatus(
+              statusEl,
+              "The conversation list response referenced an invalid page. " +
+                "Click \u201CRefresh conversations\u201D to try again.",
+              "error"
+            );
+            return { ok: false, reason: "impossible_offset" };
+          }
+          if (payload.length === 0) {
+            setStatus(
+              statusEl,
+              "The conversation list response was inconsistent with its " +
+                "total. Click \u201CRefresh conversations\u201D to try again.",
+              "error"
+            );
+            return { ok: false, reason: "impossible_page" };
+          }
+          if (offset + payload.length > totalCount) {
+            setStatus(
+              statusEl,
+              "The conversation list response was inconsistent with its " +
+                "total. Click \u201CRefresh conversations\u201D to try again.",
+              "error"
+            );
+            return { ok: false, reason: "impossible_page" };
+          }
+          if (payload.length < LIST_LIMIT && offset + payload.length < totalCount) {
+            setStatus(
+              statusEl,
+              "The conversation list response was shorter than the reported " +
+                "total. Click \u201CRefresh conversations\u201D to try again.",
+              "error"
+            );
+            return { ok: false, reason: "short_page" };
+          }
+        }
+        // Reject the response if a newer loadConversations call has started
+        // (e.g. from deleteSelected's reconciliation, or a user refresh).
+        if (token !== listLoadToken) {
+          return { ok: false, reason: "stale" };
         }
         // ---- Commit the new state as one atomic step. ----
         listTotal = totalCount;
@@ -2086,6 +2159,17 @@
         return;
       }
       conversations = conversations.filter((c) => c.id !== deletingId);
+      // Invalidate any in-flight list fetch so a pre-delete response cannot
+      // reintroduce the deleted conversation into the committed list.
+      listLoadToken++;
+      // Locally adjust the total; the bounded refresh below reconciles with
+      // the server's authoritative count.
+      if (listTotal !== null && listTotal > 0) listTotal -= 1;
+      // If deleting the last row on a non-first page leaves the offset out
+      // of range, back up to a valid offset before refreshing.
+      if (conversations.length === 0 && listOffset > 0) {
+        listOffset = Math.max(0, listOffset - LIST_LIMIT);
+      }
       if (selectedId === deletingId) {
         // Invalidate any outstanding message load BEFORE clearing state so a
         // stale response cannot repopulate the deleted conversation. Mirror
@@ -2106,13 +2190,28 @@
         ambiguousConversations.delete(deletingId);
       }
       renderList();
+      renderConvPagination();
       updateComposerMode();
-      setStatus(
-        msgsStatus,
-        "Conversation deleted. No conversation is selected; the next " +
-          "request will not be saved unless you select one.",
-        "info"
-      );
+      // Bounded refresh from the (possibly recovered) offset. On failure,
+      // keep the locally-adjusted state and tell the user honestly that the
+      // list could not be reconciled.
+      const syncRes = await loadConversations(listOffset);
+      if (!syncRes || !syncRes.ok) {
+        setStatus(
+          msgsStatus,
+          "The conversation was deleted, but the list could not be " +
+            "refreshed. Click \u201CRefresh conversations\u201D to " +
+            "reconcile.",
+          "error"
+        );
+      } else {
+        setStatus(
+          msgsStatus,
+          "Conversation deleted. No conversation is selected; the next " +
+            "request will not be saved unless you select one.",
+          "info"
+        );
+      }
       // Do not auto-select another conversation after deletion. Silently
       // picking a new save destination would let subsequent exchanges be
       // persisted to a conversation the user did not choose.
