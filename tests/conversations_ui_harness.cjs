@@ -131,7 +131,23 @@ function jsonResponse(payload, status, headers) {
 }
 
 const confirmQueue = [];
-const windowMock = { confirm: () => confirmQueue.shift() };
+const _sessionStorageValues = Object.create(null);
+const windowMock = {
+  confirm: () => confirmQueue.shift(),
+  sessionStorage: {
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(_sessionStorageValues, key)
+        ? _sessionStorageValues[key] : null;
+    },
+    setItem(key, value) { _sessionStorageValues[key] = String(value); },
+    removeItem(key) { delete _sessionStorageValues[key]; },
+    clear() {
+      for (const key of Object.keys(_sessionStorageValues)) {
+        delete _sessionStorageValues[key];
+      }
+    },
+  },
+};
 const URLMock = { createObjectURL: () => "blob:x", revokeObjectURL: () => {} };
 const BlobMock = function(parts, opts) { this.parts = parts; this.opts = opts; };
 function setTimeoutImmediate(fn) { fn(); return 0; }
@@ -2431,12 +2447,15 @@ async function scenarioRenameNetworkLossReconcilesViaList() {
   await bootstrap(0, 50, 1);
   await selectViaUI(0, "C0", 0);
   H.registry["conversation-rename-input"].value = "Renamed";
-  // PATCH throws network error.
-  H.enqueue(async () => { throw new Error("patch network boom"); });
-  // Then list refresh (reconciliation) succeeds with the NEW title.
-  H.enqueue(async () => {
-    const updated = conv("C0", "Renamed");
-    return H.jsonResponse([updated], 200, { "X-Total-Count": "1" });
+  H.enqueue(async (url, opts) => {
+    if (opts.method !== "PATCH") throw new Error("expected PATCH, got " + opts.method);
+    throw new Error("patch network boom");
+  });
+  H.enqueue(async (url, opts) => {
+    if (opts.method !== "GET" || !url.endsWith("/" + uuidFrom("C0"))) {
+      throw new Error("expected target GET reconciliation, got " + opts.method + " " + url);
+    }
+    return H.jsonResponse(conv("C0", "Renamed"), 200, {});
   });
   H.registry["conversation-rename"].click();
   await H.drain(40);
@@ -2446,6 +2465,7 @@ async function scenarioRenameNetworkLossReconcilesViaList() {
     ok: true, scenario: "rename-network-loss-reconciles-via-list",
     c0Title: c0 ? c0.title : null,
     reconciled: c0 !== undefined && c0.title === "Renamed",
+    renameButtonEnabled: H.registry["conversation-rename"].disabled === false,
   };
 }
 
@@ -2454,15 +2474,22 @@ async function scenarioRename404ClearsSelection() {
   await selectViaUI(0, "C0", 0);
   H.registry["conversation-rename-input"].value = "Renamed";
   H.enqueue(async () => H.jsonResponse({ detail: "not found" }, 404, {}));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
   H.registry["conversation-rename"].click();
-  await H.drain(30);
+  await H.drain(40);
   const rows = H.registry["conversations-list"].children;
+  const list = global.window.__mickyConversations.listState();
   return {
     ok: true, scenario: "rename-404-clears-selection",
     selected: selectedId(),
     rowCount: rows.length,
     selectionCleared: selectedId() === null,
     rowRemoved: rows.length === 0,
+    totalIsZero: list.total === 0,
+    offsetIsZero: list.offset === 0,
+    pagerHidden: list.paginationHidden === true,
+    rangeCoherent: list.range === "Showing 0 of 0",
+    renameButtonEnabled: H.registry["conversation-rename"].disabled === false,
   };
 }
 
@@ -2485,6 +2512,9 @@ async function scenarioRename404PreservesOtherSelection() {
   H.registry["conversations-list"].children[1].children[0].click();
   await H.drain(25);
   const selAfterSwitch = selectedId();
+  // The follow-up list reconciliation must preserve B and remove A.
+  H.enqueue(async () => H.jsonResponse(
+    [conv("C1", "Conversation 1")], 200, { "X-Total-Count": "1" }));
   // Release the PATCH 404.
   releasePatch();
   await H.drain(30);
@@ -2497,6 +2527,7 @@ async function scenarioRename404PreservesOtherSelection() {
     c0Removed: c0 === undefined,
     bPreserved:
       selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
+    renameButtonEnabled: H.registry["conversation-rename"].disabled === false,
   };
 }
 
@@ -2579,7 +2610,209 @@ async function scenarioSendInvalidChallengeMarksAmbiguous() {
   };
 }
 
+function countAssistantPosts() {
+  return H.fetchLog.filter((entry) =>
+    entry.url === "/api/assistant/requests" && entry.method === "POST"
+  ).length;
+}
+function submitMessage(value) {
+  H.registry["message"].value = value;
+  H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
+}
+function conversationTitle(id, title) {
+  return conv(id, title);
+}
+
+Object.assign(SCENARIOS, {
+  "rename-controls-reset-after-success": scenarioRenameControlsResetAfterSuccess,
+  "rename-unknown-outcome-blocks-retry": scenarioRenameUnknownOutcomeBlocksRetry,
+  "send-unsupported-capability-valid": scenarioSendUnsupportedCapabilityValid,
+  "confirmation-required-no-challenge-valid": scenarioConfirmationRequiredNoChallengeValid,
+  "confirmation-required-valid-challenge-shown": scenarioConfirmationRequiredValidChallengeShown,
+  "ambiguous-request-blocks-after-switch": scenarioAmbiguousRequestBlocksAfterSwitch,
+  "ambiguous-transient-request-blocks-retry": scenarioAmbiguousTransientRequestBlocksRetry,
+  "persisted-ambiguous-guard-blocks-request": scenarioPersistedAmbiguousGuardBlocksRequest,
+});
+
+async function scenarioRenameControlsResetAfterSuccess() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse(conversationTitle("C0", "Renamed"), 200, {}));
+  H.registry["conversation-rename-input"].value = "Renamed";
+  H.registry["conversation-rename"].click();
+  await H.drain(30);
+  const enabledAfterFirst = H.registry["conversation-rename"].disabled === false;
+  H.enqueue(async () => H.jsonResponse(conversationTitle("C0", "Renamed Again"), 200, {}));
+  H.registry["conversation-rename-input"].value = "Renamed Again";
+  H.registry["conversation-rename"].click();
+  await H.drain(30);
+  const patches = H.fetchLog.filter((entry) =>
+    entry.method === "PATCH" && entry.url.endsWith("/" + uuidFrom("C0"))
+  ).length;
+  const rows = global.window.__mickyConversations.conversationsState();
+  const c0 = rows.find((c) => c.id === uuidFrom("C0"));
+  return {
+    ok: true, scenario: "rename-controls-reset-after-success",
+    enabledAfterFirst,
+    enabledAfterSecond: H.registry["conversation-rename"].disabled === false,
+    patchCount: patches,
+    secondRenameSent: patches === 2,
+    secondTitleApplied: !!c0 && c0.title === "Renamed Again",
+  };
+}
+
+async function scenarioRenameUnknownOutcomeBlocksRetry() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => { throw new Error("PATCH network failure"); });
+  H.enqueue(async () => { throw new Error("GET reconciliation failure"); });
+  H.registry["conversation-rename-input"].value = "Uncertain";
+  H.registry["conversation-rename"].click();
+  await H.drain(35);
+  const firstPatchCount = H.fetchLog.filter((entry) => entry.method === "PATCH").length;
+  H.enqueue(async () => H.jsonResponse(conversationTitle("C0", "Should not apply"), 200, {}));
+  H.registry["conversation-rename-input"].value = "Should not apply";
+  H.registry["conversation-rename"].click();
+  await H.drain(20);
+  const patchCount = H.fetchLog.filter((entry) => entry.method === "PATCH").length;
+  return {
+    ok: true, scenario: "rename-unknown-outcome-blocks-retry",
+    firstPatchCount,
+    patchCount,
+    retryBlocked: firstPatchCount === 1 && patchCount === 1,
+    buttonReenabled: H.registry["conversation-rename"].disabled === false,
+    statusWarns: /unverified|reload/i.test(H.registry["conversation-messages-status"].textContent),
+  };
+}
+
+async function scenarioSendUnsupportedCapabilityValid() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "unsupported-capability",
+    message: "No matching capability. This request was not executed and was not saved.",
+  }, 200, {}));
+  submitMessage("unsupported request");
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-unsupported-capability-valid",
+    ambiguous: isAmbiguous(uuidFrom("C0")),
+    postCount: countAssistantPosts(),
+    noAmbiguity: isAmbiguous(uuidFrom("C0")) === false,
+    responseNotRetried: countAssistantPosts() === 1,
+    cardHidden: H.registry["confirmation-card"].hidden === true,
+  };
+}
+
+async function scenarioConfirmationRequiredNoChallengeValid() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Confirmation is required, but no challenge was issued in this build. Nothing was run.",
+  }, 200, {}));
+  submitMessage("consequential request");
+  await H.drain(25);
+  return {
+    ok: true, scenario: "confirmation-required-no-challenge-valid",
+    ambiguous: isAmbiguous(uuidFrom("C0")),
+    postCount: countAssistantPosts(),
+    noAmbiguity: isAmbiguous(uuidFrom("C0")) === false,
+    noUsableChallengeCard: H.registry["confirmation-card"].hidden === true,
+    serverMessageShown: H.registry["status"].textContent.indexOf("no challenge was issued") !== -1,
+  };
+}
+
+async function scenarioConfirmationRequiredValidChallengeShown() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Please confirm this exact action.",
+    challenge: {
+      challenge_id: "0123456789abcdef",
+      summary: "Example action",
+      display_code: "K42AB",
+      expires_at: "2027-01-01T00:00:00Z",
+    },
+  }, 200, {}));
+  submitMessage("consequential request");
+  await H.drain(25);
+  return {
+    ok: true, scenario: "confirmation-required-valid-challenge-shown",
+    cardShown: H.registry["confirmation-card"].hidden === false,
+    postCount: countAssistantPosts(),
+    exactlyOnePost: countAssistantPosts() === 1,
+  };
+}
+
+async function scenarioAmbiguousRequestBlocksAfterSwitch() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Please confirm",
+    challenge: { challenge_id: "short" },
+  }, 200, {}));
+  submitMessage("possible confirmation request");
+  await H.drain(25);
+  const flagAfterFirstPost = global.window.sessionStorage.getItem(
+    "micky.ai.request-outcome-unresolved.v1"
+  );
+  await selectViaUI(1, "C1", 0);
+  H.confirmQueue.push(false);
+  submitMessage("must not be sent");
+  await H.drain(20);
+  return {
+    ok: true, scenario: "ambiguous-request-blocks-after-switch",
+    selectedIsB: selectedId() === uuidFrom("C1"),
+    flagPersisted: flagAfterFirstPost === "1",
+    postCount: countAssistantPosts(),
+    secondPostBlocked: countAssistantPosts() === 1,
+  };
+}
+
+async function scenarioAmbiguousTransientRequestBlocksRetry() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => { throw new Error("network lost after POST"); });
+  submitMessage("transient request");
+  await H.drain(20);
+  const first = H.fetchLog.filter((entry) =>
+    entry.url === "/api/assistant/requests" && entry.method === "POST"
+  )[0];
+  const firstBody = first ? JSON.parse(first.body) : {};
+  H.confirmQueue.push(false);
+  submitMessage("do not retry transient request");
+  await H.drain(20);
+  return {
+    ok: true, scenario: "ambiguous-transient-request-blocks-retry",
+    noConversationId: !Object.prototype.hasOwnProperty.call(firstBody, "conversation_id"),
+    flagPersisted: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === "1",
+    postCount: countAssistantPosts(),
+    secondPostBlocked: countAssistantPosts() === 1,
+  };
+}
+
+async function scenarioPersistedAmbiguousGuardBlocksRequest() {
+  global.window.sessionStorage.setItem("micky.ai.request-outcome-unresolved.v1", "1");
+  await bootstrap(0, 50, 0);
+  H.confirmQueue.push(false);
+  submitMessage("must remain blocked after reload");
+  await H.drain(20);
+  return {
+    ok: true, scenario: "persisted-ambiguous-guard-blocks-request",
+    postCount: countAssistantPosts(),
+    noNewPost: countAssistantPosts() === 0,
+    flagStillPresent: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === "1",
+  };
+}
+
 (async function main() {
+
   const name = process.argv[3];
   const fn = SCENARIOS[name];
   if (!fn) {
