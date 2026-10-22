@@ -1152,3 +1152,33 @@ def test_uncertain_decision_acknowledgement_clears_locked_card_only() -> None:
     assert out["guardClearedAfterAck"] is True, out
     assert out["noRequestSentByAck"] is True, out
     assert out["acknowledgementStatus"] is True, out
+
+def test_rename_404_from_off_page_reconciles_pagination_and_preserves_selection() -> None:
+    """A stale rename target returning 404 while another conversation is
+    selected on the last page must not leave offset/total/range inconsistent."""
+    out = _run_scenario("rename-404-off-page-keeps-pagination-coherent")
+    assert out["bPreserved"] is True, out
+    assert out["c0Absent"] is True, out
+    assert out["offset"] == 0, out
+    assert out["total"] == 50, out
+    assert out["rowCount"] == 50, out
+    assert out["range"] == "Showing 1–50 of 50", out
+    assert out["paginationCoherent"] is True, out
+
+
+def test_rename_5xx_reconciles_target_before_reporting() -> None:
+    """A server error may be returned after the PATCH committed, so read the
+    exact target and establish the resulting title before permitting retry."""
+    out = _run_scenario("rename-5xx-reconciles-target-before-reporting")
+    assert out["reconciled"] is True, out
+    assert out["onePatchThenRead"] is True, out
+    assert out["buttonEnabled"] is True, out
+
+
+def test_rename_5xx_with_failed_reconciliation_blocks_retry() -> None:
+    """An inconclusive PATCH and failed follow-up read must leave the
+    conversation guarded instead of blindly sending another PATCH."""
+    out = _run_scenario("rename-5xx-unresolved-blocks-another-patch")
+    assert out["guarded"] is True, out
+    assert out["buttonEnabledAfterFirst"] is True, out
+    assert out["blockedRetry"] is True, out
