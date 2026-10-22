@@ -37,6 +37,8 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
+from rop.config import SettingsError
+
 __all__ = ["CliError", "build_parser", "main"]
 
 
@@ -522,7 +524,7 @@ def _execute(args: Any, session_factory: Any) -> dict[str, Any]:
         from rop.database import SessionLocal
 
         services = _application_services()
-    except ValidationError:
+    except (SettingsError, ValidationError):
         raise CliError(
             "ROP configuration is missing or invalid; set the ROP_* "
             "environment variables or create a .env file (see .env.example)"
