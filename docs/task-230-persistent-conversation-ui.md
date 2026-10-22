@@ -243,16 +243,22 @@ follows the same reconciliation. `selectedId` is cleared only if the
 deleted conversation was still selected; a switch to B during A's DELETE
 preserves B's selection and message state.
 
-**Rename uncertainty.** A network failure or unreadable/malformed PATCH
-response does not establish that the rename failed. The handler reads the
-exact target through `GET /api/assistant/conversations/{id}` rather than
-assuming that the selected list page contains it. If the read succeeds,
-the returned title is authoritative; if the target is absent, a 404
-reconciliation updates the list count/range and clears the selection only
-if that target remains selected. If the follow-up read also fails or is
-malformed, the target is guarded against another rename attempt until the
-page is reloaded and the server state is inspected. The rename button's
-in-flight flag is always released in `finally`, including early returns.
+**Rename uncertainty.** A network failure, unreadable/malformed
+success response, or HTTP 5xx during PATCH does not establish that the
+rename failed; an error response can be produced after the database update
+committed. The handler reads the exact target through
+`GET /api/assistant/conversations/{id}` rather than assuming that the
+selected list page contains it. If the read succeeds, the returned title
+is authoritative. A confirmed 404 removes the stale target, clears the
+selection/message state only if that target remains selected, refreshes the
+authoritative list from offset zero, and restores the prior page only if
+that offset remains valid under the new total. This prevents an absent
+conversation on another page from leaving an invalid last-page offset,
+stale total, or incoherent range. Switching to a different selected
+conversation while the PATCH is pending preserves that selection. If the
+follow-up read also fails or is malformed, the target is guarded against
+another rename attempt for this page session; the rename control itself is
+released in `finally`, including early returns.
 
 **Assistant-response validation.** A successful `POST /api/assistant/requests`
 response is validated against `AssistantResponse` and the `AssistantStatus`
