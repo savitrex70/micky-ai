@@ -1053,9 +1053,10 @@ def test_send_missing_message_marks_ambiguous() -> None:
     assert out["markedAmbiguous"] is True, out
 
 
-def test_send_invalid_challenge_marks_ambiguous() -> None:
+def test_send_invalid_challenge_uses_global_guard_not_history_guard() -> None:
     out = _run_scenario("send-invalid-challenge-marks-ambiguous")
     assert out["markedAmbiguous"] is True, out
+    assert out["noConversationAmbiguity"] is True, out
 
 
 # ---- Batch 14: fix rename lock, actual response schema, and POST ambiguity ----
@@ -1126,3 +1127,16 @@ def test_persisted_ambiguous_guard_blocks_after_reload() -> None:
     out = _run_scenario("persisted-ambiguous-guard-blocks-request")
     assert out["noNewPost"] is True, out
     assert out["flagStillPresent"] is True, out
+
+
+def test_send_challenge_rejects_extra_fields() -> None:
+    out = _run_scenario("send-challenge-extra-field-guarded")
+    assert out["cardHidden"] is True, out
+    assert out["globalGuarded"] is True, out
+    assert out["postCount"] == 1, out
+
+
+def test_send_response_rejects_extra_fields() -> None:
+    out = _run_scenario("send-response-extra-field-guarded")
+    assert out["globalGuarded"] is True, out
+    assert out["postCount"] == 1, out
