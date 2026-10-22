@@ -2902,6 +2902,139 @@ async function scenarioDecisionUnknownAckClearsLockedCard() {
   };
 }
 
+
+Object.assign(SCENARIOS, {
+  "rename-404-off-page-keeps-pagination-coherent":
+    scenarioRename404OffPageKeepsPaginationCoherent,
+  "rename-5xx-reconciles-target-before-reporting":
+    scenarioRename5xxReconcilesTargetBeforeReporting,
+  "rename-5xx-unresolved-blocks-another-patch":
+    scenarioRename5xxUnresolvedBlocksAnotherPatch,
+});
+
+async function scenarioRename404OffPageKeepsPaginationCoherent() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+
+  let releasePatch;
+  const patchGate = new Promise((resolve) => { releasePatch = resolve; });
+  H.enqueue(async () => {
+    await patchGate;
+    return H.jsonResponse({ detail: "not found" }, 404, {});
+  });
+  H.registry["conversation-rename-input"].value = "Rename missing A";
+  H.registry["conversation-rename"].click();
+  await H.drain(10);
+
+  // Switch the list to its last page while PATCH for A is still pending.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=50")) {
+      throw new Error("expected last-page request, got " + url);
+    }
+    return H.jsonResponse(pageOfConversations(1, 50, 51), 200,
+      { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-next"].click();
+  await H.drain(25);
+  // Select B (C50) while A's rename is still pending.
+  await selectViaUI(0, "C50", 0);
+  const selectedBefore404 = selectedId();
+
+  // Server truth after A's 404: C0 is gone; C1 through C50 remain.
+  H.enqueue(async (url) => {
+    if (!url.includes("offset=0")) {
+      throw new Error("404 reconciliation must start at offset=0, got " + url);
+    }
+    const remaining = [];
+    for (let i = 1; i <= 50; i++) {
+      remaining.push(conv("C" + i, "Conversation " + i));
+    }
+    return H.jsonResponse(remaining, 200, { "X-Total-Count": "50" });
+  });
+  releasePatch();
+  await H.drain(60);
+
+  const list = global.window.__mickyConversations.listState();
+  const rows = global.window.__mickyConversations.conversationsState();
+  return {
+    ok: true,
+    scenario: "rename-404-off-page-keeps-pagination-coherent",
+    selectedBefore404,
+    selectedAfter404: selectedId(),
+    bPreserved: selectedBefore404 === uuidFrom("C50") &&
+      selectedId() === uuidFrom("C50"),
+    offset: list.offset,
+    total: list.total,
+    rowCount: list.rowCount,
+    range: list.range,
+    c0Absent: !rows.some((row) => row.id === uuidFrom("C0")),
+    paginationCoherent: list.offset === 0 && list.total === 50 &&
+      list.rowCount === 50 && list.range === "Showing 1–50 of 50",
+  };
+}
+
+async function scenarioRename5xxReconcilesTargetBeforeReporting() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse(
+    { detail: "service unavailable" }, 503, {}));
+  H.enqueue(async (url) => {
+    if (!url.endsWith("/" + uuidFrom("C0"))) {
+      throw new Error("expected GET of exact target, got " + url);
+    }
+    return H.jsonResponse(conversationTitle("C0", "Renamed"), 200, {});
+  });
+  H.registry["conversation-rename-input"].value = "Renamed";
+  H.registry["conversation-rename"].click();
+  await H.drain(40);
+
+  const rows = global.window.__mickyConversations.conversationsState();
+  const row = rows.find((item) => item.id === uuidFrom("C0"));
+  const patches = H.fetchLog.filter((entry) => entry.method === "PATCH").length;
+  const targetReads = H.fetchLog.filter((entry) =>
+    entry.method === "GET" && entry.url.endsWith("/" + uuidFrom("C0"))
+  ).length;
+  return {
+    ok: true, scenario: "rename-5xx-reconciles-target-before-reporting",
+    title: row ? row.title : null,
+    reconciled: !!row && row.title === "Renamed",
+    patchCount: patches,
+    targetReadCount: targetReads,
+    onePatchThenRead: patches === 1 && targetReads === 1,
+    buttonEnabled: H.registry["conversation-rename"].disabled === false,
+  };
+}
+
+async function scenarioRename5xxUnresolvedBlocksAnotherPatch() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  H.enqueue(async () => H.jsonResponse(
+    { detail: "service unavailable" }, 503, {}));
+  H.enqueue(async () => { throw new Error("target read unavailable"); });
+  H.registry["conversation-rename-input"].value = "Uncertain";
+  H.registry["conversation-rename"].click();
+  await H.drain(40);
+  const firstPatchCount = H.fetchLog.filter((entry) => entry.method === "PATCH").length;
+  const guarded = H.registry["conversation-messages-status"].getAttribute("data-kind") === "ambiguous";
+  const buttonEnabledAfterFirst =
+    H.registry["conversation-rename"].disabled === false;
+
+  H.enqueue(async () => H.jsonResponse(
+    conversationTitle("C0", "Must not be sent"), 200, {}));
+  H.registry["conversation-rename-input"].value = "Must not be sent";
+  H.registry["conversation-rename"].click();
+  await H.drain(25);
+  const finalPatchCount = H.fetchLog.filter((entry) => entry.method === "PATCH").length;
+  return {
+    ok: true, scenario: "rename-5xx-unresolved-blocks-another-patch",
+    firstPatchCount,
+    finalPatchCount,
+    guarded,
+    buttonEnabledAfterFirst,
+    blockedRetry: finalPatchCount === firstPatchCount && firstPatchCount === 1,
+  };
+}
+
 (async function main() {
 
   const name = process.argv[3];
