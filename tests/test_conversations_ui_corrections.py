@@ -1153,7 +1153,7 @@ def test_uncertain_decision_acknowledgement_clears_locked_card_only() -> None:
     assert out["noRequestSentByAck"] is True, out
     assert out["acknowledgementStatus"] is True, out
 
-def test_rename_404_from_off_page_reconciles_pagination_and_preserves_selection() -> None:
+def test_rename_404_off_page_pagination_is_coherent() -> None:
     """A stale rename target returning 404 while another conversation is
     selected on the last page must not leave offset/total/range inconsistent."""
     out = _run_scenario("rename-404-off-page-keeps-pagination-coherent")
