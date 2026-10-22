@@ -27,6 +27,19 @@
   // the server says cannot be executed. Cancel remains available so the
   // user can withdraw the pending challenge.
   let challengeCannotExecute = false;
+  // A POST whose result is unknown may have left a durable confirmation
+  // challenge pending even when no usable challenge ID reached the browser.
+  // Persist only this boolean guard across reloads; never persist content or IDs.
+  const REQUEST_OUTCOME_UNRESOLVED_KEY = "micky.ai.request-outcome-unresolved.v1";
+  function readRequestOutcomeUnresolved() {
+    try {
+      return !!window.sessionStorage &&
+        window.sessionStorage.getItem(REQUEST_OUTCOME_UNRESOLVED_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+  let requestOutcomeUnresolved = readRequestOutcomeUnresolved();
 
   const STATUS_TEXT = {
     "success": "Capability responded. See the reply below.",
@@ -95,6 +108,28 @@
       status.setAttribute("data-kind", kind);
     } else {
       status.removeAttribute("data-kind");
+    }
+  }
+
+  function markRequestOutcomeUnresolved() {
+    requestOutcomeUnresolved = true;
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1");
+      }
+    } catch (err) {
+      // The in-memory guard still blocks retries for this page lifetime.
+    }
+  }
+
+  function clearRequestOutcomeUnresolved() {
+    requestOutcomeUnresolved = false;
+    try {
+      if (window.sessionStorage) {
+        window.sessionStorage.removeItem(REQUEST_OUTCOME_UNRESOLVED_KEY);
+      }
+    } catch (err) {
+      // A stale persisted guard will ask for the same acknowledgement again.
     }
   }
 
@@ -225,8 +260,6 @@
       payload = null;
     }
     if (!response.ok) {
-      // FastAPI errors put a sanitized string in ``detail``; some assistant
-      // responses use ``message``. Prefer whichever is present.
       let detail = null;
       if (payload && typeof payload.detail === "string") {
         detail = payload.detail;
@@ -240,28 +273,37 @@
     if (!payload || typeof payload.status !== "string") {
       return { kind: "unreadable" };
     }
-    // Validate the complete assistant response against the actual backend
-    // contract. The backend only emits these status values (see
-    // src/rop/authorization/dispatch.py), and each carries required
-    // payload fields. Anything else is an unexpected outcome whose
-    // persistence semantics are unknown -- classify as unexpected, so the
-    // caller marks ambiguity rather than pretending the outcome is usable.
-    const _VALID_ASSISTANT_STATUSES = new Set([
+
+    // Keep this set aligned with AssistantStatus in
+    // src/rop/schemas/assistant.py, not only the dispatch implementation.
+    const validStatuses = new Set([
       "success",
+      "unsupported-capability",
       "clarification-required",
       "confirmation-required",
       "refused",
     ]);
-    if (!_VALID_ASSISTANT_STATUSES.has(payload.status)) {
+    if (!validStatuses.has(payload.status)) {
       return { kind: "unexpected", reason: "unknown_status" };
     }
     if (typeof payload.message !== "string") {
       return { kind: "unexpected", reason: "missing_message" };
     }
+
+    const challengePresent =
+      payload.challenge !== undefined && payload.challenge !== null;
     if (payload.status === "confirmation-required") {
-      if (!isValidChallenge(payload.challenge)) {
+      // The schema makes challenge optional: for example, a confirmation
+      // requirement can be reported when no executor/challenge is available.
+      // Validate it when present, because a malformed challenge may already
+      // have been persisted even though the browser cannot safely display it.
+      if (challengePresent && !isValidChallenge(payload.challenge)) {
         return { kind: "unexpected", reason: "invalid_challenge" };
       }
+    } else if (challengePresent) {
+      // A challenge on another status contradicts the server response
+      // contract; do not discard the possibility it was persisted.
+      return { kind: "unexpected", reason: "unexpected_challenge" };
     }
     return { kind: "ok", payload: payload };
   }
@@ -317,6 +359,7 @@
   // exist, or was resolved. Do not retry. Lock the controls for this card.
   function markChallengeUnresolved() {
     challengeUnresolved = true;
+    markRequestOutcomeUnresolved();
     setDecisionBusy(false);
     setStatus(
       "The decision outcome could not be verified. The challenge may still " +
@@ -414,6 +457,34 @@
   form.addEventListener("submit", async function (event) {
     event.preventDefault();
     if (requestInFlight) return;
+
+    // Unknown POST outcomes remain guarded across reloads. This click can
+    // only acknowledge the risk; it never replays the previous request.
+    if (requestOutcomeUnresolved) {
+      const acknowledged = window.confirm(
+        "An earlier request's outcome is unknown. A server-side confirmation " +
+          "challenge may still be pending. No request will be sent by this " +
+          "click. Choose OK only after reviewing confirmation records and " +
+          "accepting that uncertainty; you must press Send again to submit " +
+          "a new request, and the previous POST will never be retried."
+      );
+      if (!acknowledged) {
+        setStatus(
+          "A prior request remains unresolved. No request was sent or " +
+            "retried; review the confirmation records before proceeding.",
+          "ambiguous"
+        );
+        return;
+      }
+      clearRequestOutcomeUnresolved();
+      setStatus(
+        "You acknowledged the unresolved outcome. This click did not send " +
+          "or retry a request. Check conversation history where applicable, " +
+          "then press Send again only when ready.",
+        "info"
+      );
+      return;
+    }
 
     // A pending or unresolved confirmation must be resolved before a new
     // request may start. Starting a new request would silently abandon an
@@ -519,10 +590,8 @@
       } else if (result.kind === "http") {
         const isSelectedConv = !!selectedConversationId;
         if (isSelectedConv && result.status === 409) {
-          // Recognized sequence conflict: the pair was rolled back and is
-          // NOT stored. Still require a reload before a retry, so the user
-          // verifies the visible history rather than trusting the error
-          // category alone.
+          // The persistence boundary rolls back a sequence conflict. Still
+          // require the user to reload history before deliberately retrying.
           window.__mickyConversations.markAmbiguous(selectedConversationId);
           setStatus(
             "The save was rejected because of a concurrent update and " +
@@ -530,34 +599,44 @@
               "actual history before retrying.",
             "error"
           );
-        } else if (isSelectedConv && result.status === 503) {
-          // Persistence failure around commit. The save may or may not
-          // have completed. Must be treated as ambiguous, not definite.
-          window.__mickyConversations.markAmbiguous(selectedConversationId);
+        } else if (result.status >= 500) {
+          if (isSelectedConv && window.__mickyConversations) {
+            window.__mickyConversations.markAmbiguous(selectedConversationId);
+          }
+          // A server error can occur after part of the request workflow ran.
+          // Persist a global guard because an issued confirmation challenge
+          // cannot always be identified from an error envelope.
+          markRequestOutcomeUnresolved();
           setStatus(
-            "The exchange could not be confirmed as saved. It may or may " +
-              "not have been stored. Reload the conversation to establish " +
-              "the actual state before retrying.",
+            "The server returned HTTP " + result.status + " but the full " +
+              "request outcome is not established. " + result.detail +
+              " A confirmation challenge may still be pending. Do not " +
+              "resend; review confirmation records before acknowledging " +
+              "this uncertainty.",
             "ambiguous"
           );
         } else {
-          // Definite non-persistence rejection (validation, refusal,
-          // missing conversation). Safe to show and allow retry.
+          // Validation, origin, or missing-conversation rejections happen
+          // before a successful dispatch/persistence and are safe to retry.
           setStatus(result.detail, "error");
         }
+
       } else {
-        // Ambiguous outcome (network / unreadable / unexpected). We cannot
-        // establish whether the exchange was saved. Mark the selected
-        // conversation as ambiguous so the next send is blocked until a
-        // reload establishes the actual state.
+        // Network, unreadable, and structurally invalid responses do not
+        // establish whether dispatch completed or whether a challenge was
+        // created. Lock new POSTs globally, including transient requests.
         if (selectedConversationId && window.__mickyConversations) {
           window.__mickyConversations.markAmbiguous(selectedConversationId);
         }
+        markRequestOutcomeUnresolved();
+        const persistenceNote = selectedConversationId
+          ? "The conversation exchange may or may not have been saved. "
+          : "This request had no conversation_id and was not saved to a conversation. ";
         setStatus(
-          "The server's response could not be established. The exchange " +
-            "may or may not have been saved. Reload the selected " +
-            "conversation (click its title in the list) to verify the " +
-            "actual state before retrying.",
+          "The server's response could not be established. " +
+            persistenceNote +
+            "A confirmation challenge may still be pending. Do not resend. " +
+            "Review confirmation records before acknowledging this uncertainty.",
           "ambiguous"
         );
       }
@@ -1095,6 +1174,7 @@
   // establish. While a conversation is in this set the composer refuses a
   // blind resubmit until the user reloads the conversation.
   const ambiguousConversations = new Set();
+  const renameAmbiguousConversations = new Set();
   let createInFlight = false;
   // Set when a prior creation's outcome is unknown; blocks a second POST
   // until the user reconciles via a list refresh or page reload.
@@ -1190,6 +1270,9 @@
     // rendering "Showing 1-0 of 50" in that window is incoherent.
     if (listTotal === null || listTotal === 0 || conversations.length === 0) {
       convPager.hidden = true;
+      convPrev.disabled = true;
+      convNext.disabled = true;
+      convRange.textContent = listTotal === 0 ? "Showing 0 of 0" : "";
       return;
     }
     convPager.hidden = false;
@@ -2179,9 +2262,35 @@
   // Reconcile a confirmed-404 rename target: remove from list; clear the
   // selection only if that target remains selected (never clear B
   // because A is missing).
-  function _reconcileMissingRenameTarget(targetId) {
-    conversations = conversations.filter((c) => c.id !== targetId);
+  function _setRenameStatus(targetId, message, kind) {
     if (selectedId === targetId) {
+      setStatus(msgsStatus, message, kind);
+    } else {
+      setStatus(statusEl, message, kind);
+    }
+  }
+
+  async function _reconcileMissingRenameTarget(targetId) {
+    const targetWasSelected = selectedId === targetId;
+    const targetWasKnown =
+      targetWasSelected || !!findConversation(targetId);
+    conversations = conversations.filter((c) => c.id !== targetId);
+    if (targetWasKnown && listTotal !== null && listTotal > 0) {
+      listTotal = Math.max(0, listTotal - 1);
+    }
+    if (
+      listOffset > 0 &&
+      (conversations.length === 0 ||
+        (listTotal !== null && listOffset >= listTotal))
+    ) {
+      listOffset = Math.max(0, listOffset - LIST_LIMIT);
+    }
+    // Invalidate any stale list response before reconciling the confirmed 404.
+    listLoadToken++;
+    renameAmbiguousConversations.delete(targetId);
+    ambiguousConversations.delete(targetId);
+
+    if (targetWasSelected) {
       messagesLoadToken++;
       messagesInFlight = false;
       selectedId = null;
@@ -2194,114 +2303,192 @@
       messagesTotal = null;
       messagesRenderedCount = 0;
       renderMsgsPagination();
-      ambiguousConversations.delete(targetId);
     }
+
     renderList();
+    renderConvPagination();
     updateComposerMode();
-    setStatus(
-      msgsStatus,
-      "The conversation no longer exists on the server; it has been " +
-        "removed from the list.",
-      "error"
-    );
+
+    let syncResult = null;
+    try {
+      syncResult = await loadConversations(listOffset);
+    } catch (err) {
+      syncResult = null;
+    }
+    const message = syncResult && syncResult.ok
+      ? "The conversation no longer exists on the server; the list and " +
+        "pagination have been reconciled."
+      : "The conversation no longer exists on the server. Its local row " +
+        "was removed, but list reconciliation failed; refresh the list.";
+    _setRenameStatus(targetWasSelected ? null : targetId, message,
+      syncResult && syncResult.ok ? "info" : "error");
+  }
+
+  // The list may be paginated or the selection may have switched while the
+  // PATCH was in flight. Read the exact target by ID instead of guessing its
+  // state from whichever list page is currently visible.
+  async function _reconcileRenameOutcome(targetId) {
+    let response;
+    try {
+      response = await fetch(
+        "/api/assistant/conversations/" + encodeURIComponent(targetId),
+        { method: "GET" }
+      );
+    } catch (err) {
+      return { kind: "unknown" };
+    }
+    if (response.status === 404) {
+      await _reconcileMissingRenameTarget(targetId);
+      return { kind: "missing" };
+    }
+    if (!response.ok) return { kind: "unknown" };
+
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      return { kind: "unknown" };
+    }
+    if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+      return { kind: "unknown" };
+    }
+    _applyRenameResult(targetId, payload.title);
+    return { kind: "found", title: payload.title };
   }
 
   async function renameSelected() {
     if (renameInFlight || !selectedId) return;
+    const targetId = selectedId;
+    if (renameAmbiguousConversations.has(targetId)) {
+      setStatus(
+        msgsStatus,
+        "A previous rename outcome for this conversation remains " +
+          "unverified. Do not retry it until the page is reloaded and the " +
+          "server state is inspected.",
+        "ambiguous"
+      );
+      return;
+    }
     const newTitle = renameInput.value.trim();
     if (!newTitle) {
       setStatus(msgsStatus, "Enter a title before renaming.", "error");
       renameInput.focus();
       return;
     }
-    const targetId = selectedId;
+
     renameInFlight = true;
     renameBtn.disabled = true;
-    setStatus(msgsStatus, "Renaming\u2026", "info");
+    setStatus(msgsStatus, "Renaming…", "info");
     let needsReconcile = false;
     try {
-      const resp = await fetch(
-        "/api/assistant/conversations/" + encodeURIComponent(targetId),
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: newTitle }),
-        }
-      );
-      if (resp.status === 404) {
-        // Confirmed missing target.
-        _reconcileMissingRenameTarget(targetId);
+      let response;
+      try {
+        response = await fetch(
+          "/api/assistant/conversations/" + encodeURIComponent(targetId),
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: newTitle }),
+          }
+        );
+      } catch (err) {
+        needsReconcile = true;
+      }
+
+      if (response && response.status === 404) {
+        await _reconcileMissingRenameTarget(targetId);
         return;
       }
-      if (!resp.ok) {
-        setStatus(
-          msgsStatus,
-          "The conversation could not be renamed (HTTP " + resp.status + ").",
+      if (response && !response.ok) {
+        renameAmbiguousConversations.delete(targetId);
+        _setRenameStatus(
+          targetId,
+          "The conversation could not be renamed (HTTP " +
+            response.status + ").",
           "error"
         );
         return;
       }
-      let payload;
-      try {
-        payload = await resp.json();
-      } catch (err) {
-        needsReconcile = true;
-        payload = null;
-      }
-      if (!needsReconcile) {
-        if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+
+      if (response && response.ok) {
+        let payload;
+        try {
+          payload = await response.json();
+        } catch (err) {
           needsReconcile = true;
-        } else {
-          _applyRenameResult(targetId, payload.title);
-          renameInput.value = "";
-          setStatus(msgsStatus, "Renamed.", "info");
-          return;
+          payload = null;
+        }
+        if (!needsReconcile) {
+          if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+            needsReconcile = true;
+          } else {
+            renameAmbiguousConversations.delete(targetId);
+            _applyRenameResult(targetId, payload.title);
+            if (selectedId === targetId && renameInput.value.trim() === newTitle) {
+              renameInput.value = "";
+            }
+            _setRenameStatus(
+              targetId,
+              selectedId === targetId ? "Renamed." :
+                "Renamed conversation “" + payload.title + "”.",
+              "info"
+            );
+            return;
+          }
         }
       }
-    } catch (err) {
-      needsReconcile = true;
-    }
 
-    // The PATCH outcome is not definitive: the server may or may not have
-    // stored the new title. Reconcile via a list refresh (which is the
-    // only per-conversation read path exposed). Never retry the PATCH.
-    if (needsReconcile) {
-      setStatus(
-        msgsStatus,
-        "The rename could not be confirmed; reconciling\u2026",
-        "info"
-      );
-      const res = await loadConversations(0);
-      if (!res || !res.ok) {
-        setStatus(
-          msgsStatus,
-          "The rename outcome is unverified and the list could not be " +
-            "reloaded. Do not retry until you reload the page.",
+      if (needsReconcile) {
+        _setRenameStatus(
+          targetId,
+          "The rename response could not be confirmed; checking the " +
+            "server's current record…",
+          "info"
+        );
+        let reconciliation;
+        try {
+          reconciliation = await _reconcileRenameOutcome(targetId);
+        } catch (err) {
+          reconciliation = { kind: "unknown" };
+        }
+        if (reconciliation.kind === "missing") return;
+        if (reconciliation.kind === "found") {
+          renameAmbiguousConversations.delete(targetId);
+          if (selectedId === targetId && renameInput.value.trim() === newTitle) {
+            renameInput.value = "";
+          }
+          const message = reconciliation.title === newTitle
+            ? "The server's current record confirms the title “" +
+              reconciliation.title + "”."
+            : "The rename did not take effect. The server's current title is “" +
+              reconciliation.title + "”; you can retry deliberately.";
+          _setRenameStatus(targetId, message, "info");
+          return;
+        }
+
+        renameAmbiguousConversations.add(targetId);
+        _setRenameStatus(
+          targetId,
+          "The rename outcome remains unverified because the follow-up " +
+            "read failed or was invalid. The rename button will stay " +
+            "guarded for this conversation until the page is reloaded and " +
+            "the server's state is inspected.",
           "ambiguous"
         );
-        return;
       }
-      const found = findConversation(targetId);
-      if (!found) {
-        setStatus(
-          msgsStatus,
-          "The rename outcome is unverified; the conversation is not on " +
-            "the refreshed page. Reload the page to verify before " +
-            "retrying.",
-          "ambiguous"
-        );
-        return;
-      }
-      if (selectedId === targetId) {
-        selectedTitle = found.title;
-        currentTitleEl.textContent = found.title;
-      }
-      setStatus(
-        msgsStatus,
-        "The rename could not be confirmed directly; the server reports " +
-          "the current title as \u201C" + found.title + "\u201D.",
-        "info"
+    } catch (err) {
+      renameAmbiguousConversations.add(targetId);
+      _setRenameStatus(
+        targetId,
+        "The rename outcome remains unverified. The rename button will " +
+          "stay guarded for this conversation until the page is reloaded " +
+          "and the server's state is inspected.",
+        "ambiguous"
       );
+    } finally {
+      // Every return and every exception must release the shared control.
+      renameInFlight = false;
+      renameBtn.disabled = false;
     }
   }
 
@@ -2353,6 +2540,7 @@
       // confirmed deletion, regardless of whether the user has switched to
       // a different conversation while the DELETE was pending.
       ambiguousConversations.delete(deletingId);
+      renameAmbiguousConversations.delete(deletingId);
       if (selectedId === deletingId) {
         // Only clear the current selection's message state when the deleted
         // conversation is still selected. If the user switched to B, B's
@@ -2494,6 +2682,15 @@
       return conversations.map(function (c) {
         return { id: c.id, title: c.title };
       });
+    },
+    listState: function () {
+      return {
+        offset: listOffset,
+        total: listTotal,
+        rowCount: conversations.length,
+        range: convRange.textContent,
+        paginationHidden: convPager.hidden,
+      };
     },
   };
 
