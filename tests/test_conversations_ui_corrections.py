@@ -217,7 +217,10 @@ def test_no_client_content_persistence_except_boolean_request_guard() -> None:
     assert "sessionStorage" not in conversations_ui
     assert "micky.ai.request-outcome-unresolved.v1" in assistant_shell
     assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in assistant_shell
-    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)" not in assistant_shell
+    assert (
+        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)"
+        not in assistant_shell
+    )
     assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in assistant_shell
 
 
