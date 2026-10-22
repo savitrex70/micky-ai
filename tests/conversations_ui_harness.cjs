@@ -177,7 +177,7 @@ function drain(n) {
 
 module.exports = {
   runApp, drain, enqueue, jsonResponse, fetchLog,
-  registry, documentMock, textOf, confirmQueue, uuidFrom,
+  registry, documentMock, textOf, confirmQueue, uuidFrom, windowMock,
 };
 
 // ----------------------------------------------------------------------------
@@ -2805,7 +2805,9 @@ async function scenarioAmbiguousTransientRequestBlocksRetry() {
 }
 
 async function scenarioPersistedAmbiguousGuardBlocksRequest() {
-  global.window.sessionStorage.setItem("micky.ai.request-outcome-unresolved.v1", "1");
+  // Seed storage before app.js reads it during bootstrap. runApp attaches
+  // windowMock to global.window, but that alias does not exist pre-bootstrap.
+  H.windowMock.sessionStorage.setItem("micky.ai.request-outcome-unresolved.v1", "1");
   await bootstrap(0, 50, 0);
   H.confirmQueue.push(false);
   submitMessage("must remain blocked after reload");
