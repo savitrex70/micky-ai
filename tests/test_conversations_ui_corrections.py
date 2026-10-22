@@ -142,7 +142,8 @@ def test_send_request_returns_structured_result() -> None:
     """sendRequest must return kind=ok/http/network/unreadable, not throw."""
     js = _js()
     idx = js.index("async function sendRequest")
-    body = js[idx : idx + 2600]
+    end = js.index("async function sendDecision", idx)
+    body = js[idx:end]
     for kind in ('kind: "network"', 'kind: "http"', 'kind: "unreadable"', 'kind: "ok"'):
         assert kind in body, kind
 
@@ -173,9 +174,10 @@ def test_submit_blocks_blind_retry_on_ambiguous() -> None:
 def test_js_marks_conversation_ambiguous_on_network_failure() -> None:
     js = _js()
     idx = js.index('form.addEventListener("submit"')
-    body = js[idx : idx + 5000]
+    marker = js.index('cardConfirm.addEventListener("click"', idx)
+    body = js[idx:marker]
     assert "markAmbiguous" in body
-    assert "clearAmbiguous" in body
+    assert "clearAmbiguousFor" in body
 
 
 def test_ambiguous_api_methods_exposed() -> None:
@@ -1152,6 +1154,7 @@ def test_uncertain_decision_acknowledgement_clears_locked_card_only() -> None:
     assert out["guardClearedAfterAck"] is True, out
     assert out["noRequestSentByAck"] is True, out
     assert out["acknowledgementStatus"] is True, out
+
 
 def test_rename_404_off_page_pagination_is_coherent() -> None:
     """A stale rename target returning 404 while another conversation is
