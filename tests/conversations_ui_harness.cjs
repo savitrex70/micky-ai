@@ -2603,10 +2603,16 @@ async function scenarioSendInvalidChallengeMarksAmbiguous() {
   }, 200, {}));
   H.registry["request-form"]._listeners["submit"][0]({ preventDefault() {} });
   await H.drain(25);
+  const conversationAmbiguous = isAmbiguous(uuidFrom("C0"));
   return {
     ok: true, scenario: "send-invalid-challenge-marks-ambiguous",
-    ambiguous: isAmbiguous(uuidFrom("C0")),
-    markedAmbiguous: isAmbiguous(uuidFrom("C0")) === true,
+    ambiguous: conversationAmbiguous,
+    // A valid non-success status establishes that the conversation turn was
+    // not saved; only the server-side challenge state remains unresolved.
+    noConversationAmbiguity: conversationAmbiguous === false,
+    markedAmbiguous: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === "1",
   };
 }
 
@@ -2632,6 +2638,8 @@ Object.assign(SCENARIOS, {
   "ambiguous-request-blocks-after-switch": scenarioAmbiguousRequestBlocksAfterSwitch,
   "ambiguous-transient-request-blocks-retry": scenarioAmbiguousTransientRequestBlocksRetry,
   "persisted-ambiguous-guard-blocks-request": scenarioPersistedAmbiguousGuardBlocksRequest,
+  "send-challenge-extra-field-guarded": scenarioSendChallengeExtraFieldGuarded,
+  "send-response-extra-field-guarded": scenarioSendResponseExtraFieldGuarded,
 });
 
 async function scenarioRenameControlsResetAfterSuccess() {
@@ -2808,6 +2816,49 @@ async function scenarioPersistedAmbiguousGuardBlocksRequest() {
     flagStillPresent: global.window.sessionStorage.getItem(
       "micky.ai.request-outcome-unresolved.v1"
     ) === "1",
+  };
+}
+
+async function scenarioSendChallengeExtraFieldGuarded() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Please confirm",
+    challenge: {
+      challenge_id: "0123456789abcdef",
+      summary: "Example action",
+      display_code: "K42AB",
+      expires_at: "2027-01-01T00:00:00Z",
+      material_digest: "unexpected-secret-field",
+    },
+  }, 200, {}));
+  submitMessage("request with malformed challenge");
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-challenge-extra-field-guarded",
+    cardHidden: H.registry["confirmation-card"].hidden === true,
+    globalGuarded: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === "1",
+    postCount: countAssistantPosts(),
+  };
+}
+
+async function scenarioSendResponseExtraFieldGuarded() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "success",
+    message: "A response",
+    unexpected: "extra field",
+  }, 200, {}));
+  submitMessage("request with malformed response");
+  await H.drain(25);
+  return {
+    ok: true, scenario: "send-response-extra-field-guarded",
+    globalGuarded: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === "1",
+    postCount: countAssistantPosts(),
   };
 }
 
