@@ -1409,6 +1409,143 @@ async function scenarioRecovery201to200RaceGuardHeld() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "recovery-year-zero": scenarioRecoveryYearZero,
+  "recovery-year-one": scenarioRecoveryYearOne,
+  "recovery-hour-24": scenarioRecoveryHour24,
+  "recovery-valid-leap-day": scenarioRecoveryValidLeapDay,
+  "recovery-year-zero-in-list": scenarioRecoveryYearZeroInList,
+  "recovery-201-to-200-race-no-bad-commit": scenarioRecovery201to200NoBadCommit,
+});
+
+async function scenarioRecoveryYearZero() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "0000-02-29T00:00:00Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-year-zero",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryYearOne() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "0001-01-01T00:00:00Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-year-one",
+    ambBefore,
+    cleared: ambBefore === true && isAmbiguous(uuidFrom("C0")) === false,
+  };
+}
+
+async function scenarioRecoveryHour24() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-01-01T24:00:00Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-hour-24",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryValidLeapDay() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2024-02-29T00:00:00Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-valid-leap-day",
+    ambBefore,
+    cleared: ambBefore === true && isAmbiguous(uuidFrom("C0")) === false,
+  };
+}
+
+async function scenarioRecoveryYearZeroInList() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  const selBefore = selectedId();
+  H.enqueue(async () => {
+    const bad = pageOfConversations(0, 50, 51);
+    bad[0].created_at = "0000-02-29T00:00:00Z";
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "recovery-year-zero-in-list",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowsBefore,
+    rangePreserved: H.registry["conversations-range"].textContent === rangeBefore,
+    selectionPreserved: selectedId() === selBefore,
+    statusKind: H.registry["conversations-status"].getAttribute("data-kind"),
+  };
+}
+
+async function scenarioRecovery201to200NoBadCommit() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  const stateBefore = global.window.__mickyConversations.messagesState();
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "201" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "200" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "200" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(40);
+  const state = global.window.__mickyConversations.messagesState();
+  const impossibleRange =
+    state.rendered === 0 &&
+    state.total !== null &&
+    state.total > 0 &&
+    state.offset === state.total;
+  const stateUnverified = state.total === null && state.rendered === 0;
+  return {
+    ok: true, scenario: "recovery-201-to-200-race-no-bad-commit",
+    ambBefore,
+    ambAfter: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+    stateBefore, state,
+    impossibleRange,
+    stateUnverified,
+    stateCoherent: !impossibleRange,
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

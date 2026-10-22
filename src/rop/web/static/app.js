@@ -1203,6 +1203,10 @@
     const m = _ISO_DATETIME_RE.exec(value);
     if (!m) return false;
     const year = Number(m[1]);
+    // Reject year zero. Python's datetime MINYEAR is 1, so the API read
+    // schema cannot produce a year-0 timestamp; the calendar checks below
+    // would otherwise treat year 0 as a leap year.
+    if (year < 1) return false;
     const month = Number(m[2]);
     const day = Number(m[3]);
     const hour = Number(m[4]);
@@ -1600,20 +1604,20 @@
     }
     if (token !== messagesLoadToken || selectedId !== id) return false;
 
+    // First attempt is transactional: the page is committed only when it
+    // is a valid current latest page for the total in the same response.
+    // A stale response is NOT committed and reports its new total.
     const targetOffset = latestOffsetFor(freshTotal);
-    const ok = await loadMessages(id, targetOffset, token);
-    if (ok === "not_found") return "not_found";
-    if (!ok) return false;
-    if (token !== messagesLoadToken || selectedId !== id) return false;
+    const first = await loadMessages(id, targetOffset, token, {
+      requireLatest: true,
+    });
+    if (first === "not_found") return "not_found";
+    if (first === true) return true;
+    if (!first || typeof first !== "object" || !first.stale) return false;
 
-    // Recovery is established ONLY when the committed page is a valid
-    // current latest page for the total returned in that same response.
-    if (isCurrentLatestPage(messagesTotal)) return true;
-
-    // The total changed between our fresh-total read and the page fetch
-    // (e.g. 201 -> 200). One bounded retry, never more.
-    const retryTotal = messagesTotal;
-    if (retryTotal === null) {
+    // One bounded retry against the new authoritative total. Never more.
+    const retryOffset = latestOffsetFor(first.responseTotal);
+    if (retryOffset === targetOffset) {
       setStatus(
         msgsStatus,
         "The latest conversation history could not be verified; " +
@@ -1622,26 +1626,14 @@
       );
       return false;
     }
-    const retryOffset = latestOffsetFor(retryTotal);
-    if (retryOffset === messagesOffset) {
-      // Re-fetching the same offset cannot fix a page that already
-      // failed the check; stop and leave ambiguity in place.
-      setStatus(
-        msgsStatus,
-        "The latest conversation history shifted while loading; " +
-          "reload again to establish the current state.",
-        "error"
-      );
-      return false;
-    }
     if (token !== messagesLoadToken || selectedId !== id) return false;
 
-    const retryOk = await loadMessages(id, retryOffset, token);
-    if (retryOk === "not_found") return "not_found";
-    if (!retryOk) return false;
-    if (token !== messagesLoadToken || selectedId !== id) return false;
-
-    if (isCurrentLatestPage(messagesTotal)) return true;
+    const second = await loadMessages(id, retryOffset, token, {
+      requireLatest: true,
+    });
+    if (second === "not_found") return "not_found";
+    if (second === true) return true;
+    if (!second || typeof second !== "object" || !second.stale) return false;
 
     setStatus(
       msgsStatus,
@@ -1745,7 +1737,9 @@
   // Returns true only when the fetch succeeded, the body was valid, and
   // the response was for the current conversation/load token. A false
   // result must NOT be interpreted as "the conversation is empty".
-  async function loadMessages(id, offset, externalToken) {
+  async function loadMessages(id, offset, externalToken, opts) {
+    opts = opts || {};
+    const requireLatest = opts.requireLatest === true;
     if (typeof offset !== "number") offset = 0;
     const token =
       typeof externalToken === "number" ? externalToken : ++messagesLoadToken;
@@ -1836,6 +1830,38 @@
         );
         return false;
       }
+      // Reject an empty page at any offset above zero. The final page of
+      // a non-empty conversation always has records; an empty page at a
+      // non-zero offset means the total changed underneath us. In
+      // latest-page recovery mode this becomes a coded stale result so
+      // the caller can retry against the fresh total WITHOUT committing
+      // the contradictory empty page.
+      if (payload.length === 0 && offset > 0) {
+        if (requireLatest) {
+          return { stale: true, responseTotal: headerTotal };
+        }
+        setStatus(
+          msgsStatus,
+          "The message list response was inconsistent with its total.",
+          "error"
+        );
+        return false;
+      }
+      // Latest-page recovery is transactional: do not commit until the
+      // page's offset, record count, and total agree with the
+      // latest-page calculation for that total.
+      if (requireLatest) {
+        const expectedOffset = latestOffsetFor(headerTotal);
+        const validLatest =
+          headerTotal === 0
+            ? offset === 0 && payload.length === 0
+            : payload.length > 0 &&
+              offset === expectedOffset &&
+              offset + payload.length === headerTotal;
+        if (!validLatest) {
+          return { stale: true, responseTotal: headerTotal };
+        }
+      }
       messagesTotal = headerTotal;
       messagesOffset = offset;
       messagesRenderedCount = payload.length;
@@ -1870,6 +1896,7 @@
     // previous content visible under the title.
     messagesOffset = 0;
     messagesTotal = null;
+    messagesRenderedCount = 0;
     while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
     msgsEmpty.hidden = true;
     renderMsgsPagination();
@@ -2054,6 +2081,13 @@
     reloadSelected: reloadSelected,
     isLoadingMessages: function () {
       return messagesInFlight;
+    },
+    messagesState: function () {
+      return {
+        offset: messagesOffset,
+        total: messagesTotal,
+        rendered: messagesRenderedCount,
+      };
     },
   };
 

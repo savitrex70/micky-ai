@@ -684,3 +684,53 @@ def test_recovery_201_to_200_guard_held_until_valid_page() -> None:
     assert out["guardHeldDuring"] is True, out
     assert out["keptAfterInvalidRetry"] is True, out
     assert out["noBlindResubmission"] is True, out
+
+
+# ---- Correction 9: year-zero rejection + transactional latest-page ----
+
+
+def test_recovery_year_zero_keeps_ambiguity() -> None:
+    """0000-02-29T00:00:00Z must be rejected: Python datetime MINYEAR is 1."""
+    out = _run_scenario("recovery-year-zero")
+    assert out["kept"] is True, out
+
+
+def test_recovery_year_one_clears_ambiguity() -> None:
+    """0001-01-01T00:00:00Z is the boundary valid year and must be accepted."""
+    out = _run_scenario("recovery-year-one")
+    assert out["ambBefore"] is True, out
+    assert out["cleared"] is True, out
+
+
+def test_recovery_hour_24_keeps_ambiguity() -> None:
+    """Hour 24 is not valid; the record must be rejected."""
+    out = _run_scenario("recovery-hour-24")
+    assert out["kept"] is True, out
+
+
+def test_recovery_valid_leap_day_clears_ambiguity() -> None:
+    """2024-02-29T00:00:00Z is a legitimate leap-day timestamp."""
+    out = _run_scenario("recovery-valid-leap-day")
+    assert out["ambBefore"] is True, out
+    assert out["cleared"] is True, out
+
+
+def test_refresh_year_zero_in_list_preserves_state() -> None:
+    """A conversation-list record with year zero must not overwrite state."""
+    out = _run_scenario("recovery-year-zero-in-list")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["selectionPreserved"] is True, out
+    assert out["statusKind"] == "error", out
+
+
+def test_recovery_201_to_200_no_bad_commit() -> None:
+    """When the 201->200 race is followed by a failed retry, no impossible
+    page state (empty at offset === total > 0) may be committed. The
+    messages state before the race must survive unchanged."""
+    out = _run_scenario("recovery-201-to-200-race-no-bad-commit")
+    assert out["ambBefore"] is True, out
+    assert out["kept"] is True, out
+    assert out["impossibleRange"] is False, out
+    assert out["stateCoherent"] is True, out
+    assert out["stateUnverified"] is True, out
