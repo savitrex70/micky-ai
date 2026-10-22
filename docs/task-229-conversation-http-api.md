@@ -1,4 +1,4 @@
-﻿# Task 229 - Conversation HTTP API
+# Task 229 - Conversation HTTP API
 
 HTTP API for the durable assistant conversation and message store added in
 Task 228. This is the API layer only. The conversation-management UI, wiring
@@ -69,9 +69,10 @@ non-negative `offset` query parameters:
 - Messages: `limit` in `[1, MAX_MESSAGE_LIST_LIMIT]`, default
   `DEFAULT_MESSAGE_LIST_LIMIT`.
 
-Invalid pagination values return 422. The response is a plain list; the
-current API does not return page metadata. Callers page until a
-shorter-than-`limit` response or an empty response is returned.
+Invalid pagination values return 422. Conversation and message list
+responses include an `X-Total-Count` header carrying the total number
+of matching records. Callers page until `offset + len(page) == total`,
+or until the list is exhausted (empty page at offset zero).
 
 ## Ordering
 

@@ -1066,6 +1066,9 @@
   // blind resubmit until the user reloads the conversation.
   const ambiguousConversations = new Set();
   let createInFlight = false;
+  // Set when a prior creation's outcome is unknown; blocks a second POST
+  // until the user reconciles via a list refresh or page reload.
+  let creationAmbiguous = false;
   let messagesInFlight = false;
   let renameInFlight = false;
   let deleteInFlight = false;
@@ -1174,11 +1177,13 @@
   // validation. Every accepted datetime must satisfy:
   //   YYYY-MM-DDTHH:MM:SS
   //   optional fractional seconds
-  //   optional timezone: Z or +/-HH:MM
+  //   required timezone: Z or +/-HH:MM
   // and each component must be in its real range, including real
-  // days-per-month and leap years.
+  // days-per-month and leap years. The timezone is required because the
+  // backend stores timestamps as DateTime(timezone=True); a naive
+  // timestamp is outside the API read contract.
   const _ISO_DATETIME_RE =
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:(?:Z)|(?:([+-])(\d{2}):(\d{2})))?$/;
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:(?:Z)|(?:([+-])(\d{2}):(\d{2})))$/;
 
   function _isLeapYear(y) {
     return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -1357,6 +1362,9 @@
         listTotal = totalCount;
         listOffset = offset;
         conversations = payload;
+        // A successful list refresh reconciles an ambiguous creation: the
+        // actual server state is now visible, so the guard clears.
+        creationAmbiguous = false;
         renderList();
         renderConvPagination();
         updateComposerMode();
@@ -1397,6 +1405,16 @@
 
   async function createConversation() {
     if (createInFlight) return;
+    if (creationAmbiguous) {
+      setStatus(
+        statusEl,
+        "A previous creation could not be confirmed. Reload the page " +
+          "or click Refresh conversations to verify the actual saved " +
+          "conversations before creating another.",
+        "ambiguous"
+      );
+      return;
+    }
     createInFlight = true;
     newBtn.disabled = true;
     setStatus(statusEl, "Creating conversation\u2026", "info");
@@ -1413,6 +1431,7 @@
         // before the browser lost the response. Treat as ambiguous: do not
         // claim definite failure, do not repeat the POST, and tell the
         // user to reload the list to establish what actually happened.
+        creationAmbiguous = true;
         setStatus(
           statusEl,
           "The conversation creation could not be confirmed. The server " +
@@ -1436,6 +1455,7 @@
         payload = await resp.json();
       } catch (err) {
         // Server did respond, but we cannot parse it — treat as ambiguous.
+        creationAmbiguous = true;
         setStatus(
           statusEl,
           "The conversation creation response could not be read. The " +
@@ -1445,13 +1465,12 @@
         );
         return;
       }
-      // Validate the fields the UI relies on. Both must be present for us
-      // to trust this as the authority for the new conversation.
-      if (
-        !payload ||
-        typeof payload.id !== "string" ||
-        typeof payload.title !== "string"
-      ) {
+      // Validate the create response against the API read contract
+      // (AssistantConversationRead): UUID id, string title, ISO datetime
+      // created_at and updated_at. A response missing any of those fields
+      // is not a reliable authority for the new conversation.
+      if (!isValidConversationRecord(payload)) {
+        creationAmbiguous = true;
         setStatus(
           statusEl,
           "The conversation creation response was unexpected. The server " +
@@ -1466,6 +1485,18 @@
       // or a blank one.
       const createdId = payload.id;
       const createdTitle = payload.title;
+      // Treat this as a conversation switch: invalidate any in-flight
+      // message load for the previous selection, clear its pagination
+      // state, and clear its DOM before the new conversation's title is
+      // presented. Without this, a stale response from the previous
+      // selection could repopulate the display under the new title.
+      messagesLoadToken++;
+      messagesOffset = 0;
+      messagesTotal = null;
+      messagesRenderedCount = 0;
+      while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
+      msgsEmpty.hidden = true;
+      renderMsgsPagination();
       selectedId = createdId;
       selectedTitle = createdTitle;
       currentTitleEl.textContent = createdTitle;
@@ -1929,12 +1960,16 @@
       renameInput.focus();
       return;
     }
+    // Capture the target conversation now: the user may switch selection
+    // while the request is pending, and a response for A must never
+    // mutate B's title or heading.
+    const targetId = selectedId;
     renameInFlight = true;
     renameBtn.disabled = true;
     setStatus(msgsStatus, "Renaming\u2026", "info");
     try {
       const resp = await fetch(
-        "/api/assistant/conversations/" + encodeURIComponent(selectedId),
+        "/api/assistant/conversations/" + encodeURIComponent(targetId),
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1956,12 +1991,28 @@
         setStatus(msgsStatus, "The rename response was unreadable.", "error");
         return;
       }
-      // Update local state only after the server confirmed.
-      const conv = findConversation(selectedId);
-      if (conv && payload && typeof payload.title === "string") {
+      // Validate the response against AssistantConversationRead and
+      // confirm it refers to the conversation we asked to rename.
+      if (!isValidConversationRecord(payload) || payload.id !== targetId) {
+        setStatus(
+          msgsStatus,
+          "The rename response was unexpected. Reload the conversation " +
+            "to verify the actual title.",
+          "error"
+        );
+        return;
+      }
+      // Apply only to the target record. A response for A must never
+      // mutate B's title, even if B is selected when the response arrives.
+      const conv = findConversation(targetId);
+      if (conv) {
         conv.title = payload.title;
       }
-      currentTitleEl.textContent = conv ? conv.title : "";
+      // Update the visible heading only if the target is still selected.
+      if (selectedId === targetId) {
+        selectedTitle = payload.title;
+        currentTitleEl.textContent = payload.title;
+      }
       renderList();
       renameInput.value = "";
       setStatus(msgsStatus, "Renamed.", "info");
@@ -2101,6 +2152,14 @@
         total: messagesTotal,
         rendered: messagesRenderedCount,
       };
+    },
+    createState: function () {
+      return { ambiguous: creationAmbiguous };
+    },
+    conversationsState: function () {
+      return conversations.map(function (c) {
+        return { id: c.id, title: c.title };
+      });
     },
   };
 

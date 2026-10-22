@@ -526,7 +526,7 @@ async function scenarioCreateThenListFail() {
   await bootstrap(0, 50, 0);
   // Click New — POST succeeds
   H.enqueue(async () => H.jsonResponse(
-    { id: uuidFrom("Cnew"), title: "New conversation" }, 201, {}));
+    conv("Cnew", "New conversation"), 201, {}));
   // List refresh fails
   H.enqueue(async () => { throw new Error("list boom"); });
   H.registry["conversations-new"].click();
@@ -785,7 +785,7 @@ async function scenarioCreateDuringRefresh() {
   await H.drain(5);
   // While list fetch is pending, click New.
   H.enqueue(async () => H.jsonResponse(
-    { id: uuidFrom("Cnew"), title: "New conversation" }, 201, {}));
+    conv("Cnew", "New conversation"), 201, {}));
   // The create's loadConversations(0) must wait for the in-flight one.
   // After list resolves, loadConversations should issue ITS OWN fetch.
   H.enqueue(async (url) => {
@@ -1693,6 +1693,205 @@ async function scenarioDeleteResetsPaginationState() {
     totalReset: after.total === null,
     renderedReset: after.rendered === 0,
     selectedCleared: selectedId() === null,
+  };
+}
+
+Object.assign(SCENARIOS, {
+  "create-response-malformed": scenarioCreateResponseMalformed,
+  "create-response-naive-timestamp": scenarioCreateResponseNaiveTimestamp,
+  "create-network-fail-blocks-retry": scenarioCreateNetworkFailBlocksRetry,
+  "create-reconcile-via-refresh": scenarioCreateReconcileViaRefresh,
+  "recovery-naive-timestamp": scenarioRecoveryNaiveTimestamp,
+});
+
+async function scenarioCreateResponseMalformed() {
+  await bootstrap(0, 50, 0);
+  // POST returns only {id, title}; missing created_at / updated_at means
+  // the response fails isValidConversationRecord and must not be treated
+  // as a valid selection.
+  H.enqueue(async () => H.jsonResponse(
+    { id: uuidFrom("Cnew"), title: "New conversation" }, 201, {}));
+  H.registry["conversations-new"].click();
+  await H.drain(25);
+  const state = global.window.__mickyConversations.createState();
+  return {
+    ok: true, scenario: "create-response-malformed",
+    ambiguous: state.ambiguous,
+    selected: selectedId(),
+  };
+}
+
+async function scenarioCreateResponseNaiveTimestamp() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => {
+    const c = conv("Cnew", "New conversation");
+    c.created_at = "2026-01-01T00:00:00";
+    return H.jsonResponse(c, 201, {});
+  });
+  H.registry["conversations-new"].click();
+  await H.drain(25);
+  const state = global.window.__mickyConversations.createState();
+  return {
+    ok: true, scenario: "create-response-naive-timestamp",
+    ambiguous: state.ambiguous,
+    selected: selectedId(),
+  };
+}
+
+async function scenarioCreateNetworkFailBlocksRetry() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => { throw new Error("network boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(20);
+  const fetchCountAfterFirst = H.fetchLog.length;
+  const stateAfterFirst = global.window.__mickyConversations.createState();
+  // A second click must NOT issue another POST while the guard is set.
+  H.registry["conversations-new"].click();
+  await H.drain(20);
+  const fetchCountAfterSecond = H.fetchLog.length;
+  return {
+    ok: true, scenario: "create-network-fail-blocks-retry",
+    ambiguousAfterFail: stateAfterFirst.ambiguous,
+    fetchCountAfterFirst,
+    fetchCountAfterSecond,
+    noSecondPost: fetchCountAfterSecond === fetchCountAfterFirst,
+  };
+}
+
+async function scenarioCreateReconcileViaRefresh() {
+  await bootstrap(0, 50, 0);
+  // First create attempt: network failure sets the guard.
+  H.enqueue(async () => { throw new Error("network boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(20);
+  const ambiguousAfterFail = global.window.__mickyConversations.createState().ambiguous;
+  // Reconcile via refresh: list fetch succeeds, guard clears.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  const ambiguousAfterRefresh = global.window.__mickyConversations.createState().ambiguous;
+  // Now New must fire a second POST.
+  const fetchCountBeforeSecondClick = H.fetchLog.length;
+  H.enqueue(async () => { throw new Error("second POST attempted"); });
+  H.registry["conversations-new"].click();
+  await H.drain(20);
+  const fetchCountAfterSecondClick = H.fetchLog.length;
+  return {
+    ok: true, scenario: "create-reconcile-via-refresh",
+    ambiguousAfterFail,
+    ambiguousAfterRefresh,
+    secondPostAttempted: fetchCountAfterSecondClick > fetchCountBeforeSecondClick,
+  };
+}
+
+async function scenarioRecoveryNaiveTimestamp() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-01-01T00:00:00";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-naive-timestamp",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+Object.assign(SCENARIOS, {
+  "create-stale-response-cannot-repopulate": scenarioCreateStaleResponseCannotRepopulate,
+  "rename-a-then-switch-to-b": scenarioRenameThenSwitchToB,
+});
+
+async function scenarioCreateStaleResponseCannotRepopulate() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 5, (off) => pageOfMessages("C0", off, 200, 5));
+  // Start a reload of C0 whose page fetch is held.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "5" }));
+  let releasePage;
+  const pageGate = new Promise((r) => { releasePage = r; });
+  H.enqueue(async () => {
+    await pageGate;
+    return H.jsonResponse(pageOfMessages("C0", 0, 200, 5), 200,
+      { "X-Total-Count": "5" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(20);
+  // Create new conversation with a valid response; list refresh fails fast.
+  H.enqueue(async () => H.jsonResponse(conv("Cnew", "New conversation"), 201, {}));
+  H.enqueue(async () => { throw new Error("list boom"); });
+  H.registry["conversations-new"].click();
+  await H.drain(30);
+  const stateAfterCreate = global.window.__mickyConversations.messagesState();
+  const selAfterCreate = selectedId();
+  const domAfterCreate = H.registry["conversation-messages"].children.length;
+  // Release the stale C0 page response.
+  releasePage();
+  await H.drain(30);
+  const stateAfterStale = global.window.__mickyConversations.messagesState();
+  const domAfterStale = H.registry["conversation-messages"].children.length;
+  return {
+    ok: true, scenario: "create-stale-response-cannot-repopulate",
+    stateAfterCreate, stateAfterStale,
+    selAfterCreate, domAfterCreate, domAfterStale,
+    selectedIsNew: selAfterCreate === uuidFrom("Cnew"),
+    clearedOnCreate:
+      stateAfterCreate.offset === 0 &&
+      stateAfterCreate.total === null &&
+      stateAfterCreate.rendered === 0,
+    staleBlocked:
+      stateAfterStale.offset === 0 &&
+      stateAfterStale.total === null &&
+      stateAfterStale.rendered === 0,
+    domStillEmpty: domAfterCreate === 0 && domAfterStale === 0,
+  };
+}
+
+async function scenarioRenameThenSwitchToB() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Set rename input and fire PATCH; hold the response.
+  H.registry["conversation-rename-input"].value = "Renamed A";
+  let releaseRename;
+  const renameGate = new Promise((r) => { releaseRename = r; });
+  H.enqueue(async () => {
+    await renameGate;
+    return H.jsonResponse({
+      id: uuidFrom("C0"),
+      title: "Renamed A",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    }, 200, {});
+  });
+  H.registry["conversation-rename"].click();
+  await H.drain(10);
+  // While rename pending, switch to C1.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(20);
+  const selAfterSwitch = selectedId();
+  const titleAfterSwitch = H.registry["conversation-current-title"].textContent;
+  // Release rename response.
+  releaseRename();
+  await H.drain(30);
+  const selAfter = selectedId();
+  const titleAfter = H.registry["conversation-current-title"].textContent;
+  const convs = global.window.__mickyConversations.conversationsState();
+  const c0 = convs.find((c) => c.id === uuidFrom("C0"));
+  const c1 = convs.find((c) => c.id === uuidFrom("C1"));
+  return {
+    ok: true, scenario: "rename-a-then-switch-to-b",
+    selAfterSwitch, titleAfterSwitch, selAfter, titleAfter,
+    c0Title: c0 ? c0.title : null,
+    c1Title: c1 ? c1.title : null,
+    bStillSelected: selAfter === uuidFrom("C1"),
+    bTitleUnchanged: titleAfter === "Conversation 1",
+    aTitleUpdated: c0 !== undefined && c0.title === "Renamed A",
   };
 }
 

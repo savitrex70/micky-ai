@@ -802,3 +802,68 @@ def test_delete_resets_pagination_state() -> None:
     assert out["after"]["offset"] == 0, out
     assert out["after"]["total"] is None, out
     assert out["after"]["rendered"] == 0, out
+
+
+# ---- Batch A: creation ambiguity guard + schema + naive datetime ----
+
+
+def test_create_response_malformed_sets_ambiguity() -> None:
+    """A 201 response missing created_at/updated_at must not be trusted as a
+    valid selection; the ambiguity guard must be set."""
+    out = _run_scenario("create-response-malformed")
+    assert out["ambiguous"] is True, out
+    assert out["selected"] is None, out
+
+
+def test_create_response_naive_timestamp_sets_ambiguity() -> None:
+    """A 201 response with a naive (no-offset) created_at is outside the
+    API read contract and must set the guard rather than being selected."""
+    out = _run_scenario("create-response-naive-timestamp")
+    assert out["ambiguous"] is True, out
+    assert out["selected"] is None, out
+
+
+def test_create_network_fail_blocks_retry() -> None:
+    """After a network failure during creation, a second New click must
+    not issue another POST while the outcome is unresolved."""
+    out = _run_scenario("create-network-fail-blocks-retry")
+    assert out["ambiguousAfterFail"] is True, out
+    assert out["noSecondPost"] is True, out
+
+
+def test_create_reconcile_via_refresh_clears_guard() -> None:
+    """A successful list refresh reconciles an ambiguous creation, clearing
+    the guard so a subsequent New click can issue a POST again."""
+    out = _run_scenario("create-reconcile-via-refresh")
+    assert out["ambiguousAfterFail"] is True, out
+    assert out["ambiguousAfterRefresh"] is False, out
+    assert out["secondPostAttempted"] is True, out
+
+
+def test_recovery_naive_timestamp_keeps_ambiguity() -> None:
+    """A message record with a naive created_at is rejected and ambiguity
+    remains active."""
+    out = _run_scenario("recovery-naive-timestamp")
+    assert out["kept"] is True, out
+
+
+# ---- Batch B: creation selection-clearing and rename scoping ----
+
+
+def test_create_clears_old_message_state_on_new_selection() -> None:
+    """Creating a new conversation must invalidate any in-flight load and
+    reset message state before presenting the new selection."""
+    out = _run_scenario("create-stale-response-cannot-repopulate")
+    assert out["selectedIsNew"] is True, out
+    assert out["clearedOnCreate"] is True, out
+    assert out["staleBlocked"] is True, out
+    assert out["domStillEmpty"] is True, out
+
+
+def test_rename_response_for_previous_target_does_not_touch_new_selection() -> None:
+    """A PATCH response for A must not mutate B's title even if B is
+    selected when the response arrives."""
+    out = _run_scenario("rename-a-then-switch-to-b")
+    assert out["bStillSelected"] is True, out
+    assert out["bTitleUnchanged"] is True, out
+    assert out["aTitleUpdated"] is True, out
