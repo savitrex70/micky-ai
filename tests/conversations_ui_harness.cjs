@@ -2640,6 +2640,7 @@ Object.assign(SCENARIOS, {
   "persisted-ambiguous-guard-blocks-request": scenarioPersistedAmbiguousGuardBlocksRequest,
   "send-challenge-extra-field-guarded": scenarioSendChallengeExtraFieldGuarded,
   "send-response-extra-field-guarded": scenarioSendResponseExtraFieldGuarded,
+  "decision-unknown-ack-clears-locked-card": scenarioDecisionUnknownAckClearsLockedCard,
 });
 
 async function scenarioRenameControlsResetAfterSuccess() {
@@ -2859,6 +2860,45 @@ async function scenarioSendResponseExtraFieldGuarded() {
       "micky.ai.request-outcome-unresolved.v1"
     ) === "1",
     postCount: countAssistantPosts(),
+  };
+}
+
+async function scenarioDecisionUnknownAckClearsLockedCard() {
+  await bootstrap(0, 50, 0);
+  H.enqueue(async () => H.jsonResponse({
+    status: "confirmation-required",
+    message: "Please confirm this exact action.",
+    challenge: {
+      challenge_id: "0123456789abcdef",
+      summary: "Example action",
+      display_code: "K42AB",
+      expires_at: "2027-01-01T00:00:00Z",
+    },
+  }, 200, {}));
+  submitMessage("request");
+  await H.drain(25);
+  H.registry["confirmation-code-input"].value = "K42AB";
+  H.enqueue(async () => { throw new Error("decision network failure"); });
+  H.registry["confirmation-confirm"].click();
+  await H.drain(25);
+  const lockedBeforeAck =
+    H.registry["confirmation-card"].hidden === false &&
+    H.registry["confirmation-confirm"].disabled === true &&
+    H.registry["confirmation-cancel"].disabled === true;
+  H.confirmQueue.push(true);
+  submitMessage("must not be sent by acknowledgement");
+  await H.drain(20);
+  return {
+    ok: true, scenario: "decision-unknown-ack-clears-locked-card",
+    lockedBeforeAck,
+    cardDismissedAfterAck: H.registry["confirmation-card"].hidden === true,
+    guardClearedAfterAck: global.window.sessionStorage.getItem(
+      "micky.ai.request-outcome-unresolved.v1"
+    ) === null,
+    postCount: countAssistantPosts(),
+    noRequestSentByAck: countAssistantPosts() === 1,
+    acknowledgementStatus:
+      /did not send|did not retry/i.test(H.registry["status"].textContent),
   };
 }
 
