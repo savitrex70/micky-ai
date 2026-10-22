@@ -2163,6 +2163,102 @@ async function scenarioListRejectsEmptyAtNonzeroOffset() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "switch-while-delete-pending": scenarioSwitchWhileDeletePending,
+  "stale-invalidated-resolves-after-new-fail": scenarioStaleInvalidatedResolvesAfterNewFail,
+  "recovery-rejects-out-of-order-sequence": scenarioRecoveryRejectsOutOfOrderSequence,
+});
+
+async function scenarioSwitchWhileDeletePending() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Start DELETE for C0; hold response on a gate.
+  H.confirmQueue.push(true);
+  let releaseDelete;
+  const deleteGate = new Promise((r) => { releaseDelete = r; });
+  H.enqueue(async () => { await deleteGate; return H.jsonResponse({}, 204, {}); });
+  H.registry["conversation-delete"].click();
+  await H.drain(10);
+  // Switch to C1 while DELETE is pending.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "0" }));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(25);
+  const selAfterSwitch = selectedId();
+  // Delete resolves -- enqueue list reconciliation fetch first.
+  H.enqueue(async () => H.jsonResponse(
+    pageOfConversations(0, 50, 1), 200, { "X-Total-Count": "1" }));
+  releaseDelete();
+  await H.drain(35);
+  return {
+    ok: true, scenario: "switch-while-delete-pending",
+    selAfterSwitch,
+    finalSelected: selectedId(),
+    state: global.window.__mickyConversations.messagesState(),
+    bStillSelected:
+      selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
+    bStateIntact:
+      global.window.__mickyConversations.messagesState().offset === 0 &&
+      global.window.__mickyConversations.messagesState().total === 0,
+  };
+}
+
+async function scenarioStaleInvalidatedResolvesAfterNewFail() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  // Start a reload of C0; hold its page fetch.
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "3" }));
+  let releasePage;
+  const pageGate = new Promise((r) => { releasePage = r; });
+  H.enqueue(async () => {
+    await pageGate;
+    return H.jsonResponse(pageOfMessages("C0", 0, 200, 3), 200,
+      { "X-Total-Count": "3" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(15);
+  // Switch to C1, whose reload fails.
+  H.enqueue(async () => H.jsonResponse({ detail: "err" }, 500, {}));
+  H.enqueue(async () => H.jsonResponse({ detail: "err" }, 500, {}));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(25);
+  const selAfterSwitch = selectedId();
+  // Release C0's stale page response.
+  releasePage();
+  await H.drain(35);
+  return {
+    ok: true, scenario: "stale-invalidated-resolves-after-new-fail",
+    selAfterSwitch,
+    finalSelected: selectedId(),
+    state: global.window.__mickyConversations.messagesState(),
+    bStillSelected:
+      selAfterSwitch === uuidFrom("C1") && selectedId() === uuidFrom("C1"),
+    noCorruption:
+      global.window.__mickyConversations.messagesState().offset === 0 &&
+      global.window.__mickyConversations.messagesState().rendered === 0,
+  };
+}
+
+async function scenarioRecoveryRejectsOutOfOrderSequence() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "3" }));
+  H.enqueue(async () => {
+    // Valid records individually, but sequences 0, 5, 2 -- not ascending.
+    const bad = pageOfMessages("C0", 0, 200, 3);
+    bad[1].sequence = 5;
+    bad[2].sequence = 2;
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "3" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-rejects-out-of-order-sequence",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

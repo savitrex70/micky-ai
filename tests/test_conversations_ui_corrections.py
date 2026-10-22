@@ -942,3 +942,29 @@ def test_list_response_rejects_empty_at_nonzero_offset() -> None:
     assert out["rowsPreserved"] is True, out
     assert out["rangePreserved"] is True, out
     assert out["isError"] is True, out
+
+
+# ---- Batch E: cross-flow interleavings and ordered-slice validation ----
+
+
+def test_switch_while_delete_pending_keeps_b_selected() -> None:
+    """Deleting A while the user has switched to B must not clear B's
+    selection or message state."""
+    out = _run_scenario("switch-while-delete-pending")
+    assert out["bStillSelected"] is True, out
+    assert out["bStateIntact"] is True, out
+
+
+def test_stale_invalidated_resolves_after_new_fail_keeps_b() -> None:
+    """A stale message response for A resolving after a failed load for B
+    must not corrupt B's selected state."""
+    out = _run_scenario("stale-invalidated-resolves-after-new-fail")
+    assert out["bStillSelected"] is True, out
+    assert out["noCorruption"] is True, out
+
+
+def test_recovery_rejects_out_of_order_sequence() -> None:
+    """A latest-page response with individually valid records that are not
+    in ascending sequence order must not clear ambiguity."""
+    out = _run_scenario("recovery-rejects-out-of-order-sequence")
+    assert out["kept"] is True, out

@@ -1935,6 +1935,35 @@
           return false;
         }
       }
+      // Ordered-slice validation: a page of valid-looking records is not
+      // enough -- it must represent an actual ordered slice of the
+      // conversation. Reject duplicate IDs within a page and reject any
+      // non-ascending sequence, so a syntactically valid response cannot
+      // silently clear ambiguity with the wrong messages.
+      const _seenMessageIds = new Set();
+      let _prevSequence = -1;
+      for (const m of payload) {
+        if (_seenMessageIds.has(m.id)) {
+          setStatus(
+            msgsStatus,
+            "The message list response contained duplicate records; " +
+              "history could not be established.",
+            "error"
+          );
+          return false;
+        }
+        _seenMessageIds.add(m.id);
+        if (m.sequence <= _prevSequence) {
+          setStatus(
+            msgsStatus,
+            "The message list response was not in the expected order; " +
+              "history could not be established.",
+            "error"
+          );
+          return false;
+        }
+        _prevSequence = m.sequence;
+      }
       // Require a valid X-Total-Count header. Missing or invalid totals
       // are rejected so a caller cannot treat an unverified page as
       // successful recovery.
