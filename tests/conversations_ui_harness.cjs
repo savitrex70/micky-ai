@@ -1546,6 +1546,71 @@ async function scenarioRecovery201to200NoBadCommit() {
   };
 }
 
+Object.assign(SCENARIOS, {
+  "recovery-fractional-precision": scenarioRecoveryFractionalPrecision,
+  "recovery-fractional-precision-in-list": scenarioRecoveryFractionalPrecisionInList,
+  "switch-failure-rendered-count-coherent": scenarioSwitchFailureRenderedCountCoherent,
+});
+
+async function scenarioRecoveryFractionalPrecision() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-01-01T00:00:00.1234567Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-fractional-precision",
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryFractionalPrecisionInList() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  const selBefore = selectedId();
+  H.enqueue(async () => {
+    const bad = pageOfConversations(0, 50, 51);
+    bad[0].created_at = "2026-01-01T00:00:00.1234567Z";
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "recovery-fractional-precision-in-list",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowsBefore,
+    rangePreserved: H.registry["conversations-range"].textContent === rangeBefore,
+    selectionPreserved: selectedId() === selBefore,
+    statusKind: H.registry["conversations-status"].getAttribute("data-kind"),
+  };
+}
+
+async function scenarioSwitchFailureRenderedCountCoherent() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  const stateBefore = global.window.__mickyConversations.messagesState();
+  H.enqueue(async () => H.jsonResponse([], 500, {}));
+  H.enqueue(async () => H.jsonResponse([], 500, {}));
+  H.registry["conversations-list"].children[1].children[0].click();
+  await H.drain(30);
+  const state = global.window.__mickyConversations.messagesState();
+  const messagesList = H.registry["messages-list"];
+  const domCount = messagesList ? messagesList.children.length : 0;
+  return {
+    ok: true, scenario: "switch-failure-rendered-count-coherent",
+    stateBefore, state, domCount,
+    renderedMatchesDom: state.rendered === domCount,
+    totalUnverified: state.total === null,
+  };
+}
+
 (async function main() {
   const name = process.argv[3];
   const fn = SCENARIOS[name];

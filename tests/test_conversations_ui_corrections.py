@@ -726,11 +726,47 @@ def test_refresh_year_zero_in_list_preserves_state() -> None:
 
 def test_recovery_201_to_200_no_bad_commit() -> None:
     """When the 201->200 race is followed by a failed retry, no impossible
-    page state (empty at offset === total > 0) may be committed. The
-    messages state before the race must survive unchanged."""
+    page state (empty at offset === total > 0) may be committed.
+
+    Documented behaviour on failed retry: the page is cleared and left
+    unverified -- offset 0, total None (unverified), rendered 0. Assert
+    each field explicitly so the test enforces its own claim."""
     out = _run_scenario("recovery-201-to-200-race-no-bad-commit")
     assert out["ambBefore"] is True, out
     assert out["kept"] is True, out
     assert out["impossibleRange"] is False, out
     assert out["stateCoherent"] is True, out
     assert out["stateUnverified"] is True, out
+    state = out["state"]
+    assert state["offset"] == 0, state
+    assert state["total"] is None, state
+    assert state["rendered"] == 0, state
+
+
+# ---- Correction 10: fractional precision + switch rendered-count ----
+
+
+def test_recovery_fractional_seconds_out_of_range_keeps_ambiguity() -> None:
+    """Seven fractional-second digits exceed Python datetime's microsecond
+    precision; the record must be rejected and ambiguity kept."""
+    out = _run_scenario("recovery-fractional-precision")
+    assert out["kept"] is True, out
+
+
+def test_refresh_fractional_seconds_in_list_preserves_state() -> None:
+    """A conversation-list record with seven fractional-second digits must
+    not overwrite committed rows, range, or selection."""
+    out = _run_scenario("recovery-fractional-precision-in-list")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["selectionPreserved"] is True, out
+    assert out["statusKind"] == "error", out
+
+
+def test_switch_failure_rendered_count_matches_dom() -> None:
+    """After a failed conversation switch, messagesRenderedCount must be
+    zero to match the cleared DOM."""
+    out = _run_scenario("switch-failure-rendered-count-coherent")
+    assert out["renderedMatchesDom"] is True, out
+    assert out["state"]["rendered"] == 0, out
+    assert out["totalUnverified"] is True, out

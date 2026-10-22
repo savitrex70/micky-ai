@@ -1178,7 +1178,7 @@
   // and each component must be in its real range, including real
   // days-per-month and leap years.
   const _ISO_DATETIME_RE =
-    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:(?:Z)|(?:([+-])(\d{2}):(\d{2})))?$/;
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:(?:Z)|(?:([+-])(\d{2}):(\d{2})))?$/;
 
   function _isLeapYear(y) {
     return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -1658,6 +1658,7 @@
     msgsEmpty.hidden = true;
     messagesOffset = 0;
     messagesTotal = null;
+    messagesRenderedCount = 0;
     renderMsgsPagination();
     view.hidden = true;
     ambiguousConversations.delete(id);
@@ -1680,6 +1681,7 @@
       // must not see one conversation's messages under another's title.
       messagesOffset = 0;
       messagesTotal = null;
+      messagesRenderedCount = 0;
       while (msgsEl.firstChild) msgsEl.removeChild(msgsEl.firstChild);
       msgsEmpty.hidden = true;
       renderMsgsPagination();
