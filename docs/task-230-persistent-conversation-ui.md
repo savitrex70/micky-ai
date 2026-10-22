@@ -264,7 +264,11 @@ is `confirmation-required`; when it is absent/null, the UI displays the
 server message and does not show a confirmation card. A present challenge
 must validate before it is displayed. An invalid challenge, unknown
 status, malformed response, unreadable response, or network failure is
-ambiguous and never triggers a retry of the original POST.
+ambiguous and never triggers a retry of the original POST. If the status is
+a valid non-success status but its optional challenge shape is malformed,
+the UI marks the server-side confirmation outcome unresolved without
+claiming the conversation exchange was saved. For a malformed `success`
+response, conversation persistence remains ambiguous.
 
 The UI separates conversation-persistence ambiguity from an unresolved
 server-side confirmation. On an ambiguous request result it guards further
