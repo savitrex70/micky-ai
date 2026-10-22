@@ -186,7 +186,7 @@ leap-year awareness, hour ≤ 23, minute ≤ 59, second ≤ 59, offset hours
 ≤ 23, offset minutes ≤ 59) and accepts at most six fractional-second
 digits to match Python `datetime`'s microsecond precision. A naive
 timestamp (no offset) is rejected, because the backend stores all
-timestamps as `DateTime(timezone=True)` and cannot emit naive values.;
+timestamps as `DateTime(timezone=True)` and cannot emit naive values.
 - the `X-Total-Count` header is present and parses as a finite
   non-negative integer — the same `parseTotalCount()` helper is used
   for both the fresh-total request and the page request, so a
@@ -243,21 +243,38 @@ follows the same reconciliation. `selectedId` is cleared only if the
 deleted conversation was still selected; a switch to B during A's DELETE
 preserves B's selection and message state.
 
-**Rename uncertainty.** A network failure or unreadable response during
-PATCH does not establish that the rename failed. The handler reconciles
-via a list refresh rather than asserting failure; if that reconciliation
-also fails, the outcome is marked unverified and the user is told to
-reload. A 404 during PATCH reconciles the missing target: the row is
-removed and the selection is cleared only if that target remained
-selected.
+**Rename uncertainty.** A network failure or unreadable/malformed PATCH
+response does not establish that the rename failed. The handler reads the
+exact target through `GET /api/assistant/conversations/{id}` rather than
+assuming that the selected list page contains it. If the read succeeds,
+the returned title is authoritative; if the target is absent, a 404
+reconciliation updates the list count/range and clears the selection only
+if that target remains selected. If the follow-up read also fails or is
+malformed, the target is guarded against another rename attempt until the
+page is reloaded and the server state is inspected. The rename button's
+in-flight flag is always released in `finally`, including early returns.
 
 **Assistant-response validation.** A successful `POST /api/assistant/requests`
-response is validated against the backend contract: the status must be
-one of `success`, `clarification-required`, `confirmation-required`, or
-`refused`, and must carry a string `message`. A `confirmation-required`
-payload must include a valid challenge per `isValidChallenge`. Anything
-else is classified as unexpected, so the ambiguity guard is set rather
-than a blind re-submit being permitted.
+response is validated against `AssistantResponse` and the `AssistantStatus`
+literal in `src/rop/schemas/assistant.py`. The five valid statuses are
+`success`, `unsupported-capability`, `clarification-required`,
+`confirmation-required`, and `refused`. Every response must carry a
+string `message`. The `challenge` field is optional even when the status
+is `confirmation-required`; when it is absent/null, the UI displays the
+server message and does not show a confirmation card. A present challenge
+must validate before it is displayed. An invalid challenge, unknown
+status, malformed response, unreadable response, or network failure is
+ambiguous and never triggers a retry of the original POST.
+
+The UI separates conversation-persistence ambiguity from an unresolved
+server-side confirmation. On an ambiguous request result it guards further
+requests across conversation switches and persists only a boolean guard in
+`sessionStorage` so a page reload does not silently clear it. No message
+content, conversation ID, or challenge ID is stored. The next Send click
+asks for explicit acknowledgement; that click only clears the guard and
+sends no request. A new POST can occur only after a separate later Send
+click. Transient requests that had no `conversation_id` are explicitly
+not described as saved to a conversation when their response is lost.
 
 **Message-slice validation.** A page of messages at offset O must have
 `payload.length ≤ MESSAGES_LIMIT` and `payload[i].sequence === O + i`
@@ -270,8 +287,10 @@ as any oversized response.
 
 - The browser continues to load only local static assets; no remote
   scripts, analytics, or telemetry.
-- No conversation content is stored in `localStorage`,
-  `sessionStorage`, `indexedDB`, cookies, URL parameters, or logs.
+- No conversation content or conversation/challenge identifiers are stored
+  in `localStorage`, `sessionStorage`, `indexedDB`, cookies, URL parameters, or logs.
+- `sessionStorage` may contain a single boolean request-outcome guard
+  (`micky.ai.request-outcome-unresolved.v1`), never user content or IDs.
 - The database is the sole authority for persisted messages.
 - Conversation data remains separate from clinical reasoning records;
   there is no foreign key, join, or ID mapping between conversation IDs
