@@ -1167,14 +1167,56 @@
   function isUuid(value) {
     return typeof value === "string" && _UUID_RE.test(value);
   }
-  // ISO 8601 datetime with a 4-digit year and a T separator, and that
-  // Date.parse can interpret. Permissive enough for the offset/Z forms
-  // produced by the API, strict enough to reject non-date strings.
-  const _ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}T/;
+  // ISO 8601 datetime with explicit calendar, clock, and timezone
+  // component validation. Date.parse() alone is insufficient: JavaScript
+  // normalizes impossible values (e.g. 2026-02-31T00:00:00Z becomes
+  // March 3) instead of rejecting them, so a malformed record could pass
+  // validation. Every accepted datetime must satisfy:
+  //   YYYY-MM-DDTHH:MM:SS
+  //   optional fractional seconds
+  //   optional timezone: Z or +/-HH:MM
+  // and each component must be in its real range, including real
+  // days-per-month and leap years.
+  const _ISO_DATETIME_RE =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:(?:Z)|(?:([+-])(\d{2}):(\d{2})))?$/;
+
+  function _isLeapYear(y) {
+    return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  }
+
+  function _daysInMonth(y, m) {
+    switch (m) {
+      case 2:
+        return _isLeapYear(y) ? 29 : 28;
+      case 4:
+      case 6:
+      case 9:
+      case 11:
+        return 30;
+      default:
+        return 31;
+    }
+  }
+
   function isIsoDateTime(value) {
     if (typeof value !== "string") return false;
-    if (!_ISO_DATE_PREFIX.test(value)) return false;
-    return !Number.isNaN(Date.parse(value));
+    const m = _ISO_DATETIME_RE.exec(value);
+    if (!m) return false;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = Number(m[6]);
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > _daysInMonth(year, month)) return false;
+    if (hour > 23 || minute > 59 || second > 59) return false;
+    if (m[7] !== undefined) {
+      const offH = Number(m[8]);
+      const offM = Number(m[9]);
+      if (offH > 23 || offM > 59) return false;
+    }
+    return true;
   }
 
   // Validate a single conversation record against the AssistantConversationRead
@@ -1513,6 +1555,30 @@
   // at was fetched successfully, and the result was rendered for `id`
   // under the same generation token. Any failure returns false and the
   // caller must NOT clear the ambiguity marker.
+  // Offset of the last page for a given total. This is the only offset
+  // at which a non-empty conversation's newest history can begin, and
+  // zero for a small or empty conversation.
+  function latestOffsetFor(total) {
+    if (total <= MESSAGES_LIMIT) return 0;
+    return Math.floor((total - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
+  }
+
+  // True only when the committed messages state is a correct current
+  // latest page for the given total. Rejects the case where the total
+  // dropped to exactly the requested offset after the page was fetched
+  // (an empty response at offset === total > 0), which is the 201->200
+  // race the task requires us to block.
+  function isCurrentLatestPage(total) {
+    if (total === null || typeof total !== "number" || total < 0) return false;
+    if (total === 0) {
+      return messagesOffset === 0 && messagesRenderedCount === 0;
+    }
+    if (messagesRenderedCount === 0) return false;
+    if (messagesOffset !== latestOffsetFor(total)) return false;
+    if (messagesOffset + messagesRenderedCount !== total) return false;
+    return true;
+  }
+
   async function reloadLatest(id) {
     const token = ++messagesLoadToken;
     // Ask for a single record to obtain a fresh total.
@@ -1533,35 +1599,57 @@
       return false;
     }
     if (token !== messagesLoadToken || selectedId !== id) return false;
-    let targetOffset = 0;
-    if (freshTotal > MESSAGES_LIMIT) {
-      targetOffset =
-        Math.floor((freshTotal - 1) / MESSAGES_LIMIT) * MESSAGES_LIMIT;
-    }
-    // Now load the actual page containing the newest messages.
+
+    const targetOffset = latestOffsetFor(freshTotal);
     const ok = await loadMessages(id, targetOffset, token);
     if (ok === "not_found") return "not_found";
     if (!ok) return false;
-    // Recovery is only established when the rendered page ends exactly
-    // at the current total for the same conversation and generation.
-    // This catches the case where records were added between the
-    // fresh-total fetch and the page fetch (our offset is no longer the
-    // last page) and the case where records were deleted (offset might
-    // be past the end).
     if (token !== messagesLoadToken || selectedId !== id) return false;
-    if (messagesTotal !== null && messagesTotal > 0) {
-      const pageEnd = messagesOffset + messagesRenderedCount;
-      if (pageEnd !== messagesTotal) {
-        setStatus(
-          msgsStatus,
-          "The latest conversation history shifted while loading; " +
-            "reload again to establish the current state.",
-          "error"
-        );
-        return false;
-      }
+
+    // Recovery is established ONLY when the committed page is a valid
+    // current latest page for the total returned in that same response.
+    if (isCurrentLatestPage(messagesTotal)) return true;
+
+    // The total changed between our fresh-total read and the page fetch
+    // (e.g. 201 -> 200). One bounded retry, never more.
+    const retryTotal = messagesTotal;
+    if (retryTotal === null) {
+      setStatus(
+        msgsStatus,
+        "The latest conversation history could not be verified; " +
+          "reload again to establish the current state.",
+        "error"
+      );
+      return false;
     }
-    return true;
+    const retryOffset = latestOffsetFor(retryTotal);
+    if (retryOffset === messagesOffset) {
+      // Re-fetching the same offset cannot fix a page that already
+      // failed the check; stop and leave ambiguity in place.
+      setStatus(
+        msgsStatus,
+        "The latest conversation history shifted while loading; " +
+          "reload again to establish the current state.",
+        "error"
+      );
+      return false;
+    }
+    if (token !== messagesLoadToken || selectedId !== id) return false;
+
+    const retryOk = await loadMessages(id, retryOffset, token);
+    if (retryOk === "not_found") return "not_found";
+    if (!retryOk) return false;
+    if (token !== messagesLoadToken || selectedId !== id) return false;
+
+    if (isCurrentLatestPage(messagesTotal)) return true;
+
+    setStatus(
+      msgsStatus,
+      "The latest conversation history shifted again during recovery; " +
+        "reload again to establish the current state.",
+      "error"
+    );
+    return false;
   }
 
   // Called when the server confirms (via 404) that the selected

@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 // Behavioural harness for Task 230 conversation UI.
 // Runs the real src/rop/web/static/app.js against a minimal DOM/fetch mock
@@ -1218,7 +1218,196 @@ const SCENARIOS = {
   "refresh-malformed-record": scenarioRefreshMalformedRecord,
   "refresh-invalid-list-total": scenarioRefreshInvalidListTotal,
   "refresh-malformed-then-valid": scenarioRefreshMalformedThenValid,
+  "recovery-impossible-date": scenarioRecoveryImpossibleDate,
+  "recovery-invalid-offset": scenarioRecoveryInvalidOffset,
+  "recovery-valid-offset": scenarioRecoveryValidOffset,
+  "recovery-wrong-conversation": scenarioRecoveryWrongConversation,
+  "recovery-missing-list-total": scenarioRecoveryMissingListTotal,
+  "recovery-impossible-date-in-list": scenarioRecoveryImpossibleDateInList,
+  "recovery-201-to-200-race": scenarioRecovery201to200Race,
+  "recovery-201-to-200-race-guard-held": scenarioRecovery201to200RaceGuardHeld,
 };
+
+// --- Correction 8. Strict datetime and 201-to-200 race recovery ---
+
+async function scenarioRecoveryImpossibleDate() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-02-31T00:00:00Z";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-impossible-date",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryInvalidOffset() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-01-01T00:00:00+99:00";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-invalid-offset",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryValidOffset() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C0", "user", 0, "hello");
+    m.created_at = "2026-01-01T00:00:00+05:30";
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-valid-offset",
+    ambBefore,
+    ambAfter: isAmbiguous(uuidFrom("C0")),
+    cleared: ambBefore === true && isAmbiguous(uuidFrom("C0")) === false,
+  };
+}
+
+async function scenarioRecoveryWrongConversation() {
+  await bootstrap(0, 50, 2);
+  await selectViaUI(0, "C0", 0);
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "1" }));
+  H.enqueue(async () => {
+    const m = msg("m0", "C1", "user", 0, "hello");
+    return H.jsonResponse([m], 200, { "X-Total-Count": "1" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(30);
+  return {
+    ok: true, scenario: "recovery-wrong-conversation",
+    amb: isAmbiguous(uuidFrom("C0")),
+    kept: isAmbiguous(uuidFrom("C0")) === true,
+  };
+}
+
+async function scenarioRecoveryMissingListTotal() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  const selBefore = selectedId();
+  H.enqueue(async () => H.jsonResponse(pageOfConversations(0, 50, 51), 200, {}));
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "recovery-missing-list-total",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowsBefore,
+    rangePreserved: H.registry["conversations-range"].textContent === rangeBefore,
+    selectionPreserved: selectedId() === selBefore,
+    statusKind: H.registry["conversations-status"].getAttribute("data-kind"),
+    statusText: H.registry["conversations-status"].textContent,
+  };
+}
+
+async function scenarioRecoveryImpossibleDateInList() {
+  await bootstrap(0, 50, 51);
+  await selectViaUI(0, "C0", 0);
+  const rowsBefore = H.registry["conversations-list"].children.length;
+  const rangeBefore = H.registry["conversations-range"].textContent;
+  const selBefore = selectedId();
+  H.enqueue(async () => {
+    const bad = pageOfConversations(0, 50, 51);
+    bad[0].created_at = "2026-02-31T00:00:00Z";
+    return H.jsonResponse(bad, 200, { "X-Total-Count": "51" });
+  });
+  H.registry["conversations-refresh"].click();
+  await H.drain(25);
+  return {
+    ok: true, scenario: "recovery-impossible-date-in-list",
+    rowsPreserved: H.registry["conversations-list"].children.length === rowsBefore,
+    rangePreserved: H.registry["conversations-range"].textContent === rangeBefore,
+    selectionPreserved: selectedId() === selBefore,
+    statusKind: H.registry["conversations-status"].getAttribute("data-kind"),
+    statusText: H.registry["conversations-status"].textContent,
+  };
+}
+
+async function scenarioRecovery201to200Race() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  const logStart = H.fetchLog.length;
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "201" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "200" }));
+  H.enqueue(async () => H.jsonResponse(
+    pageOfMessages("C0", 0, 200, 200), 200, { "X-Total-Count": "200" }));
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(40);
+  const urls = H.fetchLog.slice(logStart).map((x) => x.url);
+  return {
+    ok: true, scenario: "recovery-201-to-200-race",
+    ambBefore,
+    ambAfter: isAmbiguous(uuidFrom("C0")),
+    clearedAfterRetry: ambBefore === true && isAmbiguous(uuidFrom("C0")) === false,
+    fetchUrls: urls,
+    emptyAt200ThenRetryAt0:
+      urls.length >= 3 &&
+      /offset=200\b/.test(urls[1]) &&
+      /limit=200&offset=0\b/.test(urls[2]),
+  };
+}
+
+async function scenarioRecovery201to200RaceGuardHeld() {
+  await bootstrap(0, 50, 1);
+  await selectViaUI(0, "C0", 400, (off) => pageOfMessages("C0", off, 200, 400));
+  global.window.__mickyConversations.markAmbiguous(uuidFrom("C0"));
+  const ambBefore = isAmbiguous(uuidFrom("C0"));
+  const logStart = H.fetchLog.length;
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "201" }));
+  H.enqueue(async () => H.jsonResponse([], 200, { "X-Total-Count": "200" }));
+  let releaseRetry;
+  const retryGate = new Promise((r) => { releaseRetry = r; });
+  H.enqueue(async () => {
+    await retryGate;
+    return H.jsonResponse([], 200, { "X-Total-Count": "200" });
+  });
+  H.registry["conversations-list"].children[0].children[0].click();
+  await H.drain(40);
+  const urlsDuring = H.fetchLog.slice(logStart).map((x) => x.url);
+  const ambDuring = isAmbiguous(uuidFrom("C0"));
+  releaseRetry();
+  await H.drain(40);
+  const urlsAfter = H.fetchLog.slice(logStart).map((x) => x.url);
+  return {
+    ok: true, scenario: "recovery-201-to-200-race-guard-held",
+    ambBefore,
+    ambDuring,
+    ambAfter: isAmbiguous(uuidFrom("C0")),
+    guardHeldDuring: ambDuring === true,
+    keptAfterInvalidRetry: isAmbiguous(uuidFrom("C0")) === true,
+    fetchCountDuringRetry: urlsDuring.length,
+    fetchCountAfterFailedRetry: urlsAfter.length,
+    noBlindResubmission: urlsAfter.length === urlsDuring.length,
+  };
+}
 
 (async function main() {
   const name = process.argv[3];

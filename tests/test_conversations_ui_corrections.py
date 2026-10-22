@@ -607,3 +607,80 @@ def test_refresh_malformed_then_valid_recovers() -> None:
     out = _run_scenario("refresh-malformed-then-valid")
     assert out["failed"] is True, out
     assert out["recovered"] is True, out
+
+
+# ---- Correction 8: strict datetime and 201-to-200 race recovery ----
+
+
+def test_recovery_impossible_calendar_date_keeps_ambiguity() -> None:
+    """2026-02-31T00:00:00Z is an impossible calendar date; JavaScript
+    would normalize it via Date.parse, so a component validator must
+    reject it and keep ambiguity set."""
+    out = _run_scenario("recovery-impossible-date")
+    assert out["kept"] is True, out
+
+
+def test_recovery_invalid_timezone_offset_keeps_ambiguity() -> None:
+    """An offset like +99:00 is not a real timezone; the record must be
+    rejected and ambiguity kept."""
+    out = _run_scenario("recovery-invalid-offset")
+    assert out["kept"] is True, out
+
+
+def test_recovery_valid_timezone_offset_clears_ambiguity() -> None:
+    """A valid +05:30 offset timestamp must be accepted and recovery may
+    complete."""
+    out = _run_scenario("recovery-valid-offset")
+    assert out["ambBefore"] is True, out
+    assert out["cleared"] is True, out
+
+
+def test_recovery_message_for_other_conversation_keeps_ambiguity() -> None:
+    """A syntactically valid UUID belonging to a different conversation
+    must be rejected for the selected conversation."""
+    out = _run_scenario("recovery-wrong-conversation")
+    assert out["kept"] is True, out
+
+
+def test_refresh_missing_list_total_preserves_state() -> None:
+    """A conversation-list response without an X-Total-Count header must
+    not overwrite committed state and must show a distinct error."""
+    out = _run_scenario("recovery-missing-list-total")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["selectionPreserved"] is True, out
+    assert out["statusKind"] == "error", out
+    assert "total" in out["statusText"].lower(), out
+
+
+def test_refresh_impossible_date_in_list_preserves_state() -> None:
+    """A conversation-list record with an impossible calendar date must
+    not overwrite committed state and must show a distinct error."""
+    out = _run_scenario("recovery-impossible-date-in-list")
+    assert out["rowsPreserved"] is True, out
+    assert out["rangePreserved"] is True, out
+    assert out["selectionPreserved"] is True, out
+    assert out["statusKind"] == "error", out
+    assert "malformed" in out["statusText"].lower(), out
+
+
+def test_recovery_201_to_200_race_retries_and_clears() -> None:
+    """When fresh total (201) no longer matches the latest-page response
+    (200, empty at offset 200), the empty page must not be accepted as
+    history. A bounded retry against the fresh authoritative total must
+    occur and clear ambiguity only after a valid current page renders."""
+    out = _run_scenario("recovery-201-to-200-race")
+    assert out["ambBefore"] is True, out
+    assert out["emptyAt200ThenRetryAt0"] is True, out
+    assert out["clearedAfterRetry"] is True, out
+
+
+def test_recovery_201_to_200_guard_held_until_valid_page() -> None:
+    """While the bounded retry is pending and until a valid latest page
+    is rendered, the ambiguity guard must remain set. No blind
+    resubmission beyond the bounded retry."""
+    out = _run_scenario("recovery-201-to-200-race-guard-held")
+    assert out["ambBefore"] is True, out
+    assert out["guardHeldDuring"] is True, out
+    assert out["keptAfterInvalidRetry"] is True, out
+    assert out["noBlindResubmission"] is True, out
