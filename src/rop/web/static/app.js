@@ -498,11 +498,12 @@
     // only acknowledge the risk; it never replays the previous request.
     if (requestOutcomeUnresolved) {
       const acknowledged = window.confirm(
-        "An earlier request's outcome is unknown. A server-side confirmation " +
-          "challenge may still be pending. No request will be sent by this " +
-          "click. Choose OK only after reviewing confirmation records and " +
-          "accepting that uncertainty; you must press Send again to submit " +
-          "a new request, and the previous POST will never be retried."
+        "An earlier request's complete outcome is unknown. A saved exchange " +
+          "or confirmation may need review, depending on the response. No " +
+          "request will be sent by this click. Choose OK only after reviewing " +
+          "conversation history and confirmation records where relevant; " +
+          "press Send again later if you decide to proceed. The previous POST " +
+          "will never be retried."
       );
       if (!acknowledged) {
         setStatus(
@@ -653,9 +654,9 @@
           setStatus(
             "The server returned HTTP " + result.status + " but the full " +
               "request outcome is not established. " + result.detail +
-              " A confirmation challenge may still be pending. Do not " +
-              "resend; review confirmation records before acknowledging " +
-              "this uncertainty.",
+              " The exchange may or may not be present in the conversation " +
+              "history. Do not resend; inspect the stored state before " +
+              "acknowledging this uncertainty.",
             "ambiguous"
           );
         } else {
