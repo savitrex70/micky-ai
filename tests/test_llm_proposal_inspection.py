@@ -537,7 +537,7 @@ def test_schemas_never_import_from_services() -> None:
     )
     offenders = []
     for path in schemas_dir.glob("*.py"):
-        source = path.read_text(encoding="utf-8")
+        source = path.read_text(encoding="utf-8-sig")
         tree = ast.parse(source, filename=str(path))
         imports_services = False
         for node in ast.walk(tree):

@@ -200,18 +200,17 @@ def _assert_no_client_content_persistence(js: str) -> None:
     for forbidden in ("localStorage", "indexedDB", "document.cookie"):
         assert forbidden not in js, forbidden
 
-    key_start = js.index("const REQUEST_OUTCOME_UNRESOLVED_KEY")
-    key_end = js.index("const STATUS_TEXT", key_start)
-    guard = js[key_start:key_end]
-    assert "micky.ai.request-outcome-unresolved.v1" in guard
-    assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in guard
-    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in guard
-    assert (
-        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)" not in guard
+    assert "micky.ai.request-outcome-unresolved.v1" in js
+    assert js.count("sessionStorage.") == 3
+    storage_calls = re.findall(
+        r"sessionStorage\.(getItem|setItem|removeItem)\(([^)]*)\)",
+        js,
     )
-    assert "sessionStorage" not in js[:key_start]
-    assert "sessionStorage" not in js[key_end:]
-
+    assert storage_calls == [
+        ("getItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
+        ("setItem", 'REQUEST_OUTCOME_UNRESOLVED_KEY, "1"'),
+        ("removeItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
+    ]
 
 def _served_html() -> str:
     with TestClient(app) as client:

@@ -9,6 +9,8 @@ auto-retry loops). They run without a database.
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 from rop.main import app
@@ -194,19 +196,18 @@ def test_js_has_no_client_content_persistence() -> None:
     assert "sessionStorage" not in conversations_ui
     assert "document.cookie" not in js
 
-    # The one allowed sessionStorage use preserves a boolean safety guard.
-    guard_start = assistant_shell.index("const REQUEST_OUTCOME_UNRESOLVED_KEY")
-    guard_end = assistant_shell.index("const STATUS_TEXT", guard_start)
-    guard = assistant_shell[guard_start:guard_end]
-    assert "micky.ai.request-outcome-unresolved.v1" in guard
-    assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in guard
-    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in guard
-    assert (
-        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)" not in guard
+    # Only the boolean safety marker may use browser storage; no content or IDs.
+    assert "micky.ai.request-outcome-unresolved.v1" in assistant_shell
+    assert assistant_shell.count("sessionStorage.") == 3
+    storage_calls = re.findall(
+        r"sessionStorage\.(getItem|setItem|removeItem)\(([^)]*)\)",
+        assistant_shell,
     )
-    assert "sessionStorage" not in assistant_shell[:guard_start]
-    assert "sessionStorage" not in assistant_shell[guard_end:]
-
+    assert storage_calls == [
+        ("getItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
+        ("setItem", 'REQUEST_OUTCOME_UNRESOLVED_KEY, "1"'),
+        ("removeItem", "REQUEST_OUTCOME_UNRESOLVED_KEY"),
+    ]
 
 def test_js_has_no_automatic_retry_loop() -> None:
     js = _served_js()
