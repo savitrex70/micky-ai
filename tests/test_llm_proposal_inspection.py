@@ -528,6 +528,8 @@ def test_schema_has_no_services_import() -> None:
 
 
 def test_schemas_never_import_from_services() -> None:
+    """Inspect import statements, not harmless prose in schema docstrings."""
+    import ast
     import pathlib
 
     schemas_dir = (
@@ -535,7 +537,27 @@ def test_schemas_never_import_from_services() -> None:
     )
     offenders = []
     for path in schemas_dir.glob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if "rop.services" in text or "from rop import services" in text:
-            offenders.append(path.name)
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        imports_services = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports_services = any(
+                    alias.name == "rop.services"
+                    or alias.name.startswith("rop.services.")
+                    for alias in node.names
+                )
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                imports_services = (
+                    module == "rop.services"
+                    or module.startswith("rop.services.")
+                    or (
+                        module == "rop"
+                        and any(alias.name == "services" for alias in node.names)
+                    )
+                )
+            if imports_services:
+                offenders.append(path.name)
+                break
     assert offenders == []
