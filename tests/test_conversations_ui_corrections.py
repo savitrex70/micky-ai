@@ -205,10 +205,20 @@ def test_stale_token_still_present() -> None:
     assert "token !== messagesLoadToken" in js
 
 
-def test_no_client_persistence_still_present() -> None:
+def test_no_client_content_persistence_except_boolean_request_guard() -> None:
+    """Only a non-content ambiguity bit may survive reload; no user data or IDs."""
     js = _js()
-    for forbidden in ("localStorage", "sessionStorage", "indexedDB"):
-        assert forbidden not in js, forbidden
+    marker = js.index("Task 230: persistent conversations UI")
+    assistant_shell = js[:marker]
+    conversations_ui = js[marker:]
+
+    assert "localStorage" not in js
+    assert "indexedDB" not in js
+    assert "sessionStorage" not in conversations_ui
+    assert "micky.ai.request-outcome-unresolved.v1" in assistant_shell
+    assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in assistant_shell
+    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)" not in assistant_shell
+    assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in assistant_shell
 
 
 def test_no_innerhtml_in_conversations_module() -> None:
