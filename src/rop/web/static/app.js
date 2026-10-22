@@ -512,6 +512,12 @@
         );
         return;
       }
+      // If a known challenge decision became uncertain, the card's controls
+      // are intentionally locked. The explicit acknowledgement dismisses only
+      // the local card; it does not claim the server challenge was cancelled.
+      if (challengeUnresolved) {
+        hideConfirmationCard();
+      }
       clearRequestOutcomeUnresolved();
       setStatus(
         "You acknowledged the unresolved outcome. This click did not send " +
@@ -601,8 +607,9 @@
             setStatus(describeStatus(payload.status), "info");
           } else {
             setStatus(
-              "The server asked for confirmation but did not provide a " +
-                "usable challenge. Nothing can be confirmed here.",
+              payload.message +
+                " The response did not include a usable confirmation " +
+                "challenge, so this page cannot complete confirmation.",
               "error"
             );
           }
