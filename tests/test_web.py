@@ -207,8 +207,7 @@ def _assert_no_client_content_persistence(js: str) -> None:
     assert 'setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, "1")' in guard
     assert "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, text)" not in guard
     assert (
-        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)"
-        not in guard
+        "setItem(REQUEST_OUTCOME_UNRESOLVED_KEY, selectedConversationId)" not in guard
     )
     assert "sessionStorage" not in js[:key_start]
     assert "sessionStorage" not in js[key_end:]
