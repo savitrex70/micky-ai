@@ -168,11 +168,11 @@ def test_page_javascript_distinguishes_success_and_unsupported() -> None:
 
 
 def test_page_javascript_maps_every_status_to_its_own_truthful_text() -> None:
-    """Every status has its own wording, and every non-success says nothing ran.
+    """Status wording must accurately represent each execution outcome.
 
-    The interface must not display a clarification requirement, a
-    confirmation requirement, or a refusal as an unmatched capability or as
-    a success.
+    Non-execution statuses must say the operation did not run; a confirmed
+    execution failure must say it ran, and an unknown outcome must warn against
+    blind retries. Clarification, confirmation, and refusal are not successes.
     """
     with TestClient(app) as client:
         js = client.get("/static/app.js")
@@ -188,10 +188,25 @@ def test_page_javascript_maps_every_status_to_its_own_truthful_text() -> None:
     # No status may reuse another status's wording.
     assert len(set(entries.values())) == len(entries)
 
+    no_execution_statuses = {
+        "unsupported-capability",
+        "clarification-required",
+        "confirmation-required",
+        "confirmation-unavailable",
+        "refused",
+    }
+
     for status, text in entries.items():
-        if status == "success":
-            continue
-        assert "not executed" in text.lower(), status
+        lowered_text = text.lower()
+        if status in no_execution_statuses:
+            assert "not executed" in lowered_text, status
+        elif status == "execution-failed":
+            assert "operation ran" in lowered_text, status
+        elif status == "execution-unknown":
+            assert "final outcome is not established" in lowered_text, status
+            assert "do not retry blindly" in lowered_text, status
+        elif status != "success":
+            raise AssertionError(f"Unclassified assistant status: {status}")
 
 
 def test_page_javascript_renders_replies_without_html_injection() -> None:
