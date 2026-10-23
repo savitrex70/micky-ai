@@ -197,7 +197,9 @@ def _apply_item(session, operation: ProposedOperation) -> None:
         item.completed = raw == "true"
     else:
         item.title = params["title"]
-        if "content" in params:
+        if params.get("clear_content") == "true":
+            item.content = ""
+        elif "content" in params:
             item.content = params["content"]
         if kind == "reminder":
             try:

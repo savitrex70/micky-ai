@@ -334,8 +334,12 @@
       action: "update",
       item_id: item.id,
       title: title,
-      content: content,
     };
+    if (content.trim() === "") {
+      payload.clear_content = true;
+    } else {
+      payload.content = content;
+    }
     if (item.kind === "reminder") {
       const tz = window.prompt("Timezone (IANA name)", item.timezone || currentTimezone());
       if (tz === null) return;
@@ -598,12 +602,16 @@
     } else if (result.status === "unknown") {
       try {
         const receipt = await readReceipt(pending.key);
-        setText(
-          itemStatus,
-          receipt.status === "succeeded"
-            ? receipt.message
-            : "The confirmation outcome is unknown. Inspect the receipt and confirmation records; do not retry with a new key."
-        );
+        if (receipt.status === "succeeded") {
+          clearPending();
+          setText(itemStatus, receipt.message);
+          await refreshWorkspace();
+        } else {
+          setText(
+            itemStatus,
+            "The confirmation outcome is unknown. Inspect the receipt and confirmation records; do not retry with a new key."
+          );
+        }
       } catch (err) {
         setText(itemStatus, "The confirmation outcome is unknown. Do not retry with a new key.");
       }
@@ -617,6 +625,7 @@
       if (receipt.status === "succeeded") {
         clearPending();
         setText(itemStatus, receipt.message);
+        await refreshWorkspace();
       } else {
         setText(itemStatus, receipt.message + " Do not prepare a different operation until this key is resolved.");
       }

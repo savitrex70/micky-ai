@@ -56,6 +56,7 @@ class WorkspaceChangeRequest(BaseModel):
     item_id: UUID | None = None
     title: str | None = Field(default=None, min_length=1, max_length=200)
     content: str | None = Field(default=None, max_length=512)
+    clear_content: bool = False
     due_local: str | None = Field(default=None, max_length=32)
     timezone: str | None = Field(default=None, min_length=1, max_length=128)
     path: str | None = Field(default=None, min_length=1, max_length=512)
@@ -95,6 +96,8 @@ class WorkspaceChangeRequest(BaseModel):
     @model_validator(mode="after")
     def validate_action_shape(self) -> "WorkspaceChangeRequest":
         if self.kind == "retrieval_root":
+            if self.clear_content:
+                raise ValueError("clear_content is only valid for workspace items")
             if self.action == "add":
                 if self.path is None:
                     raise ValueError("a folder path is required")
@@ -107,6 +110,12 @@ class WorkspaceChangeRequest(BaseModel):
 
         if self.action not in {"create", "update", "delete", "complete"}:
             raise ValueError("unsupported workspace action")
+        if self.clear_content and (
+            self.action != "update" or self.content is not None
+        ):
+            raise ValueError(
+                "clear_content is valid only for an update with no content value"
+            )
         if self.action == "create":
             if self.item_id is not None:
                 raise ValueError("create does not accept an item identifier")

@@ -153,7 +153,7 @@ def search_roots(
                     break
             if stop:
                 break
-        if stop and len(matches) >= limit:
+        if stop:
             break
     return matches, files_examined, skipped_files
 
