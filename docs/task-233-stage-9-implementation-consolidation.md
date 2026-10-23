@@ -48,11 +48,11 @@ The following files and commit history were inspected on the current `main` tree
 Workflow: [CI run 40013465806](https://github.com/savitrex70/micky-ai/actions/runs/40013465806)  
 Commit: `37d0f44fd69e8b86dced6e6a67ef9abe9ab26c3e`
 
-At the time this report was prepared:
+CI result for baseline `37d0f44f` (run 40013465806):
 - Ruff: **passed**.
 - Black 24.10.0: **passed**.
-- Full pytest (Python 3.12): **still running**; no final result was available.
-- Therefore this task makes **no claim** that the full test suite passed.
+- Full pytest: **failed** with `1 failed, 7837 passed, 218 skipped, 23 warnings` in 914.77 seconds. The failure was `tests/test_web.py::test_page_javascript_maps_every_status_to_its_own_truthful_text`: the UI correctly exposed `execution-failed` and `execution-unknown`, but the expected-status test had not been updated to include them.
+- Corrective test change pushed as `6c1d16d8ff809460f5ff75f1383de0314fa4f0a0` (adds both expected status entries). Its CI result is pending; **do not treat this as a passing full suite yet**.
 
 ## 3. Work still required before Stage 9 can close
 
@@ -73,6 +73,6 @@ At the time this report was prepared:
 
 ## 5. Gate decision
 
-**Stage 9 closeout: NOT APPROVED YET.** Tasks 9.2-9.5 have substantial implementation on `main`, but the latest CI pytest result was not final, Stage 9.6 reasoning integration is partial, and Stage 9.8 acceptance evidence is outstanding.
+**Stage 9 closeout: NOT APPROVED YET.** The baseline full suite failed on one stale status-map expectation; a corrective test commit is pushed but its CI is pending. Tasks 9.2-9.5 have substantial implementation on `main`, Stage 9.6 reasoning integration is partial, and Stage 9.8 acceptance evidence is outstanding.
 
 The next safe step is to update the owner's local checkout and run the requested full suite on the exact current `main` commit. Stage 10 remains blocked until the outstanding Stage 9 work and acceptance gate are completed.
