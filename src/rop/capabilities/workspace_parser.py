@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from rop.capabilities.parser import CapabilityParseError
 from rop.schemas.authorization import ProposedOperation
@@ -71,6 +73,98 @@ def _uuid_target(value: str, missing_message: str) -> str:
             missing_message,
             partial_operation=None,
         ) from None
+
+
+class _ReminderTimeError(ValueError):
+    """Safe, field-specific reminder time validation error."""
+
+    def __init__(self, field_name: str, question: str) -> None:
+        self.field_name = field_name
+        self.question = question
+        super().__init__("reminder time needs clarification")
+
+
+def _normalize_reminder_due(due_at: str, timezone_name: str) -> str:
+    """Validate local time against its IANA zone and return canonical UTC ISO."""
+    try:
+        local = datetime.fromisoformat(due_at)
+    except (TypeError, ValueError):
+        raise _ReminderTimeError(
+            "due_at",
+            "Enter a valid local date and time, for example "
+            "2026-10-24T09:30 | Europe/Bucharest.",
+        ) from None
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise _ReminderTimeError(
+            "timezone",
+            "That timezone was not recognized. Enter an IANA timezone such as "
+            "Europe/Bucharest.",
+        ) from None
+
+    if local.tzinfo is not None:
+        zoned = local.astimezone(zone)
+        if (
+            zoned.replace(tzinfo=None) != local.replace(tzinfo=None)
+            or zoned.utcoffset() != local.utcoffset()
+        ):
+            raise _ReminderTimeError(
+                "due_at",
+                "That UTC offset does not match the selected timezone at this "
+                "local time. Enter a valid local time and matching offset.",
+            )
+        return local.astimezone(UTC).isoformat()
+
+    first = local.replace(tzinfo=zone, fold=0)
+    second = local.replace(tzinfo=zone, fold=1)
+    first_round_trip = first.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
+    second_round_trip = second.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
+    first_valid = first_round_trip == local
+    second_valid = second_round_trip == local
+    if not first_valid and not second_valid:
+        raise _ReminderTimeError(
+            "due_at",
+            "That local time does not exist because of a daylight-saving-time "
+            "change. Choose a valid local time and include its UTC offset.",
+        )
+    if first_valid and second_valid and first.utcoffset() != second.utcoffset():
+        raise _ReminderTimeError(
+            "due_at",
+            "That local time occurs twice because of a daylight-saving-time "
+            "change. Repeat it with an explicit UTC offset, for example "
+            "2026-10-25T03:30+03:00 | Europe/Bucharest.",
+        )
+    chosen = first if first_valid else second
+    return chosen.astimezone(UTC).isoformat()
+
+
+def _validate_reminder_operation(operation: ProposedOperation) -> ProposedOperation:
+    """Resolve a reminder's named local timezone before confirmation."""
+    if operation.operation_id not in {
+        "workspace_reminder_create",
+        "workspace_reminder_update",
+    }:
+        return operation
+    parameters = dict(operation.parameters)
+    due_at = parameters.get("due_at")
+    timezone_name = parameters.get("timezone")
+    if not due_at or not timezone_name:
+        return operation
+    try:
+        parameters["due_at"] = _normalize_reminder_due(due_at, timezone_name)
+    except _ReminderTimeError as error:
+        raise CapabilityParseError(
+            error.field_name,
+            error.question,
+            partial_operation=operation,
+            missing_fields=[error.field_name],
+        ) from None
+    return _operation(
+        operation.operation_id,
+        target=operation.target,
+        parameters=parameters,
+    )
 
 
 class WorkspaceCommandParser:
@@ -174,7 +268,9 @@ class WorkspaceCommandParser:
                     ),
                     missing_fields=missing,
                 )
-            return _operation("workspace_reminder_create", parameters=params)
+            return _validate_reminder_operation(
+                _operation("workspace_reminder_create", parameters=params)
+            )
 
         delete_match = _DELETE_RE.fullmatch(message)
         if delete_match:
@@ -280,9 +376,10 @@ class WorkspaceCommandParser:
                         ),
                         missing_fields=missing,
                     )
-            return _operation(
+            operation = _operation(
                 f"workspace_{kind}_update", target=target, parameters=params
             )
+            return _validate_reminder_operation(operation)
 
         raise CapabilityParseError(
             "command",
@@ -325,7 +422,7 @@ class WorkspaceCommandParser:
                     operation,
                     fields,
                 )
-            parameters["title"] = value[:200]
+            parameters[first] = value[:200]
         elif first == "target":
             try:
                 target = _uuid_target(answer, "Enter the item ID shown for the item.")
@@ -334,21 +431,30 @@ class WorkspaceCommandParser:
                     "target", "Enter the item ID shown for the item.", operation, fields
                 ) from None
         elif first in {"due_at", "timezone"}:
-            # Time and timezone are collected together to avoid creating
-            # a reminder with an arbitrary/implicit timezone.
-            due = parts[0] if parts else ""
-            timezone = parts[1] if len(parts) > 1 else ""
-            if due:
-                parameters["due_at"] = due[:32]
-            if timezone:
-                parameters["timezone"] = timezone[:128]
-            still_missing = [n for n in ("due_at", "timezone") if n not in parameters]
+            # Ask for both values together only when both are missing. A
+            # single-field correction changes only that field.
+            if set(fields) == {"due_at", "timezone"}:
+                due = parts[0] if parts else ""
+                timezone = parts[1] if len(parts) > 1 else ""
+                if due:
+                    parameters["due_at"] = due[:64]
+                if timezone:
+                    parameters["timezone"] = timezone[:128]
+            elif first == "due_at":
+                if answer.strip():
+                    parameters["due_at"] = answer.strip()[:64]
+            elif answer.strip():
+                parameters["timezone"] = answer.strip()[:128]
+            still_missing = [name for name in fields if not parameters.get(name)]
             if still_missing:
                 raise CapabilityParseError(
                     still_missing[0],
-                    "Reply with local time and timezone as "
-                    "YYYY-MM-DDTHH:MM | Europe/Bucharest.",
-                    operation,
+                    "Reply with the missing local time or IANA timezone.",
+                    _operation(
+                        operation.operation_id,
+                        target=target,
+                        parameters=parameters,
+                    ),
                     still_missing,
                 )
             fields = []
@@ -369,7 +475,10 @@ class WorkspaceCommandParser:
                 ),
                 fields,
             )
-        return _operation(operation.operation_id, target=target, parameters=parameters)
+        completed = _operation(
+            operation.operation_id, target=target, parameters=parameters
+        )
+        return _validate_reminder_operation(completed)
 
 
 __all__ = ["WorkspaceCommandParser"]
