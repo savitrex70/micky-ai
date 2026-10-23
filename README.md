@@ -132,77 +132,48 @@ Docker workflow below, then open <http://127.0.0.1:8000/> in a browser.
 The `/docs` page is the OpenAPI schema for developers. It is not the
 assistant interface and does not represent a completed personal assistant.
 
-**Current capabilities and limitations** (this is a working incremental
-step, not a finished assistant):
+**Current capabilities and limitations** (Stage 9 is still in progress, not accepted):
 
-- The Help capability is the first implemented user-facing capability.
-  It responds to a small, explicitly registered set of phrases:
-  `help`, `what can you do`, `show capabilities`, `list capabilities`,
-  and `list available capabilities`. Matching is deterministic and exact
-  after normalizing case, surrounding whitespace, and trailing
-  punctuation. Help returns a deterministic description of what the
-  assistant can and cannot do right now.
-- Any other request returns `unsupported-capability`. Unregistered phrases
-  are not guessed into a capability.
-- A matched capability is not automatically answered. The request endpoint
-  evaluates the resolved capability against the authorization policy
-  before returning anything, and only `ALLOW` dispatches the capability's
-  predefined response. `clarification-required`, `confirmation-required`,
-  and `refused` all mean that nothing was dispatched, and the page reports
-  those outcomes distinctly instead of presenting them as an unmatched
-  request or a success.
-- Conversation and message persistence are implemented (Tasks 228-230)
-  with a durable store, an HTTP API, and a persistent UI. When a
-  conversation is selected, each `success` exchange is saved as an
-  atomic user/assistant pair. Non-success outcomes are not saved.
-  Requests made without a `conversation_id` retain their original
-  database-free behaviour. This persistence is for conversations only;
-  it does not imply general-purpose user memory. Conversation data
-  remains separate from clinical reasoning sessions. Notes, tasks,
-  reminders, and local-file retrieval remain unimplemented in this
-  version, and no general-purpose user profile is stored.
-- Notes, tasks, reminders, and local-file retrieval are not implemented
-  in this version.
-- A deterministic, fail-closed authorization policy is implemented as an
-  evaluator (`src/rop/authorization/policy.py`) that decides `ALLOW`,
-  `CLARIFY`, `REQUIRE_CONFIRMATION`, or `DENY` for a proposed operation,
-  whose machine identifier is matched exactly and never normalized, so a
-  malformed identifier is refused rather than resolved. The assistant
-  request endpoint gates capability dispatch on it
-  (`src/rop/authorization/dispatch.py`), so registering a capability does
-  not authorize it: a capability with no policy rule is refused.
-- The server-side confirmation workflow is implemented: a
-  `REQUIRE_CONFIRMATION` decision with a registered executor mints a
-  durable challenge (`src/rop/services/confirmation.py`), and a decision
-  request at `POST /api/assistant/confirmations/{id}/decision`
-  revalidates the stored operation against the current policy, verifies
-  the display code in constant time, and consumes the approval at most
-  once before any executor runs. The persistence store lives in
-  `assistant_confirmations` (Task 223). Bounded startup recovery marks
-  consumed records whose outcome was never established as unknown and
-  expires overdue pending challenges.
-- The browser confirmation interface is implemented (Task 226): when
-  the server returns `confirmation-required` with a valid challenge,
-  the page shows a pending confirmation card with the stored operation
-  summary, the server-issued display code, the expiry in local time,
-  and Confirm/Cancel actions. The code-entry field starts empty; the
-  user must type the code and deliberately activate Confirm. Outcomes
-  are reported honestly - success only when the server also
-  establishes `executed: true`. With no production executor
-  registered, a consequential operation still cannot execute in this
-  build.
-- No production state-changing capability and no production executor are
-  registered. The default executor registry
-  (`src/rop/authorization/executors.py`) is empty, so a
-  `REQUIRE_CONFIRMATION` operation cannot execute in this build, and the
-  only capability registered is `help`. See
-  [the authorization policy](docs/task-220-authorization-policy.md),
-  [the dispatch boundary](docs/task-221-authorization-dispatch.md), and
-  [the confirmation flow design](docs/task-222-confirmation-flow-design.md).
-- The interface itself does not access model providers, remote services,
-  or the network beyond the local server. The one database write the
-  assistant request path performs is challenge persistence on the
-  confirmation path, and only through the store above.
+- The local Micky AI page includes saved conversations, a personal workspace
+  for notes/tasks/reminders, explicit local-retrieval root selection and
+  search, and a separate clinical reasoning panel. These are existing UI
+  surfaces, not proof that all end-to-end acceptance criteria pass.
+- Chat handling is deterministic. It supports the registered help phrases
+  and explicit workspace commands such as `workspace list notes`,
+  `workspace add note: title`, and
+  `workspace search files: terms`. It does not guess free-form intent,
+  fuzzy-match commands, or call an external model. Unsupported input is not
+  silently converted into a capability.
+- Saved conversations persist successful request/response exchanges as
+  atomic user/assistant pairs. Non-success results are not stored as
+  successful turns. Server-owned clarification state is short-lived, bound
+  to the selected conversation, and does not reuse clinical session IDs.
+- Notes, tasks, and reminders have local persistence and UI workflows.
+  State-changing workspace commands use fixed server-defined operations,
+  per-operation confirmation, and idempotency receipts. Reminder parsing
+  validates the supplied IANA timezone and rejects ambiguous or nonexistent
+  daylight-saving-time wall times instead of guessing. The interface surfaces
+  overdue reminders in-app; it does not send OS notifications.
+- Local retrieval is limited to user-authorized roots and the tested
+  `.txt`, `.md`, `.json`, and `.csv` allowlist. Path traversal,
+  symlink escapes, unsupported file types, and network roots are rejected or
+  skipped. This design does not authorize disk-wide scanning or ordinary
+  network fetching.
+- The clinical panel can invoke the existing fully audited deterministic ROP
+  reasoning workflow and displays its result as text. Package consistency is
+  not clinical validity. Clinical reasoning session IDs remain separate from
+  assistant conversation IDs, and this panel is not a free-form clinical
+  chatbot.
+- The server-side confirmation lifecycle and the browser confirmation card
+  are implemented. The generic default executor factory remains empty;
+  only the dedicated, reviewed workspace operation set is wired through a
+  confirmation-gated mutation path. No arbitrary shell/code execution,
+  hosted model, Ollama, third-party pretrained model, hidden provider
+  fallback, or automatic model download is permitted.
+- Stage 8 native-intelligence acceptance is incomplete, so model integration
+  remains gated. Stage 9 is **not accepted**: the current main-tree test run,
+  full privacy/security/offline/recovery verification, and manual end-to-end
+  walkthrough must be reviewed before Stage 9 can close.
 
 ### Stage 7 release-readiness evidence chain
 
@@ -565,5 +536,7 @@ See [`docs/stage-9-product-contract.md`](docs/stage-9-product-contract.md)
 for the agreed roadmap and
 [`docs/task-233-stage-9-implementation-consolidation.md`](docs/task-233-stage-9-implementation-consolidation.md)
 for the current implementation inventory, CI evidence, and remaining
-acceptance blockers. Stage 10 must not begin until those blockers are
-closed.
+acceptance blockers. See also
+[`docs/task-234-stage-9-implementation-status-reconciliation.md`](docs/task-234-stage-9-implementation-status-reconciliation.md)
+for the full contract/README reconciliation. Stage 10 must not begin until
+those blockers are closed.

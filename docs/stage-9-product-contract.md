@@ -6,19 +6,19 @@ This document defines the product boundary for Stage 9 of Micky AI, the
 personal-assistant product being built on top of the existing Reasoning
 Operating Platform (ROP). It is a contract, not a finished product.
 
-Stage 9 is **in progress**. Several foundational capabilities are already
-implemented on `main` (see §B.1.5): the locally served browser interface,
-deterministic capability routing with a single registered `help`
-capability, policy-enforced authorization dispatch, the durable
-confirmation record and its server-side lifecycle, the browser
-confirmation card, the user-facing confirmation-record inspect/export/
-delete surface, and durable conversation/message persistence with an
-HTTP API and a working conversation UI. Those implemented foundations
-are **distinct from the complete Stage 9 product**, which remains
-unfinished. Notes, tasks, reminders, local retrieval, integrated ROP
-reasoning through the conversation workflow, and any production
-state-changing capability or executor do not exist yet. The Stage 9.2-9.8
-roadmap in §B.3 defines the remaining work.
+Stage 9 is **in progress and not accepted**. The current `main` tree
+contains the saved-conversation foundation; deterministic help and explicit
+workspace-command routing; server-owned, conversation-bound clarification;
+persistent notes, tasks, and reminders; confirmation-gated workspace
+mutations with idempotency receipts; bounded local retrieval from explicitly
+authorized roots; and a separate clinical panel that can invoke the fully
+audited ROP reasoning workflow. These components are documented in §B.1.5
+and §B.2, but their presence does not by itself satisfy the full Stage 9
+acceptance gate. General free-form intent inference, a model-backed chat
+path, and a single conversational flow through clinical reasoning are not
+implemented. Stage 8 acceptance remains incomplete, so Stage 9.7 is still
+gated. The remaining work is end-to-end, privacy, security, offline,
+recovery, and manual acceptance under the Stage 9.2-9.8 roadmap in §B.3.
 
 ## A. Product identity and purpose
 
@@ -148,24 +148,31 @@ Implemented foundation:
     `src/rop/schemas/assistant.py`
   - Establishes: a locally served page at `GET /`, one request endpoint,
     and a truthful envelope of `success`, `unsupported-capability`,
-    `clarification-required`, `confirmation-required`, or `refused`.
-    Only `success` means a capability answered.
-  - Absent: no notes/tasks/reminders UI, no local-retrieval UI, no
-    persistent user-profile UI. Conversation and message persistence
-    exist as separate capabilities (see the next bullet).
+    `clarification-required`, `confirmation-required`,
+    `confirmation-unavailable`, `execution-failed`,
+    `execution-unknown`, or `refused`. Only `success` is a successful
+    assistant response; execution failure and unknown outcome are distinct.
+  - Absent: general free-form intent inference and a persistent user-profile
+    UI. Separate workspace and clinical panels are present; they do not
+    establish full Stage 9 product acceptance.
 
-- **Capability:** Deterministic capability routing with `help` as the
-  only registered capability.
-  - Status: `IMPLEMENTED` for routing and the single `help` capability.
-  - Paths: `src/rop/capabilities/registry.py`
-  - Establishes: exact matching after normalizing case, whitespace, and
-    trailing punctuation to one registered capability; anything else is
-    `unsupported-capability` and is never guessed into a capability.
-  - Absent: no conversational interaction engine beyond the single
-    `help` capability; no notes, tasks, reminders, or local retrieval.
-    Persistent conversation storage, the conversation HTTP API, and the
-    persistent conversation UI exist as separate capabilities (Tasks
-    228-230). The registered capability set is `help` only.
+- **Capability:** Deterministic help aliases and explicit workspace-command
+  routing.
+  - Status: `IMPLEMENTED` for the help aliases and explicit parser-backed
+    workspace commands; general free-form intent inference is not implemented.
+  - Paths: `src/rop/capabilities/registry.py`,
+    `src/rop/capabilities/parser.py`,
+    `src/rop/capabilities/workspace_parser.py`,
+    `src/rop/api/assistant.py`
+  - Establishes: exact help-phrase matching after deterministic
+    normalization; explicit `workspace ...` commands for list/search and
+    notes/tasks/reminder mutations; server-owned clarification bound to a
+    selected conversation. Unknown phrases are never guessed into a
+    capability. Parsing, authorization, and execution remain separate
+    boundaries.
+  - Absent: open-ended natural-language intent inference, a model-backed
+    chat path, and integrated clinical reasoning through the chat command
+    workflow. The separate clinical reasoning panel is described below.
 
 - **Capability:** Risk-based authorization policy, per-operation
   confirmation lifecycle, and the at-most-once executor boundary.
@@ -173,8 +180,10 @@ Implemented foundation:
     durable confirmation record (Task 223), the server-side confirmation
     lifecycle (Task 224), the browser confirmation card (Task 226), and
     the inspect/export/delete surface for confirmation records (Task 227).
-    The production executor registry is empty, so no production
-    state-changing capability executes in this build.
+    The generic default executor factory remains empty by design.
+    Workspace mutations use a dedicated fixed-operation registry and the
+    existing per-operation confirmation workflow; no arbitrary command
+    executor is registered.
   - Paths: `src/rop/authorization/policy.py`,
     `src/rop/schemas/authorization.py`,
     `src/rop/authorization/dispatch.py`,
@@ -189,9 +198,10 @@ Implemented foundation:
     effective policy identity, with constant-time display-code
     verification and a bounded failed-attempt budget; an atomic once-only
     consumption committed before an executor may run; and a server-side
-    executor registry that is empty in this build. A
-    `REQUIRE_CONFIRMATION` operation therefore cannot execute without a
-    registered server-side executor, and none is registered. See
+    generic default executor factory remains empty. The workspace
+    workflow separately registers only reviewed note/task/reminder/root
+    mutation handlers, each behind exact-operation confirmation and an
+    idempotency receipt. This does not authorize arbitrary operations. See
     `docs/task-220-authorization-policy.md`,
     `docs/task-221-authorization-dispatch.md`,
     `docs/task-222-confirmation-flow-design.md`, and
@@ -204,9 +214,36 @@ Implemented foundation:
   - Implemented (Task 227): the user-facing inspect/export/delete
     surface for confirmation records, at
     `/api/assistant/confirmation-records` and in the browser interface.
-    No production state-changing capability and no production executor
-    are registered; consequential operations remain non-executable in
-    this build.
+    Workspace-specific state-changing operations are registered behind
+    the exact confirmation lifecycle and receipt checks. No arbitrary
+    shell/code operation is registered; Stage 9.8 acceptance of the full
+    mutation and recovery path remains outstanding.
+
+Current Stage 9.2-9.6 implementation on `main` (acceptance pending):
+
+- **Workspace and local retrieval (Stage 9.2-9.5):** the existing browser
+  page contains notes/tasks/reminders and retrieval-root/search UI.
+  `workspace.js` calls the workspace API; mutations are fixed operations
+  with per-operation confirmation and idempotency receipts. Chat supports
+  only explicit deterministic workspace command grammar, not general
+  natural-language intent guessing. Reminder parsing preserves the named
+  IANA timezone and rejects nonexistent or ambiguous DST times rather than
+  guessing. In-app overdue reminders are rendered when the workspace loads
+  and refreshed while the page is open.
+- **Private retrieval:** only explicitly authorized local roots are searched;
+  the implementation allowlist is `.txt`, `.md`, `.json`, and `.csv`.
+  Root selection is explicit, and traversal/symlink escape, unsupported
+  file types, and network roots are excluded by the retrieval boundary.
+- **ROP reasoning integration (Stage 9.6):** a separate clinical-session
+  panel can run `/api/sessions/{session_id}/reasoning-run/execute-fully-audited`
+  and displays the result as text, with a distinction for package consistency.
+  It does not turn the product into a free-form clinical chatbot; package
+  consistency does not establish clinical validity, and reasoning-session IDs
+  remain separate from conversation IDs.
+- **Acceptance status:** implementation is present but Stage 9 is not
+  accepted. CI evidence must be checked on the current commit, and the
+  complete end-to-end/privacy/security/offline/recovery matrix and a manual
+  walkthrough remain required.
 
 Planned capabilities (Stage 9 target):
 
@@ -284,12 +321,12 @@ Planned capabilities (Stage 9 target):
     response preserves the previous rows, offset, total, and selection.
     The API adds backward-compatible `X-Total-Count` headers on its two
     list endpoints.
-  - Absent: conversation export/import, per-message editing, notes,
-    tasks, reminders, local retrieval. Stage 9 owner decisions H.1 (scope,
-    UI, and conversation/clinical separation), H.3 (reminder defaults),
-    and H.4 (retrieval and offline boundary defaults) are recorded in
-    §H. Stage-specific implementation details remain deferred to their
-    respective stages. Stage 9 is not complete.
+  - Absent or not yet accepted: conversation export/import, per-message
+    editing, a general-purpose profile, a free-form model-backed chat path,
+    and the full Stage 9 end-to-end acceptance evidence. Conversation,
+    workspace, and clinical reasoning data remain separate domains.
+    Decisions H.1, H.3, and H.4 remain the approved boundaries for the
+    implementations described here.
 
 #### B.1.6 Blocked or gated capabilities
 
@@ -308,17 +345,18 @@ Planned capabilities (Stage 9 target):
 
 #### B.1.7 Not established
 
-- **Capability:** End-to-end personal-assistant capability covering
-  notes, tasks, reminders, local retrieval, and integrated ROP reasoning
-  through a single conversational workflow.
+- **Capability:** Full end-to-end Stage 9 product acceptance across
+  conversations, explicit workspace commands, notes/tasks/reminders,
+  local retrieval, confirmation and recovery, and integrated ROP reasoning.
   - Status: `NOT ESTABLISHED`
-  - Paths: none - no code path currently supports the full claim.
-  - Absent: no notes/tasks/reminders implementation, no local retrieval,
-    no integrated ROP reasoning through the conversation workflow. The
-    foundational components these will build on do exist: conversation
-    persistence (B.1.5), the local browser UI (B.1.5), deterministic
-    capability routing with `help` (B.1.5), and the authorization
-    infrastructure (B.1.5).
+  - Paths: multiple components are present, but no single passing
+    acceptance record and manual walkthrough establishes the complete
+    product claim.
+  - Absent or not established: a unified free-form conversational flow
+    across all capabilities; complete privacy/security/offline/recovery
+    acceptance; Stage 9.6 manual verification of audit-package behavior
+    and identity separation; and formal Stage 9.8 closeout. Existing
+    components are implementation evidence, not proof of acceptance.
 
 - **Capability:** Clinical validity of any Stage 8 artifact.
   - Status: `NOT ESTABLISHED`
@@ -334,54 +372,55 @@ and a measurable acceptance condition. The security invariant in
 section E.1 applies to every entry below.
 
 1. **Local browser UI**
-   - Status: PARTIALLY IMPLEMENTED - the locally served page at `GET /`
-     exists and can submit a request and display a truthful response. No
-     notes/tasks/reminders/retrieval UI exists yet.
+   - Status: PARTIALLY IMPLEMENTED - the locally served interface includes
+     saved conversations, workspace item forms, authorized retrieval-root
+     selection/search, and a separate clinical reasoning panel. Stage 9
+     acceptance is still outstanding.
    - Outcome: user interacts with the assistant through a locally
      served page on the same machine.
-   - Dependencies: `src/rop/web/` and its FastAPI-served page already
-     exist. Remaining interface work is the notes/tasks UI (Stage 9.3),
-     reminders UI (Stage 9.4), and retrieval UI (Stage 9.5). No new
-     external services are planned.
+   - Dependencies: the existing FastAPI-served page and vanilla-JavaScript
+     modules are already implemented. Remaining work is acceptance-level
+     integration, recovery, privacy/offline verification, and a manual
+     walkthrough. No replacement framework or external service is planned.
    - Acceptance: a documented local URL loads a working page; the page
      can submit a request and display a truthful response.
 
 2. **Conversational requests and session continuity**
-   - Status: PARTIALLY IMPLEMENTED - durable conversation/message
-     persistence (Task 228), the HTTP API (Task 229), and the persistent
-     UI (Task 230) exist. The end-to-end conversational workflow is only
-     complete for the `help` capability; notes, tasks, reminders, and
-     retrieval are not wired through it yet.
+   - Status: PARTIALLY IMPLEMENTED - saved conversations and their UI
+     exist, and the request endpoint supports exact explicit workspace
+     commands plus server-owned clarification state. Free-form natural
+     language and a single conversation workflow for clinical reasoning
+     are not implemented. End-to-end acceptance remains pending.
    - Outcome: a user can hold a conversation; messages persist and can
      be revisited.
    - Dependencies: the conversation domain (`AssistantConversation`,
      `AssistantMessage`, repositories, HTTP API, and persistent UI) is
      already implemented (Tasks 228-230) and remains separate from the
-     clinical `reasoning_sessions` domain. Remaining product work is
-     wiring the larger interaction engine and additional capabilities
-     through the existing conversation workflow.
+     clinical `reasoning_sessions` domain. Remaining work is focused
+     boundary/recovery testing and proving the implemented commands and
+     state changes work end to end without cross-domain coupling.
    - Acceptance: create conversation, add messages, list, reopen,
      delete - all verifiable via tests and via the UI.
 
 3. **Deterministic capability routing**
-   - Status: IMPLEMENTED (routing and the single `help` capability only).
+   - Status: IMPLEMENTED for help aliases and explicit parser-backed
+     workspace commands; general free-form intent inference is not implemented.
    - Outcome: each supported request is matched to an explicitly
      registered capability; unsupported requests return an explicit
      "unsupported" response, never a fabricated success.
-   - Dependencies: `src/rop/capabilities/registry.py` and the
-     deterministic matcher already exist and route the single `help`
-     capability. Remaining work is the larger interaction engine
-     (Stage 9.2): additional registered capabilities, clarification
-     rules, safe execution boundaries, and truthful outcome taxonomy.
-     Current limitation: only `help` is registered.
+   - Dependencies: the registry, parser protocol, workspace command
+     grammar, server-owned clarification state, policy, confirmation
+     service, and outcome taxonomy exist. Commands remain exact and
+     deterministic; unregistered/free-form phrases are not inferred.
+     Full end-to-end and retry/recovery acceptance is still pending.
    - Acceptance: routing tests covering supported, ambiguous, and
      unsupported inputs; no hidden LLM or model selection on this path.
 
 4. **Notes, tasks, reminders**
-   - Status: Planned.
+   - Status: IMPLEMENTATION PRESENT; ACCEPTANCE PENDING.
    - Outcome (notes and tasks): user-controlled create/list/edit/delete
-     for simple everyday items, with honest handling of malformed or
-     partial input.
+     for simple everyday items, with an exact command grammar and a persistent
+     workspace UI. The assistant does not guess free-form intent.
    - Outcome (reminders): a reminder created by the user is stored with
      a user-specified due time and is surfaced according to the approved
      H.3 defaults (recorded below and in §H.3). Reminder functionality
@@ -389,8 +428,9 @@ section E.1 applies to every entry below.
      implementation of the exact behaviour below. The approved defaults
      define the target behaviour this stage must deliver, not a claim
      that the feature exists today.
-   - Dependencies: new persistence models and repositories; reuse the
-     existing service/repository pattern. No new external services.
+   - Dependencies: existing workspace models/repository/API, the
+     confirmation-only mutation executor, idempotency receipts, and
+     `workspace.js` are present. No new external service is needed.
    - Approved reminder defaults (recorded in §H.3):
        * Reminders surface inside the Micky AI interface while the
          application is running. No OS notifications and no separate
@@ -402,12 +442,13 @@ section E.1 applies to every entry below.
          clarification rather than a guessed interpretation.
        * Persistence and restart recovery must prevent reminders from
          being silently dropped or duplicated.
-   - Deferred to the Stage 9.4 reminder design task:
-       * The exact accepted date/time expression grammar.
-       * The exact storage schema and recovery algorithm.
-       * The exact in-app UI affordance for surfacing and dismissing
-         reminders.
-       * Concrete acceptance tests.
+   - Implemented in the current tree: the accepted input grammar is
+     explicit and deterministic; due times are parsed against an IANA zone;
+     nonexistent/ambiguous DST times are not guessed; the reminder store
+     persists the normalized instant and named timezone; and the in-app
+     overdue area refreshes on startup and while the page remains open.
+     Stage 9.8 still needs end-to-end restart, confirmation, expiry, and
+     no-drop/no-duplicate acceptance evidence.
    - Acceptance (once Stage 9.4 design is reviewed and approved):
        (a) end-to-end user workflow demonstrated for notes, tasks, and
            reminders, including create/list/edit/delete;
@@ -420,45 +461,57 @@ section E.1 applies to every entry below.
            reminder is silently dropped or duplicated.
 
 5. **Local retrieval from explicitly selected user data**
-   - Status: Planned
+   - Status: IMPLEMENTATION PRESENT; SECURITY/OFFLINE ACCEPTANCE PENDING.
    - Outcome: user points the assistant at specific local files or
      folders; the assistant retrieves from those only.
-   - Dependencies: a retrieval service that reads only from the
-     explicitly authorized paths; no filesystem-wide scanning; no
-     network access.
+   - Dependencies: the retrieval service and root management UI already
+     exist. The implementation reads only from explicitly authorized roots
+     and uses the tested `.txt`, `.md`, `.json`, and `.csv` allowlist;
+     path traversal, symlink escape, network roots, and unsupported formats
+     are excluded. Full security/offline acceptance remains pending.
    - Acceptance: retrieval tests prove that unauthorized paths are not
      read and that no external fetch occurs.
 
 6. **Integration with existing ROP functionality**
-   - Status: Planned
-   - Outcome: applicable ROP capabilities (e.g., observation
-     extraction, missing-information detection) are callable through
-     the assistant workflow via explicit, auditable service calls.
-   - Dependencies: reusing existing services; no duplicate business
-     logic.
+   - Status: PARTIALLY IMPLEMENTED; ACCEPTANCE PENDING.
+   - Outcome: applicable ROP capabilities are exposed through explicit,
+     auditable service calls in the separate clinical workspace panel.
+     The current UI can run the fully audited reasoning-run endpoint and
+     render the returned package as text; it is not wired into free-form chat.
+   - Dependencies: the existing ROP service/API and audited reasoning-run
+     endpoint are reused; the UI does not duplicate clinical business logic.
+     Manual verification of package semantics and clinical/conversation
+     identity separation remains required.
    - Acceptance: integration tests that invoke real ROP services;
      Stage 7 evidence, identity, fingerprint, status, and audit
      semantics preserved.
 
 7. **User-controlled persistence**
-   - Status: PARTIALLY IMPLEMENTED - confirmation records support
-     inspect/export/delete (Task 227); conversations support
-     create/list/rename/delete (Tasks 228-230). Notes, tasks, reminders,
-     and full conversation export/import are not implemented.
+   - Status: PARTIALLY IMPLEMENTED - confirmation records and
+     conversations support inspect/export/delete or create/list/rename/
+     delete as appropriate. Notes/tasks/reminders have local CRUD UI and
+     confirmation-gated mutations; retrieval roots can be listed and
+     removed. Full export/import of conversation and workspace content is
+     not implemented.
    - Outcome: the user can inspect, edit, delete, and export their
      permitted personal information from the UI.
-   - Dependencies: existing repositories; an export path using a
-     stable format (e.g., sorted-key JSON).
+   - Dependencies: existing repositories and per-domain controls exist.
+     A stable export path for conversations and general workspace content
+     remains a gap.
    - Acceptance: UI and API tests for inspect, edit, delete, and
      export for each permitted personal data type.
 
 8. **Uniform error, refusal, and unsupported experience**
-   - Status: Planned
+   - Status: IMPLEMENTED at the API/UI response-contract level; full
+     cross-flow acceptance pending.
    - Outcome: the assistant returns a truthful status of success,
      failure, refusal, or unsupported-capability, never a fabricated
      success.
-   - Dependencies: a shared response envelope in the new conversation
-     layer; existing deterministic services keep their contracts.
+   - Dependencies: the assistant request envelope has explicit
+     unsupported, clarification, confirmation, confirmation-unavailable,
+     execution-failed, execution-unknown, success, and refused statuses;
+     browser status mapping distinguishes failure from unknown outcomes.
+     Cross-flow/recovery acceptance remains pending.
    - Acceptance: tests covering each status.
 
 9. **Permission boundary for data-modifying operations**
@@ -466,22 +519,24 @@ section E.1 applies to every entry below.
      authorization-enforced dispatch boundary, the durable confirmation
      record, and the server-side confirmation lifecycle are implemented,
      as are the browser confirmation card and the user-facing
-     inspect/export/delete surface for confirmation records. A
-     production executor and a production state-changing capability are
-     not.
+     inspect/export/delete surface for confirmation records. The
+     workspace product also has a dedicated fixed-operation registry whose
+     mutations require exact confirmation and durable idempotency receipts;
+     the generic default executor factory remains empty by design.
    - Outcome: any operation classified as protected by the agreed
      security policy requires effective authorization before it may
      execute. No protected state-changing operation may run silently.
    - Dependencies: the policy evaluator, dispatch boundary, durable
      confirmation record, server-side confirmation lifecycle, browser
      confirmation card, and confirmation-record inspect/export/delete
-     surface already exist. The actual remaining gap is that
+     surface already exist. Workspace mutations are wired through
+     `build_workspace_executor_registry()` in
+     `src/rop/services/workspace_executor.py`; the generic
      `build_default_executor_registry()` in
-     `src/rop/authorization/executors.py` returns an empty registry by
-     design, so no production state-changing capability can execute in
-     this build. Any future protected capability must be integrated
-     through the established authorization boundary and verified
-     end-to-end.
+     `src/rop/authorization/executors.py` remains empty. The remaining
+     gap is acceptance evidence for replay, cancelled/expired challenges,
+     uncertain outcomes, and full browser-to-database recovery; arbitrary
+     operations still cannot be executed.
    - Owner decision recorded (section H.2, principles in section E.2):
      risk-based per-operation confirmation. Session-scoped authorization
      was not chosen.
@@ -521,14 +576,12 @@ section E.1 applies to every entry below.
      (`src/rop/services/confirmation_recovery.py`) marks consumed
      records without an established outcome as unknown and expires
      overdue pending challenges.
-   - Remaining gaps: the default production executor registry is empty
-     and no production state-changing capability is registered, so a
-     `REQUIRE_CONFIRMATION` operation cannot execute in this build. The
-     browser confirmation card and its Confirm/Cancel controls are
-     implemented (Task 226), so a user can decide a challenge through
-     the interface. The user-facing inspect/export/delete surface for
-     confirmation records is implemented in Task 227 (see
-     `docs/task-222-confirmation-flow-design.md` §6.4).
+   - Remaining gaps: the generic default executor factory remains empty,
+     but reviewed workspace mutations are registered separately and use
+     the same confirmation lifecycle. The workspace path still requires
+     complete retry/recovery acceptance and a manual walkthrough. The
+     confirmation-record inspect/export/delete surface is implemented in
+     Task 227 (see `docs/task-222-confirmation-flow-design.md` §6.4).
    - Acceptance (for the complete mechanism):
        (a) an unauthorized call to a protected operation is refused,
            and the refusal is recorded;
@@ -549,11 +602,11 @@ section E.1 applies to every entry below.
            that do persist are terminal challenge states (INVALIDATED,
            EXPIRED, LOCKED, CANCELLED, REJECTED); arbitrary refusals are
            not recorded.
-       (b) is not demonstrable in this build: the mechanism exists to
-           authorize and execute one protected operation, but no
-           production executor is registered, so an authorized
-           protected operation cannot be shown completing. The workflow
-           is exercised end to end only with test-only executors.
+       (b) has an implementation path for the fixed workspace operation
+           set, including confirmation and idempotency receipts. The full
+           product criterion is not marked accepted until the current CI
+           run, operation replay/unknown-outcome checks, and manual
+           end-to-end walkthrough are green on the reviewed commit.
 
 ### B.3 Agreed Stage 9 capability roadmap
 
@@ -663,18 +716,17 @@ The following principles are the agreed policy. They are the standard the
 implementation is measured against, not a description of behaviour that
 already exists end to end.
 
-**Implementation status (Task 224).** The server-side half of this
-policy exists: challenge issuance, decision handling, policy
-revalidation against the effective policy identity, atomic consumption,
-and the executor boundary are implemented in
+**Implementation status (Tasks 223-226 and Stage 9 workspace work).**
+The server-side confirmation lifecycle exists: challenge issuance, decision
+handling, policy revalidation against effective policy identity, atomic
+single-use consumption, and the executor boundary are implemented in
 `src/rop/services/confirmation.py` and exposed at
-`POST /api/assistant/confirmations/{id}/decision`. The browser
-confirmation card and its Confirm/Cancel controls are implemented
-(Task 226). The default production executor registry is empty, so no
-`REQUIRE_CONFIRMATION` operation can execute in this build. The
-principles below remain the agreed policy; the server-side lifecycle
-now enforces them, and the browser confirmation card added in Task 226
-lets the user review and decide a pending challenge.
+`POST /api/assistant/confirmations/{id}/decision`. The browser card and
+Confirm/Cancel controls are implemented. The generic default executor
+factory remains empty, while a separate fixed-operation workspace executor
+registry supports only notes/tasks/reminders and retrieval-root mutations,
+with per-operation confirmation and idempotency receipts. These components
+must still pass Stage 9.8 end-to-end and recovery acceptance.
 
 - **Clear, supported, low-risk operations** may proceed without an
   additional confirmation when they are explicitly allowed by the
@@ -704,31 +756,25 @@ lets the user review and decide a pending challenge.
   never default to permission. A malformed machine identifier is not
   normalized into a registered operation; it is refused.
 
-Server-side status (Task 224) and remaining gaps:
+Server-side status and remaining gaps:
 
-- **Implemented:** the durable confirmation record (Task 223), and the
-  server-side interaction that obtains and consumes a confirmation (Task
-  224). This covers challenge issuance, decision handling, policy-identity
-  revalidation against the effective policy fingerprint, atomic once-only
-  consumption, bounded startup recovery of unestablished outcomes and
-  overdue challenges, and the executor boundary. A confirmation is bound to
-  the effective policy identity, not to the fixed `"1"` version label.
-- **Browser confirmation UI (Task 226):** the pending-confirmation card
-  and its Confirm/Cancel controls are implemented. A user can decide a
-  challenge through the interface. With the default executor registry
-  empty, a `REQUIRE_CONFIRMATION` operation still cannot execute.
-- **Remaining gap - production execution:** no production executor and no
-  production state-changing capability is registered. The default executor
-  registry (`src/rop/authorization/executors.py`) is empty, so a
-  `REQUIRE_CONFIRMATION` operation cannot execute in this build.
-- **User control over records (Task 227):** the confirmation-record
-  inspection, export, and deletion surface is implemented at
-  `/api/assistant/confirmation-records` and in the browser interface.
-  A user can inspect stored records, download a complete export, and
-  delete selected records. This satisfies E.1's inspect/export/delete
-  promise for confirmation records; the broader user-controlled
-  persistence requirement (conversations, notes, tasks, reminders)
-  remains separate and incomplete.
+- **Implemented:** the durable confirmation record (Task 223), the
+  server-side interaction that obtains and consumes confirmation (Task
+  224), the browser confirmation card (Task 226), and confirmation-record
+  inspect/export/delete controls (Task 227). The lifecycle revalidates
+  effective policy identity and consumes a challenge at most once.
+- **Workspace mutation path:** a separately constructed registry exposes
+  only fixed note/task/reminder/root operations through the existing
+  confirmation lifecycle, with idempotency receipts and recovery reads.
+  The generic default executor factory remains empty by design. This is
+  not an arbitrary command or generated-code execution path.
+- **Acceptance gap:** Stage 9.8 must verify challenge cancellation and expiry,
+  receipt recovery, uncertain outcomes, retry/replay behavior, and the
+  browser-to-database flow on the current green test baseline.
+- **User-controlled records:** confirmation records have inspect/export/
+  delete controls. Conversations and workspace items have CRUD controls,
+  but full export/import for conversations and general workspace content
+  remains unimplemented.
 
 ## F. Non-goals
 
@@ -900,14 +946,18 @@ responsibility of the corresponding Stage 9.x design task.
 - Persistence and restart behaviour must **prevent reminders from
   being silently dropped or duplicated**.
 
-**Still deferred to the Stage 9.4 reminder design task:**
+**Implementation present; Stage 9.8 verification remains required:**
 
-- The exact parsing rules (accepted date/time expressions).
-- The exact storage schema and recovery algorithm.
-- The exact UI affordance for surfacing and dismissing reminders.
-- Acceptance tests for the above.
-
-Do not implement reminders in Task 231.
+- Reminders share the local workspace model, confirmation-gated mutation
+  path, and durable idempotency receipts.
+- The deterministic chat grammar requires an explicit local due time and
+  IANA timezone. Time normalization rejects nonexistent and ambiguous
+  daylight-saving-time values instead of guessing. The browser workspace
+  shows overdue reminders in-app on initial load and refreshes while open;
+  no OS notification or separate background service is used.
+- Acceptance must still demonstrate start/restart behavior, correct timezone
+  display, no silent drops, and no duplicates through a complete manual and
+  automated workflow.
 
 ### H.4 Retrieval and offline boundary
 **Approved defaults (Task 231):**
@@ -920,11 +970,16 @@ Do not implement reminders in Task 231.
 - Ordinary retrieval must **not access the network** or implicitly
   fetch external material.
 - Only an explicitly documented, tested **allowlist of document
-  formats** may be read. The exact initial format allowlist must be
-  resolved in the Stage 9.5 retrieval design task **before** retrieval
-  implementation begins. Do not invent a final allowlist in Task 231.
+  formats** may be read. Stage 9.5 implementation has selected and tests
+  the allowlist `.txt`, `.md`, `.json`, and `.csv`.
 - Unsupported formats, inaccessible paths, invalid inputs, and
-  unauthorized path access must be handled **honestly and safely**.
+  unauthorized path access are rejected or skipped safely. The API
+  resolves selected roots and the retrieval boundary rejects network roots,
+  traversal outside a selected root, symlink escapes, unsupported extensions,
+  and files crossing the root device boundary.
+- Full offline/security acceptance remains open and must be established in
+  Stage 9.8. The existence of these checks is not a claim that every runtime
+  boundary has been verified.
 
 **Offline boundary:**
 
