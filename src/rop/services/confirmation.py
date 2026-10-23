@@ -253,7 +253,9 @@ def build_operation_summary(
         parts.append(f"Scope: {operation.scope}.")
     if operation.parameters:
         rendered = ", ".join(
-            f"{name}={value}" for name, value in sorted(operation.parameters.items())
+            f"{name}={value}"
+            for name, value in sorted(operation.parameters.items())
+            if name != "idempotency_key"
         )
         parts.append(f"Parameters: {rendered}.")
     parts.append(f"Risk: {risk.value}.")

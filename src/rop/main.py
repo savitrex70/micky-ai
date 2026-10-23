@@ -13,6 +13,7 @@ from rop.api.confirmation_records import router as confirmation_records_router
 from rop.api.confirmations import router as confirmations_router
 from rop.api.conversations import router as conversations_router
 from rop.api.health import router as health_router
+from rop.api.retrieval import router as retrieval_router
 from rop.api.sessions import router as sessions_router
 from rop.api.workspace import router as workspace_router
 from rop.config import get_settings
@@ -52,6 +53,7 @@ app.include_router(confirmations_router)
 app.include_router(confirmation_records_router)
 app.include_router(conversations_router)
 app.include_router(workspace_router)
+app.include_router(retrieval_router)
 app.include_router(sessions_router)
 app.include_router(web_router)
 mount_static(app)
