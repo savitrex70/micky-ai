@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import rop.models
+import rop.models  # noqa: F401
 from rop import database as database_module
 from rop.database import Base, get_db
 from rop.main import app
@@ -169,7 +169,8 @@ def test_cancelled_note_does_not_mutate_and_receipt_can_be_abandoned(
     assert cancelled.json()["executed"] is False
     assert _notes(client) == []
 
-    abandoned = client.delete(
+    abandoned = client.request(
+        "DELETE",
         f"/api/assistant/workspace/receipts/{key}",
         headers=ORIGIN_HEADERS,
         json={},
@@ -196,7 +197,8 @@ def test_wrong_display_code_refuses_execution_and_keeps_active_reservation(
     assert wrong_code.json()["executed"] is False
     assert _notes(client) == []
 
-    abandoned_while_active = client.delete(
+    abandoned_while_active = client.request(
+        "DELETE",
         f"/api/assistant/workspace/receipts/{key}",
         headers=ORIGIN_HEADERS,
         json={},
