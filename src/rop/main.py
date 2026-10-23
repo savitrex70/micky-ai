@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from rop.api.assistant import router as assistant_router
 from rop.api.confirmation_records import router as confirmation_records_router
 from rop.api.confirmations import router as confirmations_router
+from rop.api.clarifications import router as clarifications_router
 from rop.api.conversations import router as conversations_router
 from rop.api.health import router as health_router
 from rop.api.retrieval import router as retrieval_router
@@ -50,6 +51,7 @@ app = FastAPI(
 app.include_router(health_router)
 app.include_router(assistant_router)
 app.include_router(confirmations_router)
+app.include_router(clarifications_router)
 app.include_router(confirmation_records_router)
 app.include_router(conversations_router)
 app.include_router(workspace_router)

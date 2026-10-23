@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 ASSISTANT_REQUEST_MAX_MESSAGE_LENGTH = 2000
 
@@ -13,6 +19,9 @@ AssistantStatus = Literal[
     "unsupported-capability",
     "clarification-required",
     "confirmation-required",
+    "confirmation-unavailable",
+    "execution-failed",
+    "execution-unknown",
     "refused",
 ]
 """The honest outcomes the assistant request endpoint can report.
@@ -50,6 +59,16 @@ class AssistantRequest(BaseModel):
     #: or persistence metadata here — ``extra="forbid"`` on the model
     #: rejects any such field before the handler runs.
     conversation_id: UUID | None = None
+    clarification_id: UUID | None = None
+    idempotency_key: UUID | None = None
+
+    @model_validator(mode="after")
+    def check_clarification_conversation(self) -> "AssistantRequest":
+        if self.clarification_id is not None and self.conversation_id is None:
+            raise ValueError(
+                "a clarification continuation requires a selected conversation"
+            )
+        return self
 
     @field_validator("message")
     @classmethod
@@ -78,6 +97,17 @@ class AssistantConfirmationChallenge(BaseModel):
     expires_at: datetime
 
 
+class ClarificationPrompt(BaseModel):
+    """Sanitized question for one server-owned pending clarification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    clarification_id: UUID
+    capability_identifier: str = Field(min_length=1, max_length=64)
+    question: str = Field(min_length=1, max_length=512)
+    missing_fields: list[str] = Field(min_length=1, max_length=16)
+
+
 class AssistantResponse(BaseModel):
     """Response envelope for the local assistant request endpoint.
 
@@ -99,3 +129,4 @@ class AssistantResponse(BaseModel):
     status: AssistantStatus
     message: str
     challenge: AssistantConfirmationChallenge | None = None
+    clarification_prompt: ClarificationPrompt | None = None
