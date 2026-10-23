@@ -254,3 +254,143 @@ def test_explicit_chat_command_uses_the_same_confirmation_and_receipt_flow(
     assert len(notes) == 1
     assert notes[0]["title"] == "Created from chat"
     assert _receipt(client, key)["status"] == "succeeded"
+
+
+def test_chat_clarification_restores_binds_and_consumes_once(
+    client: TestClient,
+) -> None:
+    first_conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Clarification A"},
+    )
+    second_conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Clarification B"},
+    )
+    assert first_conversation.status_code == 201, first_conversation.text
+    assert second_conversation.status_code == 201, second_conversation.text
+    first_id = first_conversation.json()["id"]
+    second_id = second_conversation.json()["id"]
+    key = uuid4()
+
+    initial = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "workspace add note:",
+            "conversation_id": first_id,
+            "idempotency_key": str(key),
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    body = initial.json()
+    assert body["status"] == "clarification-required"
+    prompt = body["clarification_prompt"]
+    assert prompt["missing_fields"] == ["title"]
+    assert prompt["question"]
+    assert "original_message" not in prompt
+    assert "partial_operation" not in prompt
+
+    restored = client.get(
+        f"/api/assistant/clarifications?conversation_id={first_id}"
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json() == [prompt]
+
+    # A continuation cannot move the pending operation into another chat.
+    mismatched = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "Wrong conversation title",
+            "conversation_id": second_id,
+            "clarification_id": prompt["clarification_id"],
+        },
+    )
+    assert mismatched.status_code == 200, mismatched.text
+    assert mismatched.json()["status"] == "refused"
+    still_active = client.get(
+        f"/api/assistant/clarifications?conversation_id={first_id}"
+    )
+    assert still_active.status_code == 200, still_active.text
+    assert still_active.json() == [prompt]
+
+    completed = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "Created from a restored clarification",
+            "conversation_id": first_id,
+            "clarification_id": prompt["clarification_id"],
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    prepared = completed.json()
+    assert prepared["status"] == "confirmation-required"
+    assert "challenge" in prepared
+    assert _notes(client) == []
+
+    restored_after_consume = client.get(
+        f"/api/assistant/clarifications?conversation_id={first_id}"
+    )
+    assert restored_after_consume.status_code == 200, restored_after_consume.text
+    assert restored_after_consume.json() == []
+
+    replay = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "A replay must not create a second note",
+            "conversation_id": first_id,
+            "clarification_id": prompt["clarification_id"],
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "refused"
+
+    decided = _decide(
+        client,
+        prepared["challenge"],
+        decision="confirm",
+        display_code=prepared["challenge"]["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "executed"
+    notes = _notes(client)
+    assert len(notes) == 1
+    assert notes[0]["title"] == "Created from a restored clarification"
+
+
+def test_clarification_restore_reports_database_failure(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fail_session():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(database_module, "SessionLocal", fail_session)
+    response = client.get(
+        f"/api/assistant/clarifications?conversation_id={uuid4()}"
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Clarification state could not be verified."
+
+
+def test_clarification_abandon_reports_database_failure(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    def fail_session():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(database_module, "SessionLocal", fail_session)
+    response = client.request(
+        "DELETE",
+        f"/api/assistant/clarifications/{uuid4()}?conversation_id={uuid4()}",
+        headers=ORIGIN_HEADERS,
+        json={},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Clarification state could not be updated."
