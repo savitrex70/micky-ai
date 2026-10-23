@@ -115,15 +115,21 @@ def _checked_now(now: datetime | None) -> datetime:
     return current.astimezone(UTC)
 
 
-def _transition_instant(now: datetime | None):
-    """Use a test instant when injected; otherwise PostgreSQL wall-clock time.
+def _transition_instant(now: datetime | None, db: Session):
+    """Use PostgreSQL wall-clock time in production and an aware instant in tests.
 
     PostgreSQL transaction timestamps can become stale while a confirmation
-    is being checked. Production transitions therefore use clock_timestamp()
-    in their guarded SQL predicates and terminal timestamps. Explicit test
-    instants remain supported for deterministic tests.
+    is being checked, so production transitions use clock_timestamp() in
+    guarded SQL predicates and terminal timestamps. SQLite (used by the fast
+    isolated API tests) has no clock_timestamp() function; its equivalent
+    path uses a trusted, timezone-aware application instant. Explicit instants
+    remain supported for deterministic tests.
     """
-    return func.clock_timestamp() if now is None else _checked_now(now)
+    if now is not None:
+        return _checked_now(now)
+    if db.get_bind().dialect.name == "postgresql":
+        return func.clock_timestamp()
+    return datetime.now(UTC)
 
 
 def _checked_identity(policy_identity: str) -> str:
@@ -359,7 +365,7 @@ class AssistantConfirmationRepository:
         ``EXPIRED`` atomically (see ``_expire_if_overdue``) and still
         reports that the requested transition did not happen.
         """
-        instant = _transition_instant(now)
+        instant = _transition_instant(now, db)
         conditions = [
             AssistantConfirmation.challenge_id == challenge_id,
             AssistantConfirmation.status == ConfirmationStatus.PENDING.value,
@@ -552,7 +558,7 @@ class AssistantConfirmationRepository:
         not counted and the overdue record is settled to EXPIRED.
         """
         transition_time = None if now is None else _checked_now(now)
-        current = _transition_instant(transition_time)
+        current = _transition_instant(transition_time, db)
         next_attempt = AssistantConfirmation.failed_code_attempts + 1
         locked = next_attempt >= MAX_FAILED_CODE_ATTEMPTS
         statement = (
