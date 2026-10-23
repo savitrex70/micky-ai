@@ -24,7 +24,9 @@ The single request endpoint is `POST /api/assistant/requests`
 
 1. **HTTP validation.** FastAPI parses `AssistantRequest`
    (`src/rop/schemas/assistant.py`). The model forbids extra fields,
-   requires a non-blank printable `message` of 1-2000 characters, and
+   requires `message` with length 1-2000 characters and rejects
+   blank or whitespace-only content (no printable-character rule is
+   enforced), and
    accepts an optional `conversation_id: UUID | None`.
 2. **Persistence precheck (only when `conversation_id` is supplied).**
    `_enforce_persistence_origin(http_request)` calls
@@ -216,267 +218,518 @@ preserved verbatim.
 
 ## C. Clarification contract
 
-### C.1 When the engine must stop and ask
+### C.1 Why the previous design was wrong
 
-The engine must return `clarification-required` when, and only when:
+The previous design (commit 7de8a89) recommended client-only pending
+state and claimed no API change was needed. Two facts make that
+non-viable:
 
-1. A registered capability matched the request.
-2. The capability requires a target, scope, or parameter that the
-   request did not supply, OR
-3. Two or more material readings of the request would lead to different
-   operations, and the current deterministic parser cannot choose
-   without inventing information.
+1. AssistantRequest has no field for pending context. The schema in
+   src/rop/schemas/assistant.py accepts only message and
+   conversation_id. The browser cannot attach a pending_capability_id
+   or original_message to the follow-up. Even if a field were added,
+   the server would have no way to verify the client's claim was
+   accurate - a malicious or buggy client could claim any capability
+   it liked.
 
-The engine must **never**:
+2. The follow-up does not match the original alias.
+   CapabilityRegistry.match normalizes the entire message and performs
+   exact string equality against registered normalized aliases (see
+   src/rop/capabilities/registry.py::normalize_phrase). If the user
+   first sends "remind me tomorrow" (matched to the reminder
+   capability) and gets a clarification asking "what time?", the
+   follow-up message will be something like "at 3pm" - which
+   CapabilityRegistry.match("at 3pm") will correctly return None for,
+   because it does not equal any registered alias.
 
-- Guess a missing target or parameter.
-- Treat a subsequent "confirm" as clarification. A confirmation for an
-  underspecified operation is not valid authorization.
-  `test_authorization_policy.py::test_confirmation_of_an_underspecified_operation_is_not_authorization`
-  proves this rule at the policy layer; the interaction engine must
-  preserve it at the presentation layer.
+Both facts point to the same conclusion: the follow-up must go through
+a different code path than the initial request, one that (a) carries
+the pending capability context on the wire and verifies it
+server-side, and (b) does not rely on the follow-up message matching
+an alias. The correct design uses server-issued pending state keyed by
+an unguessable identifier, the same pattern already proven by the
+confirmation-challenge system.
 
-### C.2 Representing a clarification response
+### C.2 Wire protocol
 
-`{status: "clarification-required", message: "<question>", ...}`.
-Optionally a new `clarification_id` field, `clarification` object, or
-similar, depending on the state approach chosen in C.4.
+The corrected design requires three coordinated changes.
 
-### C.3 Associating the follow-up with the pending interaction
+**New optional field on AssistantRequest:**
 
-The current endpoint has no way to associate a follow-up message with
-a pending clarification. `AssistantRequest` carries only `message` and
-an optional `conversation_id`. Adding a field like
-`clarification_response_to` or reusing `conversation_id` for context
-are both changes to the public schema.
+    clarification_id: UUID | None = None
 
-### C.4 Interaction state - three viable options
+When present, message is the answer to the identified pending question,
+not a fresh request. When absent, behaviour is unchanged.
 
-The task explicitly requires resolving the state question. Three
-options:
+**New optional field on AssistantResponse:**
 
-**Option 1 - Client-only (no persistence).**
-The browser retains a "pending clarification" object in memory. When
-the user sends the follow-up, the client attaches the pending
-context. On reload or tab close, the pending state is lost, and the
-user is shown a "clarification was pending but is no longer attached -
-please restate your request" message.
+    clarification_prompt: ClarificationPrompt | None = None
 
-- **Pros:** No schema change; no persistence semantic change; no
-  migration; matches the existing `requestOutcomeUnresolved` /
-  `challengeUnresolved` client-only guards in `app.js`.
-- **Cons:** Does not survive reload; does not survive tab close; does
-  not survive a browser crash. If `conversation_id` is set, the user
-  can retype the request after reload, so failure is graceful but not
-  silent.
-- **Owner decision needed?** Only if the product wants reload-survival
-  as a Stage 9.2 requirement. Otherwise no.
+    class ClarificationPrompt(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        clarification_id: UUID
+        capability_identifier: str
+        question: str
+        missing_fields: list[str]  # sanitized field names, not user values
 
-**Option 2 - Conversation-based (persist a non-terminal assistant
-message).**
-When the engine returns `clarification-required`, append a message to
-the conversation (if one is selected) recording the pending question.
-On the next turn, the engine inspects the most recent message; if it
-was a `clarification-required` note from the assistant, the new user
-message is treated as the answer to that clarification.
+Present only when status == "clarification-required". Carries the
+server-issued clarification_id (unguessable, high-entropy UUID), the
+matched capability identifier, a user-facing question, and the missing
+field names - but never the user's original input, never a
+pre-approved authorization, never an executor name.
 
-- **Pros:** Survives reload; reuses existing persistence; no migration.
-- **Cons:** Changes the "only success persists" contract. Today's
-  behaviour is that non-success turns are not saved; adding a
-  persisted clarification question breaks that invariant. Requires an
-  explicit Stage 9.1 contract amendment and owner approval.
-- **Owner decision needed?** Yes. This is a product-contract change.
+**New server-side state: pending_clarifications table** (or equivalent
+server-owned store, modeled on assistant_confirmations). Fields:
 
-**Option 3 - New `pending_clarifications` table.**
-Add a new table keyed by conversation_id, storing the pending
-capability identifier and the specific fields the engine is waiting
-for. Rows are cleared on resolution or expiry.
+- id (primary key, UUID)
+- clarification_id (unique, indexed, unguessable - the wire value)
+- conversation_id (nullable; see C.4)
+- capability_identifier
+- missing_fields (JSON array of field names)
+- created_at
+- expires_at (a bounded window, e.g. 10 minutes)
+- resolved_at (nullable, set on consumption)
+- resolved_by_operation_id (nullable; the operation identifier the
+  follow-up produced, for audit)
 
-- **Pros:** Clean separation from messages; survives reload; does not
-  change persistence semantics.
-- **Cons:** New migration; new schema; new repository; new expiry
-  logic (mirroring the confirmation record); more code to review.
+Rows are created when _dispatch decides CLARIFY, consumed when the
+follow-up resolves or is abandoned, and cleared on:
 
-**Recommendation for Stage 9.2:**
+- successful resolution
+- explicit abandonment (see C.5)
+- expiry
+- conversation deletion (via app-level cleanup, not a DB-level FK
+  cascade, to preserve the conversation/clinical separation invariant)
 
-Implement **Option 1 (client-only) in Stage 9.2**. Rationale:
+### C.3 Full clarification flow
 
-- It matches the existing `challengeUnresolved` pattern already used
-  for pending confirmations.
-- It requires no schema change, no migration, no contract amendment,
-  no owner decision to begin.
-- The failure mode is graceful: after reload, the user is told
-  "clarification was pending but no longer attached - please restate"
-  and retypes the request. For a locally-run single-user assistant
-  this is acceptable.
-- If reload-survival turns out to be a genuine user need, Option 2 or
-  3 becomes a Stage 9.2.x follow-up with its own review.
+1. **Initial request.** Client sends {message, conversation_id?}.
+   submit_request runs as today until the policy returns CLARIFY. At
+   that point, instead of returning {status:
+   "clarification-required", message: ...} with no context, the
+   endpoint now:
 
-**This is a recommendation, not a decision.** The reviewer should
-either approve Option 1 as the Stage 9.2 choice or direct a different
-option before any implementation begins. The task prompt's directive
-to "present the viable choices, trade-offs, recommended approach, and
-any product-contract decision required" is satisfied by naming the
-choice and the decision it depends on.
+   - creates a pending_clarifications row with a fresh
+     clarification_id,
+   - returns {status: "clarification-required", message: ...,
+     clarification_prompt: {clarification_id, capability_identifier,
+     question, missing_fields}}.
 
-### C.5 Anti-confusion safeguards
+2. **User answers.** Client sends {message: "<the answer>",
+   conversation_id?, clarification_id}. submit_request detects
+   clarification_id is not None and routes to a clarification-
+   resolution path that:
 
-Regardless of which state option is chosen:
+   - loads the pending row by clarification_id; 404 if absent or
+     expired,
+   - verifies conversation_id matches the pending row's
+     conversation_id (both must be set, or both must be None),
+   - re-runs the capability's parser with the combined input (original
+     message + answer); NOT through CapabilityRegistry.match, which
+     would fail,
+   - produces a fresh ProposedOperation from the combined input,
+   - re-runs evaluate_authorization on the fresh operation (mandatory:
+     no pre-approved authorization from the initial turn carries
+     forward),
+   - on ALLOW / REQUIRE_CONFIRMATION: proceeds per D.1 Path A/B/C as
+     normal,
+   - on CLARIFY again: mints a NEW pending row and returns a NEW
+     clarification_prompt (the previous row is consumed, since a new
+     clarification replaces it),
+   - on DENY: returns refused and consumes the pending row,
+   - on clarification_id failure (not found, expired, conversation
+     mismatch): returns {status: "clarification-required", message:
+     "the pending clarification is no longer active; restate your
+     request"}; no new pending row created.
 
-- The follow-up request must include enough information to prove it is
-  an answer to a specific pending clarification, not an unrelated new
-  request. Option 1 does this via an in-memory context; Option 2 via
-  conversation ordering; Option 3 via a per-conversation pending-row.
-- A stale clarification (e.g., the user has since performed a
-  different operation, or the conversation was deleted) must be
-  detected and rejected as a new request, not silently applied.
-- The ambiguity guard (`requestOutcomeUnresolved` in `app.js`) must be
-  extended to cover clarification state: starting a new request while
-  a clarification is pending must be either allowed (with explicit
-  "abandon the clarification" warning) or blocked, decided explicitly,
-  not left to chance.
+3. **Combined input persistence.** If the eventual combined request
+   produces success, the persisted user/assistant pair is
+   (original_message + " " + answer) and capability_reply (or the
+   executor's success message for Path B). The pending-clarification
+   row is a separate domain and is NOT persisted as a conversation
+   message; only the successful exchange is.
 
----
+### C.4 No-conversation path
+
+The pending_clarifications table is only relevant when a
+conversation_id is present. The no-conversation path must remain
+database-free per the approved Stage 9.1 contract.
+
+**Recommended behaviour:** when conversation_id is None and the
+capability would need clarification, return {status:
+"clarification-required", message: "<capability> requires a
+conversation to complete this request. Select or create a conversation
+first."} WITHOUT creating a pending row and WITHOUT a
+clarification_prompt. This preserves the DB-free invariant. The user
+must select a conversation, restate the request, and answer the
+clarification there.
+
+This is a real UX cost: a request that would need clarification cannot
+be continued without a conversation. It is honest, preserves the
+existing DB-free contract, and is the cheapest correct option. The
+alternative - making pending_clarifications work without a
+conversation - would break the DB-free contract and require a separate
+owner decision.
+
+### C.5 Edge cases
+
+- **Conversation switch during clarification.** The follow-up request
+  has a different conversation_id than the pending row. The resolution
+  path detects the mismatch, consumes the pending row, and returns
+  {status: "clarification-required", message: "the pending
+  clarification was attached to a different conversation; restate your
+  request in the current conversation"}. No executor runs; no policy
+  evaluation runs on the mixed-conversation request.
+
+- **Page reload during clarification.** The pending row persists on
+  the server; the browser loses its in-memory clarification_id. On
+  next page load the browser has no way to continue the pending row
+  automatically. The row expires naturally. A future enhancement could
+  expose a GET /api/assistant/clarifications?conversation_id=... to
+  let the browser restore the pending prompt on load; that is out of
+  scope for Stage 9.2 but flagged for later consideration.
+
+- **Explicit abandonment.** A new DELETE
+  /api/assistant/clarifications/{clarification_id} endpoint (small,
+  mirrors the confirmation-record deletion precedent at
+  src/rop/api/confirmation_records.py) lets the client discard a
+  pending clarification. Without this, abandoned rows expire after the
+  timeout window. Include this endpoint in Stage 9.2 scope, not as an
+  afterthought.
+
+- **Stale clarification_id.** A follow-up referencing an expired or
+  already-resolved row returns {status: "clarification-required",
+  message: "the pending clarification is no longer active; restate
+  your request"}, no new pending row created, no ambiguity guard
+  cleared. This is a stale-continuation outcome, distinct from a
+  parser failure and distinct from a policy refusal.
+
+- **Persistence of the eventual successful turn.** Covered in C.3
+  step 3.
+
+- **Authorization revalidation.** Every follow-up re-derives
+  ProposedOperation from scratch and re-runs evaluate_authorization.
+  The pending row does not carry a pre-approved authorization. This
+  prevents a user from "clarifying" into an operation that would not
+  have been ALLOWed if requested directly.
+
+- **Executor choice.** Path B executors are chosen server-side via
+  ExecutorRegistry.get(operation_id) after the re-evaluated policy
+  returns ALLOW. The clarification_id field on the request has no
+  bearing on which executor is chosen; it is only used to locate the
+  pending row.
+
+### C.6 Options considered and rejected
+
+- **Client-only state (the previous recommendation).** Rejected: (a)
+  the server cannot verify the client's claim about which pending
+  clarification is being answered; (b) the follow-up cannot match a
+  registered alias; (c) a client could lie.
+
+- **Conversation-message persistence (a persisted "clarification
+  question" assistant message).** Rejected: it changes the "only
+  successful exchanges persist as user/assistant pairs" contract by
+  storing an extra assistant message. A dedicated
+  pending_clarifications table keeps the pending state in its own
+  domain, like assistant_confirmations.
+
+- **Continuation payload (client re-sends the whole combined message
+  plus a hint).** Rejected: the server has no way to distinguish "I am
+  answering the reminder clarification" from "I am making a new
+  request", so a client could replay the same combined message as a
+  fresh request and get a different decision. A server-issued
+  clarification_id prevents replay.
+
+- **Reuse conversation_id as the pending identifier.** Rejected: the
+  conversation may have multiple pending clarifications across
+  capabilities; conflating the two loses the mapping between answer
+  and question.
+
+- **Fuzzy matching on the follow-up.** Rejected: the Stage 9.1
+  contract explicitly forbids fuzzy matching, substring matching, and
+  model-based intent inference. The wire protocol above works with
+  exact matching.
+
+### C.7 Contract amendment required
+
+The corrected design requires a Stage 9.1 contract amendment, fully
+documented in Section K:
+
+- New optional clarification_id field on AssistantRequest.
+- New ClarificationPrompt response field.
+- New pending_clarifications table (migration).
+- New DELETE /api/assistant/clarifications/{id} endpoint.
+- New behaviour: AssistantRequest with clarification_id routes to
+  clarification resolution, not fresh selection.
+- New behaviour: no-conversation requests that would need
+  clarification return a "select a conversation" message without a
+  pending row.
+
+Every amendment is backward-compatible for existing clients that do
+not send clarification_id; their behaviour is unchanged.
+
+
 
 ## D. Authorization and safe-execution contract
 
-### D.1 Ordered boundary
+### D.1 Three execution paths
 
-The interaction engine must process any request through these steps in
-order, with no step skippable:
+The previous design wrongly treated confirmation consumption as the
+universal prerequisite for executor dispatch. The approved risk-based
+policy (`src/rop/authorization/policy.py`) allows `LOW`-risk operations
+to execute on `ALLOW` without any confirmation, so the design must
+distinguish three paths.
+
+**Path A - Non-state-changing capabilities (today: `help`).**
+- Capability registered; operation is read-only.
+- Policy rule: `RiskLevel.LOW`, `prohibited=False`.
+- `evaluate_authorization` returns `ALLOW` (`ALLOWED_LOW_RISK`).
+- `capability_reply` returns the predefined reply.
+- **No executor runs.** `help` has no executor and needs none.
+- This is the only path exercised today.
+
+**Path B - State-changing but LOW-risk operations (future).**
+- Capability registered; operation mutates state.
+- Policy rule: `RiskLevel.LOW`, `prohibited=False`.
+- `evaluate_authorization` returns `ALLOW` (`ALLOWED_LOW_RISK`).
+- **A server-owned executor is registered for this operation** (a
+  specific, reviewed registration; not the empty default).
+- The `submit_request` handler invokes the executor **directly, on
+  this request**, after re-validating operation identity and material
+  parameters against the freshly-parsed `ProposedOperation`. No
+  confirmation step occurs because the approved policy did not require
+  one.
+- Executor outcome maps to `AssistantResponse`:
+  - `ExecutorResult.SUCCEEDED` → `{status: "success", message: ...}`.
+    If `conversation_id` supplied, persist the user/assistant pair.
+  - `ExecutorError` (established failure) → `{status:
+    "execution-failed", message: ...}` (new status, §E).
+  - `ExecutorInterrupted` / unexpected exception → `{status:
+    "execution-unknown", message: ...}` (new status, §E).
+  - No conversation persistence for failed or unknown outcomes (no
+    assistant reply exists to store).
+
+**Path C - Consequential operations that require confirmation (future).**
+- Capability registered; operation mutates state.
+- Policy rule: `RiskLevel.CONSEQUENTIAL`, `prohibited=False`.
+- `evaluate_authorization` returns `REQUIRE_CONFIRMATION`.
+- The `submit_request` handler mints a challenge via
+  `issue_challenge` and returns `{status: "confirmation-required",
+  challenge: ...}` on `AssistantResponse`. **No executor runs here.**
+- The user submits a decision via
+  `POST /api/assistant/confirmations/{id}/decision`.
+- `services/confirmation.decide` re-runs `evaluate_authorization`,
+  verifies the display code, and on `CONFIRM` consumes the challenge
+  then invokes the executor via `ExecutorRegistry.get(operation_id)`.
+- Executor outcome maps to `ConfirmationDecisionResponse` (existing
+  contract, unchanged): `executed`, `failed`, `unknown`, `cancelled`,
+  `rejected`, `refused`, `unavailable`.
+
+### D.2 Ordered steps common to all three paths
+
+Regardless of which path a capability takes, the interaction engine
+processes any request through these steps in order:
 
 1. **Capability selection.** `CapabilityRegistry.match`. No side
    effects.
-2. **Building a validated proposed operation.** The capability's
-   parser turns `message` (and any pending clarification) into a
-   `ProposedOperation`. Existing operation: `help` has no target,
-   scope, or parameters. Future operations must produce a `ProposedOperation`
-   from **user-supplied** values, never from defaults.
-3. **Required-information validation.** The policy evaluator checks
-   `requires_target` and `required_parameters`. Missing values produce
-   `CLARIFY`. This is already implemented in the policy; the interaction
-   engine must feed it real values (not empty `{}`).
-4. **Policy evaluation.**
-   `evaluate_authorization(operation, policy=..., authorized=None)`.
-   No caller-supplied authorization at this layer. `ALLOW`, `CLARIFY`,
-   `REQUIRE_CONFIRMATION`, or `DENY`.
-5. **Clarification or refusal.** `CLARIFY` → `clarification-required`;
-   `DENY` → `refused`. Both mean nothing was executed.
-6. **Confirmation where required.** `REQUIRE_CONFIRMATION` →
-   `issue_challenge`. On `ISSUED`, return `confirmation-required` with
-   the challenge values. On any other outcome, return
-   `confirmation-unavailable` (see §E) - **never** pretend a challenge
-   was issued. No capability's reply is returned at this step.
-7. **Server-owned executor dispatch.** Only after `confirmation.decide`
-   has consumed a challenge (`CONSUMED` status) is the executor
-   reachable. The executor is chosen by the server-side
-   `ExecutorRegistry`, never by the client. Result is `ExecutorResult.SUCCEEDED`
-   or `FAILED`; `ExecutorInterrupted` means unknown.
-8. **Outcome reporting and persistence.** `success` for completed
-   operations. `execution-failed` for `FAILED`. `execution-unknown` for
-   interrupted. Persistence is gated as today: only `success` turns
-   persist as user/assistant pairs.
+2. **Build a validated `ProposedOperation`.** The capability's parser
+   (see §G.2) turns `message` (plus pending clarification context if
+   present) into a `ProposedOperation`. For `help`, the parser is
+   trivial. For future parameterized capabilities, the parser produces
+   the operation from user-supplied values; missing fields do not
+   crash the parser (they yield a `ProposedOperation` with those fields
+   unset, and the policy returns `CLARIFY`).
+3. **Required-information validation.** Policy checks
+   `requires_target` and `required_parameters`. Missing → `CLARIFY`.
+   This is already implemented in the policy; the interaction engine
+   feeds it real values, not empty `{}`.
+4. **Policy evaluation.** `evaluate_authorization(operation,
+   policy=..., authorized=None)`. No caller-supplied authorization at
+   this layer. Returns `ALLOW`, `CLARIFY`, `REQUIRE_CONFIRMATION`, or
+   `DENY`.
+5. **Clarification or refusal.** `CLARIFY` → return
+   `clarification-required` with a `clarification_prompt` per §C.
+   `DENY` → return `refused`. Both mean nothing was executed.
+6. **Path-specific dispatch.** Path A: no executor. Path B: executor
+   invoked directly on `submit_request`, outcome reported as
+   `success` / `execution-failed` / `execution-unknown` on
+   `AssistantResponse`. Path C: challenge minted; execution deferred
+   to the decision endpoint.
+7. **Persistence.** `success` turns with a `conversation_id` persist as
+   today. `execution-failed`, `execution-unknown`, and every
+   non-`success` outcome from Path A/B do **not** persist as
+   user/assistant pairs, preserving the "only successful exchanges
+   persist" invariant. Path C execution outcome is recorded in the
+   `assistant_confirmations` table's terminal outcome column (existing
+   behavior); it does not touch conversation messages.
 
-### D.2 Preserved constraints
+### D.3 Preserved constraints
 
-- **Per-operation, risk-based authorization.** Preserved. No session-
-  scoped authorization.
-- **Confirmation covers the exact operation and material parameters.**
-  Preserved. Material change → new decision. Proven by
+- **Per-operation, risk-based authorization.** Preserved. No
+  session-scoped authorization.
+- **Confirmation covers the exact operation and material
+  parameters.** Preserved. Material change → new decision. Proven by
   `test_authorization_policy.py::test_authorization_for_one_target_does_not_cover_another`
   and siblings.
 - **Client is never trusted for authorization.** Preserved.
-  `AssistantRequest` forbids extra fields; `dispatch.py` accepts no
-  `AuthorizedScope`, `confirmed` flag, or caller-chosen executor.
-- **No production executor registered in Stage 9.2.** Enforced. Task
-  232 does not register one; nor should Stage 9.2.x implementation.
+  `AssistantRequest` forbids extra fields; Path B and Path C choose
+  executors server-side via `ExecutorRegistry.get(operation_id)`, never
+  via request field. No `AuthorizedScope`, `confirmed` flag, or
+  caller-chosen executor is accepted.
+- **No production executor registered in Stage 9.2.** Enforced. Path
+  B and Path C are exercised only with test-only executors. The
+  production `build_default_executor_registry()` remains empty
+  throughout Stage 9.2.
+- **Every follow-up re-validates and re-authorizes.** A clarification
+  follow-up (§C) does not carry a pre-approved authorization; the
+  combined input is re-parsed and the resulting operation is
+  re-evaluated against the policy.
 
-### D.3 Integration with future capabilities
+### D.4 Integration with future capabilities
 
-Future notes/tasks/reminders capabilities must:
+A future notes/tasks/reminders capability chooses its path by the risk
+classification of each operation:
 
-- Register their `Capability` in the registry (aliases).
-- Register an `OperationRule` in the policy (risk, required target/
-  parameters).
-- Register an `Executor` in the executor registry **only after** the
-  capability has been independently reviewed and approved (a separate
-  owner decision per capability).
+- A read-only "list notes" operation → Path A.
+- A "create note" operation → likely Path B (LOW risk, no
+  confirmation).
+- A "delete all notes" operation → Path C (CONSEQUENTIAL, requires
+  confirmation).
 
-None of these three can be inferred from the others. A test-only
-executor remains the only way to exercise the `REQUIRE_CONFIRMATION`
-path in Stage 9.2.
+**Registering the executor is a separate owner decision per
+capability**, not bundled with the capability's initial registration.
+This preserves the three-way independence documented in §B.4:
 
----
+- Registering a capability does not authorize it.
+- Authorizing a capability does not give it an executor.
+- Registering an executor does not register a capability.
+
+
 
 ## E. Truthful outcome contract
 
-### E.1 Current five statuses vs required cases
+### E.1 Two response contracts, two owners of outcome
 
-| Required case | Current status | Notes |
-|---|---|---|
-| Successful response / completed operation | `success` | OK for `help`-style capabilities. |
-| Unsupported capability | `unsupported-capability` | OK. |
-| Clarification required | `clarification-required` | OK. |
-| Confirmation required and successfully issued | `confirmation-required` + `challenge != None` | OK. |
-| Confirmation unavailable | `confirmation-required` + `challenge == None` | **Overloaded.** A status-only reader cannot distinguish "show card" from "cannot show card". |
-| Refusal by policy | `refused` | OK. |
-| Valid operation that fails (executor error) | **Absent.** | Today unreachable (no prod executor), but must exist before any executor is registered. |
-| Operation whose outcome cannot be established (interrupted) | **Absent.** | Same. |
-| Internal or persistence failure | HTTP 5xx with `detail` (not a status envelope) | The exchange was answered; only the save failed. A distinct envelope status would be honest to the client, but the current HTTP-error approach is defensible because the response has already been produced. |
-| Execution succeeded but persistence failed | HTTP 5xx (`_ERROR_SAVE_FAILED`) | Same as above. |
+The interaction engine produces **two distinct response envelopes**,
+each with its own status enum, for two distinct endpoints. The
+previous design wrongly proposed moving post-confirmation execution
+outcomes onto `AssistantStatus`; the corrected design preserves the
+existing boundary.
 
-### E.2 Recommended envelope evolution (design only)
+| Contract | Endpoint | Statuses | Owner of the outcome |
+|---|---|---|---|
+| `AssistantResponse` | `POST /api/assistant/requests` | `success`, `unsupported-capability`, `clarification-required`, `confirmation-required`, `refused` (today) + proposed `confirmation-unavailable`, `execution-failed`, `execution-unknown` | The request handler, synchronously |
+| `ConfirmationDecisionResponse` | `POST /api/assistant/confirmations/{id}/decision` | `executed`, `failed`, `unknown`, `cancelled`, `rejected`, `refused`, `unavailable` (existing, unchanged) | The decision handler, synchronously |
 
-For Stage 9.2.x, when a production executor is eventually considered,
-the envelope needs at minimum:
+**`ConfirmationDecisionResponse` already owns Path C execution
+outcomes.** `src/rop/schemas/confirmation.py::ConfirmationDecisionStatus`
+defines exactly seven statuses, and `src/rop/api/confirmations.py`
+returns `ConfirmationDecisionResponse(status=result.outcome,
+message=result.message, executed=result.executed)` unchanged. The
+corrected design does not touch that contract.
 
-- `execution-failed` - status for `ExecutorError`. Response carries
-  `message` only. No challenge.
-- `execution-unknown` - status for `ExecutorInterrupted` or unexpected
-  executor exception. Response carries `message` and, if a
-  `challenge_id` was consumed, that ID so the browser can show
-  "outcome unknown; inspect confirmation records".
-- `confirmation-unavailable` - status distinct from
-  `confirmation-required`. Response carries `message` only; no
-  `challenge` field. **This is the schema change that most clearly
-  fixes an ambiguity.**
+The three proposed `AssistantStatus` additions are for **Path B only**
+and for the initial-endpoint `confirmation-unavailable`
+disambiguation; they are not for post-confirmation outcomes.
 
-Persistence failures do **not** need a new envelope status: the HTTP
-5xx path already truthfully communicates "answered but not saved" via
-the `detail` message, and it is orthogonal to the operation's own
-outcome.
+### E.2 Corrected status inventory
 
-### E.3 Compatibility and migration
+**`ConfirmationDecisionStatus` (unchanged):** owns all Path C
+execution outcomes. `executed` is the only status where an executor
+ran and reported success. `failed` = ran, reported failure. `unknown`
+= ran, outcome could not be established. `cancelled`, `rejected`,
+`refused`, `unavailable` = nothing ran.
 
-Adding new statuses is backward-incompatible for any client that
-exhaustively matches `AssistantStatus`. The current browser
-`describeStatus` function and any client code must be updated in the
-same change that adds the new statuses.
+**`AssistantStatus` (three additions proposed):**
 
-**No schema change is performed by Task 232.** The recommendation is
-documented for the Stage 9.2.x implementation review. The reviewer
-should explicitly approve or reject adding `execution-failed`,
-`execution-unknown`, and `confirmation-unavailable`.
+1. **`confirmation-unavailable`** - disambiguates from
+   `confirmation-required`. Today both share the same status; only
+   whether `challenge` is `None` distinguishes them. The corrected
+   design returns `confirmation-required` when a challenge was issued
+   (`challenge != None`) and `confirmation-unavailable` when it could
+   not be (`challenge == None`). The message field remains; no other
+   payload change. This is a small, honest improvement to the initial
+   endpoint.
+
+2. **`execution-failed`** - Path B only. Returned when a LOW-risk
+   `ALLOW` operation's executor ran synchronously on the request
+   endpoint and reported `ExecutorError`. Payload: `message` only. No
+   conversation persistence (there is no assistant reply to store).
+   The user is told the operation failed.
+
+3. **`execution-unknown`** - Path B only. Returned when a LOW-risk
+   `ALLOW` operation's executor ran synchronously on the request
+   endpoint but its outcome could not be established
+   (`ExecutorInterrupted` or unexpected exception). Payload: `message`
+   only. The user is told the outcome is unknown and instructed to
+   inspect logs / not retry blindly. No conversation persistence.
+
+### E.3 Persistence per status
+
+| Status (on `AssistantResponse`) | Path | Executor ran? | Persisted as user/assistant pair? |
+|---|---|---|---|
+| `success` | A | No | Yes, if `conversation_id` supplied |
+| `success` | B | Yes (SUCCEEDED) | Yes, if `conversation_id` supplied |
+| `unsupported-capability` | - | No | No |
+| `clarification-required` | - | No | No (pending state in `pending_clarifications`) |
+| `confirmation-required` | C (issued) | No | No |
+| `confirmation-unavailable` | C (unavailable) | No | No |
+| `refused` | - | No | No |
+| `execution-failed` | B | Yes (FAILED) | No - no assistant reply exists |
+| `execution-unknown` | B | Yes (unknown) | No - no assistant reply exists |
+
+Path C execution outcome is recorded entirely by
+`confirmation.decide` in the `assistant_confirmations` table's
+terminal outcome column. It does not touch the conversation message
+table and does not surface on `AssistantResponse`.
 
 ### E.4 Truthful-outcome invariants
 
-Regardless of status additions:
-
 - **A request is never a success merely because it was accepted,
   matched, attempted, or confirmed.** Only `success` with a
-  `capability_reply` is a success.
-- **Execution failure is never reported as `success`.** The
-  `ExecutorResult` contract enforces this: `ExecutorError` is
-  established failure, `ExecutorInterrupted` is unknown outcome,
-  neither may produce `success`.
+  `capability_reply` (Path A) or `ExecutorResult.SUCCEEDED` (Path B)
+  is a success.
+- **Execution failure is never reported as `success`.** Path B
+  `ExecutorError` → `execution-failed`. Path C `ExecutorError` →
+  `ConfirmationDecisionStatus.failed`.
 - **Unknown outcome is never reported as `refused` or `failed`.**
-  `refused` means "not attempted due to policy"; `execution-failed`
-  means "attempted and failed"; `execution-unknown` means "attempted
-  and cannot be established". These are distinct.
+  Path B `ExecutorInterrupted` → `execution-unknown`. Path C
+  `ExecutorInterrupted` → `ConfirmationDecisionStatus.unknown`. These
+  are distinct from `failed` and from `refused`.
 - **Confirmation requirement is never inferred from a challenge
-  existing.** A challenge exists only when `issue_challenge` succeeded.
+  existing.** A challenge exists only when `issue_challenge`
+  succeeded; the corrected `confirmation-unavailable` status reflects
+  the failed case honestly.
+- **A clarification request is never confused with a refusal or with
+  an internal error.** §G.2 defines the parser failure taxonomy:
+  expected user-input failures map to `clarification-required`,
+  unexpected parser exceptions map to `refused` with a static message.
 
----
+### E.5 Compatibility and migration
+
+Adding `confirmation-unavailable`, `execution-failed`,
+`execution-unknown` to `AssistantStatus` is backward-incompatible for
+any client that exhaustively matches the enum. The current browser
+`describeStatus` function (`web/static/app.js`) must be updated in the
+same change that adds these statuses. There is one first-party client;
+no external clients are known.
+
+`ConfirmationDecisionResponse` and its seven statuses are unchanged.
+No path in this design modifies `src/rop/schemas/confirmation.py`.
+
+### E.6 What does NOT change
+
+For clarity, given the previous design's error:
+
+- No new status on `ConfirmationDecisionStatus`.
+- No new field on `ConfirmationDecisionResponse`.
+- No change to how `services/confirmation.decide` records Path C
+  outcomes.
+- No change to the `assistant_confirmations` table.
+- The `executed` boolean on `ConfirmationDecisionResponse` continues
+  to mean exactly "an executor was invoked"; it is not redefined.
+
+
 
 ## F. Conversation, privacy, and offline boundaries
 
@@ -574,32 +827,71 @@ an alias without a policy rule returns `refused`.
 **Compatibility:** no schema change; no browser change needed (browser
 already handles `success`).
 
-### G.2 - `CapabilityParser` contract
+### G.2 - `CapabilityParser` contract with typed failure taxonomy
 
 **Intended behaviour:** introduce a `CapabilityParser` protocol that
-each capability uses to turn `(message, pending_clarification)` into a
-`ProposedOperation`. `help` and the `status` capability both use a
-trivial parser that produces `ProposedOperation(operation_id=capability.identifier)`.
+turns `(message, pending_context) -> ProposedOperation`, with a defined
+failure taxonomy that distinguishes **expected user-input parse
+failures** from **unexpected internal parser faults**.
 
-**Modules:** new `src/rop/capabilities/parser.py` (or similar);
-`capabilities/registry.py` (extend `Capability` to optionally carry a
-parser); `api/assistant.py` (`_dispatch` calls the parser).
+`help` and any future non-parameterized capability use a trivial
+parser. A parameterized capability's parser produces a
+`ProposedOperation` from `message` (plus pending clarification
+context if present).
+
+**Failure taxonomy (critical):**
+
+- **Expected parse failure (`CapabilityParseError`)**: raised by the
+  parser when the user's input does not contain a required field or
+  contains an ambiguous value. Carries a `field_name: str` attribute
+  identifying which field is missing/ambiguous. Server catches this
+  and returns `clarification-required` with a `clarification_prompt`
+  naming the field. This is the designed path for user input that
+  legitimately needs clarification.
+
+- **Unexpected parser exception (internal bug)**: any other exception
+  from the parser. Server catches and returns `refused` with a static
+  "the request could not be processed" message. **Does not echo the
+  exception type, the exception message, or any input value.** Never
+  maps to `clarification-required`, because disguising a bug as a
+  clarification request would mislead the user into thinking they
+  can fix the problem by rephrasing.
+
+- **Invalid output from parser**: if the parser returns something
+  that is not a valid `ProposedOperation`, or a
+  `ProposedOperation` with a wrong `operation_id` for the matched
+  capability, server returns `refused`. Same handling as unexpected
+  exception - never clarified.
+
+**Modules:** new `src/rop/capabilities/parser.py` (protocol,
+`CapabilityParseError` exception with `field_name`); update
+`capabilities/registry.py` (extend `Capability` with optional
+`parser: CapabilityParser`); `api/assistant.py` (parser invocation
+with try/except that distinguishes the two exception types).
 
 **Dependencies:** G.1.
 
-**Failure/security cases:** a parser that raises on malformed input
-must map to `clarification-required` (not 500). A parser that
-produces a `ProposedOperation` with a wrong `operation_id` must be
-refused by the policy.
+**Tests:**
 
-**Tests:** unit tests for the trivial parser; integration test proving
-a capability with a bad parser returns `clarification-required` (or
-`refused`), not `success`.
+- Unit: a well-behaved parser produces the expected
+  `ProposedOperation`.
+- Unit: a parser raising `CapabilityParseError("target")` produces an
+  exception with `field_name == "target"`.
+- Integration: a test-only capability whose parser raises
+  `CapabilityParseError` returns `clarification-required` with a
+  `clarification_prompt` naming the field.
+- Integration: a test-only capability whose parser raises a generic
+  `RuntimeError` returns `refused` with the static message.
+- Integration: a test-only capability whose parser returns an
+  invalid `ProposedOperation` returns `refused`.
+- Regression: `help`-only path unchanged.
 
-**Acceptance:** the parser contract is documented and the two existing
-capabilities pass through it unchanged.
+**Acceptance:** expected and unexpected parser failures produce
+distinct statuses; neither masks the other; no exception detail is
+exposed to the client.
 
-**Compatibility:** no schema change; no browser change.
+**Compatibility:** no schema change; no browser change (the browser
+must handle both `clarification-required` and `refused` per §E).
 
 ### G.3 - Clarification workflow (client-only per §C.4)
 
@@ -860,6 +1152,135 @@ scope for correction.
   deferred to Stage 9.4/9.5.
 
 ---
+
+## K. Proposed Stage 9.1 contract amendment
+
+The corrected design requires the following amendments to the Stage 9.1
+contract and to the initial assistant request/response schemas. Each
+requires explicit owner approval before implementation begins. Until
+approved, Stage 9.2 does not implement any of them.
+
+### K.1 New AssistantRequest field: clarification_id
+
+    clarification_id: UUID | None = None
+
+- Optional. When present, message is the answer to the identified
+  pending clarification, not a fresh request.
+- When absent, behaviour is unchanged.
+- Backward compatible for existing clients that do not send this
+  field; they continue to see today's behaviour.
+- Existing test test_assistant_api.py::test_unexpected_fields_rejected
+  still passes because clarification_id is now a declared field, not an
+  unexpected one.
+
+### K.2 New AssistantResponse field: clarification_prompt
+
+    clarification_prompt: ClarificationPrompt | None = None
+
+- Present only when status == "clarification-required".
+- Backward compatible: existing clients that read status and message
+  continue to work. The message field carries a human-readable string;
+  clarification_prompt carries the machine-readable structured
+  payload.
+- New ClarificationPrompt model carries: clarification_id, capability_
+  identifier, question, missing_fields. No user values, no policy
+  identity, no executor name.
+
+### K.3 New AssistantStatus values
+
+The current enum has five values. Three additions are proposed, all
+scoped to Path B execution (the request endpoint) and the initial-
+endpoint ambiguity between "challenge issued" and "challenge
+unavailable":
+
+- confirmation-unavailable - challenge could not be minted.
+  Replaces the current confirmation-required with challenge == None
+  case. Honest but is a backward-incompatible status addition.
+- execution-failed - Path B executor ran and reported failure.
+- execution-unknown - Path B executor ran but its outcome could not be
+  established.
+
+ConfirmationDecisionStatus (the confirmation-decision endpoint) is
+unchanged. It already owns Path C execution outcomes with seven
+existing statuses and this design does not touch that contract.
+
+Backward-compatibility impact: any client that exhaustively matches
+AssistantStatus must be updated. First-party clients: only web/static/
+app.js. No known external clients.
+
+### K.4 New table: pending_clarifications
+
+New migration. Fields as documented in C.2.
+
+- No foreign key to assistant_conversations (to preserve domain
+  separation; app-level cleanup on conversation delete, not DB cascade).
+- No foreign key to clinical reasoning tables.
+- Indexed unique column on clarification_id for O(1) lookup by the
+  wire value.
+
+### K.5 New persistence domain: pending clarifications
+
+- NOT part of conversation persistence ("only successful turns
+  persist" unchanged).
+- Cleared on resolution, abandonment, expiry, or conversation delete.
+- Not exported in confirmation-record inspect/export (separate domain).
+- Stored values: field names only (never user values), capability
+  identifier, conversation_id, timestamps. No secrets, no display
+  codes, no policy fingerprints.
+
+### K.6 New endpoint: DELETE /api/assistant/clarifications/{id}
+
+Small endpoint mirroring the confirmation-record deletion precedent.
+Lets the client discard a pending clarification explicitly. Requires
+local-origin guard on the state-changing act, matching the existing
+enforcement pattern (enforce_local_origin).
+
+Backward compatible: new endpoint, no existing client affected.
+
+### K.7 No-conversation path
+
+The submit_request handler must not create a pending_clarifications
+row when conversation_id is None. Instead it returns
+clarification-required with a "select a conversation to continue"
+message and no clarification_prompt. This preserves the existing
+database-free contract; it is not itself an amendment, it is a design
+decision that honours the existing contract.
+
+### K.8 Executor registration approval process
+
+A new documented process (Step G.7). Registering a production executor
+requires all of:
+
+- Capability already reviewed and registered.
+- Policy rule already reviewed and registered.
+- Executor reviewed separately as a distinct change.
+- Executor tested end-to-end against the confirmation-decision
+  endpoint before merge.
+- Production executor registry updated only after all four are
+  approved and merged.
+
+This codifies the existing three-way independence (Section B.4) as an
+explicit gate. It does not itself register an executor; the production
+build_default_executor_registry() continues to return an empty
+registry until a specific executor is separately approved.
+
+### K.9 Summary of amendments needing owner approval
+
+Before Stage 9.2 implementation begins, the reviewer must approve or
+reject:
+
+1. New optional clarification_id field on AssistantRequest (K.1).
+2. New optional clarification_prompt field on AssistantResponse (K.2).
+3. Three new AssistantStatus values: confirmation-unavailable,
+   execution-failed, execution-unknown (K.3).
+4. New pending_clarifications table and migration (K.4).
+5. New DELETE /api/assistant/clarifications/{id} endpoint (K.6).
+6. Executor registration approval process as documented (K.8).
+
+If any is rejected, the corresponding design section must be revised
+before implementation begins. Task 232 does not perform any of these
+changes.
+
 
 ## Closing note
 
