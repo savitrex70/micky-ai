@@ -306,7 +306,10 @@ def prepare_change(
     except Exception:
         return WorkspaceChangeResponse(
             status="refused",
-            message="The workspace change could not be authorized. Nothing was changed.",
+            message=(
+                "The workspace change could not be authorized. "
+                "Nothing was changed."
+            ),
         )
     if decision.outcome is AuthorizationOutcome.CLARIFY:
         return WorkspaceChangeResponse(

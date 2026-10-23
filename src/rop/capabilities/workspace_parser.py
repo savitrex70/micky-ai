@@ -104,14 +104,14 @@ class WorkspaceCommandParser:
             match = _LIST_RE.fullmatch(message)
             assert match is not None
             requested = match.group(1).casefold()
-            kind = None if requested == "all" else requested[:-1] if requested in {"notes", "tasks", "reminders"} else requested
-            parameters = {} if kind is None else {"kind": kind.rstrip("s")}
-            if requested == "reminders":
-                parameters = {"kind": "reminder"}
-            if requested == "notes":
-                parameters = {"kind": "note"}
-            if requested == "tasks":
-                parameters = {"kind": "task"}
+            kind_by_name = {
+                "all": None,
+                "notes": "note",
+                "tasks": "task",
+                "reminders": "reminder",
+            }
+            kind = kind_by_name[requested]
+            parameters = {} if kind is None else {"kind": kind}
             return _operation("workspace_list_items", parameters=parameters)
 
         search = _SEARCH_RE.fullmatch(message)
@@ -123,7 +123,9 @@ class WorkspaceCommandParser:
                     "What words should I search for in your authorized local files?",
                     partial_operation=_operation("workspace_search_files"),
                 )
-            return _operation("workspace_search_files", parameters={"query": query[:200]})
+            return _operation(
+                "workspace_search_files", parameters={"query": query[:200]}
+            )
 
         add_item = _ADD_ITEM_RE.fullmatch(message)
         if add_item:
@@ -152,7 +154,9 @@ class WorkspaceCommandParser:
                 raise CapabilityParseError(
                     "title",
                     "What should the reminder be called?",
-                    partial_operation=_operation("workspace_reminder_create", parameters=params),
+                    partial_operation=_operation(
+                        "workspace_reminder_create", parameters=params
+                    ),
                 )
             params["title"] = title[:200]
             if len(parts) > 1 and parts[1]:
@@ -163,7 +167,8 @@ class WorkspaceCommandParser:
             if missing:
                 raise CapabilityParseError(
                     missing[0],
-                    "When is this reminder due? Reply with local time and timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
+                    "When is this reminder due? Reply with local time and timezone as "
+                    "YYYY-MM-DDTHH:MM | Europe/Bucharest.",
                     partial_operation=_operation("workspace_reminder_create", parameters=params),
                     missing_fields=missing,
                 )
@@ -197,7 +202,10 @@ class WorkspaceCommandParser:
             action, raw_target = state_match.groups()
             verb = action.casefold()
             try:
-                target = _uuid_target(raw_target, "Which task should I change? Reply with its item ID.")
+                target = _uuid_target(
+                    raw_target,
+                    "Which task should I change? Reply with its item ID.",
+                )
             except CapabilityParseError:
                 raise CapabilityParseError(
                     "target",
@@ -224,7 +232,10 @@ class WorkspaceCommandParser:
             kind, raw_target, raw_values = update_match.groups()
             kind = kind.casefold()
             try:
-                target = _uuid_target(raw_target, "Which item should I update? Reply with its item ID.")
+                target = _uuid_target(
+                    raw_target,
+                    "Which item should I update? Reply with its item ID.",
+                )
             except CapabilityParseError:
                 raise CapabilityParseError(
                     "target",
@@ -258,17 +269,23 @@ class WorkspaceCommandParser:
                 if missing:
                     raise CapabilityParseError(
                         missing[0],
-                        "When is the updated reminder due? Reply with local time and timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
+                        "When is the updated reminder due? Reply with local time and "
+                        "timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
                         partial_operation=_operation(
-                            "workspace_reminder_update", target=target, parameters=params
+                            "workspace_reminder_update",
+                            target=target,
+                            parameters=params,
                         ),
                         missing_fields=missing,
                     )
-            return _operation(f"workspace_{kind}_update", target=target, parameters=params)
+            return _operation(
+                f"workspace_{kind}_update", target=target, parameters=params
+            )
 
         raise CapabilityParseError(
             "command",
-            "Use an explicit workspace command such as 'workspace list notes' or 'workspace add note: title'.",
+            "Use an explicit workspace command such as 'workspace list notes' "
+            "or 'workspace add note: title'.",
         )
 
     def _continue_clarification(
@@ -276,9 +293,14 @@ class WorkspaceCommandParser:
     ) -> ProposedOperation:
         raw_operation = context.get("partial_operation")
         missing = context.get("missing_fields")
-        if not isinstance(raw_operation, Mapping) or not isinstance(missing, list) or not missing:
+        if (
+            not isinstance(raw_operation, Mapping)
+            or not isinstance(missing, list)
+            or not missing
+        ):
             raise CapabilityParseError(
-                "clarification", "That clarification is no longer available. Start the command again."
+                "clarification",
+                "That clarification is no longer available. Start the command again.",
             )
         try:
             operation = ProposedOperation.model_validate(raw_operation)
@@ -321,21 +343,27 @@ class WorkspaceCommandParser:
             if still_missing:
                 raise CapabilityParseError(
                     still_missing[0],
-                    "Reply with local time and timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
+                    "Reply with local time and timezone as "
+                    "YYYY-MM-DDTHH:MM | Europe/Bucharest.",
                     operation,
                     still_missing,
                 )
             fields = []
         else:
             raise CapabilityParseError(
-                "clarification", "That clarification is no longer supported. Start again."
+                "clarification",
+                "That clarification is no longer supported. Start again.",
             )
         fields = [name for name in fields if name != first]
         if fields:
             raise CapabilityParseError(
                 fields[0],
                 "Please provide the remaining information: " + ", ".join(fields),
-                _operation(operation.operation_id, target=target, parameters=parameters),
+                _operation(
+                    operation.operation_id,
+                    target=target,
+                    parameters=parameters,
+                ),
                 fields,
             )
         return _operation(operation.operation_id, target=target, parameters=parameters)

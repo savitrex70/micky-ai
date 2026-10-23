@@ -26,15 +26,8 @@ from rop import database as database_module
 from rop.api.integrity import classify_integrity_error
 from rop.api.origin import enforce_local_origin
 from rop.authorization.dispatch import authorize_capability_dispatch
-from rop.authorization.executors import (
-    ExecutorRegistry,
-    build_default_executor_registry,
-)
-from rop.authorization.policy import (
-    AuthorizationPolicy,
-    build_default_policy,
-    evaluate_authorization,
-)
+from rop.authorization.executors import ExecutorRegistry
+from rop.authorization.policy import AuthorizationPolicy, evaluate_authorization
 from rop.capabilities.parser import CapabilityParseError
 from rop.capabilities.registry import (
     Capability,
@@ -45,14 +38,14 @@ from rop.capabilities.workspace_parser import WorkspaceCommandParser
 from rop.models.assistant_confirmation import AssistantConfirmation
 from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.repositories.assistant_confirmation import AssistantConfirmationRepository
-from rop.repositories.assistant_pending_clarification import (
-    AssistantPendingClarificationRepository,
-)
-from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.repositories.assistant_conversation import (
     ConversationNotFoundError,
     ConversationRepository,
 )
+from rop.repositories.assistant_pending_clarification import (
+    AssistantPendingClarificationRepository,
+)
+from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.schemas.assistant import (
     AssistantConfirmationChallenge,
     AssistantRequest,
@@ -279,7 +272,8 @@ def _prepare_workspace_confirmation(
         if active is not None:
             return _workspace_refusal(
                 "A matching confirmation may already be pending. Inspect the "
-                "confirmation records before proceeding; no second challenge was created."
+                "confirmation records before proceeding; no second challenge was "
+                "created."
             )
     else:
         receipt = AssistantOperationReceipt(
@@ -439,7 +433,8 @@ def _dispatch_workspace_command(
                     session.rollback()
                 return (
                     _workspace_refusal(
-                        "The command could not be processed safely. Nothing was executed."
+                        "The command could not be processed safely. "
+                        "Nothing was executed."
                     ),
                     turn_message,
                     False,
@@ -514,7 +509,8 @@ def _dispatch_workspace_command(
                 session.rollback()
             return (
                 _workspace_refusal(
-                    "The command is not permitted by the current policy. Nothing was changed."
+                    "The command is not permitted by the current policy. "
+                    "Nothing was changed."
                 ),
                 turn_message,
                 False,
