@@ -250,225 +250,54 @@ an alias. The correct design uses server-issued pending state keyed by
 an unguessable identifier, the same pattern already proven by the
 confirmation-challenge system.
 
-### C.2 Wire protocol
+### C.2 Wire protocol and pending-state record
 
-The corrected design requires three coordinated changes.
+**Request:** add optional `clarification_id: UUID | None = None`. When present, the request is a continuation of that server-owned clarification, not a fresh selection. If absent, current fresh-request semantics remain unchanged.
 
-**New optional field on AssistantRequest:**
+**Response:** add optional `clarification_prompt: ClarificationPrompt | None`, present only when a real pending row is created. It contains the server-issued clarification ID, capability identifier, user-facing question, and sanitized missing-field names. It contains no authorization, executor selection, policy identity, or confirmation data.
 
-    clarification_id: UUID | None = None
+**New server-owned table: `pending_clarifications`.** Fields: UUID primary key; unique high-entropy clarification ID; non-null UUID `conversation_id` referencing `assistant_conversations.id` with `ON DELETE CASCADE`; capability identifier; bounded `original_message`; minimized JSON partial operation values; missing-field names; created/expiry/consumed timestamps; and a constrained lifecycle status.
 
-When present, message is the answer to the identified pending question,
-not a fresh request. When absent, behaviour is unchanged.
+The table must retain the original bounded message and only the partial operation material needed to continue safely. These are temporary user values, so they must not be described as value-free. Rows expire after ten minutes and are deleted on resolution, explicit abandonment, expiry cleanup, or conversation deletion. The endpoint must not log raw user values, expose stored material through GET responses or exports, or reveal it in errors. There is no relationship to clinical reasoning tables. No pending row may be created when `conversation_id` is absent.
 
-**New optional field on AssistantResponse:**
-
-    clarification_prompt: ClarificationPrompt | None = None
-
-    class ClarificationPrompt(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        clarification_id: UUID
-        capability_identifier: str
-        question: str
-        missing_fields: list[str]  # sanitized field names, not user values
-
-Present only when status == "clarification-required". Carries the
-server-issued clarification_id (unguessable, high-entropy UUID), the
-matched capability identifier, a user-facing question, and the missing
-field names - but never the user's original input, never a
-pre-approved authorization, never an executor name.
-
-**New server-side state: pending_clarifications table** (or equivalent
-server-owned store, modeled on assistant_confirmations). Fields:
-
-- id (primary key, UUID)
-- clarification_id (unique, indexed, unguessable - the wire value)
-- conversation_id (nullable; see C.4)
-- capability_identifier
-- missing_fields (JSON array of field names)
-- created_at
-- expires_at (a bounded window, e.g. 10 minutes)
-- resolved_at (nullable, set on consumption)
-- resolved_by_operation_id (nullable; the operation identifier the
-  follow-up produced, for audit)
-
-Rows are created when _dispatch decides CLARIFY, consumed when the
-follow-up resolves or is abandoned, and cleared on:
-
-- successful resolution
-- explicit abandonment (see C.5)
-- expiry
-- conversation deletion (via app-level cleanup, not a DB-level FK
-  cascade, to preserve the conversation/clinical separation invariant)
+The migration must include expiry/status and unique-ID indexes, status constraints, and a downgrade that removes only this new table.
 
 ### C.3 Full clarification flow
 
-1. **Initial request.** Client sends {message, conversation_id?}.
-   submit_request runs as today until the policy returns CLARIFY. At
-   that point, instead of returning {status:
-   "clarification-required", message: ...} with no context, the
-   endpoint now:
-
-   - creates a pending_clarifications row with a fresh
-     clarification_id,
-   - returns {status: "clarification-required", message: ...,
-     clarification_prompt: {clarification_id, capability_identifier,
-     question, missing_fields}}.
-
-2. **User answers.** Client sends {message: "<the answer>",
-   conversation_id?, clarification_id}. submit_request detects
-   clarification_id is not None and routes to a clarification-
-   resolution path that:
-
-   - loads the pending row by clarification_id; 404 if absent or
-     expired,
-   - verifies conversation_id matches the pending row's
-     conversation_id (both must be set, or both must be None),
-   - re-runs the capability's parser with the combined input (original
-     message + answer); NOT through CapabilityRegistry.match, which
-     would fail,
-   - produces a fresh ProposedOperation from the combined input,
-   - re-runs evaluate_authorization on the fresh operation (mandatory:
-     no pre-approved authorization from the initial turn carries
-     forward),
-   - on ALLOW / REQUIRE_CONFIRMATION: proceeds per D.1 Path A/B/C as
-     normal,
-   - on CLARIFY again: mints a NEW pending row and returns a NEW
-     clarification_prompt (the previous row is consumed, since a new
-     clarification replaces it),
-   - on DENY: returns refused and consumes the pending row,
-   - on clarification_id failure (not found, expired, conversation
-     mismatch): returns {status: "clarification-required", message:
-     "the pending clarification is no longer active; restate your
-     request"}; no new pending row created.
-
-3. **Combined input persistence.** If the eventual combined request
-   produces success, the persisted user/assistant pair is
-   (original_message + " " + answer) and capability_reply (or the
-   executor's success message for Path B). The pending-clarification
-   row is a separate domain and is NOT persisted as a conversation
-   message; only the successful exchange is.
+1. **Initial request:** select an explicitly registered capability and run its deterministic parser. If required information is missing, create a pending row only for a verified selected conversation; store the bounded original message and minimized partial operation, then return `clarification-required` with a fresh ID and a question. Do not persist the non-success clarification in conversation messages.
+2. **Follow-up:** the client sends the answer as `message`, the same `conversation_id`, and the server-issued `clarification_id`. The handler locks/claims the matching unexpired row, verifies that it belongs to that conversation, and loads its saved context. The client does not name the capability or submit an authorization.
+3. **Continuation:** combine the saved partial operation with the answer and produce a validated `ProposedOperation`. Do not match the answer against the global alias registry. If more information is needed, create a replacement pending row and consume the old one atomically. If the operation is complete, consume the old row before dispatch.
+4. **Fresh authorization:** every continuation re-runs the current policy over the newly reconstructed operation; no authorization or confirmation from the original turn carries forward. Material changes require a new decision and, for consequential operations, a new confirmation.
+5. **Persistence:** on success, persist the original message plus the clarification answer as the user turn, and the truthful result as the assistant turn, atomically under the existing successful-turn-only rule. A non-success clarification is not stored as a successful exchange.
+6. **Parser faults:** expected typed user-input errors may initiate clarification. Unexpected exceptions or invalid parser output produce a sanitized fail-closed response, not another question that misleads the user.
 
 ### C.4 No-conversation path
 
-The pending_clarifications table is only relevant when a
-conversation_id is present. The no-conversation path must remain
-database-free per the approved Stage 9.1 contract.
+Requests without `conversation_id` remain database-free. When such a request needs clarification, return a sanitized message asking the user to select/create a conversation; do not create a pending row or return a continuation ID. A request containing `clarification_id` but no `conversation_id` is rejected before opening a database session. A state-changing capability must not execute on this path.
 
-**Recommended behaviour:** when conversation_id is None and the
-capability would need clarification, return {status:
-"clarification-required", message: "<capability> requires a
-conversation to complete this request. Select or create a conversation
-first."} WITHOUT creating a pending row and WITHOUT a
-clarification_prompt. This preserves the DB-free invariant. The user
-must select a conversation, restate the request, and answer the
-clarification there.
+### C.5 Edge cases and lifecycle guarantees
 
-This is a real UX cost: a request that would need clarification cannot
-be continued without a conversation. It is honest, preserves the
-existing DB-free contract, and is the cheapest correct option. The
-alternative - making pending_clarifications work without a
-conversation - would break the DB-free contract and require a separate
-owner decision.
-
-### C.5 Edge cases
-
-- **Conversation switch during clarification.** The follow-up request
-  has a different conversation_id than the pending row. The resolution
-  path detects the mismatch, consumes the pending row, and returns
-  {status: "clarification-required", message: "the pending
-  clarification was attached to a different conversation; restate your
-  request in the current conversation"}. No executor runs; no policy
-  evaluation runs on the mixed-conversation request.
-
-- **Page reload during clarification.** The pending row persists on
-  the server; the browser loses its in-memory clarification_id. On
-  next page load the browser has no way to continue the pending row
-  automatically. The row expires naturally. A future enhancement could
-  expose a GET /api/assistant/clarifications?conversation_id=... to
-  let the browser restore the pending prompt on load; that is out of
-  scope for Stage 9.2 but flagged for later consideration.
-
-- **Explicit abandonment.** A new DELETE
-  /api/assistant/clarifications/{clarification_id} endpoint (small,
-  mirrors the confirmation-record deletion precedent at
-  src/rop/api/confirmation_records.py) lets the client discard a
-  pending clarification. Without this, abandoned rows expire after the
-  timeout window. Include this endpoint in Stage 9.2 scope, not as an
-  afterthought.
-
-- **Stale clarification_id.** A follow-up referencing an expired or
-  already-resolved row returns {status: "clarification-required",
-  message: "the pending clarification is no longer active; restate
-  your request"}, no new pending row created, no ambiguity guard
-  cleared. This is a stale-continuation outcome, distinct from a
-  parser failure and distinct from a policy refusal.
-
-- **Persistence of the eventual successful turn.** Covered in C.3
-  step 3.
-
-- **Authorization revalidation.** Every follow-up re-derives
-  ProposedOperation from scratch and re-runs evaluate_authorization.
-  The pending row does not carry a pre-approved authorization. This
-  prevents a user from "clarifying" into an operation that would not
-  have been ALLOWed if requested directly.
-
-- **Executor choice.** Path B executors are chosen server-side via
-  ExecutorRegistry.get(operation_id) after the re-evaluated policy
-  returns ALLOW. The clarification_id field on the request has no
-  bearing on which executor is chosen; it is only used to locate the
-  pending row.
+- **Conversation switch/mismatch:** reject the follow-up without entering dispatch and without consuming the legitimate pending row.
+- **Reload/recovery:** add local-origin-guarded `GET /api/assistant/clarifications?conversation_id=...`, returning only the active sanitized prompt for the selected conversation, never original input or partial operation values.
+- **Abandonment:** add local-origin-guarded `DELETE /api/assistant/clarifications/{clarification_id}`, restricted to the matching selected conversation.
+- **Expiry:** pending rows expire after ten minutes. Cleanup must be bounded and use indexes rather than an unbounded scan. Expired rows cannot be resumed.
+- **Concurrency/replay:** use a row lock or atomic state transition from PENDING to CONSUMED. Only one continuation may claim a row. A replay or simultaneous second answer receives a sanitized stale/consumed response and cannot execute.
+- **Replacement clarification:** if more information is needed, atomically consume the old row and create the new one; transaction failure rolls back both effects.
+- **Deletion/privacy:** deleting a conversation removes only its clarification state, never clinical data. Raw user values are excluded from logs, generic errors, and exports. Delete/redact temporary values immediately when no longer needed.
 
 ### C.6 Options considered and rejected
 
-- **Client-only state (the previous recommendation).** Rejected: (a)
-  the server cannot verify the client's claim about which pending
-  clarification is being answered; (b) the follow-up cannot match a
-  registered alias; (c) a client could lie.
+- Client-only state is rejected because the backend cannot verify the client's claimed pending capability and the follow-up does not match the original exact alias.
+- A continuation payload without server state is rejected because the client could alter or replay operation material without a server-verifiable binding.
+- Persisting clarification questions as conversation messages is rejected for this implementation because it changes the successful-turn-only conversation persistence contract.
+- Reusing `conversation_id` as the pending-interaction ID is rejected because those identifiers represent different lifecycles.
+- Fuzzy matching or model-based intent inference for follow-ups is rejected. Follow-ups resolve only through the explicit pending-clarification route.
 
-- **Conversation-message persistence (a persisted "clarification
-  question" assistant message).** Rejected: it changes the "only
-  successful exchanges persist as user/assistant pairs" contract by
-  storing an extra assistant message. A dedicated
-  pending_clarifications table keeps the pending state in its own
-  domain, like assistant_confirmations.
+### C.7 Contract amendments for delegated Stage 9 completion
 
-- **Continuation payload (client re-sends the whole combined message
-  plus a hint).** Rejected: the server has no way to distinguish "I am
-  answering the reminder clarification" from "I am making a new
-  request", so a client could replay the same combined message as a
-  fresh request and get a different decision. A server-issued
-  clarification_id prevents replay.
+The owner has delegated the full Stage 9 implementation and associated design choices to the assistant. Within the approved privacy, deterministic-routing, offline, and authorization boundaries, the implementation will add: `clarification_id`, structured `clarification_prompt`, ten-minute server-side clarification records, restore/abandon endpoints, an idempotency key for state-changing requests, durable operation receipts, and distinct initial-request outcomes for unavailable confirmation and synchronous direct execution failure/unknown status. The confirmation-decision endpoint retains its existing outcome contract.
 
-- **Reuse conversation_id as the pending identifier.** Rejected: the
-  conversation may have multiple pending clarifications across
-  capabilities; conflating the two loses the mapping between answer
-  and question.
-
-- **Fuzzy matching on the follow-up.** Rejected: the Stage 9.1
-  contract explicitly forbids fuzzy matching, substring matching, and
-  model-based intent inference. The wire protocol above works with
-  exact matching.
-
-### C.7 Contract amendment required
-
-The corrected design requires a Stage 9.1 contract amendment, fully
-documented in Section K:
-
-- New optional clarification_id field on AssistantRequest.
-- New ClarificationPrompt response field.
-- New pending_clarifications table (migration).
-- New DELETE /api/assistant/clarifications/{id} endpoint.
-- New behaviour: AssistantRequest with clarification_id routes to
-  clarification resolution, not fresh selection.
-- New behaviour: no-conversation requests that would need
-  clarification return a "select a conversation" message without a
-  pending row.
-
-Every amendment is backward-compatible for existing clients that do
-not send clarification_id; their behaviour is unchanged.
-
-
+These changes do not authorize fuzzy matching, hosted/remote inference, hidden provider fallback, clinical-domain coupling, or enabling a production executor before its implementation and recovery tests pass.
 
 ## D. Authorization and safe-execution contract
 
@@ -587,24 +416,17 @@ processes any request through these steps in order:
 
 ### D.4 Integration with future capabilities
 
-A future notes/tasks/reminders capability chooses its path by the risk
-classification of each operation:
+A read-only operation such as listing notes uses a policy-authorized non-mutating path. A reviewed low-risk local write may use direct LOW-risk ALLOW. A destructive or consequential operation must use the trusted confirmation path. Each capability, policy rule, and executor remains independently registered and reviewed.
 
-- A read-only "list notes" operation → Path A.
-- A "create note" operation → likely Path B (LOW risk, no
-  confirmation).
-- A "delete all notes" operation → Path C (CONSEQUENTIAL, requires
-  confirmation).
+### D.5 Execution permits, receipts, and recovery
 
-**Registering the executor is a separate owner decision per
-capability**, not bundled with the capability's initial registration.
-This preserves the three-way independence documented in §B.4:
+The current executor type is `Callable[[ProposedOperation, AuthorizedScope], ExecutorResult]`; it does not model a LOW-risk ALLOW without confirmation. Introduce a server-created, immutable execution permit with separate variants: `LowRiskPermit`, binding the exact operation fingerprint and current policy identity after an ALLOW for a LOW-risk rule, and `ConfirmedPermit`, containing the exact stored scope only after the trusted confirmation has been verified and consumed. Neither permit is accepted from HTTP input. The boundary must reject a permit whose type conflicts with the current policy risk or whose material operation differs.
 
-- Registering a capability does not authorize it.
-- Authorizing a capability does not give it an executor.
-- Registering an executor does not register a capability.
+Every state-changing local executor must require an idempotency key and a durable operation receipt bound to the canonical operation fingerprint. The state mutation and receipt must commit atomically in the same database transaction. Reusing a key with different material is a conflict; a completed key returns its prior result without re-running; a concurrent or unresolved receipt must not start a second execution.
 
+This is necessary because an operation can succeed before conversation history persistence fails. The receipt stays authoritative; retrying with the same key recovers the result and saves the conversation turn without duplicating the effect. External/non-transactional side effects are not eligible for the direct local write path without a separately reviewed recovery protocol.
 
+Tests must cover success + saved exchange, success + failed conversation persistence, established failure, unknown execution, failure to record a terminal result, duplicate replay, concurrent duplicate request, and same-key/different-operation conflict. Production state-changing executors remain disabled until these boundaries are implemented and verified.
 
 ## E. Truthful outcome contract
 
@@ -735,23 +557,12 @@ For clarity, given the previous design's error:
 
 ### F.1 Conversation integration
 
-The interaction engine builds on the existing conversation/message
-API and UI:
-
-- Requests without a `conversation_id` remain database-free. This is
-  preserved by the current `submit_request` structure and by
-  `test_assistant_persistence.py::test_no_conversation_does_not_touch_db`.
-- With a `conversation_id`, the persistence precheck verifies the
-  conversation exists before any dispatch. This preserves the
-  "selected conversation is real" contract.
-- Successful turns persist as an atomic user/assistant pair. The
-  engine must not change this.
-- **Clarification state, if persisted, must go through an explicitly
-  reviewed contract.** Under the recommended Option 1 (client-only),
-  no clarification state is persisted, so the existing "only success
-  persists" contract is unchanged.
-- **Conversation identifiers never touch clinical reasoning records.**
-  No FK, no shared ID, no join.
+- Requests without `conversation_id` remain database-free.
+- When supplied, a conversation ID is verified before dispatch.
+- Only successful exchanges persist as an atomic user/assistant pair; clarification prompts are not stored as successful conversation messages.
+- Pending clarifications use short-lived server-side state, not conversation ordering. A successful continuation persists the original request plus the answer as one user turn and the truthful outcome as the assistant turn.
+- State-changing requests require durable idempotency receipts to recover if HTTP delivery or conversation persistence fails.
+- Conversation IDs never join, map, or share identity with clinical reasoning IDs or tables. Clarification records relate only to assistant conversations.
 
 ### F.2 Privacy
 
@@ -782,16 +593,13 @@ native-model restrictions remain intact: no hosted inference, no
 Ollama, no third-party pretrained model, no automatic download, no
 training during interaction.
 
-### F.5 Owner decisions still required
+### F.5 Decisions selected for delegated Stage 9 completion
 
-The only genuinely open owner decision surfaced by this design is
-**C.4: which clarification-state approach to adopt**. Option 1
-(client-only) is recommended because it requires no schema change and
-no contract amendment. Option 2 or 3 requires an explicit owner
-decision to amend either the "only success persists" contract
-(Option 2) or add a new persistence table (Option 3).
-
----
+- Use server-owned, ten-minute clarification state bound to a selected conversation, with restore and abandonment endpoints.
+- Store only the bounded original message and minimized partial operation needed to safely reconstruct the request; delete temporary values on resolution, abandonment, expiry, or conversation deletion.
+- Add an idempotency key and durable receipt before any state-changing executor is production-eligible.
+- Keep execution outcomes on the endpoint that owns them: initial-request statuses for synchronous direct LOW-risk execution and challenge issuance; existing confirmation-decision statuses for consequential confirmation execution.
+- Production executor registration remains separately reviewed; no production executor is registered in Stage 9.2.
 
 ## G. Implementation sequence
 
@@ -800,32 +608,11 @@ reviewable, and preserves the production executor registry being
 empty. Each step ends with green tests and a design review, not an
 automatic merge.
 
-### G.1 - Non-`help` capability with no required parameters
+### G.1 - Test-only capability and policy fixtures
 
-**Intended behaviour:** register a second capability (e.g. `status`)
-that requires no target, no scope, and no parameters, and is `LOW`
-risk. It returns a static reply. This exercises the "selection →
-policy → reply" path end to end with a non-`help` capability.
+Prove non-help selection and dispatch with test-only capability/policy fixtures. Do not add a production `status` capability solely to test routing.
 
-**Modules:** `capabilities/registry.py` (add alias set),
-`authorization/policy.py` (`DEFAULT_POLICY_RULES` add one rule),
-`api/assistant.py` (no change needed).
-
-**Dependencies:** none.
-
-**Failure/security cases:** policy does not contain the new rule →
-refused. Registry contains the alias but policy does not → refused
-(the independence property).
-
-**Tests:** `test_assistant_api.py` extended to cover the new
-capability's aliases; `test_authorization_dispatch.py` extended to
-prove the new capability flows through `authorize_capability_dispatch`.
-
-**Acceptance:** a new alias returns `success` with the correct reply;
-an alias without a policy rule returns `refused`.
-
-**Compatibility:** no schema change; no browser change needed (browser
-already handles `success`).
+**Acceptance:** test the exact-alias path, a registered capability without a policy rule returning refusal, and the existing help response unchanged. Production registry stays help-only until an actual feature is independently implemented and reviewed.
 
 ### G.2 - `CapabilityParser` contract with typed failure taxonomy
 
@@ -893,37 +680,15 @@ exposed to the client.
 **Compatibility:** no schema change; no browser change (the browser
 must handle both `clarification-required` and `refused` per §E).
 
-### G.3 - Clarification workflow (client-only per §C.4)
+### G.3 - Server-owned clarification workflow
 
-**Intended behaviour:** a capability that requires a target
-(e.g., a hypothetical `echo` with a `target` field) returns
-`clarification-required` when the target is absent. The browser
-retains the pending clarification in memory. The follow-up message is
-sent with the pending context; the parser sees the follow-up plus
-context and either resolves or escalates.
+Implement the protocol in §C: optional clarification ID, structured prompt, ten-minute pending rows for verified selected conversations, safe continuation, GET restore, DELETE abandonment, atomic single-use consumption, and fresh authorization after every answer.
 
-**Modules:** `capabilities/registry.py`, `capabilities/parser.py`,
-`api/assistant.py`, `web/static/app.js`,
-`web/static/index.html` (if a "clarification pending" indicator is
-added).
+**Modules:** request/response schemas; new clarification model, repository, service, API routes and migration; `api/assistant.py`; browser UI.
 
-**Dependencies:** G.2.
+**Tests:** persistence and expiry; local-origin checks; no-conversation database-free behaviour; reload restoration; malformed/expired/mismatched IDs; conversation deletion; replay and concurrent continuation; successful pair persistence; static error messages and privacy.
 
-**Failure/security cases:** stale pending clarification after
-conversation switch (reject). Pending clarification after reload
-(graceful degradation: "please restate").
-
-**Tests:** new scenario in `tests/conversations_ui_harness.cjs`
-covering: request → `clarification-required` → follow-up →
-`success`. And: `clarification-required` → switch conversation →
-follow-up → `unsupported-capability` or fresh selection, not silently
-applied.
-
-**Acceptance:** the browser retains and correctly attaches the pending
-clarification; a switch or reload does not mis-apply it.
-
-**Compatibility:** no API change (follow-up is a new request); browser
-change required.
+**Acceptance:** exactly one request can claim a pending clarification; a follow-up cannot be routed as an unrelated alias; stale/mismatched continuation never enters execution; non-success clarification is not stored as a successful turn.
 
 ### G.4 - Confirmation flow end-to-end test (no production executor)
 
@@ -948,65 +713,29 @@ test-only executor and the production registry stays empty.
 
 **Compatibility:** no change.
 
-### G.5 - Envelope extension for executor outcomes
+### G.5 - Truthful outcomes, idempotency, and recovery
 
-**Intended behaviour:** add the three new statuses discussed in §E.2
-(`execution-failed`, `execution-unknown`, `confirmation-unavailable`).
-Update the browser's `describeStatus` to handle them. Extend the
-`AssistantResponse` model to allow (but not require) an optional
-`challenge_id` on `execution-unknown` for correlation with the
-confirmation record.
+Add `confirmation-unavailable` to distinguish failed challenge issuance from a real pending challenge. Add `execution-failed` and `execution-unknown` only for synchronous direct LOW-risk execution. Keep post-confirmation outcomes on the existing `ConfirmationDecisionResponse`.
 
-**Modules:** `schemas/assistant.py`, `authorization/dispatch.py`
-(dispatch outcome mapping), `api/assistant.py` (challenge-unavailable
-branch), `web/static/app.js`.
+Add state-changing request idempotency and durable operation receipts. The state mutation and receipt commit together; conversation message persistence can be recovered on retry using the same key without re-executing the operation.
 
-**Dependencies:** reviewer approval for the schema change.
+**Tests:** issued/unavailable challenge; direct low-risk success, established failure and unknown execution; receipt uniqueness; concurrent duplicate; same key/different payload conflict; succeeded operation + conversation persistence failure; receipt/result record failure; browser protection from blind retry.
 
-**Tests:** new tests for each new status; updated browser tests.
+**Acceptance:** all outcomes are truthful, and retry cannot silently duplicate a local state-changing operation. Production executor registry remains empty.
 
-**Acceptance:** every outcome path the interaction engine can take
-maps to an honest status.
+### G.6 - Cross-flow integration and recovery tests
 
-**Compatibility:** backward-incompatible for any client that
-enumerates all statuses. Must be coordinated across all first-party
-clients.
+Exercise unsupported selection, policy refusal, expected clarification, internal parser error, stale/replayed clarification, LOW-risk ALLOW with a test-only executor, consequential confirmation with a test-only executor, operation failure, unknown outcome, receipt recovery, and conversation persistence failure.
 
-### G.6 - Cross-flow integration test
+**Acceptance:** API and UI tests verify the endpoint-specific outcome, persistence result, and retry behaviour. Existing help, successful-turn persistence, and no-conversation DB-free tests stay green.
 
-**Intended behaviour:** a behavioural test that exercises every path
-in one harness run: unsupported, policy refused, clarification
-(client-only), confirmation (test-only executor), and execution-failed
-(test-only executor). Verify each status, each message, and each
-persistence outcome.
+### G.7 - Risk-appropriate executor approval gate
 
-**Modules:** `tests/conversations_ui_harness.cjs`,
-`tests/test_assistant_*.py`.
+- **Path A:** prove policy-authorized non-mutating behaviour and exact selection.
+- **Path B:** prove a test-only LOW-risk executor through request dispatch, including idempotency receipts, duplicate/replay rejection, and recovery when conversation persistence fails.
+- **Path C:** prove a test-only consequential executor through the confirmation-decision endpoint, with exact scope, policy revalidation, single-use consumption, terminal-outcome recording, and replay rejection.
 
-**Dependencies:** G.1-G.5.
-
-**Tests:** this test *is* the test.
-
-**Acceptance:** every enumerated path is demonstrably reachable and
-honestly reported.
-
-**Compatibility:** no production change.
-
-### G.7 - Executor approval-gate documentation
-
-**Intended behaviour:** document the process by which a specific
-production executor is approved. This is not implementation; it is a
-review-gate description that Stage 9.3+ will use.
-
-**Modules:** `docs/task-232-*.md` update, or a new
-`docs/executor-approval-process.md`.
-
-**Dependencies:** none.
-
-**Acceptance:** the process is written down and referenced by the
-Stage 9.3 design.
-
-**Compatibility:** no change.
+No blanket rule requires a LOW-risk operation to go through the confirmation endpoint. A production executor still requires a separate capability-specific review, acceptance evidence for its risk path, and its own commit. This design does not register one.
 
 ### G.8 - Out of scope for Stage 9.2
 
@@ -1127,31 +856,11 @@ scope for correction.
 
 ---
 
-## J. Summary of open decisions
+## J. Decisions selected for delegated Stage 9 completion
 
-**For the reviewer to decide before Stage 9.2 implementation begins:**
+The owner has delegated implementation of Stage 9 and the necessary design choices to the assistant. The selected approach is server-owned clarification state with bounded temporary input, selected-conversation binding, ten-minute expiry, and atomic single-use use; a two-path execution permit separating LOW-risk ALLOW from exact confirmed scope; and durable idempotency receipts before state-changing execution.
 
-1. **§C.4 - Clarification state.** Option 1 (client-only, recommended)
-   or Option 2 (conversation-based, requires contract amendment) or
-   Option 3 (new table, requires migration). This is the single open
-   owner decision.
-
-2. **§E.2 - Envelope extension.** Approve, modify, or reject adding
-   `execution-failed`, `execution-unknown`, and
-   `confirmation-unavailable` as distinct statuses. Without these, the
-   eventual executor path cannot honestly distinguish three different
-   outcomes.
-
-**Not open decisions (already resolved by Stage 9.1):**
-
-- The roadmap is fixed (§B.3 of the Stage 9 contract).
-- The UI is the existing FastAPI + vanilla-JS interface (H.1).
-- Conversation/clinical separation is fixed (H.1).
-- Reminder defaults (H.3) and retrieval/offline defaults (H.4) are
-  approved at the default level; their implementation detail is
-  deferred to Stage 9.4/9.5.
-
----
+The initial request response may distinguish challenge-unavailable and synchronous LOW-risk failure/unknown outcomes. The existing confirmation-decision status enum remains unchanged. No production executor is registered during Stage 9.2. These decisions preserve the existing offline, privacy, deterministic selection, and clinical-domain separation boundaries.
 
 ## K. Proposed Stage 9.1 contract amendment
 
@@ -1160,31 +869,14 @@ contract and to the initial assistant request/response schemas. Each
 requires explicit owner approval before implementation begins. Until
 approved, Stage 9.2 does not implement any of them.
 
-### K.1 New AssistantRequest field: clarification_id
+### K.1 New AssistantRequest fields
 
-    clarification_id: UUID | None = None
-
-- Optional. When present, message is the answer to the identified
-  pending clarification, not a fresh request.
-- When absent, behaviour is unchanged.
-- Backward compatible for existing clients that do not send this
-  field; they continue to see today's behaviour.
-- Existing test test_assistant_api.py::test_unexpected_fields_rejected
-  still passes because clarification_id is now a declared field, not an
-  unexpected one.
+- `clarification_id: UUID | None = None`: continuation for one active server-owned clarification. If absent, existing fresh-request behaviour is preserved.
+- `idempotency_key: UUID | None = None`: required for state-changing execution and bound to the canonical operation fingerprint. This key grants no permission and cannot choose an executor.
 
 ### K.2 New AssistantResponse field: clarification_prompt
 
-    clarification_prompt: ClarificationPrompt | None = None
-
-- Present only when status == "clarification-required".
-- Backward compatible: existing clients that read status and message
-  continue to work. The message field carries a human-readable string;
-  clarification_prompt carries the machine-readable structured
-  payload.
-- New ClarificationPrompt model carries: clarification_id, capability_
-  identifier, question, missing_fields. No user values, no policy
-  identity, no executor name.
+Present only when a real pending record has been created. Contains the server ID, capability identifier, question, and sanitized missing-field names. It never returns the original message or partial operation values. The first-party UI must use this structure to continue or restore the pending interaction.
 
 ### K.3 New AssistantStatus values
 
@@ -1210,32 +902,17 @@ app.js. No known external clients.
 
 ### K.4 New table: pending_clarifications
 
-New migration. Fields as documented in C.2.
+Add a migration for a separate assistant-interaction state table: UUID primary key, unique clarification ID, non-null FK to `assistant_conversations.id` with `ON DELETE CASCADE`, capability identifier, bounded original message, minimized partial operation JSON, missing-field list, timestamps, and constrained status. Add indexes for unique ID lookup and bounded expiry cleanup. No foreign key or relationship to clinical reasoning tables.
 
-- No foreign key to assistant_conversations (to preserve domain
-  separation; app-level cleanup on conversation delete, not DB cascade).
-- No foreign key to clinical reasoning tables.
-- Indexed unique column on clarification_id for O(1) lookup by the
-  wire value.
+### K.5 Temporary values, retention, and privacy
 
-### K.5 New persistence domain: pending clarifications
+The original request and minimized partial-operation values are stored only to reconstruct a safe continuation. They expire after ten minutes and are deleted on resolution, abandonment, expiry, or conversation deletion. They are never logged, exported through confirmation-record controls, or returned to the client. Cleanup and deletion must be bounded and tested.
 
-- NOT part of conversation persistence ("only successful turns
-  persist" unchanged).
-- Cleared on resolution, abandonment, expiry, or conversation delete.
-- Not exported in confirmation-record inspect/export (separate domain).
-- Stored values: field names only (never user values), capability
-  identifier, conversation_id, timestamps. No secrets, no display
-  codes, no policy fingerprints.
+### K.6 Restore and abandonment endpoints
 
-### K.6 New endpoint: DELETE /api/assistant/clarifications/{id}
-
-Small endpoint mirroring the confirmation-record deletion precedent.
-Lets the client discard a pending clarification explicitly. Requires
-local-origin guard on the state-changing act, matching the existing
-enforcement pattern (enforce_local_origin).
-
-Backward compatible: new endpoint, no existing client affected.
+- `GET /api/assistant/clarifications?conversation_id=...` restores only the active sanitized prompt for that conversation.
+- `DELETE /api/assistant/clarifications/{clarification_id}` explicitly abandons a pending clarification, guarded by local origin and bound to the selected conversation.
+- A guessed ID cannot disclose another conversation's state.
 
 ### K.7 No-conversation path
 
@@ -1246,41 +923,15 @@ message and no clarification_prompt. This preserves the existing
 database-free contract; it is not itself an amendment, it is a design
 decision that honours the existing contract.
 
-### K.8 Executor registration approval process
+### K.8 Risk-appropriate executor approval and recovery gate
 
-A new documented process (Step G.7). Registering a production executor
-requires all of:
+A production executor is considered only after its capability and policy are reviewed. Path A needs non-mutation and policy evidence; Path B needs LOW-risk permit, idempotency receipt, direct dispatch and persistence-failure recovery tests; Path C needs exact-scope confirmation, policy revalidation, single-use consumption and terminal outcome tests through the confirmation-decision endpoint. A production executor is a separate reviewed commit.
 
-- Capability already reviewed and registered.
-- Policy rule already reviewed and registered.
-- Executor reviewed separately as a distinct change.
-- Executor tested end-to-end against the confirmation-decision
-  endpoint before merge.
-- Production executor registry updated only after all four are
-  approved and merged.
+### K.9 Design changes selected for implementation
 
-This codifies the existing three-way independence (Section B.4) as an
-explicit gate. It does not itself register an executor; the production
-build_default_executor_registry() continues to return an empty
-registry until a specific executor is separately approved.
+The delegated Stage 9 work includes the clarification request/response fields, pending-clarification model/migration and restore/abandon endpoints, idempotency key and durable operation receipts, the separate low-risk/confirmed execution permit, and the three initial-request status additions `confirmation-unavailable`, `execution-failed`, and `execution-unknown`. The confirmation-decision status contract is unchanged.
 
-### K.9 Summary of amendments needing owner approval
-
-Before Stage 9.2 implementation begins, the reviewer must approve or
-reject:
-
-1. New optional clarification_id field on AssistantRequest (K.1).
-2. New optional clarification_prompt field on AssistantResponse (K.2).
-3. Three new AssistantStatus values: confirmation-unavailable,
-   execution-failed, execution-unknown (K.3).
-4. New pending_clarifications table and migration (K.4).
-5. New DELETE /api/assistant/clarifications/{id} endpoint (K.6).
-6. Executor registration approval process as documented (K.8).
-
-If any is rejected, the corresponding design section must be revised
-before implementation begins. Task 232 does not perform any of these
-changes.
-
+Each change requires focused tests and cross-flow verification. If the implementation cannot preserve the guarantees in this design, the affected feature must remain disabled and be reported honestly.
 
 ## Closing note
 
