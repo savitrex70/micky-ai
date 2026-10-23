@@ -14,6 +14,9 @@
   const cardCodeInput = document.getElementById("confirmation-code-input");
   const cardConfirm = document.getElementById("confirmation-confirm");
   const cardCancel = document.getElementById("confirmation-cancel");
+  const clarificationPanel = document.getElementById("clarification-panel");
+  const clarificationQuestion = document.getElementById("clarification-question");
+  const clarificationAbandon = document.getElementById("clarification-abandon");
 
   const MAX = 2000;
 
@@ -27,6 +30,176 @@
   // the server says cannot be executed. Cancel remains available so the
   // user can withdraw the pending challenge.
   let challengeCannotExecute = false;
+
+  const ACTIVE_CLARIFICATION_KEY = "micky.ai.active-clarification.v1";
+  const WORKSPACE_COMMAND_KEY = "micky.ai.workspace-command-key.v1";
+  let activeClarification = readActiveClarification();
+  let pendingWorkspaceCommand = null;
+
+  function readActiveClarification() {
+    try {
+      const raw = window.sessionStorage.getItem(ACTIVE_CLARIFICATION_KEY);
+      if (!raw) return null;
+      const value = JSON.parse(raw);
+      if (
+        !value ||
+        typeof value.conversationId !== "string" ||
+        typeof value.clarificationId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.clarificationId) ||
+        typeof value.question !== "string"
+      ) return null;
+      return value;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function persistActiveClarification(value) {
+    activeClarification = value;
+    try {
+      if (value) {
+        window.sessionStorage.setItem(ACTIVE_CLARIFICATION_KEY, JSON.stringify(value));
+      } else {
+        window.sessionStorage.removeItem(ACTIVE_CLARIFICATION_KEY);
+      }
+    } catch (err) {
+      // The server remains authoritative; this storage only restores the
+      // selected conversation's opaque continuation ID across page reloads.
+    }
+    renderActiveClarification();
+  }
+
+  function selectedConversationIdNow() {
+    return window.__mickyConversations
+      ? window.__mickyConversations.getSelectedId()
+      : null;
+  }
+
+  function renderActiveClarification() {
+    if (!clarificationPanel || !clarificationQuestion) return;
+    const selected = selectedConversationIdNow();
+    const visible = !!activeClarification &&
+      !!selected &&
+      activeClarification.conversationId === selected;
+    clarificationPanel.hidden = !visible;
+    if (visible) {
+      clarificationQuestion.textContent = activeClarification.question +
+        " Reply in the message box below to continue this exact command.";
+    }
+  }
+
+  async function restoreActiveClarification(conversationId) {
+    if (!conversationId) {
+      renderActiveClarification();
+      return;
+    }
+    try {
+      const response = await fetch(
+        "/api/assistant/clarifications?conversation_id=" +
+          encodeURIComponent(conversationId),
+        { headers: { Accept: "application/json" } }
+      );
+      if (!response.ok) {
+        renderActiveClarification();
+        return;
+      }
+      const prompts = await response.json();
+      if (!Array.isArray(prompts) || prompts.length === 0) {
+        if (
+          activeClarification &&
+          activeClarification.conversationId === conversationId &&
+          !requestOutcomeUnresolved
+        ) {
+          persistActiveClarification(null);
+        } else {
+          renderActiveClarification();
+        }
+        return;
+      }
+      const prompt = prompts[0];
+      if (!isValidClarificationPrompt(prompt)) {
+        renderActiveClarification();
+        return;
+      }
+      persistActiveClarification({
+        conversationId,
+        clarificationId: prompt.clarification_id,
+        question: prompt.question,
+      });
+    } catch (err) {
+      renderActiveClarification();
+    }
+  }
+
+  function isValidClarificationPrompt(value) {
+    return !!value &&
+      typeof value === "object" &&
+      typeof value.clarification_id === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.clarification_id) &&
+      typeof value.capability_identifier === "string" &&
+      value.capability_identifier.length > 0 &&
+      typeof value.question === "string" &&
+      value.question.length > 0 &&
+      Array.isArray(value.missing_fields) &&
+      value.missing_fields.length > 0 &&
+      value.missing_fields.every((item) => typeof item === "string");
+  }
+
+  function getWorkspaceCommandKey(message, conversationId) {
+    if (!/^\\s*workspace\\s+(add|delete|complete|reopen|update)\\b/i.test(message)) {
+      return null;
+    }
+    try {
+      const raw = window.sessionStorage.getItem(WORKSPACE_COMMAND_KEY);
+      if (raw) {
+        const previous = JSON.parse(raw);
+        if (
+          previous &&
+          previous.conversationId === conversationId &&
+          previous.message === message &&
+          typeof previous.key === "string"
+        ) return previous.key;
+      }
+    } catch (err) {
+      // Create a fresh key below if no safe saved key can be read.
+    }
+    if (!window.crypto || typeof window.crypto.randomUUID !== "function") {
+      return null;
+    }
+    const key = window.crypto.randomUUID();
+    try {
+      window.sessionStorage.setItem(
+        WORKSPACE_COMMAND_KEY,
+        JSON.stringify({ conversationId, message, key })
+      );
+    } catch (err) {
+      // The server can generate a key, but browser-side retry protection is
+      // unavailable when session storage is blocked.
+    }
+    pendingWorkspaceCommand = { conversationId, message, key };
+    return key;
+  }
+
+  function clearWorkspaceCommandKey(conversationId, message) {
+    try {
+      const raw = window.sessionStorage.getItem(WORKSPACE_COMMAND_KEY);
+      if (!raw) return;
+      const value = JSON.parse(raw);
+      if (
+        value &&
+        value.conversationId === conversationId &&
+        (!message || value.message === message)
+      ) window.sessionStorage.removeItem(WORKSPACE_COMMAND_KEY);
+    } catch (err) {
+      // Safe to leave a stale key; reusing it for identical material cannot
+      // execute the same local operation twice.
+    }
+    if (
+      pendingWorkspaceCommand &&
+      pendingWorkspaceCommand.conversationId === conversationId &&
+      (!message || pendingWorkspaceCommand.message === message)
+    ) pendingWorkspaceCommand = null;
+  }
   // A POST whose result is unknown may have left a durable confirmation
   // challenge pending even when no usable challenge ID reached the browser.
   // Persist only this boolean guard across reloads; never persist content or IDs.
@@ -51,6 +224,12 @@
     "confirmation-required":
       "This operation needs your explicit confirmation before it may run. " +
       "It was not executed.",
+    "confirmation-unavailable":
+      "The change was not applied because a safe confirmation challenge could not be created.",
+    "execution-failed":
+      "The operation ran but reported an established failure.",
+    "execution-unknown":
+      "The operation's final outcome is not established. Do not retry blindly.",
     "refused":
       "The authorization policy did not permit this operation. The request " +
       "was not executed.",
@@ -254,6 +433,15 @@
     if (conversationId) {
       body.conversation_id = conversationId;
     }
+    if (
+      activeClarification &&
+      conversationId &&
+      activeClarification.conversationId === conversationId
+    ) {
+      body.clarification_id = activeClarification.clarificationId;
+    }
+    const workspaceKey = getWorkspaceCommandKey(text, conversationId);
+    if (workspaceKey) body.idempotency_key = workspaceKey;
     let response;
     try {
       response = await fetch("/api/assistant/requests", {
@@ -292,6 +480,9 @@
       "unsupported-capability",
       "clarification-required",
       "confirmation-required",
+      "confirmation-unavailable",
+      "execution-failed",
+      "execution-unknown",
       "refused",
     ]);
     if (!validStatuses.has(payload.status)) {
@@ -302,7 +493,9 @@
     // conversation exchange was persisted. Preserve that distinction even
     // if the optional message/challenge shape is malformed.
     const noConversationSave = payload.status !== "success";
-    const allowedResponseFields = new Set(["status", "message", "challenge"]);
+    const allowedResponseFields = new Set([
+      "status", "message", "challenge", "clarification_prompt"
+    ]);
     if (Object.keys(payload).some((key) => !allowedResponseFields.has(key))) {
       return {
         kind: "unexpected",
@@ -320,6 +513,27 @@
 
     const challengePresent =
       payload.challenge !== undefined && payload.challenge !== null;
+    const clarificationPresent =
+      payload.clarification_prompt !== undefined &&
+      payload.clarification_prompt !== null;
+    if (payload.status === "clarification-required") {
+      if (
+        clarificationPresent &&
+        !isValidClarificationPrompt(payload.clarification_prompt)
+      ) {
+        return {
+          kind: "unexpected",
+          reason: "invalid_clarification_prompt",
+          noConversationSave: true,
+        };
+      }
+    } else if (clarificationPresent) {
+      return {
+        kind: "unexpected",
+        reason: "unexpected_clarification_prompt",
+        noConversationSave: noConversationSave,
+      };
+    }
     if (payload.status === "confirmation-required") {
       // The schema makes challenge optional: for example, a confirmation
       // requirement can be reported when no executor/challenge is available.
@@ -489,6 +703,15 @@
         detail: { status: payload.status, message: payload.message },
       })
     );
+    if (
+      pendingWorkspaceCommand &&
+      payload.status !== "unknown"
+    ) {
+      clearWorkspaceCommandKey(
+        pendingWorkspaceCommand.conversationId,
+        pendingWorkspaceCommand.message
+      );
+    }
     hideConfirmationCard();
     setDecisionBusy(false);
     setStatus(describeDecision(payload.status), "info");
@@ -607,8 +830,26 @@
       if (result.kind === "ok") {
         const payload = result.payload;
         addHistory(text, payload.message, payload.status);
-        if (payload.status === "confirmation-required") {
+        if (payload.status === "clarification-required") {
+          if (isValidClarificationPrompt(payload.clarification_prompt)) {
+            persistActiveClarification({
+              conversationId: selectedConversationId,
+              clarificationId: payload.clarification_prompt.clarification_id,
+              question: payload.clarification_prompt.question,
+            });
+          }
+          setStatus(describeStatus(payload.status), "info");
+        } else if (payload.status === "confirmation-required") {
           if (isValidChallenge(payload.challenge)) {
+            // A completed clarification is consumed when its operation moves
+            // to confirmation, so the follow-up ID must not be reused.
+            if (
+              activeClarification &&
+              activeClarification.conversationId === selectedConversationId &&
+              result.payload.status === "confirmation-required"
+            ) {
+              persistActiveClarification(null);
+            }
             showConfirmationCard(payload.challenge);
             setStatus(describeStatus(payload.status), "info");
           } else {
@@ -620,6 +861,22 @@
             );
           }
         } else {
+          if (
+            activeClarification &&
+            activeClarification.conversationId === selectedConversationId &&
+            payload.status !== "confirmation-unavailable"
+          ) {
+            persistActiveClarification(null);
+          }
+          if (payload.status === "success") {
+            clearWorkspaceCommandKey(selectedConversationId, text);
+          } else if (
+            ["refused", "unsupported-capability", "execution-failed"].includes(
+              payload.status
+            )
+          ) {
+            clearWorkspaceCommandKey(selectedConversationId, text);
+          }
           setStatus(describeStatus(payload.status), "info");
         }
         input.value = "";
@@ -727,6 +984,55 @@
       event.preventDefault();
     }
   });
+
+  if (clarificationAbandon) {
+    clarificationAbandon.addEventListener("click", async function () {
+      const selected = selectedConversationIdNow();
+      if (
+        !activeClarification ||
+        !selected ||
+        activeClarification.conversationId !== selected
+      ) {
+        renderActiveClarification();
+        return;
+      }
+      clarificationAbandon.disabled = true;
+      try {
+        const response = await fetch(
+          "/api/assistant/clarifications/" +
+            encodeURIComponent(activeClarification.clarificationId) +
+            "?conversation_id=" + encodeURIComponent(selected),
+          { method: "DELETE" }
+        );
+        if (!response.ok) {
+          setStatus(
+            "The clarification could not be abandoned. Nothing was executed.",
+            "error"
+          );
+          return;
+        }
+        persistActiveClarification(null);
+        setStatus("The clarification was abandoned. No operation was executed.", "info");
+      } catch (err) {
+        setStatus(
+          "The clarification result could not be verified. Inspect the selected conversation before retrying.",
+          "error"
+        );
+      } finally {
+        clarificationAbandon.disabled = false;
+      }
+    });
+  }
+  window.addEventListener("micky-selected-conversation-changed", function (event) {
+    const detail = event.detail || {};
+    renderActiveClarification();
+    restoreActiveClarification(detail.conversationId || null);
+  });
+  if (clarificationPanel) {
+    renderActiveClarification();
+    const initialSelected = selectedConversationIdNow();
+    if (initialSelected) restoreActiveClarification(initialSelected);
+  }
 
   window.__mickyWorkspaceUI = {
     showConfirmationCard: showConfirmationCard,
@@ -2009,6 +2315,11 @@
       renderMsgsPagination();
     }
     selectedId = id;
+    window.dispatchEvent(
+      new CustomEvent("micky-selected-conversation-changed", {
+        detail: { conversationId: id },
+      })
+    );
     // Prefer the title from the loaded list. When the selected conversation
     // is not on the current page, fall back to the previously known title
     // rather than reusing another conversation's title or showing blank.
