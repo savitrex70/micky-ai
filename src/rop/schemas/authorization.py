@@ -11,10 +11,10 @@ policy result is evidence that a user approved anything. ``AuthorizedScope``
 describes what the boundary that owns the real permission interaction
 asserts is already authorized for exactly one operation. That interaction
 is implemented outside this module in
-``src/rop/services/confirmation.py`` and ``src/rop/api/confirmations.py``;
-the browser controls that would surface it to the user remain
-unimplemented. This module stays data-only: it does not mint, verify, or
-store a confirmation.
+``src/rop/services/confirmation.py`` and ``src/rop/api/confirmations.py``.
+The first-party browser confirmation card is implemented separately in
+``src/rop/web/static/app.js``. This module stays data-only: it does not
+mint, verify, or store a confirmation.
 
 Operation identifiers are machine-facing names, not user text. They are
 matched exactly: surrounding whitespace, case, and embedded spacing are

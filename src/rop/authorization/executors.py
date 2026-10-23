@@ -7,11 +7,15 @@ public endpoint, a capability, or a request field: a client cannot name,
 select, supply, or replace an executor, and no request field is ever read
 to choose one.
 
-The default registry is deliberately **empty**. This build registers no
-production state-changing capability and no production executor, so a
-consequential operation cannot run outside a test. An empty registry is
-not permission: whenever no executor is registered for an operation, the
-operation is not executed.
+The build_default_executor_registry() factory is deliberately **empty**.
+This default contains no state-changing operations. The personal workspace
+builds its own explicit whitelist in
+src/rop/services/workspace_executor.py for fixed note/task/reminder and
+retrieval-root mutations; those operations are reachable only through the
+trusted confirmation workflow and durable receipt checks. An empty registry
+is not permission: whenever no executor is registered for an operation,
+that operation is not executed. No arbitrary shell, code, or client-selected
+executor is supported.
 """
 
 from __future__ import annotations

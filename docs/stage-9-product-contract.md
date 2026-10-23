@@ -65,9 +65,10 @@ API endpoint is not an end-user feature merely because it exists.
     chain covering sessions, observations, entities, hypotheses,
     evidence, missing information, template matches, reasoning steps,
     candidate hypotheses, evaluated evidence, and reasoning run receipts.
-  - Absent: no user-profile tables, no notes/tasks/reminders tables.
-    Conversation/message tables exist in migration `20261019_0018` (see
-    B.1.5).
+  - Absent: no general user-profile table. Notes, tasks, reminders, and
+    authorized retrieval roots use their separate personal-workspace tables;
+    they are not stored in the clinical reasoning domain. Conversation/message
+    tables exist in migration `20261019_0018` (see B.1.5).
 
 #### B.1.2 Reasoning and evidence services
 
@@ -147,11 +148,12 @@ Implemented foundation:
   - Paths: `src/rop/web/`, `src/rop/api/assistant.py`,
     `src/rop/schemas/assistant.py`
   - Establishes: a locally served page at `GET /`, one request endpoint,
-    and a truthful envelope of `success`, `unsupported-capability`,
-    `clarification-required`, `confirmation-required`,
-    `confirmation-unavailable`, `execution-failed`,
-    `execution-unknown`, or `refused`. Only `success` is a successful
-    assistant response; execution failure and unknown outcome are distinct.
+    and a truthful envelope of six request statuses:
+    `success`, `unsupported-capability`, `clarification-required`,
+    `confirmation-required`, `confirmation-unavailable`, and `refused`.
+    Post-confirmation outcomes (`executed`, `failed`, `unknown`, `cancelled`,
+    `rejected`, `refused`, `unavailable`) belong to the separate
+    confirmation-decision API. Only `success` describes a successful response.
   - Absent: general free-form intent inference and a persistent user-profile
     UI. Separate workspace and clinical panels are present; they do not
     establish full Stage 9 product acceptance.
@@ -510,9 +512,11 @@ section E.1 applies to every entry below.
      failure, refusal, or unsupported-capability, never a fabricated
      success.
    - Dependencies: the assistant request envelope has explicit
-     unsupported, clarification, confirmation, confirmation-unavailable,
-     execution-failed, execution-unknown, success, and refused statuses;
-     browser status mapping distinguishes failure from unknown outcomes.
+     unsupported-capability, clarification-required,
+     confirmation-required, confirmation-unavailable, success, and refused.
+     The confirmation-decision endpoint separately reports executed, failed,
+     unknown, cancelled, rejected, refused, or unavailable. Browser status
+     mapping distinguishes the two API contracts.
      Cross-flow/recovery acceptance remains pending.
    - Acceptance: tests covering each status.
 

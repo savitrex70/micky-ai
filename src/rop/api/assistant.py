@@ -85,20 +85,21 @@ _PENDING_CLARIFICATION_REPOSITORY = AssistantPendingClarificationRepository()
 _WORKSPACE_REPOSITORY = AssistantWorkspaceRepository()
 
 _POLICY: AuthorizationPolicy = build_workspace_policy()
-"""The explicitly configured policy the dispatch boundary consults.
+"""The explicit authorization policy for help and workspace operations.
 
-It is the Task 220 default table, which registers exactly the capabilities
-that exist today. It is written down here rather than derived from the
-registry on purpose: registering a capability does not authorize it, so a
-capability added to the registry without a deliberate policy rule is refused
-instead of silently inheriting permission.
+The policy is constructed by build_workspace_policy() and contains rules
+for the help capability, low-risk local listing/search, and fixed protected
+workspace mutations. It is independent of the capability registry: registering
+a command never grants permission without its explicit policy rule.
 """
 
 _EXECUTORS: ExecutorRegistry = build_workspace_executor_registry()
-"""The server-side executors that can perform a confirmed operation.
+"""The dedicated whitelist of workspace executors.
 
-Empty by default: this build registers no production executor, so a
-consequential operation cannot run. A test may register a fake executor.
+This registry contains only the fixed workspace mutation operations defined
+in rop.services.workspace_executor. The separate generic default executor
+factory remains empty. These executors are only invoked by the trusted
+confirmation service after exact-scope challenge consumption.
 """
 
 _REPOSITORY = AssistantConfirmationRepository()
@@ -737,7 +738,10 @@ def submit_request(
     ``ALLOW``; ``CLARIFY`` and ``DENY`` return their non-success status. A
     ``REQUIRE_CONFIRMATION`` outcome with a registered executor mints a
     challenge and returns its display values; without one it returns an
-    honest non-success. Nothing is executed on any path.
+    honest non-success. This request endpoint never directly applies a
+    protected workspace mutation: it either performs an explicitly allowed
+    read-only workspace action or prepares a challenge. Protected state
+    changes run only through the separate confirmation-decision endpoint.
 
     The request carries no confirmation and no authorization assertion, so
     this endpoint cannot be talked into treating a request as already

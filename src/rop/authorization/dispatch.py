@@ -19,10 +19,12 @@ trusted confirmation workflow (`src/rop/services/confirmation.py`,
 obtains, records, and consumes a user's approval, and the executor boundary
 (`src/rop/authorization/executors.py`) runs only after consumption. That
 workflow does not accept a caller-supplied `confirmed` flag,
-`AuthorizedScope`, or permission assertion either. The default production
-executor registry is empty, so no production state-changing operation can
-execute in this build, and the browser confirmation UI remains
-unimplemented. This boundary continues to fail closed.
+`AuthorizedScope`, or permission assertion either. This generic dispatch
+boundary never executes a mutation. Its default executor factory is empty;
+the workspace feature constructs a separate whitelist registry for fixed
+note/task/reminder/retrieval-root operations that still require the trusted
+confirmation flow and durable idempotency receipt. The first-party browser
+confirmation UI exists separately. This boundary continues to fail closed.
 
 Nothing here executes, persists, logs, or records anything, and it touches
 no database, model, or network.

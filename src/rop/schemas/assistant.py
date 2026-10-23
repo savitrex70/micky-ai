@@ -22,14 +22,17 @@ AssistantStatus = Literal[
     "confirmation-unavailable",
     "refused",
 ]
-"""The honest outcomes the assistant request endpoint can report.
+"""The outcomes returned by the initial assistant request endpoint.
 
-``success`` is the only status that carries a capability's response.
-``unsupported-capability`` means no registered capability matched the
-request. ``clarification-required``, ``confirmation-required``, and
-``refused`` mean a capability matched but the authorization policy did not
-permit it to answer, so nothing was dispatched. Every non-``success`` status
-means no operation was performed and nothing was saved.
+The endpoint has six statuses. ``success`` reports a successful deterministic
+capability response (including approved read-only workspace operations).
+``unsupported-capability``, ``clarification-required``,
+``confirmation-required``, ``confirmation-unavailable``, and ``refused`` are
+non-success outcomes: the request endpoint does not apply a workspace mutation
+or persist a successful conversation turn on those paths. A clarification or
+confirmation challenge may still be stored as server-owned pending state.
+Post-confirmation outcomes belong to ``ConfirmationDecisionStatus``, not
+this enum.
 """
 
 
@@ -109,19 +112,19 @@ class ClarificationPrompt(BaseModel):
 class AssistantResponse(BaseModel):
     """Response envelope for the local assistant request endpoint.
 
-    ``success`` means a registered capability was permitted by the
-    authorization policy and produced its predefined deterministic
-    response. ``unsupported-capability`` means no registered capability
-    matched the request. The remaining three statuses describe a matched
-    capability that the policy stopped: the request was understood, but it
-    was not executed. A non-``success`` status is never evidence that
-    anything ran.
+    ``success`` reports that a registered deterministic capability returned
+    a successful response. ``unsupported-capability`` means no help alias or
+    explicit workspace command matched. The other statuses describe
+    clarification, a confirmation challenge, inability to create a challenge,
+    or refusal. This endpoint does not itself apply a protected workspace
+    mutation; those run only through the separate confirmation-decision
+    endpoint.
 
     ``challenge`` is present only when a pending confirmation was genuinely
-    created for a consequential operation. It carries the server-owned
-    challenge values so the interface can display them; it is ``None`` for
-    every other status, and the endpoint omits it rather than emitting a
-    null field.
+    created for a consequential workspace operation. ``clarification_prompt``
+    is present only when server-owned pending clarification state was created
+    for the selected conversation. The response excludes absent optional
+    fields.
     """
 
     status: AssistantStatus
