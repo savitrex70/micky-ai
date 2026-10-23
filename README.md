@@ -536,16 +536,29 @@ conversation/message persistence with an HTTP API and a working
 conversation UI (create, list, select, rename, delete, load history,
 save exchanges as atomic user/assistant pairs).
 
-Not yet implemented: notes, tasks, reminders, local retrieval from
-user-selected data, integrated ROP reasoning through the conversation
-workflow, and any production state-changing capability or executor.
-The production executor registry is intentionally empty, so no
-consequential operation executes in this build. Stage 8 acceptance
-remains incomplete, and the native model is not wired into API request
-handling. The FastAPI-generated `/docs` developer interface is not a
-personal-assistant product.
+The current `main` tree also contains the Stage 9.2-9.5 workspace
+implementation: deterministic workspace command parsing and
+conversation-scoped clarification state; notes, tasks, and reminders
+with confirmation-gated mutations and idempotency receipts; and local
+retrieval from explicitly selected roots using a bounded format
+allowlist. Relevant code includes `src/rop/capabilities/workspace_parser.py`,
+`src/rop/api/workspace.py`, `src/rop/services/workspace_executor.py`,
+`src/rop/api/retrieval.py`, and `src/rop/web/static/workspace.js`.
+These implementations are not a claim that full product acceptance has
+passed.
 
-The Stage 9.1 task (Task 231) reconciles this contract with the code and
-freezes the Stage 9.2-9.8 roadmap described in §B.3 of the contract. See
-[`docs/task-231-stage-9-contract-reconciliation.md`](docs/task-231-stage-9-contract-reconciliation.md)
-for the reconciliation record.
+Still outstanding before Stage 9 can close: Stage 9.6 integration of
+suitable existing ROP reasoning services through explicit, auditable
+assistant workflows, and Stage 9.8 end-to-end/privacy/security/offline
+acceptance. Stage 9.7 optional native intelligence remains gated because
+Stage 8 acceptance is incomplete; no model/provider fallback is allowed.
+The original generic assistant executor registry remains intentionally
+empty. Workspace writes use their separate confirmation-gated flow; no
+arbitrary shell/code execution is introduced.
+
+See [`docs/stage-9-product-contract.md`](docs/stage-9-product-contract.md)
+for the agreed roadmap and
+[`docs/task-233-stage-9-implementation-consolidation.md`](docs/task-233-stage-9-implementation-consolidation.md)
+for the current implementation inventory, CI evidence, and remaining
+acceptance blockers. Stage 10 must not begin until those blockers are
+closed.
