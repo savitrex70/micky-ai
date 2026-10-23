@@ -10,7 +10,9 @@ from rop.schemas.assistant import AssistantConfirmationChallenge
 
 WorkspaceItemKind = Literal["note", "task", "reminder"]
 WorkspaceChangeKind = Literal["note", "task", "reminder", "retrieval_root"]
-WorkspaceChangeAction = Literal["create", "update", "delete", "complete", "add", "remove"]
+WorkspaceChangeAction = Literal[
+    "create", "update", "delete", "complete", "add", "remove"
+]
 
 
 class WorkspaceItemRead(BaseModel):

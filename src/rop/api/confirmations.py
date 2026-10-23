@@ -19,10 +19,6 @@ from sqlalchemy.orm import Session
 from rop.api.origin import require_local_origin
 from rop.authorization.executors import ExecutorRegistry
 from rop.authorization.policy import AuthorizationPolicy
-from rop.services.workspace_executor import (
-    build_workspace_executor_registry,
-    build_workspace_policy,
-)
 from rop.database import get_db
 from rop.repositories.assistant_confirmation import AssistantConfirmationRepository
 from rop.schemas.confirmation import (
@@ -30,6 +26,10 @@ from rop.schemas.confirmation import (
     ConfirmationDecisionResponse,
 )
 from rop.services.confirmation import decide
+from rop.services.workspace_executor import (
+    build_workspace_executor_registry,
+    build_workspace_policy,
+)
 
 router = APIRouter(
     prefix="/api/assistant/confirmations", tags=["assistant-confirmations"]

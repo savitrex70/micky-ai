@@ -33,8 +33,8 @@ from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.schemas.authorization import (
     AuthorizationPolicy,
     OperationRule,
-    RiskLevel,
     ProposedOperation,
+    RiskLevel,
 )
 
 logger = logging.getLogger(__name__)
