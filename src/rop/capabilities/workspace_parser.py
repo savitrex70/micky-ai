@@ -169,7 +169,9 @@ class WorkspaceCommandParser:
                     missing[0],
                     "When is this reminder due? Reply with local time and timezone as "
                     "YYYY-MM-DDTHH:MM | Europe/Bucharest.",
-                    partial_operation=_operation("workspace_reminder_create", parameters=params),
+                    partial_operation=_operation(
+                        "workspace_reminder_create", parameters=params
+                    ),
                     missing_fields=missing,
                 )
             return _operation("workspace_reminder_create", parameters=params)
@@ -306,7 +308,8 @@ class WorkspaceCommandParser:
             operation = ProposedOperation.model_validate(raw_operation)
         except Exception:
             raise CapabilityParseError(
-                "clarification", "That clarification is no longer available. Start the command again."
+                "clarification",
+                "That clarification is no longer available. Start the command again.",
             ) from None
         fields = list(missing)
         parts = _parts(answer)

@@ -338,3 +338,31 @@ def test_authorization_assertions_cannot_be_supplied_by_the_client() -> None:
             response = client.post(ENDPOINT, json=payload)
             assert response.status_code == 422, payload
             assert marker not in response.text
+
+
+
+def test_workspace_command_without_conversation_stays_database_free(
+    monkeypatch,
+) -> None:
+    """The no-conversation path refuses workspace commands before DB access."""
+    from rop.api import assistant as assistant_api
+
+    with TestClient(app) as client:
+        def fail_if_opened():
+            raise AssertionError("no-conversation workspace command opened the database")
+
+        monkeypatch.setattr(
+            assistant_api.database_module,
+            "SessionLocal",
+            fail_if_opened,
+        )
+        response = client.post(
+            ENDPOINT,
+            json={"message": "workspace list notes"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "refused"
+    assert "saved conversation" in payload["message"]
+    assert "workspace list notes" not in payload["message"]
