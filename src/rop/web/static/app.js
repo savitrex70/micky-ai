@@ -158,7 +158,14 @@
           previous.conversationId === conversationId &&
           previous.message === message &&
           typeof previous.key === "string"
-        ) return previous.key;
+        ) {
+          pendingWorkspaceCommand = {
+            conversationId,
+            message,
+            key: previous.key,
+          };
+          return previous.key;
+        }
       }
     } catch (err) {
       // Create a fresh key below if no safe saved key can be read.
@@ -1002,7 +1009,11 @@
           "/api/assistant/clarifications/" +
             encodeURIComponent(activeClarification.clarificationId) +
             "?conversation_id=" + encodeURIComponent(selected),
-          { method: "DELETE" }
+          {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          }
         );
         if (!response.ok) {
           setStatus(

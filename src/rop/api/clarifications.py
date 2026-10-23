@@ -21,11 +21,9 @@ _REPOSITORY = AssistantPendingClarificationRepository()
 
 @router.get("", response_model=list[ClarificationPrompt])
 def list_clarifications(
-    http_request: Request,
     conversation_id: UUID = Query(...),
 ) -> list[ClarificationPrompt]:
     """Restore only the sanitized active prompt for the selected conversation."""
-    enforce_local_origin(http_request)
     session = database_module.SessionLocal()
     try:
         now = datetime.now(UTC)

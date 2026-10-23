@@ -28,12 +28,12 @@ HELP_ALIASES: tuple[str, ...] = (
     "list available capabilities",
 )
 HELP_RESPONSE = (
-    "Help is the only capability handled by the assistant chat workflow. "
-    "The separate private workspace can store notes, tasks, and reminders "
-    "after server-side confirmation, and search only folders you explicitly "
-    "authorize. ROP clinical sessions remain separate records. Natural-language "
-    "changes through chat, general question answering, and model-based reasoning "
-    "are not yet available through the chat workflow."
+    "The chat supports help plus explicit deterministic workspace commands. "
+    "Use commands such as 'workspace list notes', 'workspace add note: title', "
+    "or 'workspace search files: terms'. Every state-changing command requires "
+    "server-side confirmation. Local file search is limited to folders you "
+    "explicitly authorize. ROP clinical sessions remain separate records. "
+    "General question answering and model-based reasoning are not yet available."
 )
 
 _WHITESPACE_RUN = re.compile(r"\s+")
