@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -80,6 +81,8 @@ from rop.schemas.authorization import (
     RiskLevel,
 )
 from rop.schemas.confirmation import ConfirmationDecision, ConfirmationDecisionStatus
+
+logger = logging.getLogger(__name__)
 
 CHALLENGE_LIFETIME = timedelta(minutes=5)
 """How long a challenge stays confirmable. Evaluated with the server clock."""
@@ -452,10 +455,12 @@ def _confirm(
         record = repository.lock_pending_for_update(db, challenge_id)
     except Exception:
         db.rollback()
+        logger.warning("confirmation refused: pending-record lock failed")
         return _refusal()
 
     if record is None:
         db.rollback()
+        logger.warning("confirmation refused: no pending record")
         return _refusal()
 
     try:
@@ -467,9 +472,11 @@ def _confirm(
                 repository.expire_if_overdue(db, challenge_id, now=transition_time)
         if expired:
             db.commit()
+            logger.warning("confirmation refused: challenge expired")
             return _refusal()
     except Exception:
         db.rollback()
+        logger.warning("confirmation refused: expiry check failed")
         return _refusal()
 
     try:
@@ -481,6 +488,7 @@ def _confirm(
         )
     except Exception:
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: stored operation invalid")
         return _refusal()
 
     if not verify_display_code(record, display_code):
@@ -489,6 +497,7 @@ def _confirm(
             db.commit()
         except Exception:
             db.rollback()
+        logger.warning("confirmation refused: display code invalid")
         return _refusal()
 
     try:
@@ -505,19 +514,24 @@ def _confirm(
         )
     except Exception:
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: policy revalidation failed")
         return _refusal()
 
     if identity != record.policy_identity:
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: policy identity changed")
         return _refusal()
     if decision_without_scope.outcome is not AuthorizationOutcome.REQUIRE_CONFIRMATION:
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: confirmation no longer required")
         return _refusal()
     if decision_with_scope.outcome is not AuthorizationOutcome.ALLOW:
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: authorization scope not allowed")
         return _refusal()
     if not scope.covers(stored_operation):
         _safe_invalidate(db, repository, challenge_id, transition_time)
+        logger.warning("confirmation refused: scope does not cover operation")
         return _refusal()
 
     if executors.get(stored_operation.operation_id) is None:
@@ -536,10 +550,12 @@ def _confirm(
         )
         if not consumed:
             db.commit()
+            logger.warning("confirmation refused: challenge consumption lost race")
             return _refusal()
         db.commit()
     except Exception:
         db.rollback()
+        logger.warning("confirmation refused: challenge consumption failed")
         return _refusal()
 
     if executor is None:  # defensive: the check above already refused
