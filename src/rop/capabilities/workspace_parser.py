@@ -329,53 +329,67 @@ class WorkspaceCommandParser:
         if update_match:
             kind, raw_target, raw_values = update_match.groups()
             kind = kind.casefold()
+            parts = _parts(raw_values)
+            title = parts[0] if parts else ""
+            params = {"idempotency_key": idempotency_key or ""}
+            if title:
+                params["title"] = title[:200]
+            if len(parts) > 1 and parts[1]:
+                params["content"] = parts[1][:512]
+            if kind == "reminder":
+                if len(parts) > 2 and parts[2]:
+                    params["due_at"] = parts[2][:64]
+                if len(parts) > 3 and parts[3]:
+                    params["timezone"] = parts[3][:128]
+
+            time_missing = (
+                [name for name in ("due_at", "timezone") if not params.get(name)]
+                if kind == "reminder"
+                else []
+            )
             try:
                 target = _uuid_target(
                     raw_target,
                     "Which item should I update? Reply with its item ID.",
                 )
             except CapabilityParseError:
+                missing_fields = ["target"]
+                if not title:
+                    missing_fields.append("title")
+                missing_fields.extend(time_missing)
                 raise CapabilityParseError(
                     "target",
                     "Which item should I update? Reply with its item ID.",
                     partial_operation=_operation(
-                        f"workspace_{kind}_update",
-                        parameters={"idempotency_key": idempotency_key or ""},
+                        f"workspace_{kind}_update", parameters=params
                     ),
+                    missing_fields=missing_fields,
                 ) from None
-            parts = _parts(raw_values)
-            title = parts[0] if parts else ""
+
             if not title:
+                missing_fields = ["title", *time_missing]
                 raise CapabilityParseError(
                     "title",
                     "What should the updated title be?",
                     partial_operation=_operation(
                         f"workspace_{kind}_update",
                         target=target,
-                        parameters={"idempotency_key": idempotency_key or ""},
+                        parameters=params,
                     ),
+                    missing_fields=missing_fields,
                 )
-            params = {"idempotency_key": idempotency_key or "", "title": title[:200]}
-            if len(parts) > 1 and parts[1]:
-                params["content"] = parts[1][:512]
-            if kind == "reminder":
-                if len(parts) > 2 and parts[2]:
-                    params["due_at"] = parts[2][:32]
-                if len(parts) > 3 and parts[3]:
-                    params["timezone"] = parts[3][:128]
-                missing = [n for n in ("due_at", "timezone") if n not in params]
-                if missing:
-                    raise CapabilityParseError(
-                        missing[0],
-                        "When is the updated reminder due? Reply with local time and "
-                        "timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
-                        partial_operation=_operation(
-                            "workspace_reminder_update",
-                            target=target,
-                            parameters=params,
-                        ),
-                        missing_fields=missing,
-                    )
+            if time_missing:
+                raise CapabilityParseError(
+                    time_missing[0],
+                    "When is the updated reminder due? Reply with local time and "
+                    "timezone as YYYY-MM-DDTHH:MM | Europe/Bucharest.",
+                    partial_operation=_operation(
+                        "workspace_reminder_update",
+                        target=target,
+                        parameters=params,
+                    ),
+                    missing_fields=time_missing,
+                )
             operation = _operation(
                 f"workspace_{kind}_update", target=target, parameters=params
             )

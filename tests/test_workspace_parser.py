@@ -183,3 +183,66 @@ def test_clarification_updates_search_query_not_title() -> None:
     assert operation.operation_id == "workspace_search_files"
     assert operation.parameters["query"] == "hypertension"
     assert "title" not in operation.parameters
+
+
+def test_update_preserves_material_values_when_target_needs_clarification() -> None:
+    parser = WorkspaceCommandParser()
+    key = str(uuid4())
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace update note not-a-uuid: Revised title | Revised body",
+            idempotency_key=key,
+        )
+    error = caught.value
+    assert error.field_name == "target"
+    assert error.missing_fields == ["target"]
+    partial = error.partial_operation
+    assert partial is not None
+    assert partial.parameters == {
+        "idempotency_key": key,
+        "title": "Revised title",
+        "content": "Revised body",
+    }
+
+    target = str(uuid4())
+    completed = parser.parse(
+        target,
+        pending_context={
+            "partial_operation": partial.model_dump(mode="json"),
+            "missing_fields": error.missing_fields,
+        },
+    )
+    assert completed.operation_id == "workspace_note_update"
+    assert completed.target == target
+    assert completed.parameters["title"] == "Revised title"
+    assert completed.parameters["content"] == "Revised body"
+    assert completed.parameters["idempotency_key"] == key
+
+
+def test_reminder_update_preserves_timezone_values_while_target_is_missing() -> None:
+    parser = WorkspaceCommandParser()
+    key = str(uuid4())
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace update reminder not-a-uuid: Call clinic | bring notes | "
+            "2026-10-24T09:30 | Europe/Bucharest",
+            idempotency_key=key,
+        )
+    error = caught.value
+    assert error.field_name == "target"
+    partial = error.partial_operation
+    assert partial is not None
+    target = str(uuid4())
+    completed = parser.parse(
+        target,
+        pending_context={
+            "partial_operation": partial.model_dump(mode="json"),
+            "missing_fields": error.missing_fields,
+        },
+    )
+    assert completed.operation_id == "workspace_reminder_update"
+    assert completed.target == target
+    assert completed.parameters["title"] == "Call clinic"
+    assert completed.parameters["content"] == "bring notes"
+    assert completed.parameters["due_at"] == "2026-10-24T06:30:00+00:00"
+    assert completed.parameters["timezone"] == "Europe/Bucharest"
