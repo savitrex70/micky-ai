@@ -402,7 +402,7 @@ class AssistantConfirmationRepository:
         self, db: Session, challenge_id: str, now: datetime | None
     ) -> bool:
         """Expire an overdue pending challenge using the transition-time clock."""
-        instant = _transition_instant(now)
+        instant = _transition_instant(now, db)
         statement = (
             update(AssistantConfirmation)
             .where(
@@ -471,7 +471,7 @@ class AssistantConfirmationRepository:
         now: datetime | None,
     ) -> bool:
         """Invalidate a changed-policy challenge only while it remains live."""
-        instant = _transition_instant(now)
+        instant = _transition_instant(now, db)
         statement = (
             update(AssistantConfirmation)
             .where(
@@ -693,7 +693,7 @@ class AssistantConfirmationRepository:
         """
         if limit <= 0 or limit > MAX_EXPIRY_SWEEP_LIMIT:
             raise ConfirmationRecordError("invalid expiry sweep limit")
-        current = _transition_instant(now)
+        current = _transition_instant(now, db)
         candidate_ids = (
             select(AssistantConfirmation.id)
             .where(
