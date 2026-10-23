@@ -128,7 +128,7 @@ def build_workspace_executor_registry() -> ExecutorRegistry:
     return registry
 
 
-def _operation_fingerprint(operation: ProposedOperation) -> str:
+def operation_fingerprint(operation: ProposedOperation) -> str:
     material = {
         "operation_id": operation.operation_id,
         "target": operation.target,
@@ -249,23 +249,17 @@ def execute_workspace_operation(
     session = SessionLocal()
     committing = False
     try:
-        existing = _REPOSITORY.get_receipt(session, key)
-        if existing is not None:
-            if existing.operation_fingerprint != fingerprint:
-                raise ExecutorError("operation key reused for different material")
-            if existing.status == "SUCCEEDED":
-                return ExecutorResult.SUCCEEDED
+        receipt = _REPOSITORY.get_receipt(session, key, for_update=True)
+        if receipt is None:
+            raise ExecutorError("workspace operation was not reserved")
+        if receipt.operation_fingerprint != fingerprint:
+            raise ExecutorError("operation key reused for different material")
+        if receipt.status == "SUCCEEDED":
+            return ExecutorResult.SUCCEEDED
+        if receipt.status != "PENDING":
             raise ExecutorInterrupted("prior operation has no established result")
 
-        receipt = AssistantOperationReceipt(
-            idempotency_key=key,
-            operation_id=operation.operation_id,
-            operation_fingerprint=fingerprint,
-            status="RUNNING",
-            result_code="workspace-change-completed",
-        )
-        session.add(receipt)
-        session.flush()
+        receipt.status = "RUNNING"
         if operation.operation_id in _ITEM_OPERATIONS:
             _apply_item(session, operation)
         elif operation.operation_id in _ROOT_OPERATIONS:
@@ -309,4 +303,8 @@ def _recover_receipt(key: UUID, fingerprint: str) -> ExecutorResult:
         check.close()
 
 
-__all__ = ["build_workspace_executor_registry", "build_workspace_policy"]
+__all__ = [
+    "build_workspace_executor_registry",
+    "build_workspace_policy",
+    "operation_fingerprint",
+]

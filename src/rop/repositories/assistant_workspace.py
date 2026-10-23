@@ -52,13 +52,18 @@ class AssistantWorkspaceRepository:
         )
 
     def get_receipt(
-        self, session: Session, idempotency_key: UUID
+        self,
+        session: Session,
+        idempotency_key: UUID,
+        *,
+        for_update: bool = False,
     ) -> AssistantOperationReceipt | None:
-        return session.scalar(
-            select(AssistantOperationReceipt).where(
-                AssistantOperationReceipt.idempotency_key == idempotency_key
-            )
+        statement = select(AssistantOperationReceipt).where(
+            AssistantOperationReceipt.idempotency_key == idempotency_key
         )
+        if for_update:
+            statement = statement.with_for_update()
+        return session.scalar(statement)
 
 
 __all__ = ["AssistantWorkspaceRepository"]
