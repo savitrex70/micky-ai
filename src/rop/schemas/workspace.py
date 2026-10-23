@@ -1,0 +1,152 @@
+"""Request and response contracts for the local personal workspace."""
+
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from rop.schemas.assistant import AssistantConfirmationChallenge
+
+WorkspaceItemKind = Literal["note", "task", "reminder"]
+WorkspaceChangeKind = Literal["note", "task", "reminder", "retrieval_root"]
+WorkspaceChangeAction = Literal["create", "update", "delete", "complete", "add", "remove"]
+
+
+class WorkspaceItemRead(BaseModel):
+    """User-visible workspace item."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: UUID
+    kind: WorkspaceItemKind
+    title: str
+    content: str
+    due_at: datetime | None
+    timezone: str | None
+    completed: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetrievalRootRead(BaseModel):
+    """A folder explicitly authorized for local retrieval."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+    id: UUID
+    path: str
+    created_at: datetime
+
+
+class WorkspaceChangeRequest(BaseModel):
+    """Describe a proposed change; never authorizes it by itself.
+
+    Every mutation is converted into a server-defined ProposedOperation and
+    requires a server-issued, operation-specific confirmation before it runs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: WorkspaceChangeKind
+    action: WorkspaceChangeAction
+    idempotency_key: UUID
+    item_id: UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = Field(default=None, max_length=512)
+    due_local: str | None = Field(default=None, max_length=32)
+    timezone: str | None = Field(default=None, min_length=1, max_length=128)
+    path: str | None = Field(default=None, min_length=1, max_length=512)
+    completed: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                return None
+            if not value.isprintable():
+                raise ValueError("content must be plain single-line text")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("path must not be blank")
+            if not value.isprintable():
+                raise ValueError("path contains unsupported characters")
+        return value
+
+    @model_validator(mode="after")
+    def validate_action_shape(self) -> "WorkspaceChangeRequest":
+        if self.kind == "retrieval_root":
+            if self.action == "add":
+                if self.path is None:
+                    raise ValueError("a folder path is required")
+            elif self.action == "remove":
+                if self.item_id is None:
+                    raise ValueError("a retrieval-root identifier is required")
+            else:
+                raise ValueError("unsupported retrieval-root action")
+            return self
+
+        if self.action not in {"create", "update", "delete", "complete"}:
+            raise ValueError("unsupported workspace action")
+        if self.action == "create":
+            if self.item_id is not None:
+                raise ValueError("create does not accept an item identifier")
+            if self.title is None:
+                raise ValueError("a title is required")
+        else:
+            if self.item_id is None:
+                raise ValueError("an item identifier is required")
+            if self.action == "update" and self.title is None:
+                raise ValueError("an updated title is required")
+        if self.kind == "reminder":
+            if self.action in {"create", "update"} and (
+                self.due_local is None or self.timezone is None
+            ):
+                raise ValueError("a due time and timezone are required for a reminder")
+            if self.action == "complete":
+                raise ValueError("reminders are dismissed by updating or deleting them")
+        elif self.due_local is not None or self.timezone is not None:
+            raise ValueError("due time and timezone are only valid for reminders")
+        if self.action == "complete":
+            if self.kind != "task" or self.completed is None:
+                raise ValueError("task completion requires a completed value")
+        elif self.completed is not None:
+            raise ValueError("completed is only valid for task completion")
+        return self
+
+
+class WorkspaceChangeResponse(BaseModel):
+    """Initial outcome when preparing a protected workspace mutation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["confirmation-required", "confirmation-unavailable", "refused"]
+    message: str
+    challenge: AssistantConfirmationChallenge | None = None
+
+
+class WorkspaceReceiptRead(BaseModel):
+    """Safe recovery view of an idempotent operation result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: UUID
+    status: Literal["succeeded", "not-found", "unknown"]
+    message: str

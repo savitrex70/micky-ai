@@ -8,6 +8,9 @@ from rop.database import Base
 from rop.models import AssistantConfirmation as _AssistantConfirmation  # noqa: F401
 from rop.models import AssistantConversation as _AssistantConversation  # noqa: F401
 from rop.models import AssistantMessage as _AssistantMessage  # noqa: F401
+from rop.models import AssistantItem as _AssistantItem  # noqa: F401
+from rop.models import AssistantOperationReceipt as _AssistantOperationReceipt  # noqa: F401
+from rop.models import AssistantRetrievalRoot as _AssistantRetrievalRoot  # noqa: F401
 from rop.models import ReasoningSession as _ReasoningSession  # noqa: F401
 
 config = context.config
