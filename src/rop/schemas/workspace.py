@@ -95,11 +95,15 @@ class WorkspaceChangeRequest(BaseModel):
             if self.clear_content:
                 raise ValueError("clear_content is only valid for workspace items")
             if self.action == "add":
-                if self.path is None:
-                    raise ValueError("a folder path is required")
+                if self.path is None or self.item_id is not None:
+                    raise ValueError(
+                        "folder authorization requires a path and no item ID"
+                    )
             elif self.action == "remove":
-                if self.item_id is None:
-                    raise ValueError("a retrieval-root identifier is required")
+                if self.item_id is None or self.path is not None:
+                    raise ValueError(
+                        "folder removal requires an ID and no path"
+                    )
             else:
                 raise ValueError("unsupported retrieval-root action")
             if any(
