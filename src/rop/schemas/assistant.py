@@ -20,8 +20,6 @@ AssistantStatus = Literal[
     "clarification-required",
     "confirmation-required",
     "confirmation-unavailable",
-    "execution-failed",
-    "execution-unknown",
     "refused",
 ]
 """The honest outcomes the assistant request endpoint can report.
@@ -38,10 +36,10 @@ means no operation was performed and nothing was saved.
 class AssistantRequest(BaseModel):
     """A single user message sent from the local browser interface.
 
-    Only a message is accepted. There is deliberately no field for a
-    confirmation, an authorization, or a permission assertion: a caller
-    cannot supply evidence that a user approved anything, and unexpected
-    fields are rejected rather than ignored.
+    A message may be tied to a saved conversation and a server-owned
+    clarification continuation. There is deliberately no field for a
+    confirmation or permission assertion: callers cannot supply evidence
+    of approval, and unexpected fields are rejected.
     """
 
     model_config = ConfigDict(extra="forbid")

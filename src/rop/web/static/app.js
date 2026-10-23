@@ -31,41 +31,13 @@
   // user can withdraw the pending challenge.
   let challengeCannotExecute = false;
 
-  const ACTIVE_CLARIFICATION_KEY = "micky.ai.active-clarification.v1";
-  const WORKSPACE_COMMAND_KEY = "micky.ai.workspace-command-key.v1";
-  let activeClarification = readActiveClarification();
+  let activeClarification = null;
   let pendingWorkspaceCommand = null;
 
-  function readActiveClarification() {
-    try {
-      const raw = window.sessionStorage.getItem(ACTIVE_CLARIFICATION_KEY);
-      if (!raw) return null;
-      const value = JSON.parse(raw);
-      if (
-        !value ||
-        typeof value.conversationId !== "string" ||
-        typeof value.clarificationId !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.clarificationId) ||
-        typeof value.question !== "string"
-      ) return null;
-      return value;
-    } catch (err) {
-      return null;
-    }
-  }
-
   function persistActiveClarification(value) {
+    // Content and continuation IDs remain server-owned. Reload recovery asks
+    // the API for the pending clarification of the selected conversation.
     activeClarification = value;
-    try {
-      if (value) {
-        window.sessionStorage.setItem(ACTIVE_CLARIFICATION_KEY, JSON.stringify(value));
-      } else {
-        window.sessionStorage.removeItem(ACTIVE_CLARIFICATION_KEY);
-      }
-    } catch (err) {
-      // The server remains authoritative; this storage only restores the
-      // selected conversation's opaque continuation ID across page reloads.
-    }
     renderActiveClarification();
   }
 
@@ -146,67 +118,36 @@
   }
 
   function getWorkspaceCommandKey(message, conversationId) {
-    if (!/^\\s*workspace\\s+(add|delete|complete|reopen|update)\\b/i.test(message)) {
+    if (!/^\s*workspace\s+(add|delete|complete|reopen|update)\b/i.test(message)) {
       return null;
     }
-    try {
-      const raw = window.sessionStorage.getItem(WORKSPACE_COMMAND_KEY);
-      if (raw) {
-        const previous = JSON.parse(raw);
-        if (
-          previous &&
-          previous.conversationId === conversationId &&
-          previous.message === message &&
-          typeof previous.key === "string"
-        ) {
-          pendingWorkspaceCommand = {
-            conversationId,
-            message,
-            key: previous.key,
-          };
-          return previous.key;
-        }
-      }
-    } catch (err) {
-      // Create a fresh key below if no safe saved key can be read.
+    if (
+      pendingWorkspaceCommand &&
+      pendingWorkspaceCommand.conversationId === conversationId &&
+      pendingWorkspaceCommand.message === message
+    ) {
+      return pendingWorkspaceCommand.key;
     }
     if (!window.crypto || typeof window.crypto.randomUUID !== "function") {
       return null;
     }
     const key = window.crypto.randomUUID();
-    try {
-      window.sessionStorage.setItem(
-        WORKSPACE_COMMAND_KEY,
-        JSON.stringify({ conversationId, message, key })
-      );
-    } catch (err) {
-      // The server can generate a key, but browser-side retry protection is
-      // unavailable when session storage is blocked.
-    }
+    // Keep the operation key and text in memory only. The durable unresolved
+    // outcome guard blocks blind retries after a page reload.
     pendingWorkspaceCommand = { conversationId, message, key };
     return key;
   }
 
   function clearWorkspaceCommandKey(conversationId, message) {
-    try {
-      const raw = window.sessionStorage.getItem(WORKSPACE_COMMAND_KEY);
-      if (!raw) return;
-      const value = JSON.parse(raw);
-      if (
-        value &&
-        value.conversationId === conversationId &&
-        (!message || value.message === message)
-      ) window.sessionStorage.removeItem(WORKSPACE_COMMAND_KEY);
-    } catch (err) {
-      // Safe to leave a stale key; reusing it for identical material cannot
-      // execute the same local operation twice.
-    }
     if (
       pendingWorkspaceCommand &&
       pendingWorkspaceCommand.conversationId === conversationId &&
       (!message || pendingWorkspaceCommand.message === message)
-    ) pendingWorkspaceCommand = null;
+    ) {
+      pendingWorkspaceCommand = null;
+    }
   }
+
   // A POST whose result is unknown may have left a durable confirmation
   // challenge pending even when no usable challenge ID reached the browser.
   // Persist only this boolean guard across reloads; never persist content or IDs.
@@ -232,7 +173,7 @@
       "This operation needs your explicit confirmation before it may run. " +
       "It was not executed.",
     "confirmation-unavailable":
-      "The change was not applied because a safe confirmation challenge could not be created.",
+      "The change was not applied because a safe confirmation challenge could not be created. The request was not executed.",
     "execution-failed":
       "The operation ran but reported an established failure.",
     "execution-unknown":
@@ -705,11 +646,16 @@
     // All of these establish a server-side terminal transition, so it is
     // safe to clear the card and add the outcome to history.
     addHistory(summaryForHistory, payload.message, payload.status);
-    window.dispatchEvent(
-      new CustomEvent("micky-workspace-confirmation-outcome", {
-        detail: { status: payload.status, message: payload.message },
-      })
-    );
+    if (
+      typeof window.dispatchEvent === "function" &&
+      typeof CustomEvent === "function"
+    ) {
+      window.dispatchEvent(
+        new CustomEvent("micky-workspace-confirmation-outcome", {
+          detail: { status: payload.status, message: payload.message },
+        })
+      );
+    }
     if (
       pendingWorkspaceCommand &&
       payload.status !== "unknown"
@@ -1034,11 +980,13 @@
       }
     });
   }
-  window.addEventListener("micky-selected-conversation-changed", function (event) {
-    const detail = event.detail || {};
-    renderActiveClarification();
-    restoreActiveClarification(detail.conversationId || null);
-  });
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("micky-selected-conversation-changed", function (event) {
+      const detail = event.detail || {};
+      renderActiveClarification();
+      restoreActiveClarification(detail.conversationId || null);
+    });
+  }
   if (clarificationPanel) {
     renderActiveClarification();
     const initialSelected = selectedConversationIdNow();
@@ -2326,11 +2274,16 @@
       renderMsgsPagination();
     }
     selectedId = id;
-    window.dispatchEvent(
-      new CustomEvent("micky-selected-conversation-changed", {
-        detail: { conversationId: id },
-      })
-    );
+    if (
+      typeof window.dispatchEvent === "function" &&
+      typeof CustomEvent === "function"
+    ) {
+      window.dispatchEvent(
+        new CustomEvent("micky-selected-conversation-changed", {
+          detail: { conversationId: id },
+        })
+      );
+    }
     // Prefer the title from the loaded list. When the selected conversation
     // is not on the current page, fall back to the previously known title
     // rather than reusing another conversation's title or showing blank.

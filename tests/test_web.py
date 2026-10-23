@@ -22,6 +22,7 @@ EXPECTED_STATUS_TEXT = {
     "unsupported-capability": "No capability matched",
     "clarification-required": "More detail is needed",
     "confirmation-required": "needs your explicit confirmation",
+    "confirmation-unavailable": "safe confirmation challenge could not be created",
     "refused": "did not permit this operation",
 }
 
