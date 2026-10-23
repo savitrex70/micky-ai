@@ -96,7 +96,6 @@ def test_uuid_target_is_required_for_delete() -> None:
     assert caught.value.partial_operation is not None
 
 
-
 def test_reminder_normalizes_named_local_time_to_utc() -> None:
     operation = WorkspaceCommandParser().parse(
         "workspace add reminder: Call clinic | 2026-06-10T09:30 | Europe/Bucharest",

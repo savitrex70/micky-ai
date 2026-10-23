@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from rop import database as database_module
 from rop.api.origin import enforce_local_origin
