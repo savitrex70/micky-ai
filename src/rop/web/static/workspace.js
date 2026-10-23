@@ -627,7 +627,11 @@
         setText(itemStatus, receipt.message);
         await refreshWorkspace();
       } else {
-        setText(itemStatus, receipt.message + " Do not prepare a different operation until this key is resolved.");
+        setText(
+          itemStatus,
+          receipt.message +
+            " Do not prepare a different operation until this key is resolved."
+        );
       }
     } catch (err) {
       setText(itemStatus, "The prior operation cannot yet be verified. Do not create a new operation key.");

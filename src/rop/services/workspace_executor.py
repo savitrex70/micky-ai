@@ -247,7 +247,7 @@ def execute_workspace_operation(
     together. Duplicate keys return the prior result, never reapply the write.
     """
     key = _operation_key(operation)
-    fingerprint = _operation_fingerprint(operation)
+    fingerprint = operation_fingerprint(operation)
     session = SessionLocal()
     committing = False
     try:
