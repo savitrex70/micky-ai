@@ -32,10 +32,13 @@
   const clinicalObservationStatus = byId("clinical-observation-status");
   const clinicalObservations = byId("clinical-observations");
   const clinicalExtract = byId("clinical-extract");
+  const clinicalRunReasoning = byId("clinical-run-reasoning");
+  const clinicalReasoningResult = byId("clinical-reasoning-result");
   const PENDING_KEY = "micky.ai.workspace-pending-key.v1";
 
   let items = [];
   let selectedClinicalSession = null;
+  let clinicalRunInFlight = false;
   let busy = false;
   let pending = readPendingKey();
 
@@ -567,6 +570,47 @@
       await loadClinicalObservations();
     } catch (err) {
       setText(clinicalObservationStatus, "Extraction failed: " + err.message);
+    }
+  });
+
+  clinicalRunReasoning.addEventListener("click", async () => {
+    if (!selectedClinicalSession || clinicalRunInFlight) return;
+    clinicalRunInFlight = true;
+    clinicalRunReasoning.disabled = true;
+    clinicalReasoningResult.hidden = false;
+    clinicalReasoningResult.textContent = "Running the fully audited deterministic ROP workflow…";
+    setText(
+      clinicalObservationStatus,
+      "Running the deterministic reasoning workflow. This may take a moment."
+    );
+    try {
+      const result = await jsonRequest(
+        "/api/sessions/" +
+          encodeURIComponent(selectedClinicalSession.id) +
+          "/reasoning-run/execute-fully-audited",
+        { method: "POST" }
+      );
+      clinicalReasoningResult.textContent = JSON.stringify(result, null, 2);
+      if (result.package_consistent === true) {
+        setText(
+          clinicalObservationStatus,
+          "The audit package is internally consistent. Review the execution outcome and limitations below; this does not establish clinical validity."
+        );
+      } else {
+        setText(
+          clinicalObservationStatus,
+          "The reasoning response is not backed by a consistent audit package. Do not treat it as accepted."
+        );
+      }
+    } catch (err) {
+      clinicalReasoningResult.textContent = "";
+      setText(
+        clinicalObservationStatus,
+        "The reasoning workflow did not return a verified result: " + err.message
+      );
+    } finally {
+      clinicalRunInFlight = false;
+      clinicalRunReasoning.disabled = false;
     }
   });
 
