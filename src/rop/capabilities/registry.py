@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from rop.capabilities.parser import CapabilityParser
+
 HELP_IDENTIFIER = "help"
 HELP_DESCRIPTION = (
     "Explain what the assistant can currently do and what is not yet " "available."
@@ -51,6 +53,7 @@ class Capability:
     description: str
     aliases: tuple[str, ...]
     response: str
+    parser: CapabilityParser | None = None
 
 
 @dataclass
@@ -75,9 +78,9 @@ class CapabilityRegistry:
             raise RegistryError(
                 f"duplicate capability identifier: {capability.identifier}"
             )
-        if not capability.aliases:
+        if not capability.aliases and capability.parser is None:
             raise RegistryError(
-                f"capability {capability.identifier} must define at least " "one alias"
+                f"capability {capability.identifier} needs aliases or a parser"
             )
 
         normalized_aliases: list[str] = []
@@ -117,6 +120,17 @@ class CapabilityRegistry:
         if not normalized:
             return None
         return self._by_phrase.get(normalized)
+
+    def match_parser(self, message: str) -> Capability | None:
+        """Return a parser-backed capability that explicitly recognizes the command."""
+        matches = [
+            capability
+            for capability in self._capabilities
+            if capability.parser is not None and capability.parser.matches(message)
+        ]
+        if len(matches) > 1:
+            raise RegistryError("request matches more than one registered parser")
+        return matches[0] if matches else None
 
     def capabilities(self) -> tuple[Capability, ...]:
         return tuple(self._capabilities)

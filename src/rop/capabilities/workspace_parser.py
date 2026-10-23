@@ -227,6 +227,10 @@ class WorkspaceCommandParser:
                 raise CapabilityParseError(
                     "target",
                     "Which item should I update? Reply with its item ID.",
+                    partial_operation=_operation(
+                        f"workspace_{kind}_update",
+                        parameters={"idempotency_key": idempotency_key or ""},
+                    ),
                 ) from None
             parts = _parts(raw_values)
             title = parts[0] if parts else ""

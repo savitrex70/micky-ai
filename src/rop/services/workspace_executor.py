@@ -116,6 +116,23 @@ def build_workspace_policy() -> AuthorizationPolicy:
             ),
         )
     )
+    rules.extend(
+        (
+            OperationRule(
+                operation_id="workspace_list_items",
+                description="List the user's local notes, tasks, or reminders.",
+                risk=RiskLevel.LOW,
+                prohibited=False,
+            ),
+            OperationRule(
+                operation_id="workspace_search_files",
+                description="Search text in explicitly authorized local folders.",
+                risk=RiskLevel.LOW,
+                prohibited=False,
+                required_parameters=("query",),
+            ),
+        )
+    )
     return AuthorizationPolicy(rules=tuple(rules))
 
 
