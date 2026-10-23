@@ -339,6 +339,7 @@ def test_authorization_assertions_cannot_be_supplied_by_the_client() -> None:
             assert response.status_code == 422, payload
             assert marker not in response.text
 
+
 def test_workspace_command_without_conversation_stays_database_free(
     monkeypatch,
 ) -> None:
