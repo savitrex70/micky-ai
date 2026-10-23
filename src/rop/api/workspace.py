@@ -54,9 +54,7 @@ _UNAVAILABLE = (
     "This change requires confirmation, but a challenge could not be created. "
     "Nothing was changed."
 )
-_REQUIRED = (
-    "Review the exact change in the confirmation card. It has not been applied."
-)
+_REQUIRED = "Review the exact change in the confirmation card. It has not been applied."
 
 
 def _is_network_path(path: Path) -> bool:
@@ -243,16 +241,12 @@ def get_receipt(idempotency_key: UUID) -> WorkspaceReceiptRead:
     "/receipts/{idempotency_key}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def abandon_receipt(
-    idempotency_key: UUID, http_request: Request
-) -> Response:
+def abandon_receipt(idempotency_key: UUID, http_request: Request) -> Response:
     """Abandon an unused reservation only when no active challenge remains."""
     enforce_local_origin(http_request)
     session = database_module.SessionLocal()
     try:
-        receipt = _REPOSITORY.get_receipt(
-            session, idempotency_key, for_update=True
-        )
+        receipt = _REPOSITORY.get_receipt(session, idempotency_key, for_update=True)
         if receipt is None:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         if receipt.status != "PENDING":
@@ -312,10 +306,7 @@ def prepare_change(
     except Exception:
         return WorkspaceChangeResponse(
             status="refused",
-            message=(
-                "The workspace change could not be authorized. "
-                "Nothing was changed."
-            ),
+            message="The workspace change could not be authorized. Nothing was changed.",
         )
     if decision.outcome is AuthorizationOutcome.CLARIFY:
         return WorkspaceChangeResponse(

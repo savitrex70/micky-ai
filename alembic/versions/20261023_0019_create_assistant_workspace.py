@@ -85,9 +85,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "path", name="uq_assistant_retrieval_roots_path"
-        ),
+        sa.UniqueConstraint("path", name="uq_assistant_retrieval_roots_path"),
     )
     op.create_index(
         "ix_assistant_retrieval_roots_created_at",

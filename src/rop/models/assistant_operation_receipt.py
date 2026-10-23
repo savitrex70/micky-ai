@@ -26,9 +26,7 @@ class AssistantOperationReceipt(Base):
 
     __tablename__ = "assistant_operation_receipts"
     __table_args__ = (
-        UniqueConstraint(
-            "idempotency_key", name="uq_assistant_operation_receipts_key"
-        ),
+        UniqueConstraint("idempotency_key", name="uq_assistant_operation_receipts_key"),
         CheckConstraint(
             "status IN ('PENDING', 'RUNNING', 'SUCCEEDED')",
             name="ck_assistant_operation_receipts_status",
@@ -40,9 +38,7 @@ class AssistantOperationReceipt(Base):
     idempotency_key: Mapped[UUID] = mapped_column(nullable=False)
     operation_id: Mapped[str] = mapped_column(String(64), nullable=False)
     operation_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="PENDING"
-    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     result_code: Mapped[str] = mapped_column(
         String(64),
         nullable=False,

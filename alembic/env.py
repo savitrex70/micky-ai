@@ -5,7 +5,6 @@ from sqlalchemy import engine_from_config, pool
 
 from rop.config import get_settings
 from rop.database import Base
-import rop.models  # noqa: F401
 
 config = context.config
 config.set_main_option(

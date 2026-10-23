@@ -101,9 +101,7 @@ class WorkspaceChangeRequest(BaseModel):
                     )
             elif self.action == "remove":
                 if self.item_id is None or self.path is not None:
-                    raise ValueError(
-                        "folder removal requires an ID and no path"
-                    )
+                    raise ValueError("folder removal requires an ID and no path")
             else:
                 raise ValueError("unsupported retrieval-root action")
             if any(
@@ -133,9 +131,7 @@ class WorkspaceChangeRequest(BaseModel):
                 raise ValueError("an item identifier is required")
             if self.action == "update" and self.title is None:
                 raise ValueError("an updated title is required")
-        if self.clear_content and (
-            self.action != "update" or self.content is not None
-        ):
+        if self.clear_content and (self.action != "update" or self.content is not None):
             raise ValueError(
                 "clear_content is valid only for an update with no content value"
             )
@@ -147,13 +143,9 @@ class WorkspaceChangeRequest(BaseModel):
             if self.action in {"create", "update"} and (
                 self.due_local is None or self.timezone is None
             ):
-                raise ValueError(
-                    "a due time and timezone are required for a reminder"
-                )
+                raise ValueError("a due time and timezone are required for a reminder")
             if self.action == "complete":
-                raise ValueError(
-                    "reminders are dismissed by updating or deleting them"
-                )
+                raise ValueError("reminders are dismissed by updating or deleting them")
         elif self.due_local is not None or self.timezone is not None:
             raise ValueError("due time and timezone are only valid for reminders")
         if self.action == "complete":

@@ -102,12 +102,21 @@ def test_unc_paths_are_rejected_for_retrieval() -> None:
 
 def test_retrieval_root_add_rejects_an_item_id() -> None:
     with pytest.raises(ValidationError):
-        _change(kind="retrieval_root", action="add", path="C:/Documents",
-                item_id="b1d855f9-fbc8-465e-a449-ce2cf251a973", title=None)
+        _change(
+            kind="retrieval_root",
+            action="add",
+            path="C:/Documents",
+            item_id="b1d855f9-fbc8-465e-a449-ce2cf251a973",
+            title=None,
+        )
 
 
 def test_retrieval_root_remove_rejects_a_path() -> None:
     with pytest.raises(ValidationError):
-        _change(kind="retrieval_root", action="remove",
-                item_id="b1d855f9-fbc8-465e-a449-ce2cf251a973",
-                path="C:/Documents", title=None)
+        _change(
+            kind="retrieval_root",
+            action="remove",
+            item_id="b1d855f9-fbc8-465e-a449-ce2cf251a973",
+            path="C:/Documents",
+            title=None,
+        )
