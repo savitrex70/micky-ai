@@ -293,9 +293,7 @@ def test_chat_clarification_restores_binds_and_consumes_once(
     assert "original_message" not in prompt
     assert "partial_operation" not in prompt
 
-    restored = client.get(
-        f"/api/assistant/clarifications?conversation_id={first_id}"
-    )
+    restored = client.get(f"/api/assistant/clarifications?conversation_id={first_id}")
     assert restored.status_code == 200, restored.text
     assert restored.json() == [prompt]
 
@@ -371,9 +369,7 @@ def test_clarification_restore_reports_database_failure(
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(database_module, "SessionLocal", fail_session)
-    response = client.get(
-        f"/api/assistant/clarifications?conversation_id={uuid4()}"
-    )
+    response = client.get(f"/api/assistant/clarifications?conversation_id={uuid4()}")
     assert response.status_code == 503
     assert response.json()["detail"] == "Clarification state could not be verified."
 
