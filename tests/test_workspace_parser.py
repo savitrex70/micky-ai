@@ -83,7 +83,7 @@ def test_reminder_clarification_requires_both_values() -> None:
         },
     )
     assert operation.operation_id == "workspace_reminder_create"
-    assert operation.parameters["due_at"] == "2026-10-24T09:30"
+    assert operation.parameters["due_at"] == "2026-10-24T06:30:00+00:00"
     assert operation.parameters["timezone"] == "Europe/Bucharest"
     assert operation.parameters["idempotency_key"] == key
 
@@ -94,3 +94,93 @@ def test_uuid_target_is_required_for_delete() -> None:
         parser.parse("workspace delete note", idempotency_key=str(uuid4()))
     assert caught.value.field_name == "target"
     assert caught.value.partial_operation is not None
+
+
+
+def test_reminder_normalizes_named_local_time_to_utc() -> None:
+    operation = WorkspaceCommandParser().parse(
+        "workspace add reminder: Call clinic | 2026-06-10T09:30 | Europe/Bucharest",
+        idempotency_key=str(uuid4()),
+    )
+    assert operation.parameters["due_at"] == "2026-06-10T06:30:00+00:00"
+    assert operation.parameters["timezone"] == "Europe/Bucharest"
+
+
+def test_ambiguous_daylight_saving_time_requires_explicit_offset() -> None:
+    parser = WorkspaceCommandParser()
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace add reminder: Call clinic | 2026-10-25T03:30 | Europe/Bucharest",
+            idempotency_key=str(uuid4()),
+        )
+    assert caught.value.field_name == "due_at"
+    assert caught.value.partial_operation is not None
+    assert "occurs twice" in caught.value.question
+
+
+@pytest.mark.parametrize(
+    ("due_at", "expected_utc"),
+    [
+        ("2026-10-25T03:30+03:00", "2026-10-25T00:30:00+00:00"),
+        ("2026-10-25T03:30+02:00", "2026-10-25T01:30:00+00:00"),
+    ],
+)
+def test_explicit_offset_disambiguates_repeated_local_time(
+    due_at: str, expected_utc: str
+) -> None:
+    operation = WorkspaceCommandParser().parse(
+        f"workspace add reminder: Call clinic | {due_at} | Europe/Bucharest",
+        idempotency_key=str(uuid4()),
+    )
+    assert operation.parameters["due_at"] == expected_utc
+
+
+def test_nonexistent_daylight_saving_time_requires_correction() -> None:
+    parser = WorkspaceCommandParser()
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace add reminder: Call clinic | 2026-03-29T03:30 | Europe/Bucharest",
+            idempotency_key=str(uuid4()),
+        )
+    assert caught.value.field_name == "due_at"
+    assert "does not exist" in caught.value.question
+
+
+def test_invalid_timezone_clarification_updates_timezone_not_due_time() -> None:
+    parser = WorkspaceCommandParser()
+    key = str(uuid4())
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace add reminder: Call clinic | 2026-06-10T09:30 | Not/AZone",
+            idempotency_key=key,
+        )
+    error = caught.value
+    assert error.field_name == "timezone"
+    assert error.partial_operation is not None
+    operation = parser.parse(
+        "Europe/Bucharest",
+        pending_context={
+            "partial_operation": error.partial_operation.model_dump(mode="json"),
+            "missing_fields": ["timezone"],
+        },
+    )
+    assert operation.parameters["timezone"] == "Europe/Bucharest"
+    assert operation.parameters["due_at"] == "2026-06-10T06:30:00+00:00"
+
+
+def test_clarification_updates_search_query_not_title() -> None:
+    parser = WorkspaceCommandParser()
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse("workspace search files:")
+    error = caught.value
+    assert error.partial_operation is not None
+    operation = parser.parse(
+        "hypertension",
+        pending_context={
+            "partial_operation": error.partial_operation.model_dump(mode="json"),
+            "missing_fields": ["query"],
+        },
+    )
+    assert operation.operation_id == "workspace_search_files"
+    assert operation.parameters["query"] == "hypertension"
+    assert "title" not in operation.parameters

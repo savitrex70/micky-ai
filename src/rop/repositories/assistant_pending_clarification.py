@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from rop.models.assistant_conversation import AssistantConversation
 from rop.models.assistant_pending_clarification import AssistantPendingClarification
 
 CLARIFICATION_LIFETIME = timedelta(minutes=10)
@@ -29,6 +30,15 @@ class AssistantPendingClarificationRepository:
         now: datetime | None = None,
     ) -> AssistantPendingClarification:
         current = now or datetime.now(UTC)
+        # Lock the parent even when no pending row exists yet. This serializes
+        # concurrent first-time clarifications for the same conversation.
+        parent_id = session.scalar(
+            select(AssistantConversation.id)
+            .where(AssistantConversation.id == conversation_id)
+            .with_for_update()
+        )
+        if parent_id is None:
+            raise LookupError("assistant conversation does not exist")
         existing = self.get_active_for_conversation(
             session, conversation_id, now=current, for_update=True
         )

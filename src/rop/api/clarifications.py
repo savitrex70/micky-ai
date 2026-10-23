@@ -1,5 +1,6 @@
 """Restore and abandon pending assistant clarification prompts."""
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -17,6 +18,7 @@ router = APIRouter(
     tags=["assistant-clarifications"],
 )
 _REPOSITORY = AssistantPendingClarificationRepository()
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[ClarificationPrompt])
@@ -43,7 +45,11 @@ def list_clarifications(
         ]
     except Exception:
         session.rollback()
-        return []
+        logger.warning("assistant clarification restore failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clarification state could not be verified.",
+        ) from None
     finally:
         session.close()
 
@@ -69,7 +75,11 @@ def abandon_clarification(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception:
         session.rollback()
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        logger.warning("assistant clarification abandonment failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clarification state could not be updated.",
+        ) from None
     finally:
         session.close()
 
