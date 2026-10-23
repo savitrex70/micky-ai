@@ -547,10 +547,12 @@ allowlist. Relevant code includes `src/rop/capabilities/workspace_parser.py`,
 These implementations are not a claim that full product acceptance has
 passed.
 
-Still outstanding before Stage 9 can close: Stage 9.6 integration of
-suitable existing ROP reasoning services through explicit, auditable
-assistant workflows, and Stage 9.8 end-to-end/privacy/security/offline
-acceptance. Stage 9.7 optional native intelligence remains gated because
+Still outstanding before Stage 9 can close: Stage 9.6 is only partially
+integrated. The workspace UI can list/create clinical sessions, add
+observations, and invoke observation extraction, but a complete auditable
+reasoning workflow with run orchestration, result/status display, and
+safe conversation handoff is not established. Stage 9.8 end-to-end/privacy/
+security/offline acceptance also remains outstanding. Stage 9.7 optional native intelligence remains gated because
 Stage 8 acceptance is incomplete; no model/provider fallback is allowed.
 The original generic assistant executor registry remains intentionally
 empty. Workspace writes use their separate confirmation-gated flow; no
