@@ -203,7 +203,8 @@ def test_wrong_display_code_refuses_execution_and_keeps_active_reservation(
 
     cancelled = _decide(client, challenge, decision="cancel")
     assert cancelled.json()["status"] == "cancelled"
-    abandoned = client.delete(
+    abandoned = client.request(
+        "DELETE",
         f"/api/assistant/workspace/receipts/{key}",
         headers=ORIGIN_HEADERS,
         json={},
