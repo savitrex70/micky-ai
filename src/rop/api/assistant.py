@@ -184,9 +184,6 @@ def _dispatch(capability: Capability, http_request: Request) -> AssistantRespons
     return authorize_capability_dispatch(capability, policy=_POLICY)
 
 
-
-
-
 def _workspace_refusal(message: str) -> AssistantResponse:
     """Build a static, input-safe refusal for a workspace command."""
     return AssistantResponse(status="refused", message=message)
@@ -292,10 +289,7 @@ def _prepare_workspace_confirmation(
         executors=_EXECUTORS,
         repository=_REPOSITORY,
     )
-    if (
-        result.outcome is not ChallengeIssueOutcome.ISSUED
-        or result.challenge is None
-    ):
+    if result.outcome is not ChallengeIssueOutcome.ISSUED or result.challenge is None:
         return AssistantResponse(
             status="confirmation-unavailable",
             message=(
@@ -377,10 +371,7 @@ def _dispatch_workspace_command(
             pending_row = _PENDING_CLARIFICATION_REPOSITORY.get_pending(
                 session, request.clarification_id, for_update=True
             )
-            if (
-                pending_row is None
-                or pending_row.conversation_id != conversation_id
-            ):
+            if pending_row is None or pending_row.conversation_id != conversation_id:
                 session.rollback()
                 return (
                     _workspace_refusal(
@@ -761,8 +752,8 @@ def submit_request(
         _verify_conversation(conversation_id)
 
     if request.clarification_id is not None:
-        response, persistence_message, already_persisted = (
-            _dispatch_workspace_command(request)
+        response, persistence_message, already_persisted = _dispatch_workspace_command(
+            request
         )
     else:
         capability = _REGISTRY.match(request.message)

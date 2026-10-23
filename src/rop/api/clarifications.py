@@ -61,9 +61,7 @@ def abandon_clarification(
     enforce_local_origin(http_request)
     session = database_module.SessionLocal()
     try:
-        row = _REPOSITORY.get_pending(
-            session, clarification_id, for_update=True
-        )
+        row = _REPOSITORY.get_pending(session, clarification_id, for_update=True)
         if row is not None and row.conversation_id == conversation_id:
             _REPOSITORY.consume_and_clear(session, row)
         _REPOSITORY.delete_expired(session)

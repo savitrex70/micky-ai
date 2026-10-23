@@ -9,11 +9,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -74,9 +74,7 @@ class AssistantPendingClarification(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="PENDING"
-    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
