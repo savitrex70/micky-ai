@@ -39,9 +39,7 @@ def client(monkeypatch) -> Generator[TestClient, None, None]:
     )
     monkeypatch.setattr(database_module, "SessionLocal", testing_session_local)
     # The workspace executor imports SessionLocal directly, unlike the APIs.
-    monkeypatch.setattr(
-        workspace_executor, "SessionLocal", testing_session_local
-    )
+    monkeypatch.setattr(workspace_executor, "SessionLocal", testing_session_local)
 
     previous_override = app.dependency_overrides.get(get_db)
 
@@ -94,9 +92,7 @@ def _decide(
     if display_code is not None:
         body["display_code"] = display_code
     return client.post(
-        "/api/assistant/confirmations/"
-        + challenge["challenge_id"]
-        + "/decision",
+        "/api/assistant/confirmations/" + challenge["challenge_id"] + "/decision",
         headers=ORIGIN_HEADERS,
         json=body,
     )
