@@ -487,3 +487,56 @@ footer {
 }
 
 .conversations-toolbar button[disabled] { opacity: 0.6; cursor: progress; }
+
+
+/* Stage 9 local workspace panels */
+.workspace-form,
+.workspace-toolbar,
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+  margin-block: 0.75rem;
+}
+.workspace-form {
+  padding: 0.85rem;
+  border: 1px solid #d7dde4;
+  border-radius: 0.5rem;
+}
+.workspace-form label {
+  font-weight: 600;
+}
+.workspace-form input,
+.workspace-form textarea,
+.workspace-form select {
+  min-width: min(100%, 15rem);
+  max-width: 100%;
+}
+.workspace-form input,
+.workspace-form textarea {
+  flex: 1 1 15rem;
+}
+.workspace-items {
+  display: grid;
+  gap: 0.6rem;
+  padding-inline-start: 0;
+  list-style: none;
+}
+.workspace-card {
+  border: 1px solid #d7dde4;
+  border-radius: 0.5rem;
+  padding: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.workspace-card h3 {
+  margin-top: 0;
+}
+.workspace-overdue {
+  border-left: 0.25rem solid #b45309;
+  padding: 0.75rem 1rem;
+  margin-block: 0.75rem;
+}
+.danger-button {
+  border-color: #b91c1c;
+}

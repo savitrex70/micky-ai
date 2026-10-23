@@ -484,6 +484,11 @@
     // All of these establish a server-side terminal transition, so it is
     // safe to clear the card and add the outcome to history.
     addHistory(summaryForHistory, payload.message, payload.status);
+    window.dispatchEvent(
+      new CustomEvent("micky-workspace-confirmation-outcome", {
+        detail: { status: payload.status, message: payload.message },
+      })
+    );
     hideConfirmationCard();
     setDecisionBusy(false);
     setStatus(describeDecision(payload.status), "info");
@@ -722,6 +727,11 @@
       event.preventDefault();
     }
   });
+
+  window.__mickyWorkspaceUI = {
+    showConfirmationCard: showConfirmationCard,
+    setStatus: setStatus,
+  };
 })();
 
 // ============================================================================

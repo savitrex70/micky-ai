@@ -85,6 +85,112 @@
     </p>
   </section>
 
+  <section id="workspace-section" aria-labelledby="workspace-heading">
+    <h2 id="workspace-heading">Private workspace</h2>
+    <p class="help">
+      Notes, tasks, and reminders stay on this machine. Create, edit, complete,
+      and delete changes require a separate server-side confirmation tied to
+      the exact operation and its values.
+    </p>
+    <form id="workspace-create-form" class="workspace-form">
+      <label for="workspace-kind">Item type</label>
+      <select id="workspace-kind" required>
+        <option value="note">Note</option>
+        <option value="task">Task</option>
+        <option value="reminder">Reminder</option>
+      </select>
+      <label for="workspace-title">Title</label>
+      <input id="workspace-title" maxlength="200" required>
+      <label for="workspace-content">Details (optional, one line)</label>
+      <input id="workspace-content" maxlength="512">
+      <div id="workspace-reminder-fields" hidden>
+        <label for="workspace-due">Due time (local wall time)</label>
+        <input id="workspace-due" type="datetime-local">
+        <label for="workspace-timezone">Timezone (IANA name)</label>
+        <input id="workspace-timezone" maxlength="128" required>
+        <p class="help">A missing or ambiguous daylight-saving time is refused. Select a different time.</p>
+      </div>
+      <button type="submit">Prepare change for confirmation</button>
+    </form>
+    <p id="workspace-status" role="status" aria-live="polite" class="workspace-status"></p>
+    <button id="workspace-abandon" type="button" hidden>Abandon unused operation key</button>
+    <div class="workspace-toolbar">
+      <label for="workspace-filter">Show</label>
+      <select id="workspace-filter">
+        <option value="all">All items</option>
+        <option value="note">Notes</option>
+        <option value="task">Tasks</option>
+        <option value="reminder">Reminders</option>
+      </select>
+      <button id="workspace-refresh" type="button">Refresh workspace</button>
+    </div>
+    <div id="workspace-overdue" class="workspace-overdue" hidden></div>
+    <div id="workspace-items" class="workspace-items" aria-live="polite"></div>
+  </section>
+
+  <section id="retrieval-section" aria-labelledby="retrieval-heading">
+    <h2 id="retrieval-heading">Private local-file retrieval</h2>
+    <p class="help">
+      Add only folders you explicitly authorize. Search reads only a fixed
+      allowlist of local text formats; it does not access the network or scan
+      outside authorized roots.
+    </p>
+    <form id="retrieval-root-form" class="workspace-form">
+      <label for="retrieval-root-path">Local folder path</label>
+      <input id="retrieval-root-path" maxlength="512" required
+        placeholder="C:\Users\you\Documents">
+      <button type="submit">Prepare folder authorization</button>
+    </form>
+    <p id="retrieval-root-status" role="status" aria-live="polite"></p>
+    <ul id="retrieval-roots" class="workspace-items"></ul>
+    <form id="retrieval-search-form" class="workspace-form">
+      <label for="retrieval-query">Search authorized folders</label>
+      <input id="retrieval-query" maxlength="200" required>
+      <button type="submit">Search offline</button>
+    </form>
+    <p id="retrieval-search-status" role="status" aria-live="polite"></p>
+    <ul id="retrieval-results" class="workspace-items"></ul>
+  </section>
+
+  <section id="clinical-workspace" aria-labelledby="clinical-workspace-heading">
+    <h2 id="clinical-workspace-heading">ROP clinical reasoning — separate records</h2>
+    <p class="help">
+      This panel uses the existing clinical session and observation APIs. It
+      is separate from assistant conversations and personal workspace items.
+    </p>
+    <form id="clinical-session-form" class="workspace-form">
+      <label for="clinical-domain">Clinical domain</label>
+      <input id="clinical-domain" maxlength="255" value="general" required>
+      <label for="clinical-input">Initial clinical input</label>
+      <textarea id="clinical-input" rows="3" required></textarea>
+      <label for="clinical-notes">Session notes (optional)</label>
+      <input id="clinical-notes">
+      <button type="submit">Create clinical reasoning session</button>
+    </form>
+    <p id="clinical-status" role="status" aria-live="polite"></p>
+    <div id="clinical-sessions" class="workspace-items"></div>
+    <div id="clinical-observations-panel" hidden>
+      <h3 id="clinical-selected-heading">Selected reasoning session</h3>
+      <p id="clinical-selected-meta" class="help"></p>
+      <form id="clinical-observation-form" class="workspace-form">
+        <label for="clinical-observation-text">Observation text</label>
+        <textarea id="clinical-observation-text" rows="3" required></textarea>
+        <label for="clinical-observation-type">Observation type</label>
+        <input id="clinical-observation-type" maxlength="100" value="user_observation" required>
+        <label for="clinical-observation-confidence">Confidence (0–1)</label>
+        <input id="clinical-observation-confidence" type="number" min="0" max="1" step="0.05" value="1" required>
+        <label for="clinical-observation-source">Source</label>
+        <input id="clinical-observation-source" maxlength="255" value="user" required>
+        <div class="workspace-actions">
+          <button type="submit">Add observation</button>
+          <button id="clinical-extract" type="button">Extract observations from text</button>
+        </div>
+      </form>
+      <p id="clinical-observation-status" role="status" aria-live="polite"></p>
+      <ul id="clinical-observations" class="workspace-items"></ul>
+    </div>
+  </section>
+
   <form id="request-form" novalidate>
     <label for="message">Your request</label>
     <textarea
@@ -219,6 +325,7 @@
 </footer>
 
 <script src="/static/app.js"></script>
+<script src="/static/workspace.js"></script>
 <noscript>
   <p>
     This interface requires JavaScript. You can still use the developer API
