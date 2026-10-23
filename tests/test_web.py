@@ -51,6 +51,25 @@ def test_root_serves_micky_ai_interface() -> None:
     assert 'aria-live="polite"' in body
 
 
+def test_clinical_workspace_runs_fully_audited_rop_workflow() -> None:
+    """The local clinical panel exposes the existing audited ROP pipeline."""
+    with TestClient(app) as client:
+        page = client.get("/")
+        workspace_js = client.get("/static/workspace.js")
+
+    assert page.status_code == 200
+    assert workspace_js.status_code == 200
+    assert 'id="clinical-run-reasoning"' in page.text
+    assert 'id="clinical-reasoning-result"' in page.text
+    assert "/reasoning-run/execute-fully-audited" in workspace_js.text
+    assert "result.package_consistent === true" in workspace_js.text
+    assert "clinicalReasoningResult.textContent = JSON.stringify(result, null, 2)" in (
+        workspace_js.text
+    )
+    assert "does not establish clinical validity" in workspace_js.text
+
+
+
 def test_root_references_only_local_assets() -> None:
     with TestClient(app) as client:
         response = client.get("/")
