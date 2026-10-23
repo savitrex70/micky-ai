@@ -139,7 +139,13 @@ class WorkspaceChangeResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["confirmation-required", "confirmation-unavailable", "refused"]
+    status: Literal[
+        "success",
+        "confirmation-required",
+        "confirmation-unavailable",
+        "refused",
+        "unknown",
+    ]
     message: str
     challenge: AssistantConfirmationChallenge | None = None
 

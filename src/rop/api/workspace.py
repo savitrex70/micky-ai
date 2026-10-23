@@ -8,17 +8,20 @@ only after the existing trusted confirmation endpoint consumes it.
 
 from __future__ import annotations
 
+import ctypes
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 
 from rop import database as database_module
 from rop.api.origin import enforce_local_origin
 from rop.authorization.policy import evaluate_authorization
+from rop.models.assistant_confirmation import AssistantConfirmation
 from rop.models.assistant_item import AssistantItem
 from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
@@ -38,6 +41,7 @@ from rop.services.confirmation import ChallengeIssueOutcome, issue_challenge
 from rop.services.workspace_executor import (
     build_workspace_executor_registry,
     build_workspace_policy,
+    operation_fingerprint,
 )
 
 router = APIRouter(prefix="/api/assistant/workspace", tags=["assistant-workspace"])
@@ -53,6 +57,19 @@ _UNAVAILABLE = (
 _REQUIRED = (
     "Review the exact change in the confirmation card. It has not been applied."
 )
+
+
+def _is_network_path(path: Path) -> bool:
+    """Reject UNC and mapped network-drive paths for offline-only use."""
+    raw = str(path)
+    if raw.startswith("\\\\") or raw.startswith("//"):
+        return True
+    if os.name == "nt" and path.drive:
+        try:
+            return ctypes.windll.kernel32.GetDriveTypeW(path.drive + "\\") == 4
+        except (AttributeError, OSError, TypeError):
+            return True
+    return False
 
 
 def _parse_local_due(value: str, timezone_name: str) -> datetime:
@@ -103,14 +120,20 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
     operation_id: str
     if request.kind == "retrieval_root":
         if request.action == "add":
+            raw_root = Path(request.path or "").expanduser()
+            if _is_network_path(raw_root):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Network folders are not supported for offline retrieval.",
+                )
             try:
-                root = Path(request.path or "").expanduser().resolve(strict=True)
+                root = raw_root.resolve(strict=True)
             except (OSError, RuntimeError, ValueError):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Choose an accessible local folder.",
                 ) from None
-            if not root.is_dir():
+            if _is_network_path(root) or not root.is_dir():
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="The selected path is not a directory.",
@@ -214,6 +237,63 @@ def get_receipt(idempotency_key: UUID) -> WorkspaceReceiptRead:
         session.close()
 
 
+@router.delete(
+    "/receipts/{idempotency_key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def abandon_receipt(
+    idempotency_key: UUID, http_request: Request
+) -> Response:
+    """Abandon an unused reservation only when no active challenge remains."""
+    enforce_local_origin(http_request)
+    session = database_module.SessionLocal()
+    try:
+        receipt = _REPOSITORY.get_receipt(
+            session, idempotency_key, for_update=True
+        )
+        if receipt is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if receipt.status != "PENDING":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A completed or unresolved operation receipt cannot be deleted."
+                ),
+            )
+        active = session.scalar(
+            select(AssistantConfirmation.id)
+            .where(
+                AssistantConfirmation.status == "PENDING",
+                AssistantConfirmation.expires_at > datetime.now(UTC),
+                AssistantConfirmation.parameters["idempotency_key"].as_string()
+                == str(idempotency_key),
+            )
+            .limit(1)
+        )
+        if active is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A confirmation is still active. Cancel or delete that "
+                    "challenge before abandoning this key."
+                ),
+            )
+        session.delete(receipt)
+        session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The operation key could not be abandoned.",
+        ) from None
+    finally:
+        session.close()
+
+
 @router.post(
     "/changes",
     response_model=WorkspaceChangeResponse,
@@ -248,8 +328,65 @@ def prepare_change(
                 "for this change."
             ),
         )
+    key = body.idempotency_key
+    fingerprint = operation_fingerprint(operation)
     session = database_module.SessionLocal()
     try:
+        receipt = _REPOSITORY.get_receipt(session, key, for_update=True)
+        if receipt is not None:
+            if receipt.operation_fingerprint != fingerprint:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "This idempotency key is already bound to a different "
+                        "workspace change. Resolve the earlier change first."
+                    ),
+                )
+            if receipt.status == "SUCCEEDED":
+                return WorkspaceChangeResponse(
+                    status="success",
+                    message=(
+                        "This exact change already completed. "
+                        "No duplicate change was applied."
+                    ),
+                )
+            if receipt.status == "RUNNING":
+                return WorkspaceChangeResponse(
+                    status="unknown",
+                    message=(
+                        "This operation has no established terminal result. "
+                        "Do not submit it with a new key."
+                    ),
+                )
+            active = session.scalar(
+                select(AssistantConfirmation.id)
+                .where(
+                    AssistantConfirmation.status == "PENDING",
+                    AssistantConfirmation.expires_at > datetime.now(UTC),
+                    AssistantConfirmation.parameters["idempotency_key"].as_string()
+                    == str(key),
+                )
+                .limit(1)
+            )
+            if active is not None:
+                return WorkspaceChangeResponse(
+                    status="unknown",
+                    message=(
+                        "A confirmation for this exact change may already be "
+                        "pending. Check the confirmation records; do not create "
+                        "a new operation key."
+                    ),
+                )
+        else:
+            receipt = AssistantOperationReceipt(
+                idempotency_key=key,
+                operation_id=operation.operation_id,
+                operation_fingerprint=fingerprint,
+                status="PENDING",
+            )
+            session.add(receipt)
+            session.flush()
+
         result = issue_challenge(
             session,
             operation,
@@ -277,6 +414,9 @@ def prepare_change(
         return WorkspaceChangeResponse(
             status="confirmation-unavailable", message=_UNAVAILABLE
         )
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception:
         session.rollback()
         return WorkspaceChangeResponse(
