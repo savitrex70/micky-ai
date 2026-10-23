@@ -245,16 +245,18 @@ Current Stage 9.2-9.6 implementation on `main` (acceptance pending):
   complete end-to-end/privacy/security/offline/recovery matrix and a manual
   walkthrough remain required.
 
-Planned capabilities (Stage 9 target):
+Stage 9 capability inventory and remaining acceptance work:
 
 - **Capability:** Conversational requests and session continuity, notes,
   tasks, reminders, local retrieval from user-selected data,
   user-controlled persistence UI, uniform error/refusal/unsupported
   experience, and gating of data-modifying operations by the
   authorization policy.
-  - Status: `PLANNED` overall. Two sub-components are `IMPLEMENTED` as
-    foundations: durable conversation-and-message persistence (Task 228)
-    and the conversation HTTP API (Task 229).
+  - Status: `PARTIALLY IMPLEMENTED; ACCEPTANCE PENDING`. The current tree
+    contains conversation persistence/API/UI, explicit command parsing and
+    clarification, workspace item workflows, bounded local retrieval, and a
+    separate clinical reasoning panel. The overall Stage 9 product, the
+    complete acceptance matrix, and manual walkthrough are not established.
   - Paths (persistence + API foundations):
     `src/rop/models/assistant_conversation.py`,
     `src/rop/models/assistant_message.py`,

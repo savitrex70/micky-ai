@@ -10,8 +10,10 @@
 Tasks 232-233 documented the new workspace and audited clinical workflow, but
 older parts of the README and Stage 9 contract still claimed that notes,
 tasks, reminders, local retrieval, all parser-backed interaction, and any
-production state-changing executor did not exist. Those statements contradicted
-the current `main` tree and the later Stage 9 implementation inventory.
+production state-changing executor did not exist. The first reconciliation
+also left a section label that still called the complete scoped capability
+set "planned" despite its new inventory of implemented components. Those
+statements contradicted the current `main` tree and the later Stage 9 inventory.
 
 This task corrects those implementation-status claims without treating code
 presence, source inspection, or an in-flight CI run as product acceptance.
@@ -72,6 +74,8 @@ passed; its final result must be read from that run before Stage 9 can close.
 - Updated the Stage 9 contract to distinguish implemented 9.2-9.6 components
   from incomplete product acceptance and to reconcile the workspace executor,
   reminder, retrieval, and clinical reasoning status.
+- Corrected the remaining scope-section label/status so implemented
+  capabilities are not still described as entirely planned.
 - No application code, schema, migration, runtime behavior, or test changed
   in Task 234.
 
