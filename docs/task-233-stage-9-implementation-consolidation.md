@@ -73,6 +73,6 @@ At the time this report was prepared:
 
 ## 5. Gate decision
 
-**Stage 9 closeout: NOT APPROVED YET.** Tasks 9.2-9.5 have substantial implementation on `main`, but the latest CI pytest result was not final, Stage 9.6 integration is not established, and Stage 9.8 acceptance evidence is outstanding.
+**Stage 9 closeout: NOT APPROVED YET.** Tasks 9.2-9.5 have substantial implementation on `main`, but the latest CI pytest result was not final, Stage 9.6 reasoning integration is partial, and Stage 9.8 acceptance evidence is outstanding.
 
 The next safe step is to update the owner's local checkout and run the requested full suite on the exact current `main` commit. Stage 10 remains blocked until the outstanding Stage 9 work and acceptance gate are completed.
