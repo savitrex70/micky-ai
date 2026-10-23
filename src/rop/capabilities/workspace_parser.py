@@ -119,7 +119,9 @@ class WorkspaceCommandParser:
             query = search.group(1).strip()
             if not query:
                 raise CapabilityParseError(
-                    "query", "What words should I search for in your authorized local files?"
+                    "query",
+                    "What words should I search for in your authorized local files?",
+                    partial_operation=_operation("workspace_search_files"),
                 )
             return _operation("workspace_search_files", parameters={"query": query[:200]})
 
@@ -289,7 +291,7 @@ class WorkspaceCommandParser:
         parameters = dict(operation.parameters)
         target = operation.target
         first = fields[0]
-        if first == "title":
+        if first in {"title", "query"}:
             value = answer.strip()
             if not value:
                 raise CapabilityParseError(

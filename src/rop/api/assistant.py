@@ -15,9 +15,11 @@ only ever persisted from the configured local origin.
 """
 
 import logging
-from uuid import UUID
+from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from rop import database as database_module
@@ -33,12 +35,20 @@ from rop.authorization.policy import (
     build_default_policy,
     evaluate_authorization,
 )
+from rop.capabilities.parser import CapabilityParseError
 from rop.capabilities.registry import (
     Capability,
     CapabilityRegistry,
     build_default_registry,
 )
+from rop.capabilities.workspace_parser import WorkspaceCommandParser
+from rop.models.assistant_confirmation import AssistantConfirmation
+from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.repositories.assistant_confirmation import AssistantConfirmationRepository
+from rop.repositories.assistant_pending_clarification import (
+    AssistantPendingClarificationRepository,
+)
+from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.repositories.assistant_conversation import (
     ConversationNotFoundError,
     ConversationRepository,
@@ -47,6 +57,7 @@ from rop.schemas.assistant import (
     AssistantConfirmationChallenge,
     AssistantRequest,
     AssistantResponse,
+    ClarificationPrompt,
 )
 from rop.schemas.assistant_conversation import AssistantMessageCreate
 from rop.schemas.authorization import AuthorizationOutcome, ProposedOperation
@@ -55,16 +66,32 @@ from rop.services.confirmation import (
     ChallengeIssueResult,
     issue_challenge,
 )
+from rop.services.workspace_executor import (
+    build_workspace_executor_registry,
+    build_workspace_policy,
+    operation_fingerprint,
+)
+from rop.services.workspace_read import run_workspace_read
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 _REGISTRY: CapabilityRegistry = build_default_registry()
+_WORKSPACE_CAPABILITY = Capability(
+    identifier="workspace-command",
+    description="Run explicit deterministic commands against the local workspace.",
+    aliases=(),
+    response="",
+    parser=WorkspaceCommandParser(),
+)
+_REGISTRY.register(_WORKSPACE_CAPABILITY)
 
 _CONVERSATION_REPOSITORY = ConversationRepository()
+_PENDING_CLARIFICATION_REPOSITORY = AssistantPendingClarificationRepository()
+_WORKSPACE_REPOSITORY = AssistantWorkspaceRepository()
 
-_POLICY: AuthorizationPolicy = build_default_policy()
+_POLICY: AuthorizationPolicy = build_workspace_policy()
 """The explicitly configured policy the dispatch boundary consults.
 
 It is the Task 220 default table, which registers exactly the capabilities
@@ -74,7 +101,7 @@ capability added to the registry without a deliberate policy rule is refused
 instead of silently inheriting permission.
 """
 
-_EXECUTORS: ExecutorRegistry = build_default_executor_registry()
+_EXECUTORS: ExecutorRegistry = build_workspace_executor_registry()
 """The server-side executors that can perform a confirmed operation.
 
 Empty by default: this build registers no production executor, so a
@@ -162,6 +189,415 @@ def _dispatch(capability: Capability, http_request: Request) -> AssistantRespons
             )
 
     return authorize_capability_dispatch(capability, policy=_POLICY)
+
+
+
+
+
+def _workspace_refusal(message: str) -> AssistantResponse:
+    """Build a static, input-safe refusal for a workspace command."""
+    return AssistantResponse(status="refused", message=message)
+
+
+def _make_clarification_response(
+    session,
+    *,
+    conversation_id: UUID,
+    original_message: str,
+    error: CapabilityParseError,
+) -> AssistantResponse:
+    """Persist only a real, resumable clarification for a selected conversation."""
+    operation = error.partial_operation
+    if operation is None:
+        return _workspace_refusal(
+            "The command could not be completed safely. Nothing was executed or saved."
+        )
+    missing_fields = list(error.missing_fields or [error.field_name])
+    row = _PENDING_CLARIFICATION_REPOSITORY.create(
+        session,
+        conversation_id=conversation_id,
+        capability_identifier=_WORKSPACE_CAPABILITY.identifier,
+        original_message=original_message,
+        partial_operation=operation.model_dump(mode="json"),
+        missing_fields=missing_fields,
+        question=error.question,
+    )
+    return AssistantResponse(
+        status="clarification-required",
+        message=error.question,
+        clarification_prompt=ClarificationPrompt(
+            clarification_id=row.clarification_id,
+            capability_identifier=row.capability_identifier,
+            question=row.question,
+            missing_fields=list(row.missing_fields),
+        ),
+    )
+
+
+def _prepare_workspace_confirmation(
+    session,
+    operation: ProposedOperation,
+    *,
+    conversation_id: UUID,
+    pending_row,
+) -> AssistantResponse:
+    """Bind an operation key and challenge in one transaction."""
+    raw_key = operation.parameters.get("idempotency_key")
+    try:
+        key = UUID(raw_key or "")
+    except (TypeError, ValueError):
+        return _workspace_refusal(
+            "This change could not be safely identified. Nothing was changed."
+        )
+
+    fingerprint = operation_fingerprint(operation)
+    receipt = _WORKSPACE_REPOSITORY.get_receipt(session, key, for_update=True)
+    if receipt is not None:
+        if receipt.operation_fingerprint != fingerprint:
+            return _workspace_refusal(
+                "That operation key is already bound to a different change. "
+                "Nothing new was executed."
+            )
+        if receipt.status == "SUCCEEDED":
+            return AssistantResponse(
+                status="success",
+                message=(
+                    "This exact change has already completed. "
+                    "No duplicate change was applied."
+                ),
+            )
+        active = session.scalar(
+            select(AssistantConfirmation.id)
+            .where(
+                AssistantConfirmation.status == "PENDING",
+                AssistantConfirmation.expires_at > datetime.now(UTC),
+                AssistantConfirmation.parameters["idempotency_key"].as_string()
+                == str(key),
+            )
+            .limit(1)
+        )
+        if active is not None:
+            return _workspace_refusal(
+                "A matching confirmation may already be pending. Inspect the "
+                "confirmation records before proceeding; no second challenge was created."
+            )
+    else:
+        receipt = AssistantOperationReceipt(
+            idempotency_key=key,
+            operation_id=operation.operation_id,
+            operation_fingerprint=fingerprint,
+            status="PENDING",
+        )
+        session.add(receipt)
+        session.flush()
+
+    result = issue_challenge(
+        session,
+        operation,
+        policy=_POLICY,
+        executors=_EXECUTORS,
+        repository=_REPOSITORY,
+    )
+    if (
+        result.outcome is not ChallengeIssueOutcome.ISSUED
+        or result.challenge is None
+    ):
+        return AssistantResponse(
+            status="confirmation-unavailable",
+            message=(
+                "This change requires confirmation, but a usable challenge "
+                "could not be created. Nothing was changed."
+            ),
+        )
+
+    challenge = result.challenge
+    if pending_row is not None:
+        _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(session, pending_row)
+    return AssistantResponse(
+        status="confirmation-required",
+        message=(
+            "This change has not run. Review the exact confirmation card and "
+            "confirm it to apply the change."
+        ),
+        challenge=AssistantConfirmationChallenge(
+            challenge_id=challenge.challenge_id,
+            summary=challenge.summary,
+            display_code=challenge.display_code,
+            expires_at=challenge.expires_at,
+        ),
+    )
+
+
+def _persist_clarified_success(
+    session,
+    *,
+    conversation_id: UUID,
+    pending_row,
+    original_message: str,
+    answer: str,
+    assistant_message: str,
+) -> None:
+    """Consume clarification and save one successful turn atomically."""
+    user_content = f"{original_message}\nClarification: {answer}"
+    _CONVERSATION_REPOSITORY.append_message(
+        session,
+        conversation_id,
+        AssistantMessageCreate(role="user", content=user_content),
+    )
+    _CONVERSATION_REPOSITORY.append_message(
+        session,
+        conversation_id,
+        AssistantMessageCreate(role="assistant", content=assistant_message),
+    )
+    _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(session, pending_row)
+    session.commit()
+
+
+def _dispatch_workspace_command(
+    request: AssistantRequest,
+) -> tuple[AssistantResponse, str, bool]:
+    """Parse, clarify, authorize and dispatch one explicit workspace command.
+
+    Returns response, user message for persistence, and whether the successful
+    turn has already been persisted atomically with clarification consumption.
+    """
+    conversation_id = request.conversation_id
+    if conversation_id is None:
+        return (
+            _workspace_refusal(
+                "Select or create a saved conversation before using workspace "
+                "commands. Nothing was executed or saved."
+            ),
+            request.message,
+            False,
+        )
+
+    session = database_module.SessionLocal()
+    pending_row = None
+    original_message = request.message
+    turn_message = request.message
+    context = None
+    idempotency_key = str(request.idempotency_key or uuid4())
+    try:
+        if request.clarification_id is not None:
+            pending_row = _PENDING_CLARIFICATION_REPOSITORY.get_pending(
+                session, request.clarification_id, for_update=True
+            )
+            if (
+                pending_row is None
+                or pending_row.conversation_id != conversation_id
+            ):
+                session.rollback()
+                return (
+                    _workspace_refusal(
+                        "That clarification is no longer active for this conversation. "
+                        "Start the command again."
+                    ),
+                    request.message,
+                    False,
+                )
+            now = datetime.now(UTC)
+            expires_at = pending_row.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at <= now:
+                _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(
+                    session, pending_row, now=now
+                )
+                _PENDING_CLARIFICATION_REPOSITORY.delete_expired(session, now=now)
+                session.commit()
+                return (
+                    _workspace_refusal(
+                        "That clarification expired. Start the workspace command again."
+                    ),
+                    request.message,
+                    False,
+                )
+            original_message = pending_row.original_message
+            turn_message = f"{original_message}\nClarification: {request.message}"
+            parameters = pending_row.partial_operation.get("parameters", {})
+            idempotency_key = parameters.get("idempotency_key", idempotency_key)
+            context = {
+                "partial_operation": pending_row.partial_operation,
+                "missing_fields": list(pending_row.missing_fields),
+            }
+
+        try:
+            operation = _WORKSPACE_CAPABILITY.parser.parse(
+                request.message,
+                pending_context=context,
+                idempotency_key=idempotency_key,
+            )
+        except CapabilityParseError as exc:
+            if exc.partial_operation is None:
+                if pending_row is not None:
+                    _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(
+                        session, pending_row
+                    )
+                    session.commit()
+                else:
+                    session.rollback()
+                return (
+                    _workspace_refusal(
+                        "The command could not be processed safely. Nothing was executed."
+                    ),
+                    turn_message,
+                    False,
+                )
+            response = _make_clarification_response(
+                session,
+                conversation_id=conversation_id,
+                original_message=original_message,
+                error=exc,
+            )
+            session.commit()
+            return response, turn_message, False
+        except Exception:
+            session.rollback()
+            logger.warning("workspace command parser failed")
+            return (
+                _workspace_refusal(
+                    "The command could not be processed safely. Nothing was executed."
+                ),
+                turn_message,
+                False,
+            )
+
+        try:
+            decision = evaluate_authorization(operation, policy=_POLICY)
+        except Exception:
+            session.rollback()
+            logger.warning("workspace command authorization failed")
+            return (
+                _workspace_refusal(
+                    "The command could not be authorized. Nothing was executed."
+                ),
+                turn_message,
+                False,
+            )
+
+        if decision.outcome is AuthorizationOutcome.CLARIFY:
+            rule = _POLICY.rule(operation.operation_id)
+            missing = []
+            if rule is not None:
+                if rule.requires_target and operation.target is None:
+                    missing.append("target")
+                missing.extend(
+                    name
+                    for name in rule.required_parameters
+                    if name not in operation.parameters
+                )
+            if not missing:
+                missing = [str(decision.reason).lower()]
+            question = "Please provide the missing information: " + ", ".join(missing)
+            response = _make_clarification_response(
+                session,
+                conversation_id=conversation_id,
+                original_message=original_message,
+                error=CapabilityParseError(
+                    missing[0],
+                    question,
+                    partial_operation=operation,
+                    missing_fields=missing,
+                ),
+            )
+            session.commit()
+            return response, turn_message, False
+
+        if decision.outcome is AuthorizationOutcome.DENY:
+            if pending_row is not None:
+                _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(
+                    session, pending_row
+                )
+                session.commit()
+            else:
+                session.rollback()
+            return (
+                _workspace_refusal(
+                    "The command is not permitted by the current policy. Nothing was changed."
+                ),
+                turn_message,
+                False,
+            )
+
+        if decision.outcome is AuthorizationOutcome.ALLOW:
+            try:
+                message = run_workspace_read(operation)
+            except Exception:
+                session.rollback()
+                logger.warning("workspace read operation failed")
+                return (
+                    _workspace_refusal(
+                        "The local workspace request could not be completed. "
+                        "No change was made."
+                    ),
+                    turn_message,
+                    False,
+                )
+            response = AssistantResponse(status="success", message=message)
+            if pending_row is not None:
+                _persist_clarified_success(
+                    session,
+                    conversation_id=conversation_id,
+                    pending_row=pending_row,
+                    original_message=original_message,
+                    answer=request.message,
+                    assistant_message=message,
+                )
+                return response, turn_message, True
+            session.rollback()
+            return response, turn_message, False
+
+        if decision.outcome is AuthorizationOutcome.REQUIRE_CONFIRMATION:
+            response = _prepare_workspace_confirmation(
+                session,
+                operation,
+                conversation_id=conversation_id,
+                pending_row=pending_row,
+            )
+            if (
+                response.status == "confirmation-required"
+                and response.challenge is not None
+            ):
+                session.commit()
+            elif response.status == "success":
+                session.rollback()
+            elif response.status == "refused":
+                if pending_row is not None:
+                    _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(
+                        session, pending_row
+                    )
+                    session.commit()
+                else:
+                    session.rollback()
+            else:
+                # Keep both the original clarification and the receipt
+                # reservation unchanged when challenge issuance fails.
+                session.rollback()
+            return response, turn_message, False
+
+        session.rollback()
+        return (
+            _workspace_refusal("The command could not be safely dispatched."),
+            turn_message,
+            False,
+        )
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        logger.warning("workspace command handler failed")
+        return (
+            _workspace_refusal(
+                "The workspace command could not be completed safely. "
+                "Inspect the local application state before retrying."
+            ),
+            turn_message,
+            False,
+        )
+    finally:
+        session.close()
 
 
 _ERROR_CONVERSATION_NOT_FOUND = "The conversation does not exist."
@@ -328,26 +764,39 @@ def submit_request(
         _enforce_persistence_origin(http_request)
         _verify_conversation(conversation_id)
 
-    capability = _REGISTRY.match(request.message)
-    if capability is None:
-        # Unsupported requests are transient, not saved.
-        return AssistantResponse(
-            status="unsupported-capability",
-            message=_UNSUPPORTED_MESSAGE,
+    if request.clarification_id is not None:
+        response, persistence_message, already_persisted = (
+            _dispatch_workspace_command(request)
         )
-    response = _dispatch(capability, http_request)
+    else:
+        capability = _REGISTRY.match(request.message)
+        if capability is None:
+            capability = _REGISTRY.match_parser(request.message)
+        if capability is None:
+            return AssistantResponse(
+                status="unsupported-capability",
+                message=_UNSUPPORTED_MESSAGE,
+            )
+        if capability.parser is not None:
+            response, persistence_message, already_persisted = (
+                _dispatch_workspace_command(request)
+            )
+        else:
+            response = _dispatch(capability, http_request)
+            persistence_message = request.message
+            already_persisted = False
 
-    # Only a genuinely successful turn is persisted, and only when a
-    # conversation was supplied. Non-success outcomes and no-conversation
-    # requests do not touch the conversation store.
+    # Successful clarification continuations append their original command,
+    # answer, and result atomically with consuming the pending record.
     if (
         conversation_id is not None
+        and not already_persisted
         and response.status == "success"
         and response.challenge is None
     ):
         _persist_successful_turn(
             conversation_id,
-            request.message,
+            persistence_message,
             response.message,
         )
     return response
