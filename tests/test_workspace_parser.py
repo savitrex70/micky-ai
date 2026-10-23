@@ -58,7 +58,10 @@ def test_clarification_can_complete_note_creation() -> None:
 def test_reminder_requires_explicit_local_time_and_timezone() -> None:
     parser = WorkspaceCommandParser()
     with pytest.raises(CapabilityParseError) as caught:
-        parser.parse("workspace add reminder: Call clinic", idempotency_key=str(uuid4()))
+        parser.parse(
+            "workspace add reminder: Call clinic",
+            idempotency_key=str(uuid4()),
+        )
     error = caught.value
     assert error.field_name == "due_at"
     assert set(error.missing_fields) == {"due_at", "timezone"}

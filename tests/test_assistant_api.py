@@ -349,7 +349,9 @@ def test_workspace_command_without_conversation_stays_database_free(
 
     with TestClient(app) as client:
         def fail_if_opened():
-            raise AssertionError("no-conversation workspace command opened the database")
+            raise AssertionError(
+                "no-conversation workspace command opened the database"
+            )
 
         monkeypatch.setattr(
             assistant_api.database_module,
