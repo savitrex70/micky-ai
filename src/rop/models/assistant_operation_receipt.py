@@ -31,7 +31,9 @@ class AssistantOperationReceipt(Base):
     operation_id: Mapped[str] = mapped_column(String(64), nullable=False)
     operation_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="RUNNING")
-    result_code: Mapped[str] = mapped_column(String(64), nullable=False, default="workspace-change-completed")
+    result_code: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="workspace-change-completed"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

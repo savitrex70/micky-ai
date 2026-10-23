@@ -28,9 +28,24 @@ def upgrade() -> None:
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("due_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("timezone", sa.String(length=128), nullable=True),
-        sa.Column("completed", sa.Boolean(), server_default=sa.text("false"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "completed",
+            sa.Boolean(),
+            server_default=sa.text("false"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.CheckConstraint("kind IN ('note', 'task', 'reminder')", name="ck_assistant_items_kind"),
         sa.CheckConstraint("length(trim(title)) > 0", name="ck_assistant_items_title"),
         sa.CheckConstraint(
@@ -93,9 +108,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_assistant_operation_receipts_created_at", table_name="assistant_operation_receipts")
+    op.drop_index(
+        "ix_assistant_operation_receipts_created_at",
+        table_name="assistant_operation_receipts",
+    )
     op.drop_table("assistant_operation_receipts")
-    op.drop_index("ix_assistant_retrieval_roots_created_at", table_name="assistant_retrieval_roots")
+    op.drop_index(
+        "ix_assistant_retrieval_roots_created_at",
+        table_name="assistant_retrieval_roots",
+    )
     op.drop_table("assistant_retrieval_roots")
     op.drop_index("ix_assistant_items_reminder_due", table_name="assistant_items")
     op.drop_index("ix_assistant_items_kind_updated_at", table_name="assistant_items")

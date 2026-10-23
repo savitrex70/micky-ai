@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import select
@@ -80,12 +80,18 @@ def _parse_local_due(value: str, timezone_name: str) -> datetime:
     if not valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="That local time does not exist because of a daylight-saving transition. Choose another time.",
+            detail=(
+                "That local time does not exist because of a daylight-saving "
+                "transition. Choose another time."
+            ),
         )
     if len(offsets) > 1:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="That local time is ambiguous because clocks change. Choose a different time.",
+            detail=(
+                "That local time is ambiguous because clocks change. "
+                "Choose a different time."
+            ),
         )
     return valid[0].astimezone(UTC)
 
@@ -152,7 +158,8 @@ def list_items(
             statement = statement.where(AssistantItem.kind == kind)
         if not include_completed:
             statement = statement.where(AssistantItem.completed.is_(False))
-        return [WorkspaceItemRead.model_validate(row) for row in session.scalars(statement).all()]
+        rows = session.scalars(statement).all()
+        return [WorkspaceItemRead.model_validate(row) for row in rows]
     finally:
         session.close()
 
@@ -198,7 +205,10 @@ def get_receipt(idempotency_key: UUID) -> WorkspaceReceiptRead:
         return WorkspaceReceiptRead(
             idempotency_key=idempotency_key,
             status="unknown",
-            message="The operation has no established terminal result. Do not retry it with a new key.",
+            message=(
+                "The operation has no established terminal result. "
+                "Do not retry it with a new key."
+            ),
         )
     finally:
         session.close()
@@ -220,7 +230,10 @@ def prepare_change(
     except Exception:
         return WorkspaceChangeResponse(
             status="refused",
-            message="The workspace change could not be authorized. Nothing was changed.",
+            message=(
+                "The workspace change could not be authorized. "
+                "Nothing was changed."
+            ),
         )
     if decision.outcome is AuthorizationOutcome.CLARIFY:
         return WorkspaceChangeResponse(
@@ -230,7 +243,10 @@ def prepare_change(
     if decision.outcome is not AuthorizationOutcome.REQUIRE_CONFIRMATION:
         return WorkspaceChangeResponse(
             status="refused",
-            message="The current policy did not authorize a confirmation for this change.",
+            message=(
+                "The current policy did not authorize a confirmation "
+                "for this change."
+            ),
         )
     session = database_module.SessionLocal()
     try:
@@ -258,7 +274,9 @@ def prepare_change(
                 ),
             )
         session.rollback()
-        return WorkspaceChangeResponse(status="confirmation-unavailable", message=_UNAVAILABLE)
+        return WorkspaceChangeResponse(
+            status="confirmation-unavailable", message=_UNAVAILABLE
+        )
     except Exception:
         session.rollback()
         return WorkspaceChangeResponse(status="confirmation-unavailable", message=_UNAVAILABLE)
