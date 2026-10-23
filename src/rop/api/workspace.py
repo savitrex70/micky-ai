@@ -279,7 +279,9 @@ def prepare_change(
         )
     except Exception:
         session.rollback()
-        return WorkspaceChangeResponse(status="confirmation-unavailable", message=_UNAVAILABLE)
+        return WorkspaceChangeResponse(
+            status="confirmation-unavailable", message=_UNAVAILABLE
+        )
     finally:
         session.close()
 

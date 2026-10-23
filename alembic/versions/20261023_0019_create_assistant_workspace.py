@@ -46,8 +46,14 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint("kind IN ('note', 'task', 'reminder')", name="ck_assistant_items_kind"),
-        sa.CheckConstraint("length(trim(title)) > 0", name="ck_assistant_items_title"),
+        sa.CheckConstraint(
+            "kind IN ('note', 'task', 'reminder')",
+            name="ck_assistant_items_kind",
+        ),
+        sa.CheckConstraint(
+            "length(trim(title)) > 0",
+            name="ck_assistant_items_title",
+        ),
         sa.CheckConstraint(
             "(kind = 'reminder' AND due_at IS NOT NULL AND timezone IS NOT NULL) "
             "OR (kind <> 'reminder' AND due_at IS NULL AND timezone IS NULL)",
@@ -72,7 +78,12 @@ def upgrade() -> None:
         "assistant_retrieval_roots",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("path", sa.String(length=1024), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("path", name="uq_assistant_retrieval_roots_path"),
     )
@@ -93,11 +104,14 @@ def upgrade() -> None:
         sa.Column("result_code", sa.String(length=64), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint(
-            "status IN ('RUNNING', 'SUCCEEDED')",
+            "status IN ('PENDING', 'RUNNING', 'SUCCEEDED')",
             name="ck_assistant_operation_receipts_status",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("idempotency_key", name="uq_assistant_operation_receipts_key"),
+        sa.UniqueConstraint(
+            "idempotency_key",
+            name="uq_assistant_operation_receipts_key",
+        ),
     )
     op.create_index(
         "ix_assistant_operation_receipts_created_at",
