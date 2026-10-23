@@ -174,9 +174,11 @@ def list_items(
     """List local items only; this endpoint never accesses the network."""
     session = database_module.SessionLocal()
     try:
-        statement = select(AssistantItem).order_by(
-            AssistantItem.updated_at.desc(), AssistantItem.id.desc()
-        ).limit(limit)
+        statement = (
+            select(AssistantItem)
+            .order_by(AssistantItem.updated_at.desc(), AssistantItem.id.desc())
+            .limit(limit)
+        )
         if kind is not None:
             statement = statement.where(AssistantItem.kind == kind)
         if not include_completed:
@@ -412,7 +414,8 @@ def prepare_change(
             )
         session.rollback()
         return WorkspaceChangeResponse(
-            status="confirmation-unavailable", message=_UNAVAILABLE
+            status="confirmation-unavailable",
+            message=_UNAVAILABLE,
         )
     except HTTPException:
         session.rollback()

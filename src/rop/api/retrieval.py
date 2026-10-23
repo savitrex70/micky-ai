@@ -6,7 +6,7 @@ import ctypes
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request
 
 from rop import database as database_module
 from rop.api.origin import enforce_local_origin

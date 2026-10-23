@@ -27,7 +27,6 @@ from rop.authorization.executors import (
 from rop.authorization.policy import build_default_policy
 from rop.database import SessionLocal
 from rop.models.assistant_item import AssistantItem
-from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.schemas.authorization import (

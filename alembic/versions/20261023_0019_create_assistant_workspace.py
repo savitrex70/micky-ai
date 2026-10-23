@@ -85,7 +85,9 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("path", name="uq_assistant_retrieval_roots_path"),
+        sa.UniqueConstraint(
+            "path", name="uq_assistant_retrieval_roots_path"
+        ),
     )
     op.create_index(
         "ix_assistant_retrieval_roots_created_at",
@@ -102,7 +104,12 @@ def upgrade() -> None:
         sa.Column("operation_fingerprint", sa.String(length=64), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("result_code", sa.String(length=64), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "status IN ('PENDING', 'RUNNING', 'SUCCEEDED')",
             name="ck_assistant_operation_receipts_status",
@@ -132,6 +139,12 @@ def downgrade() -> None:
         table_name="assistant_retrieval_roots",
     )
     op.drop_table("assistant_retrieval_roots")
-    op.drop_index("ix_assistant_items_reminder_due", table_name="assistant_items")
-    op.drop_index("ix_assistant_items_kind_updated_at", table_name="assistant_items")
+    op.drop_index(
+        "ix_assistant_items_reminder_due",
+        table_name="assistant_items",
+    )
+    op.drop_index(
+        "ix_assistant_items_kind_updated_at",
+        table_name="assistant_items",
+    )
     op.drop_table("assistant_items")

@@ -812,30 +812,19 @@ def test_records_js_export_uses_content_disposition_filename() -> None:
     assert "confirmation-records-export.json" in body
 
 
-def test_page_notice_does_not_claim_nothing_is_saved() -> None:
-    """The main notice must accurately describe what is and is not saved.
-
-    After Task 230 the notice distinguishes three cases:
-      * a successful exchange in a selected conversation IS saved;
-      * confirmation records are a separate store with their own retention;
-      * notes, tasks, and reminders are not persisted.
-
-    It must not revert to the older blanket claim that nothing is saved
-    (false once confirmation records and conversations existed), nor to
-    claiming conversations are never persisted (false once Task 230
-    wired persistence).
-    """
+def test_page_notice_describes_persisted_data_accurately() -> None:
+    """The notice distinguishes the separate saved-data areas accurately."""
     html = _served_html()
-    assert "Nothing is saved." not in html
-    assert "not persisted" in html
-    assert "confirmation records" in html.lower()
-    assert "retention" in html.lower() or "redaction" in html.lower()
-    # The correct scoping — notes/tasks/reminders unpersisted, conversations
-    # handled separately — must be present.
-    assert "notes, tasks, and reminders are not persisted" in html.lower()
-    # Conversations must be described as persisting on success, not as
-    # permanently unpersisted.
-    assert "selected conversation" in html.lower()
+    notice = html.lower()
+    assert "nothing is saved." not in notice
+    assert "confirmation records" in notice
+    assert "retention" in notice or "redaction" in notice
+    assert "selected conversation" in notice
+    assert "only a successful exchange" in notice
+    assert "notes, tasks, and reminders" in notice
+    assert "private workspace" in notice
+    assert "confirmation before it is applied" in notice
+    assert "clinical reasoning data" in notice
     assert "Conversations, notes, tasks, and reminders are not persisted." not in html
 
 

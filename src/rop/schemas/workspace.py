@@ -32,7 +32,7 @@ class WorkspaceItemRead(BaseModel):
 
 
 class RetrievalRootRead(BaseModel):
-    """A folder explicitly authorized for local retrieval."""
+    """A folder explicitly authorized for retrieval."""
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
@@ -42,11 +42,7 @@ class RetrievalRootRead(BaseModel):
 
 
 class WorkspaceChangeRequest(BaseModel):
-    """Describe a proposed change; never authorizes it by itself.
-
-    Every mutation is converted into a server-defined ProposedOperation and
-    requires a server-issued, operation-specific confirmation before it runs.
-    """
+    """Describe a proposed change; never authorizes it by itself."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -106,16 +102,23 @@ class WorkspaceChangeRequest(BaseModel):
                     raise ValueError("a retrieval-root identifier is required")
             else:
                 raise ValueError("unsupported retrieval-root action")
+            if any(
+                value is not None
+                for value in (
+                    self.title,
+                    self.content,
+                    self.due_local,
+                    self.timezone,
+                    self.completed,
+                )
+            ):
+                raise ValueError("retrieval-root actions accept only a path or item ID")
             return self
 
+        if self.path is not None:
+            raise ValueError("path is only valid for retrieval-root actions")
         if self.action not in {"create", "update", "delete", "complete"}:
             raise ValueError("unsupported workspace action")
-        if self.clear_content and (
-            self.action != "update" or self.content is not None
-        ):
-            raise ValueError(
-                "clear_content is valid only for an update with no content value"
-            )
         if self.action == "create":
             if self.item_id is not None:
                 raise ValueError("create does not accept an item identifier")
@@ -126,13 +129,27 @@ class WorkspaceChangeRequest(BaseModel):
                 raise ValueError("an item identifier is required")
             if self.action == "update" and self.title is None:
                 raise ValueError("an updated title is required")
+        if self.clear_content and (
+            self.action != "update" or self.content is not None
+        ):
+            raise ValueError(
+                "clear_content is valid only for an update with no content value"
+            )
+        if self.action not in {"create", "update"} and (
+            self.content is not None or self.clear_content
+        ):
+            raise ValueError("content changes are valid only for create or update")
         if self.kind == "reminder":
             if self.action in {"create", "update"} and (
                 self.due_local is None or self.timezone is None
             ):
-                raise ValueError("a due time and timezone are required for a reminder")
+                raise ValueError(
+                    "a due time and timezone are required for a reminder"
+                )
             if self.action == "complete":
-                raise ValueError("reminders are dismissed by updating or deleting them")
+                raise ValueError(
+                    "reminders are dismissed by updating or deleting them"
+                )
         elif self.due_local is not None or self.timezone is not None:
             raise ValueError("due time and timezone are only valid for reminders")
         if self.action == "complete":
