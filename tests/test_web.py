@@ -69,7 +69,6 @@ def test_clinical_workspace_runs_fully_audited_rop_workflow() -> None:
     assert "does not establish clinical validity" in workspace_js.text
 
 
-
 def test_root_references_only_local_assets() -> None:
     with TestClient(app) as client:
         response = client.get("/")
