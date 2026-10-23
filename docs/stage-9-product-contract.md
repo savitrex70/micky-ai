@@ -383,9 +383,12 @@ section E.1 applies to every entry below.
      for simple everyday items, with honest handling of malformed or
      partial input.
    - Outcome (reminders): a reminder created by the user is stored with
-     a user-specified due time and, when it becomes due, is surfaced
-     through an explicitly chosen mechanism. Actual reminder behaviour
-     is a Stage 9 deliverable and is not assumed by this contract.
+     a user-specified due time and is surfaced according to the approved
+     H.3 defaults (recorded below and in §H.3). Reminder functionality
+     is **not yet implemented**; Stage 9.4 owns the design and
+     implementation of the exact behaviour below. The approved defaults
+     define the target behaviour this stage must deliver, not a claim
+     that the feature exists today.
    - Dependencies: new persistence models and repositories; reuse the
      existing service/repository pattern. No new external services.
    - Approved reminder defaults (recorded in §H.3):

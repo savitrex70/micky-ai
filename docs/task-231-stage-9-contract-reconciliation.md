@@ -191,6 +191,25 @@ internal contradictions, which were corrected together:
   by that decision; it distinguishes the agreed-level resolution from
   stage-specific implementation details.
 
+A second follow-up review found two remaining cross-document
+contradictions, which were corrected together:
+
+- **README.md** no longer claims that "Requests and conversation
+  history are not persisted", that "History lives in the current
+  browser tab only; reloading or closing the page clears it", or that
+  "There is no conversation or message table". It now accurately
+  describes durable conversation persistence (Tasks 228-230), atomic
+  user/assistant pair saving on `success`, non-persistence of non-success
+  outcomes, database-free behaviour when no `conversation_id` is
+  supplied, separation from clinical reasoning sessions, and the fact
+  that no general-purpose user memory or user-profile storage exists.
+- **docs/stage-9-product-contract.md §B.2.4** no longer describes
+  reminders as surfaced through an "explicitly chosen mechanism" whose
+  actual behaviour "is not assumed by this contract". It now states
+  that reminder functionality is not yet implemented and that the
+  approved H.3 defaults define the target behaviour Stage 9.4 must
+  deliver.
+
 ## 5. Explicitly deferred details
 
 These remain open and are the responsibility of their respective

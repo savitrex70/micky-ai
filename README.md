@@ -151,9 +151,16 @@ step, not a finished assistant):
   and `refused` all mean that nothing was dispatched, and the page reports
   those outcomes distinctly instead of presenting them as an unmatched
   request or a success.
-- Requests and conversation history are not persisted. History lives in
-  the current browser tab only; reloading or closing the page clears it.
-  There is no conversation or message table and no user memory.
+- Conversation and message persistence are implemented (Tasks 228-230)
+  with a durable store, an HTTP API, and a persistent UI. When a
+  conversation is selected, each `success` exchange is saved as an
+  atomic user/assistant pair. Non-success outcomes are not saved.
+  Requests made without a `conversation_id` retain their original
+  database-free behaviour. This persistence is for conversations only;
+  it does not imply general-purpose user memory. Conversation data
+  remains separate from clinical reasoning sessions. Notes, tasks,
+  reminders, and local-file retrieval remain unimplemented in this
+  version, and no general-purpose user profile is stored.
 - Notes, tasks, reminders, and local-file retrieval are not implemented
   in this version.
 - A deterministic, fail-closed authorization policy is implemented as an
