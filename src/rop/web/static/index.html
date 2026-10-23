@@ -186,10 +186,14 @@
         <div class="workspace-actions">
           <button type="submit">Add observation</button>
           <button id="clinical-extract" type="button">Extract observations from text</button>
+          <button id="clinical-run-reasoning" type="button">Run fully audited ROP reasoning</button>
         </div>
       </form>
       <p id="clinical-observation-status" role="status" aria-live="polite"></p>
       <ul id="clinical-observations" class="workspace-items"></ul>
+      <h4>Audited reasoning output</h4>
+      <p class="help">This deterministic workflow is an aid to review, not a validated diagnosis or treatment recommendation.</p>
+      <pre id="clinical-reasoning-result" aria-live="polite" hidden></pre>
     </div>
   </section>
 
