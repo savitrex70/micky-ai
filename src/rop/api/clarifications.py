@@ -26,8 +26,9 @@ def list_clarifications(
     conversation_id: UUID = Query(...),
 ) -> list[ClarificationPrompt]:
     """Restore only the sanitized active prompt for the selected conversation."""
-    session = database_module.SessionLocal()
+    session = None
     try:
+        session = database_module.SessionLocal()
         now = datetime.now(UTC)
         _REPOSITORY.delete_expired(session, now=now)
         rows = _REPOSITORY.list_active_for_conversation(
@@ -44,14 +45,16 @@ def list_clarifications(
             for row in rows
         ]
     except Exception:
-        session.rollback()
+        if session is not None:
+            session.rollback()
         logger.warning("assistant clarification restore failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Clarification state could not be verified.",
         ) from None
     finally:
-        session.close()
+        if session is not None:
+            session.close()
 
 
 @router.delete(
@@ -65,8 +68,9 @@ def abandon_clarification(
 ) -> Response:
     """Abandon a prompt without revealing whether a guessed ID exists."""
     enforce_local_origin(http_request)
-    session = database_module.SessionLocal()
+    session = None
     try:
+        session = database_module.SessionLocal()
         row = _REPOSITORY.get_pending(session, clarification_id, for_update=True)
         if row is not None and row.conversation_id == conversation_id:
             _REPOSITORY.consume_and_clear(session, row)
@@ -74,14 +78,16 @@ def abandon_clarification(
         session.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception:
-        session.rollback()
+        if session is not None:
+            session.rollback()
         logger.warning("assistant clarification abandonment failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Clarification state could not be updated.",
         ) from None
     finally:
-        session.close()
+        if session is not None:
+            session.close()
 
 
 __all__ = ["router"]
