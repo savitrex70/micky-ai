@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import json
+import shutil
+import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -173,10 +177,26 @@ def _create_item(
     return matching[0]
 
 
-def _receipt(client: TestClient, key: UUID) -> dict[str, Any]:
-    response = client.get(f"{WORKSPACE}/receipts/{key}")
-    assert response.status_code == 200, response.text
-    return response.json()
+def _render_workspace_ui(items: list[dict[str, Any]]) -> dict[str, Any]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available; workspace UI behavior test requires it")
+    here = Path(__file__).resolve().parent
+    harness = here / "workspace_ui_harness.cjs"
+    workspace_js = (
+        here.parent / "src" / "rop" / "web" / "static" / "workspace.js"
+    )
+    result = subprocess.run(
+        [node, str(harness), str(workspace_js), json.dumps(items)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "workspace UI harness failed:\n" + result.stdout + "\n" + result.stderr
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 
 @pytest.mark.parametrize(
@@ -700,6 +720,13 @@ def test_reminders_persist_update_and_delete_across_api_restarts(
         )
         assert persisted_overdue["title"] == "Overdue reminder"
         assert _utc_datetime(persisted_overdue["due_at"]) < FIXED_NOW
+
+        rendered = _render_workspace_ui(persisted)
+        for phase in ("initial", "refreshed", "afterReload"):
+            assert rendered[phase]["overdueVisible"] is True
+            assert "Overdue reminder" in rendered[phase]["overdueText"]
+            assert "Future reminder" not in rendered[phase]["overdueText"]
+            assert rendered[phase]["itemCardCount"] == 2
 
         update_body = _body(
             "reminder",
