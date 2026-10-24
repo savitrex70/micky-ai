@@ -413,8 +413,6 @@ def test_nonexistent_targets_fail_without_creating_items(
         assert _items(client, kind) == []
 
 
-
-
 @pytest.mark.parametrize(
     ("kind", "action"),
     [
@@ -484,6 +482,7 @@ def test_list_filters_item_kind_and_completed_tasks_without_item_detail_route(
 
         missing_detail = client.get(f"{WORKSPACE}/items/{note['id']}")
         assert missing_detail.status_code == 404
+
 
 def test_clear_content_update_is_bound_and_only_applied_after_confirmation(
     workspace_test_env,
