@@ -8,8 +8,6 @@ only after the existing trusted confirmation endpoint consumes it.
 
 from __future__ import annotations
 
-import ctypes
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -38,6 +36,7 @@ from rop.schemas.workspace import (
     WorkspaceReceiptRead,
 )
 from rop.services.confirmation import ChallengeIssueOutcome, issue_challenge
+from rop.services.local_paths import is_network_path as _is_network_path
 from rop.services.workspace_executor import (
     build_workspace_executor_registry,
     build_workspace_policy,
@@ -55,19 +54,6 @@ _UNAVAILABLE = (
     "Nothing was changed."
 )
 _REQUIRED = "Review the exact change in the confirmation card. It has not been applied."
-
-
-def _is_network_path(path: Path) -> bool:
-    """Reject UNC and mapped network-drive paths for offline-only use."""
-    raw = str(path)
-    if raw.startswith("\\\\") or raw.startswith("//"):
-        return True
-    if os.name == "nt" and path.drive:
-        try:
-            return ctypes.windll.kernel32.GetDriveTypeW(path.drive + "\\") == 4
-        except (AttributeError, OSError, TypeError):
-            return True
-    return False
 
 
 def _parse_local_due(value: str, timezone_name: str) -> datetime:
