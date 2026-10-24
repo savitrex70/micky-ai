@@ -152,6 +152,8 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
         params["title"] = request.title
     if request.content is not None:
         params["content"] = request.content
+    if request.clear_content:
+        params["clear_content"] = "true"
     if request.action == "complete":
         params["completed"] = "true" if request.completed else "false"
     if request.kind == "reminder" and request.action in {"create", "update"}:
