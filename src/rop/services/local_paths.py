@@ -97,7 +97,9 @@ def is_network_path(path: Path) -> bool:
             # unknowable. Retrieval must fail closed rather than guess.
             return True
         try:
-            target = Path(path).resolve(strict=False)
+            # Classify by lexical path and mount metadata only: resolving a
+            # path inside an unavailable network mount could itself access it.
+            target = Path(os.path.abspath(os.fspath(path)))
         except (OSError, RuntimeError, ValueError):
             return True
 

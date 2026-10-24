@@ -283,6 +283,22 @@ def test_workspace_root_add_refreshes_mount_snapshot(
     assert refresh_calls == [True]
 
 
+def test_linux_network_mount_classification_does_not_resolve_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mounted_root = tmp_path / "mounted-share"
+    mounted_root.mkdir()
+    mount_table = ((Path("/"), "overlay"), (mounted_root, "nfs4"))
+    monkeypatch.setattr(local_paths, "_linux_mount_table", lambda: mount_table)
+
+    def prohibited_resolve(self, *args, **kwargs):
+        raise AssertionError("network mount detection must not resolve the path")
+
+    monkeypatch.setattr(Path, "resolve", prohibited_resolve)
+
+    assert local_paths.is_network_path(mounted_root / "not-yet-accessible" / "notes.md")
+
+
 def test_search_roots_fails_closed_if_linux_mount_metadata_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

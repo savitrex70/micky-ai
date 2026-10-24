@@ -59,7 +59,11 @@ def _contained_local_path(
 ) -> Path | None:
     """Resolve and validate one candidate against the approved local root."""
     try:
-        if candidate.is_symlink() or _is_junction(candidate):
+        if (
+            _is_network_path(candidate)
+            or candidate.is_symlink()
+            or _is_junction(candidate)
+        ):
             return None
         resolved = candidate.resolve(strict=True)
         if (
@@ -147,6 +151,11 @@ def search_roots(
             for entry in sorted(entries, key=lambda item: item.name):
                 candidate = Path(entry.path)
                 try:
+                    # Check the mount table before metadata calls that could
+                    # reach a mounted remote filesystem.
+                    if _is_network_path(candidate):
+                        skipped_files += 1
+                        continue
                     if entry.is_symlink() or _is_junction(candidate):
                         continue
                     is_directory = entry.is_dir(follow_symlinks=False)
