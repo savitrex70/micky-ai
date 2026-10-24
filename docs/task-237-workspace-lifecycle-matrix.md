@@ -23,14 +23,14 @@ The new `tests/test_workspace_lifecycle_matrix.py` uses the real FastAPI routes,
 |---|---|
 | LIFECYCLE-01 | Parameterized create/update/delete for notes, tasks, reminders; task complete and reopen. Mutation stays unchanged before confirmation; persisted result and succeeded receipt are checked after confirmation. |
 | READ-01 | List all items, filter by each supported item kind, exclude completed tasks when requested, and explicitly assert that a single-item GET route is unsupported. |
-| IDEMPOTENCY-01 | Same-key/same-material request while a challenge is pending, same-key replay after success, conflicting material under the same key, and duplicate-count assertion across all three item types. |
-| CONFIRM-01 | Wrong code, cancellation, consumed-challenge replay, and expiry refusal for note/task/reminder creation. |
+| IDEMPOTENCY-01 | Same-key/same-material request while a challenge is pending, same-key replay after success, conflicting material under the same key, changed target/action/parameters on existing-item mutations, explicit `clear_content=true` versus content replacement, and exactly-once executor-call assertions. |
+| CONFIRM-01 | Creation confirmation failures plus a parameterized existing-item matrix for note/task/reminder updates, deletes, task completion and reopening. Cancellation, wrong code, expiry and consumed-challenge replay are checked without applying a pending mutation a second time. |
 | TARGET-01 | Valid but nonexistent targets for note update, task completion, and reminder delete fail without creating an item; targets deleted earlier cannot be updated/completed/deleted again. Invalid IDs and missing target/title fields are rejected at request validation. |
 | POLICY-01 | Missing local Origin and a policy-prohibited mutation are refused without a challenge, receipt reservation, or item mutation. |
 | UPDATE-01 | Content clearing is tested end-to-end. The API operation builder now carries the existing schema's `clear_content` flag to the executor so it is applied only after confirmation. |
 | STATE-01 | Re-completing an already-completed task, editing a completed task, and deleting it are exercised under the existing semantics. |
 | REMINDER-01 | Nonexistent and ambiguous DST wall times are rejected; future/overdue UTC due times, timezone retention, update/delete, no duplicate records, and persistence across API lifespan restarts are checked. The real workspace JavaScript is run in a minimal DOM/fetch harness against the persisted API response with a deterministic clock; overdue visibility is checked on initial load, refresh, and a fresh page context. |
-| RECEIPT-01 | ExecutorError (established failure) and ExecutorInterrupted (unknown result) return distinct decision statuses. A simulated commit acknowledgement loss produces an unknown response; the original durable receipt is then recovered as succeeded across restart and replay creates no duplicate. |
+| RECEIPT-01 | Covers creation's unknown result plus an existing note update failing before mutation, uncertain task completion, and uncertain reminder update. Commit acknowledgement loss is reconciled from the original succeeded receipt/key; replay does not reapply the mutation. |
 
 ## Boundaries retained
 
