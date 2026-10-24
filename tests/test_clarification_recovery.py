@@ -189,7 +189,9 @@ class _FakeRepository:
         deleted_counts: list[int] | None = None,
     ) -> None:
         self.error = error
-        self.deleted_counts = list(deleted_counts) if deleted_counts is not None else [1]
+        self.deleted_counts = (
+            list(deleted_counts) if deleted_counts is not None else [1]
+        )
         self.limits: list[int] = []
 
     def delete_expired(self, session, *, now=None, limit=100) -> int:
