@@ -1,9 +1,9 @@
 """End-to-end lifecycle matrix for notes, tasks, and reminders."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
