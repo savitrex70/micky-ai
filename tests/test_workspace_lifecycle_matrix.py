@@ -145,9 +145,7 @@ def _decide(
 def _confirm(client: TestClient, prepared: dict[str, Any]) -> dict[str, Any]:
     assert prepared["status"] == "confirmation-required", prepared
     challenge = prepared["challenge"]
-    response = _decide(
-        client, challenge, display_code=challenge["display_code"]
-    )
+    response = _decide(client, challenge, display_code=challenge["display_code"])
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -244,17 +242,19 @@ def test_supported_workspace_operation_lifecycle_matrix(
             key,
             item_id=target_id,
             title="Updated item" if action == "update" else None,
-            content="Updated content" if action == "update" else (
-                "Initial content" if action == "create" else None
+            content=(
+                "Updated content"
+                if action == "update"
+                else ("Initial content" if action == "create" else None)
             ),
             completed=completed,
             due_local=UPDATED_FUTURE_DUE if action == "update" else FUTURE_DUE,
         )
         prepared = _prepare(client, body)
         assert prepared["status"] == "confirmation-required", prepared
-        assert _items(client, kind) == before, (
-            f"{kind}/{action} mutated workspace data before confirmation"
-        )
+        assert (
+            _items(client, kind) == before
+        ), f"{kind}/{action} mutated workspace data before confirmation"
 
         outcome = _confirm(client, prepared)
         assert outcome["status"] == "executed", outcome
@@ -340,9 +340,7 @@ def test_wrong_code_cancel_and_replay_do_not_mutate(
         assert cancelled.status_code == 200
         assert cancelled.json()["status"] == "cancelled"
         assert cancelled.json()["executed"] is False
-        replay = _decide(
-            client, challenge, display_code=challenge["display_code"]
-        )
+        replay = _decide(client, challenge, display_code=challenge["display_code"])
         assert replay.json()["status"] == "refused"
         assert replay.json()["executed"] is False
         assert _items(client, kind) == []
@@ -368,15 +366,11 @@ def test_expired_challenge_is_refused_and_cannot_be_replayed(
             record.expires_at = datetime.now(UTC) - timedelta(minutes=1)
             session.commit()
 
-        first = _decide(
-            client, challenge, display_code=challenge["display_code"]
-        )
+        first = _decide(client, challenge, display_code=challenge["display_code"])
         assert first.status_code == 200
         assert first.json()["status"] == "refused"
         assert first.json()["executed"] is False
-        second = _decide(
-            client, challenge, display_code=challenge["display_code"]
-        )
+        second = _decide(client, challenge, display_code=challenge["display_code"])
         assert second.json()["status"] == "refused"
         assert _items(client, kind) == []
         assert _receipt(client, key)["status"] == "unknown"
@@ -475,7 +469,9 @@ def test_list_filters_item_kind_and_completed_tasks_without_item_detail_route(
 
         all_items = _items(client)
         assert {item["id"] for item in all_items} == {
-            note["id"], task["id"], reminder["id"]
+            note["id"],
+            task["id"],
+            reminder["id"],
         }
         assert {item["kind"] for item in all_items} == {"note", "task", "reminder"}
         for kind in ("note", "task", "reminder"):
@@ -533,9 +529,11 @@ def test_workspace_validation_origin_and_policy_refusals_are_non_mutating(
 
         original_policy = workspace_api._POLICY
         denied_rules = tuple(
-            rule.model_copy(update={"prohibited": True})
-            if rule.operation_id == "workspace_note_create"
-            else rule
+            (
+                rule.model_copy(update={"prohibited": True})
+                if rule.operation_id == "workspace_note_create"
+                else rule
+            )
             for rule in original_policy.rules
         )
         monkeypatch.setattr(
@@ -564,9 +562,7 @@ def test_invalid_fields_malformed_ids_and_unsupported_actions_are_rejected(
             "action": "create",
             "idempotency_key": str(uuid4()),
         },
-        _body(
-            "note", "update", uuid4(), item_id="not-a-uuid", title="Invalid target"
-        ),
+        _body("note", "update", uuid4(), item_id="not-a-uuid", title="Invalid target"),
         {
             "kind": "note",
             "action": "update",
@@ -677,11 +673,9 @@ def test_reminder_dst_values_are_rejected_at_the_api(
 
 def _utc_datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
-    return (
-        parsed.replace(tzinfo=UTC)
-        if parsed.tzinfo is None
-        else parsed.astimezone(UTC)
-    )
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def test_reminders_persist_update_and_delete_across_api_restarts(
