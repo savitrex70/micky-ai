@@ -163,6 +163,7 @@ def test_consumed_clarification_is_redacted_then_deleted() -> None:
     finally:
         engine.dispose()
 
+
 class _FakeSession:
     def __init__(self, *, commit_error: Exception | None = None) -> None:
         self.commit_error = commit_error
@@ -224,9 +225,7 @@ def test_recovery_repeats_full_batches_in_separate_transactions() -> None:
         sessions.append(session)
         return session
 
-    repository = _FakeRepository(
-        deleted_counts=[CLARIFICATION_RECOVERY_BATCH_LIMIT, 3]
-    )
+    repository = _FakeRepository(deleted_counts=[CLARIFICATION_RECOVERY_BATCH_LIMIT, 3])
     assert recover_pending_clarification_state(
         session_factory=session_factory,
         repository=repository,
