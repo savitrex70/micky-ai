@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from rop import database as database_module
 from rop.repositories.assistant_pending_clarification import (
-    AssistantPendingClarificationRepository,
     MAX_EXPIRY_CLEANUP,
+    AssistantPendingClarificationRepository,
 )
 
 CLARIFICATION_RECOVERY_BATCH_LIMIT = MAX_EXPIRY_CLEANUP
