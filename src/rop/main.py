@@ -19,6 +19,7 @@ from rop.api.sessions import router as sessions_router
 from rop.api.workspace import router as workspace_router
 from rop.config import get_settings
 from rop.logging_config import configure_logging
+from rop.services.clarification_recovery import recover_pending_clarification_state
 from rop.services.confirmation_recovery import recover_confirmation_state
 from rop.web.routes import mount_static
 from rop.web.routes import router as web_router
@@ -37,6 +38,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if not recover_confirmation_state():
             logger.warning(
                 "Assistant confirmation startup recovery did not complete; "
+                "it will be retried on the next startup."
+            )
+        if not recover_pending_clarification_state():
+            logger.warning(
+                "Assistant clarification startup cleanup did not complete; "
                 "it will be retried on the next startup."
             )
     yield

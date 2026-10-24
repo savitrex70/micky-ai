@@ -104,6 +104,9 @@ def test_lifespan_still_starts_when_database_recovery_is_unavailable(
     started: list[bool] = []
     monkeypatch.setattr(main_module, "configure_logging", lambda level: None)
     monkeypatch.setattr(main_module, "recover_confirmation_state", lambda: False)
+    monkeypatch.setattr(
+        main_module, "recover_pending_clarification_state", lambda: False
+    )
     # Enable the gate so the failure path is actually exercised rather than
     # skipped by the test-environment default.
     monkeypatch.setattr(main_module.settings, "startup_recovery_enabled", True)
@@ -132,6 +135,17 @@ def test_lifespan_invokes_recovery_when_setting_enabled(monkeypatch) -> None:
 
     monkeypatch.setattr(main_module, "configure_logging", lambda level: None)
     monkeypatch.setattr(main_module, "recover_confirmation_state", recording_recovery)
+    clarification_calls: list[bool] = []
+
+    def recording_clarification_recovery() -> bool:
+        clarification_calls.append(True)
+        return True
+
+    monkeypatch.setattr(
+        main_module,
+        "recover_pending_clarification_state",
+        recording_clarification_recovery,
+    )
     monkeypatch.setattr(main_module.settings, "startup_recovery_enabled", True)
 
     async def exercise_lifespan() -> None:
@@ -140,6 +154,7 @@ def test_lifespan_invokes_recovery_when_setting_enabled(monkeypatch) -> None:
 
     asyncio.run(exercise_lifespan())
     assert calls == [True]
+    assert clarification_calls == [True]
 
 
 def test_lifespan_skips_recovery_when_setting_disabled(monkeypatch) -> None:
@@ -152,6 +167,11 @@ def test_lifespan_skips_recovery_when_setting_disabled(monkeypatch) -> None:
 
     monkeypatch.setattr(main_module, "configure_logging", lambda level: None)
     monkeypatch.setattr(main_module, "recover_confirmation_state", recording_recovery)
+    monkeypatch.setattr(
+        main_module,
+        "recover_pending_clarification_state",
+        recording_recovery,
+    )
     monkeypatch.setattr(main_module.settings, "startup_recovery_enabled", False)
 
     async def exercise_lifespan() -> None:
