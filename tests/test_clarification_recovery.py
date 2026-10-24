@@ -168,9 +168,7 @@ def test_recovery_caps_configured_batch_limit() -> None:
 
 def test_cleanup_failure_rolls_back_and_returns_false() -> None:
     session = _FakeSession()
-    repository = _FakeRepository(
-        error=RuntimeError("sensitive database detail")
-    )
+    repository = _FakeRepository(error=RuntimeError("sensitive database detail"))
 
     recovered = recover_pending_clarification_state(
         session_factory=lambda: session,
