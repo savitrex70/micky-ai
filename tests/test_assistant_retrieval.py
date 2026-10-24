@@ -106,9 +106,7 @@ def test_search_roots_does_not_traverse_symlinked_directory(tmp_path: Path) -> N
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / "secret.md").write_text(
-        "do not follow directory link", encoding="utf-8"
-    )
+    (outside / "secret.md").write_text("do not follow directory link", encoding="utf-8")
     try:
         (root / "linked").symlink_to(outside, target_is_directory=True)
     except (OSError, NotImplementedError):

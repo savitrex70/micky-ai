@@ -16,12 +16,10 @@ from rop.schemas.retrieval import (
     RetrievalSearchRequest,
     RetrievalSearchResponse,
 )
-from rop.services.local_paths import (
-    is_junction as _is_junction,
-    is_network_path as _is_network_path,
-    normalized_path_key as _path_key,
-    refresh_mount_table,
-)
+from rop.services.local_paths import is_junction as _is_junction
+from rop.services.local_paths import is_network_path as _is_network_path
+from rop.services.local_paths import normalized_path_key as _path_key
+from rop.services.local_paths import refresh_mount_table
 
 router = APIRouter(prefix="/api/assistant/retrieval", tags=["assistant-retrieval"])
 _REPOSITORY = AssistantWorkspaceRepository()
@@ -123,9 +121,7 @@ def search_roots(
                 break
             current = pending.pop()
             directories_seen += 1
-            current = _contained_local_path(
-                current, root, root_device, directory=True
-            )
+            current = _contained_local_path(current, root, root_device, directory=True)
             if current is None:
                 skipped_files += 1
                 continue

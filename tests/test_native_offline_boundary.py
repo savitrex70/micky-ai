@@ -184,9 +184,7 @@ def test_retrieval_search_stays_offline_under_runtime_network_guards(
 
     root = tmp_path / "authorized"
     root.mkdir()
-    (root / "notes.md").write_text(
-        "local-only retrieval marker", encoding="utf-8"
-    )
+    (root / "notes.md").write_text("local-only retrieval marker", encoding="utf-8")
 
     _install_network_guards(monkeypatch)
     matches, examined, skipped = search_roots(
