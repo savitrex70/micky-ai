@@ -11,6 +11,9 @@ import rop.models  # noqa: F401
 from rop.database import Base
 from rop.models.assistant_conversation import AssistantConversation
 from rop.models.assistant_pending_clarification import AssistantPendingClarification
+from rop.repositories.assistant_pending_clarification import (
+    AssistantPendingClarificationRepository,
+)
 from rop.services.clarification_recovery import (
     CLARIFICATION_RECOVERY_BATCH_LIMIT,
     recover_pending_clarification_state,
@@ -61,28 +64,53 @@ def _seed_expired_clarifications(factory, count: int) -> list[UUID]:
     return ids
 
 
-def test_startup_recovery_deletes_expired_clarification_values() -> None:
+def test_startup_recovery_deletes_expired_clarifications_and_keeps_active() -> None:
     engine, factory = _session_factory()
     try:
-        ids = _seed_expired_clarifications(factory, 2)
+        expired_ids = _seed_expired_clarifications(factory, 2)
+        cleanup_now = datetime.now(UTC)
+        active_id = uuid4()
+        with factory() as session:
+            conversation_id = session.scalar(select(AssistantConversation.id))
+            session.add(
+                AssistantPendingClarification(
+                    id=active_id,
+                    clarification_id=uuid4(),
+                    conversation_id=conversation_id,
+                    capability_identifier="workspace-command",
+                    original_message="PRIVATE_ACTIVE_MESSAGE",
+                    partial_operation={"title": "PRIVATE_ACTIVE_TITLE"},
+                    missing_fields=["title"],
+                    question="What title should I use?",
+                    expires_at=cleanup_now + timedelta(minutes=5),
+                    status="PENDING",
+                )
+            )
+            session.commit()
+
         recovered = recover_pending_clarification_state(
             session_factory=factory,
-            now=datetime.now(UTC),
+            now=cleanup_now,
         )
 
         assert recovered is True
         with factory() as session:
-            remaining = session.scalar(
+            remaining_expired = session.scalar(
                 select(func.count())
                 .select_from(AssistantPendingClarification)
-                .where(AssistantPendingClarification.id.in_(ids))
+                .where(AssistantPendingClarification.id.in_(expired_ids))
             )
-        assert remaining == 0
+            active = session.get(AssistantPendingClarification, active_id)
+        assert remaining_expired == 0
+        assert active is not None
+        assert active.status == "PENDING"
+        assert active.original_message == "PRIVATE_ACTIVE_MESSAGE"
+        assert active.partial_operation == {"title": "PRIVATE_ACTIVE_TITLE"}
     finally:
         engine.dispose()
 
 
-def test_startup_cleanup_processes_only_one_bounded_batch() -> None:
+def test_startup_cleanup_drains_backlog_in_bounded_transactions() -> None:
     engine, factory = _session_factory()
     try:
         total = CLARIFICATION_RECOVERY_BATCH_LIMIT + 5
@@ -96,20 +124,6 @@ def test_startup_cleanup_processes_only_one_bounded_batch() -> None:
 
         assert recovered is True
         with factory() as session:
-            remaining_ids = set(
-                session.scalars(
-                    select(AssistantPendingClarification.id).where(
-                        AssistantPendingClarification.id.in_(ids)
-                    )
-                ).all()
-            )
-        assert len(remaining_ids) == 5
-
-        assert recover_pending_clarification_state(
-            session_factory=factory,
-            now=datetime.now(UTC),
-        )
-        with factory() as session:
             remaining = session.scalar(
                 select(func.count())
                 .select_from(AssistantPendingClarification)
@@ -119,6 +133,35 @@ def test_startup_cleanup_processes_only_one_bounded_batch() -> None:
     finally:
         engine.dispose()
 
+
+def test_consumed_clarification_is_redacted_then_deleted() -> None:
+    engine, factory = _session_factory()
+    repository = AssistantPendingClarificationRepository()
+    try:
+        ids = _seed_expired_clarifications(factory, 1)
+        with factory() as session:
+            row = session.get(AssistantPendingClarification, ids[0])
+            assert row is not None
+            repository.consume_and_clear(session, row, now=datetime.now(UTC))
+            session.commit()
+
+        with factory() as session:
+            redacted = session.get(AssistantPendingClarification, ids[0])
+            assert redacted is not None
+            assert redacted.status == "CONSUMED"
+            assert redacted.original_message == ""
+            assert redacted.partial_operation == {}
+            assert redacted.missing_fields == []
+            assert redacted.question == ""
+
+            deleted = repository.delete_expired(session, now=datetime.now(UTC))
+            session.commit()
+        assert deleted == 1
+
+        with factory() as session:
+            assert session.get(AssistantPendingClarification, ids[0]) is None
+    finally:
+        engine.dispose()
 
 class _FakeSession:
     def __init__(self, *, commit_error: Exception | None = None) -> None:
@@ -140,15 +183,20 @@ class _FakeSession:
 
 
 class _FakeRepository:
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        error: Exception | None = None,
+        deleted_counts: list[int] | None = None,
+    ) -> None:
         self.error = error
+        self.deleted_counts = list(deleted_counts) if deleted_counts is not None else [1]
         self.limits: list[int] = []
 
     def delete_expired(self, session, *, now=None, limit=100) -> int:
         self.limits.append(limit)
         if self.error:
             raise self.error
-        return 1
+        return self.deleted_counts.pop(0) if self.deleted_counts else 0
 
 
 def test_recovery_caps_configured_batch_limit() -> None:
@@ -164,6 +212,33 @@ def test_recovery_caps_configured_batch_limit() -> None:
     assert session.commits == 1
     assert session.rollbacks == 0
     assert session.closes == 1
+
+
+def test_recovery_repeats_full_batches_in_separate_transactions() -> None:
+    sessions: list[_FakeSession] = []
+
+    def session_factory() -> _FakeSession:
+        session = _FakeSession()
+        sessions.append(session)
+        return session
+
+    repository = _FakeRepository(
+        deleted_counts=[CLARIFICATION_RECOVERY_BATCH_LIMIT, 3]
+    )
+    assert recover_pending_clarification_state(
+        session_factory=session_factory,
+        repository=repository,
+        now=datetime.now(UTC),
+    )
+
+    assert repository.limits == [
+        CLARIFICATION_RECOVERY_BATCH_LIMIT,
+        CLARIFICATION_RECOVERY_BATCH_LIMIT,
+    ]
+    assert len(sessions) == 2
+    assert [
+        (session.commits, session.rollbacks, session.closes) for session in sessions
+    ] == [(1, 0, 1), (1, 0, 1)]
 
 
 def test_cleanup_failure_rolls_back_and_returns_false() -> None:

@@ -30,12 +30,13 @@ def recover_pending_clarification_state(
     batch_limit: int = CLARIFICATION_RECOVERY_BATCH_LIMIT,
     now: datetime | None = None,
 ) -> bool:
-    """Run one bounded, transactional clarification cleanup sweep.
+    """Drain expired clarification state in separate bounded transactions.
 
-    At most 100 records are removed per startup sweep. If more expired rows
-    remain, a later request/restore cleanup or next startup handles the next
-    batch. Return True only after commit; failures roll back where possible
-    and return False without preventing application startup.
+    Each transaction removes at most 100 records. A full batch triggers a
+    follow-up batch in the same sweep, so a backlog does not depend on later
+    traffic or another restart. A failed batch is rolled back and returns
+    False; earlier committed batches remain safe to retry. Return True only
+    when the last batch confirms fewer than the limit remain to be removed.
     """
     if batch_limit <= 0:
         return False
@@ -43,26 +44,28 @@ def recover_pending_clarification_state(
     limit = min(batch_limit, CLARIFICATION_RECOVERY_BATCH_LIMIT)
     factory = session_factory or database_module.SessionLocal
     store = repository or AssistantPendingClarificationRepository()
-    db: Session | None = None
-    try:
-        db = factory()
-        store.delete_expired(db, now=now, limit=limit)
-        db.commit()
-        return True
-    except Exception:
-        if db is not None:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-        return False
-    finally:
-        if db is not None:
-            try:
-                db.close()
-            except Exception:
-                pass
 
+    while True:
+        db: Session | None = None
+        try:
+            db = factory()
+            deleted = store.delete_expired(db, now=now, limit=limit)
+            db.commit()
+            if deleted < limit:
+                return True
+        except Exception:
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            return False
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
 __all__ = [
     "CLARIFICATION_RECOVERY_BATCH_LIMIT",
