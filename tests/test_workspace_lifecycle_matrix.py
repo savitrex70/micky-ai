@@ -1,14 +1,13 @@
 """End-to-end lifecycle matrix for notes, tasks, and reminders."""
 
+import json
+import shutil
+import subprocess
 from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
-
-import json
-import shutil
-import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
@@ -177,15 +176,19 @@ def _create_item(
     return matching[0]
 
 
+def _receipt(client: TestClient, key: UUID) -> dict[str, Any]:
+    response = client.get(f"{WORKSPACE}/receipts/{key}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def _render_workspace_ui(items: list[dict[str, Any]]) -> dict[str, Any]:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not available; workspace UI behavior test requires it")
     here = Path(__file__).resolve().parent
     harness = here / "workspace_ui_harness.cjs"
-    workspace_js = (
-        here.parent / "src" / "rop" / "web" / "static" / "workspace.js"
-    )
+    workspace_js = here.parent / "src" / "rop" / "web" / "static" / "workspace.js"
     result = subprocess.run(
         [node, str(harness), str(workspace_js), json.dumps(items)],
         capture_output=True,
