@@ -182,9 +182,7 @@ def _receipt(client: TestClient, key: UUID) -> dict[str, Any]:
     return response.json()
 
 
-def _item_by_id(
-    client: TestClient, kind: str, item_id: str
-) -> dict[str, Any] | None:
+def _item_by_id(client: TestClient, kind: str, item_id: str) -> dict[str, Any] | None:
     matches = [item for item in _items(client, kind) if item["id"] == item_id]
     assert len(matches) <= 1
     return matches[0] if matches else None
@@ -865,8 +863,6 @@ def test_overdue_reminder_ui_uses_persisted_due_time_and_refreshes() -> None:
     assert "window.setInterval(refreshItems, 60000)" in source
 
 
-
-
 @pytest.mark.parametrize(
     ("kind", "action", "completed", "initial_completed"),
     MUTATION_FAILURE_CASES,
@@ -922,17 +918,14 @@ def test_confirmation_failures_never_mutate_existing_items(
             assert result["status"] == "cancelled"
             assert result["executed"] is False
         elif failure_mode == "wrong-code":
-            result = _decide(
-                client, challenge, display_code="WRONG-CODE"
-            ).json()
+            result = _decide(client, challenge, display_code="WRONG-CODE").json()
             assert result["status"] == "refused"
             assert result["executed"] is False
         else:
             with sessions() as session:
                 record = session.scalar(
                     select(AssistantConfirmation).where(
-                        AssistantConfirmation.challenge_id
-                        == challenge["challenge_id"]
+                        AssistantConfirmation.challenge_id == challenge["challenge_id"]
                     )
                 )
                 assert record is not None
@@ -950,9 +943,9 @@ def test_confirmation_failures_never_mutate_existing_items(
             assert replay["status"] == "refused"
             assert replay["executed"] is False
 
-        assert _snapshot_item(client, kind, item["id"]) == before, (
-            f"{failure_mode} applied {kind}/{action} before valid confirmation"
-        )
+        assert (
+            _snapshot_item(client, kind, item["id"]) == before
+        ), f"{failure_mode} applied {kind}/{action} before valid confirmation"
         assert len(_items(client, kind)) == 1
 
 
