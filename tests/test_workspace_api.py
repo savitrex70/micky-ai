@@ -1,6 +1,7 @@
 """End-to-end tests for confirmation-gated personal workspace mutations."""
 
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -390,3 +391,83 @@ def test_clarification_abandon_reports_database_failure(
     )
     assert response.status_code == 503
     assert response.json()["detail"] == "Clarification state could not be updated."
+
+
+def test_guarded_confirmation_updates_survive_session_loaded_records(
+    client: TestClient,
+) -> None:
+    """Regression: guarded updates must not re-evaluate clocks in Python.
+
+    The guarded confirmation transitions enforce every condition (PENDING,
+    the deadline, the policy identity) inside SQL. SQLite hands stored
+    datetimes back naive, so SQLAlchemy's client-side ``evaluate``
+    synchronization compared a naive ``expires_at`` against the aware
+    transition instant and raised. That exception surfaced as a refusal of
+    every valid confirmation. The regression proves that a live, already
+    session-loaded challenge still executes, while a genuinely overdue one
+    is expired and refused by the same SQL guard.
+    """
+    from rop.repositories.assistant_confirmation import (
+        AssistantConfirmationRepository,
+    )
+
+    repository = AssistantConfirmationRepository()
+    local_session = database_module.SessionLocal
+    prepared = _prepare_note(client, idempotency_key=uuid4())
+    challenge_id = prepared["challenge"]["challenge_id"]
+
+    # Load the pending record into a session exactly as `_confirm` does
+    # before its guarded expiry check, then exercise the guarded expiry.
+    with local_session() as session:
+        loaded = repository.lock_pending_for_update(session, challenge_id)
+        assert loaded is not None
+        # The challenge is live, so the guard must leave it PENDING.
+        assert repository.expire_if_overdue(session, challenge_id, now=None) is False
+
+    decided = _decide(
+        client,
+        prepared["challenge"],
+        decision="confirm",
+        display_code=prepared["challenge"]["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "executed"
+
+
+def test_overdue_challenge_is_refused_and_settled_to_expired(
+    client: TestClient,
+) -> None:
+    """Regression: expiry refusal keeps its refusal even after the fix."""
+    from rop.repositories.assistant_confirmation import (
+        AssistantConfirmationRepository,
+    )
+
+    local_session = database_module.SessionLocal
+    prepared = _prepare_note(client, idempotency_key=uuid4())
+    challenge_id = prepared["challenge"]["challenge_id"]
+    expired_at = datetime.now(UTC) - timedelta(minutes=1)
+
+    with local_session() as session:
+        loaded = AssistantConfirmationRepository().lock_pending_for_update(
+            session, challenge_id
+        )
+        assert loaded is not None
+        loaded.expires_at = expired_at
+        session.commit()
+
+    decided = _decide(
+        client,
+        prepared["challenge"],
+        decision="confirm",
+        display_code=prepared["challenge"]["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "refused"
+    assert decided.json()["executed"] is False
+
+    with local_session() as session:
+        settled = AssistantConfirmationRepository().get_by_challenge_id(
+            session, challenge_id
+        )
+        assert settled is not None
+        assert settled.status == "EXPIRED"

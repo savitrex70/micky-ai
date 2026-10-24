@@ -391,6 +391,10 @@ class AssistantConfirmationRepository:
             update(AssistantConfirmation)
             .where(*conditions)
             .values(**values)
+            # The guarded predicate is enforced by SQL; ORM synchronization
+            # must not re-evaluate it client-side, where SQLite's naive
+            # datetimes cannot be compared with the aware instant.
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         if db.execute(statement).first() is not None:
@@ -417,6 +421,7 @@ class AssistantConfirmationRepository:
                 display_code_hash=None,
                 display_code_salt=None,
             )
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         return db.execute(statement).first() is not None
@@ -487,6 +492,7 @@ class AssistantConfirmationRepository:
                 display_code_hash=None,
                 display_code_salt=None,
             )
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         changed = db.execute(statement).first() is not None
@@ -592,6 +598,7 @@ class AssistantConfirmationRepository:
                     else_=AssistantConfirmation.display_code_salt,
                 ),
             )
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.failed_code_attempts)
         )
         row = db.execute(statement).first()
@@ -621,6 +628,7 @@ class AssistantConfirmationRepository:
                 AssistantConfirmation.outcome.is_(None),
             )
             .values(outcome=outcome.value)
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         return db.execute(statement).first() is not None
@@ -667,6 +675,7 @@ class AssistantConfirmationRepository:
                 AssistantConfirmation.outcome.is_(None),
             )
             .values(outcome=ConfirmationOutcome.UNKNOWN_AFTER_CONSUME.value)
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         return len(db.execute(statement).all())
@@ -724,6 +733,7 @@ class AssistantConfirmationRepository:
                 display_code_hash=None,
                 display_code_salt=None,
             )
+            .execution_options(synchronize_session=False)
             .returning(AssistantConfirmation.id)
         )
         return len(db.execute(statement).all())
