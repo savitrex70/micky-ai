@@ -110,7 +110,10 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
             if _is_network_path(raw_root) or contains_link_or_junction(raw_root):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Network folders and linked paths are not supported for offline retrieval.",
+                    detail=(
+                        "Network folders and linked paths are not supported for "
+                        "offline retrieval."
+                    ),
                 )
             try:
                 root = raw_root.resolve(strict=True)
