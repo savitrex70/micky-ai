@@ -144,7 +144,7 @@ The PASS count applies only to the specific evidence rows, not to Stage 9 as a w
 ## 8. Commit record
 
 - **Starting main SHA:** 0378963907dc3d5f45636b550062177c484e74af
-- **Final SHA:** to be filled from the documentation-only commit that adds this report.
+- **Final main SHA:** recorded in the Task 235 handoff; the report's initial creation commit was 2aaf7c2e9802c0980c07e5f225de9833584b3584. (The final commit SHA is supplied alongside this report rather than embedded in its own content.)
 - **Changed path:** docs/task-235-stage-9-acceptance-audit.md only.
 - **Production behavior/tests/migrations:** unchanged by Task 235.
 - **CI for starting SHA:** PASS — run 40054521006 (Ruff, Black, pytest 7,850 passed / 218 skipped / 23 warnings). A CI run for the documentation commit is separate and must be checked after the commit; it is not inferred from the starting run.
