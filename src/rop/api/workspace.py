@@ -36,8 +36,8 @@ from rop.schemas.workspace import (
     WorkspaceReceiptRead,
 )
 from rop.services.confirmation import ChallengeIssueOutcome, issue_challenge
+from rop.services.local_paths import contains_link_or_junction, refresh_mount_table
 from rop.services.local_paths import is_network_path as _is_network_path
-from rop.services.local_paths import refresh_mount_table
 from rop.services.workspace_executor import (
     build_workspace_executor_registry,
     build_workspace_policy,
@@ -107,10 +107,10 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
         if request.action == "add":
             refresh_mount_table()
             raw_root = Path(request.path or "").expanduser()
-            if _is_network_path(raw_root):
+            if _is_network_path(raw_root) or contains_link_or_junction(raw_root):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Network folders are not supported for offline retrieval.",
+                    detail="Network folders and linked paths are not supported for offline retrieval.",
                 )
             try:
                 root = raw_root.resolve(strict=True)

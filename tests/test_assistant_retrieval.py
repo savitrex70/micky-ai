@@ -285,6 +285,39 @@ def test_workspace_root_add_rejects_mocked_network_mount(
     assert "Network folders" in str(raised.value.detail)
 
 
+def test_workspace_root_add_rejects_link_ancestor_before_resolving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    (real_parent / "approved").mkdir()
+    alias_parent = tmp_path / "parent-alias"
+    try:
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symbolic links are not available in this environment")
+
+    request = WorkspaceChangeRequest.model_validate(
+        {
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(uuid4()),
+            "path": str(alias_parent / "approved"),
+        }
+    )
+
+    def prohibited_resolve(self, *args, **kwargs):
+        raise AssertionError("linked roots must be rejected before resolution")
+
+    monkeypatch.setattr(Path, "resolve", prohibited_resolve)
+
+    with pytest.raises(HTTPException) as raised:
+        workspace_api._operation_for(request)
+
+    assert raised.value.status_code == 422
+    assert "linked paths" in str(raised.value.detail)
+
+
 def test_workspace_root_add_refreshes_mount_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
