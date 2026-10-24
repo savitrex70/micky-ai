@@ -75,6 +75,33 @@ def test_search_roots_rejects_root_replaced_by_symlink(tmp_path: Path) -> None:
     assert skipped >= 1
 
 
+def test_ancestor_symlink_is_rejected_before_resolving_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target_parent = tmp_path / "real-parent"
+    target_parent.mkdir()
+    target_root = target_parent / "approved"
+    target_root.mkdir()
+    (target_root / "secret.md").write_text("must not be read", encoding="utf-8")
+    alias_parent = tmp_path / "parent-alias"
+    try:
+        alias_parent.symlink_to(target_parent, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symbolic links are not available in this environment")
+
+    def prohibited_resolve(self, *args, **kwargs):
+        raise AssertionError("a path with a symlink ancestor must be rejected first")
+
+    monkeypatch.setattr(Path, "resolve", prohibited_resolve)
+
+    matches, _, skipped = search_roots(
+        [str(alias_parent / "approved")], "must not be read", 10
+    )
+
+    assert matches == []
+    assert skipped >= 1
+
+
 def test_search_roots_rejects_ancestor_symlink_substitution(tmp_path: Path) -> None:
     original_parent = tmp_path / "original-parent"
     original_parent.mkdir()

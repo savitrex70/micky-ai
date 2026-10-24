@@ -137,6 +137,26 @@ def is_junction(path: Path) -> bool:
     return False
 
 
+def contains_link_or_junction(path: Path) -> bool:
+    """Reject a path if any component is a symlink or junction.
+
+    Inspect prefixes in order so no filesystem call follows a detected link
+    or enters a path already identified as a remote mount.
+    """
+    try:
+        absolute = Path(os.path.abspath(os.fspath(path)))
+        current = Path(absolute.anchor)
+        for component in absolute.parts[1:]:
+            current = current / component
+            if is_network_path(current):
+                return True
+            if current.is_symlink() or is_junction(current):
+                return True
+        return False
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return True
+
+
 def normalized_path_key(path: Path) -> str:
     """Return a normalized absolute spelling without resolving links."""
     return os.path.normcase(os.path.abspath(os.fspath(path)))

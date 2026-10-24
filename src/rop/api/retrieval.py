@@ -16,6 +16,7 @@ from rop.schemas.retrieval import (
     RetrievalSearchRequest,
     RetrievalSearchResponse,
 )
+from rop.services.local_paths import contains_link_or_junction
 from rop.services.local_paths import is_junction as _is_junction
 from rop.services.local_paths import is_network_path as _is_network_path
 from rop.services.local_paths import normalized_path_key as _path_key
@@ -35,11 +36,7 @@ def _safe_root(raw_path: str) -> Path | None:
     """Reject a substituted path instead of authorizing its newly resolved target."""
     try:
         supplied = Path(raw_path).expanduser()
-        if (
-            _is_network_path(supplied)
-            or supplied.is_symlink()
-            or _is_junction(supplied)
-        ):
+        if _is_network_path(supplied) or contains_link_or_junction(supplied):
             return None
         root = supplied.resolve(strict=True)
         if _is_network_path(root) or not root.is_dir():
@@ -59,11 +56,7 @@ def _contained_local_path(
 ) -> Path | None:
     """Resolve and validate one candidate against the approved local root."""
     try:
-        if (
-            _is_network_path(candidate)
-            or candidate.is_symlink()
-            or _is_junction(candidate)
-        ):
+        if _is_network_path(candidate) or contains_link_or_junction(candidate):
             return None
         resolved = candidate.resolve(strict=True)
         if (
