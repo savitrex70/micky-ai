@@ -258,6 +258,31 @@ def test_workspace_root_add_rejects_mocked_network_mount(
     assert "Network folders" in str(raised.value.detail)
 
 
+def test_workspace_root_add_refreshes_mount_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "local-root"
+    root.mkdir()
+    refresh_calls: list[bool] = []
+    monkeypatch.setattr(
+        workspace_api,
+        "refresh_mount_table",
+        lambda: refresh_calls.append(True),
+    )
+    request = WorkspaceChangeRequest.model_validate(
+        {
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(uuid4()),
+            "path": str(root),
+        }
+    )
+
+    workspace_api._operation_for(request)
+
+    assert refresh_calls == [True]
+
+
 def test_search_roots_fails_closed_if_linux_mount_metadata_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

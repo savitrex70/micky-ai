@@ -37,6 +37,7 @@ from rop.schemas.workspace import (
 )
 from rop.services.confirmation import ChallengeIssueOutcome, issue_challenge
 from rop.services.local_paths import is_network_path as _is_network_path
+from rop.services.local_paths import refresh_mount_table
 from rop.services.workspace_executor import (
     build_workspace_executor_registry,
     build_workspace_policy,
@@ -104,6 +105,7 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
     operation_id: str
     if request.kind == "retrieval_root":
         if request.action == "add":
+            refresh_mount_table()
             raw_root = Path(request.path or "").expanduser()
             if _is_network_path(raw_root):
                 raise HTTPException(
