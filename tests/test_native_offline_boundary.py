@@ -45,6 +45,7 @@ from rop.inference.runtime import (
     run_inference,
 )
 from rop.schemas.inference import InferenceRequest
+from rop.services.local_paths import secure_directory_traversal_supported
 
 _PROHIBITED_ATTEMPT_REASON = (
     "prohibited network call attempted during native offline inference"
@@ -176,6 +177,10 @@ def test_offline_load_and_inference_attempt_no_network_call(
     assert result.num_classes == session.num_classes
 
 
+@pytest.mark.skipif(
+    not secure_directory_traversal_supported(),
+    reason="offline retrieval needs the secure Linux descriptor backend",
+)
 def test_retrieval_search_stays_offline_under_runtime_network_guards(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
