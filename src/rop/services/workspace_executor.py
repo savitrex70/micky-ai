@@ -240,6 +240,7 @@ def _apply_root(session, operation: ProposedOperation) -> None:
         if not raw_path or not approved_identity:
             raise ExecutorError("retrieval folder approval identity missing")
         path = Path(raw_path)
+        refresh_mount_table()
         if (
             not path.is_absolute()
             or str(path) != os.path.abspath(raw_path)
@@ -247,7 +248,6 @@ def _apply_root(session, operation: ProposedOperation) -> None:
             or contains_link_or_junction(path)
         ):
             raise ExecutorError("retrieval folder no longer satisfies local policy")
-        refresh_mount_table()
         current_identity = local_directory_identity(path)
         if current_identity is None:
             raise ExecutorError("retrieval folder cannot be verified securely")
