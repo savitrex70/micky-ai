@@ -76,6 +76,11 @@ def _same_object(first: os.stat_result, second: os.stat_result) -> bool:
     return first.st_dev == second.st_dev and first.st_ino == second.st_ino
 
 
+def _stat_entry(name: str, directory_fd: int) -> os.stat_result:
+    """Read one directory entry without following its final symlink."""
+    return os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+
+
 def _root_spec(
     item: str | tuple[str, str | None],
 ) -> tuple[str, str | None]:
@@ -189,9 +194,7 @@ def search_roots(
                             if _is_network_path(candidate):
                                 skipped_files += 1
                                 continue
-                            entry_info = os.stat(
-                                name, dir_fd=current_fd, follow_symlinks=False
-                            )
+                            entry_info = _stat_entry(name, current_fd)
                         except (OSError, RuntimeError, ValueError):
                             skipped_files += 1
                             continue
