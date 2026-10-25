@@ -586,7 +586,9 @@ def test_directory_replaced_between_scan_and_open_is_rejected(
             swapped = True
 
     monkeypatch.setattr(retrieval, "_before_candidate_open", replace_directory)
-    matches, _, skipped = search_roots([str(root)], "replacement directory private marker", 10)
+    matches, _, skipped = search_roots(
+        [str(root)], "replacement directory private marker", 10
+    )
 
     assert swapped
     assert matches == []
@@ -620,7 +622,9 @@ def test_same_filesystem_symlink_substitution_before_file_open_is_rejected(
             swapped = True
 
     monkeypatch.setattr(retrieval, "_before_candidate_open", replace_file)
-    matches, _, skipped = search_roots([str(root)], "same filesystem private redirect marker", 10)
+    matches, _, skipped = search_roots(
+        [str(root)], "same filesystem private redirect marker", 10
+    )
 
     assert swapped
     assert matches == []
