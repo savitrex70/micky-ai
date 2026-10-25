@@ -393,7 +393,11 @@
     setText(
       searchStatus,
       "Examined " + response.files_examined + " file(s); skipped " +
-      response.skipped_files + "; found " + response.matches.length + " match(es)."
+      response.skipped_files + "; found " + response.matches.length + " match(es)." +
+      (response.roots_skipped
+        ? " " + response.roots_skipped + " authorized folder(s) were not searched " +
+          "in this request (limit " + response.roots_limit + " folders per search)."
+        : "")
     );
     if (!response.matches.length) {
       searchResults.appendChild(element("li", "No matches found in authorized folders."));

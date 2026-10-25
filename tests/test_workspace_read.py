@@ -13,9 +13,7 @@ def test_workspace_search_preserves_persisted_root_identity(
 ) -> None:
     root = tmp_path / "legacy-root"
     root.mkdir()
-    (root / "private.md").write_text(
-        "legacy root private marker", encoding="utf-8"
-    )
+    (root / "private.md").write_text("legacy root private marker", encoding="utf-8")
 
     class FakeSession:
         def close(self) -> None:
@@ -27,18 +25,19 @@ def test_workspace_search_preserves_persisted_root_identity(
     monkeypatch.setattr(
         workspace_read._REPOSITORY,
         "list_roots",
-        lambda _session: [
+        lambda _session, **_kwargs: [
             SimpleNamespace(path=str(root), root_identity=None)
         ],
     )
+    monkeypatch.setattr(workspace_read._REPOSITORY, "count_roots", lambda _s: 1)
     received: list[object] = []
-    search = retrieval.search_roots
+    search = retrieval.search_roots_detailed
 
-    def observe_root_identity(root_specs, query, limit):
+    def observe_root_identity(root_specs, query, limit, **kwargs):
         received.extend(root_specs)
-        return search(root_specs, query, limit)
+        return search(root_specs, query, limit, **kwargs)
 
-    monkeypatch.setattr(retrieval, "search_roots", observe_root_identity)
+    monkeypatch.setattr(retrieval, "search_roots_detailed", observe_root_identity)
     result = workspace_read.run_workspace_read(
         ProposedOperation(
             operation_id="workspace_search_files",

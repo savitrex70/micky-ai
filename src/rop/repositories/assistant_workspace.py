@@ -2,12 +2,13 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rop.models.assistant_item import AssistantItem
 from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
+from rop.schemas.retrieval import MAX_RETRIEVAL_ROOTS_PER_REQUEST
 
 
 class AssistantWorkspaceRepository:
@@ -33,11 +34,37 @@ class AssistantWorkspaceRepository:
     def get_item(self, session: Session, item_id: UUID) -> AssistantItem | None:
         return session.get(AssistantItem, item_id)
 
-    def list_roots(self, session: Session) -> list[AssistantRetrievalRoot]:
-        statement = select(AssistantRetrievalRoot).order_by(
-            AssistantRetrievalRoot.created_at.asc(), AssistantRetrievalRoot.id.asc()
+    def list_roots(
+        self,
+        session: Session,
+        *,
+        limit: int = MAX_RETRIEVAL_ROOTS_PER_REQUEST,
+    ) -> list[AssistantRetrievalRoot]:
+        """Return at most ``limit`` roots, oldest first, bounded in SQL.
+
+        The cap is applied by the database (``LIMIT``) so a legacy database with
+        more roots than the limit never materializes the surplus rows. The order
+        is stable (creation time, then id), so the same roots are selected on
+        every request.
+        """
+        if limit < 0:
+            raise ValueError("root limit must not be negative")
+        statement = (
+            select(AssistantRetrievalRoot)
+            .order_by(
+                AssistantRetrievalRoot.created_at.asc(),
+                AssistantRetrievalRoot.id.asc(),
+            )
+            .limit(limit)
         )
         return list(session.scalars(statement).all())
+
+    def count_roots(self, session: Session) -> int:
+        """Count authorized roots in SQL without loading any row."""
+        return int(
+            session.scalar(select(func.count()).select_from(AssistantRetrievalRoot))
+            or 0
+        )
 
     def get_root(
         self, session: Session, root_id: UUID

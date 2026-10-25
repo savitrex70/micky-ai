@@ -38,20 +38,32 @@ def run_workspace_read(operation: ProposedOperation) -> str:
         query = operation.parameters.get("query", "").strip()
         if not query:
             raise ValueError("search query missing")
+        # Lazy import, as before: the browser-facing retrieval API and this chat
+        # search share one bounded helper and one SQL-level root limit.
+        from rop.api import retrieval as retrieval_api
+
         session = database_module.SessionLocal()
         try:
-            roots = _REPOSITORY.list_roots(session)
+            roots = _REPOSITORY.list_roots(
+                session, limit=retrieval_api._MAX_ROOTS_PER_REQUEST
+            )
+            authorized_total = _REPOSITORY.count_roots(session)
             root_specs = [(root.path, root.root_identity) for root in roots]
         finally:
             session.close()
-        # The same bounded helper is used by the browser-facing retrieval API.
-        from rop.api.retrieval import search_roots
-
-        matches, examined, skipped = search_roots(root_specs, query, 10)
+        outcome = retrieval_api.search_roots_detailed(
+            root_specs, query, 10, authorized_total=authorized_total
+        )
+        matches = outcome.matches
         lines = [
-            f"Local search examined {examined} files; skipped {skipped}; "
-            f"found {len(matches)} matches."
+            f"Local search examined {outcome.files_examined} files; "
+            f"skipped {outcome.skipped_files}; found {len(matches)} matches."
         ]
+        if outcome.roots_skipped:
+            lines.append(
+                f"{outcome.roots_skipped} authorized folder(s) were not searched "
+                "in this request because a search limit was reached."
+            )
         for match in matches:
             lines.append(f"- {match.path}")
             lines.append(f"  {match.snippet}")

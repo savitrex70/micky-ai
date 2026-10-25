@@ -52,10 +52,17 @@ _PROHIBITED_ATTEMPT_REASON = (
 )
 
 
-def _install_network_guards(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace every real Python-level network seam with a fail guard."""
+def _install_network_guards(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace every real Python-level network seam with a fail guard.
+
+    Returns the list of attempts the guards recorded. A guard also raises, but
+    an application layer could swallow that exception, so tests assert the list
+    is empty as well.
+    """
+    attempts: list[str] = []
 
     def _raise(*args: object, **kwargs: object):
+        attempts.append(_PROHIBITED_ATTEMPT_REASON)
         raise AssertionError(_PROHIBITED_ATTEMPT_REASON)
 
     monkeypatch.setattr(socket, "socket", _raise)
@@ -66,6 +73,7 @@ def _install_network_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(urllib.request, "build_opener", _raise)
     monkeypatch.setattr(http.client, "HTTPConnection", _raise)
     monkeypatch.setattr(http.client, "HTTPSConnection", _raise)
+    return attempts
 
 
 def test_guards_fail_on_attempted_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,3 +208,79 @@ def test_retrieval_search_stays_offline_under_runtime_network_guards(
     assert "retrieval marker" in matches[0].snippet
     assert examined == 1
     assert skipped >= 1
+
+
+@pytest.mark.skipif(
+    not secure_directory_traversal_supported(),
+    reason="offline retrieval needs the secure Linux descriptor backend",
+)
+def test_retrieval_search_route_stays_offline_under_runtime_network_guards(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Drive the real in-process POST route against a persisted, identified root.
+
+    This is a Python-level interception test, not proof of OS-wide network
+    isolation: it cannot see network access made inside compiled dependencies
+    that bypass the guarded Python callables. The ASGI client and its event loop
+    are created before the guards are installed because asyncio itself builds a
+    socketpair when a loop starts; that is loop plumbing, not network use. The
+    guards are then active for the whole request and the retrieval work.
+    """
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import rop.models  # noqa: F401
+    from rop import database as database_module
+    from rop.database import Base
+    from rop.main import app
+    from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
+    from rop.services.local_paths import local_directory_identity
+
+    root = tmp_path / "authorized-route-root"
+    root.mkdir()
+    (root / "notes.md").write_text("route-level offline marker", encoding="utf-8")
+    identity = local_directory_identity(root)
+    assert identity is not None
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
+    monkeypatch.setattr(database_module, "SessionLocal", factory)
+    with factory() as session:
+        session.add(AssistantRetrievalRoot(path=str(root), root_identity=identity))
+        session.commit()
+
+    origin = "http://127.0.0.1:8000"
+    try:
+        with TestClient(app, base_url=origin) as client:
+            with monkeypatch.context() as guarded:
+                attempts = _install_network_guards(guarded)
+                # The guards must be live, or an empty attempt list proves nothing.
+                with pytest.raises(AssertionError, match="prohibited network call"):
+                    socket.create_connection(("example.invalid", 80))  # type: ignore[arg-type]
+                attempts.clear()
+
+                response = client.post(
+                    "/api/assistant/retrieval/search",
+                    headers={"origin": origin, "content-type": "application/json"},
+                    json={"query": "route-level offline marker", "limit": 10},
+                )
+            assert attempts == []
+    finally:
+        engine.dispose()
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["matches"]) == 1
+    assert "route-level offline marker" in body["matches"][0]["snippet"]
+    assert body["files_examined"] == 1
+    assert body["roots_examined"] == 1
+    assert body["roots_skipped"] == 0

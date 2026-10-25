@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -17,23 +18,34 @@ from rop import database as database_module
 from rop.api.origin import enforce_local_origin
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.schemas.retrieval import (
+    MAX_RETRIEVAL_ROOTS_PER_REQUEST,
     RetrievalMatch,
     RetrievalSearchRequest,
     RetrievalSearchResponse,
 )
 from rop.services.local_paths import (
     contains_link_or_junction,
-    descriptor_mount_id as _descriptor_mount_id,
-    directory_identity_from_descriptor as _identity_from_descriptor,
-    is_junction as _is_junction,
-    is_network_path as _is_network_path,
     local_directory_identity,
-    normalized_path_key as _path_key,
     open_directory_at,
     open_directory_descriptor,
     open_regular_file_at,
     refresh_mount_table,
     secure_directory_traversal_supported,
+)
+from rop.services.local_paths import (
+    descriptor_mount_id as _descriptor_mount_id,
+)
+from rop.services.local_paths import (
+    directory_identity_from_descriptor as _identity_from_descriptor,
+)
+from rop.services.local_paths import (
+    is_junction as _is_junction,
+)
+from rop.services.local_paths import (
+    is_network_path as _is_network_path,
+)
+from rop.services.local_paths import (
+    normalized_path_key as _path_key,
 )
 
 router = APIRouter(prefix="/api/assistant/retrieval", tags=["assistant-retrieval"])
@@ -44,6 +56,20 @@ _MAX_BYTES_PER_REQUEST = 20_000_000
 _MAX_FILES_PER_REQUEST = 1_000
 _MAX_ENTRIES_PER_REQUEST = 10_000
 _MAX_DIRECTORIES_PER_ROOT = 250
+# Roots are bounded in the database query and again in the processing loop; see
+# MAX_RETRIEVAL_ROOTS_PER_REQUEST for the rationale. Read at call time.
+_MAX_ROOTS_PER_REQUEST = MAX_RETRIEVAL_ROOTS_PER_REQUEST
+
+
+@dataclass(frozen=True)
+class RetrievalOutcome:
+    """Search result plus honest accounting of roots and files."""
+
+    matches: list[RetrievalMatch]
+    files_examined: int
+    skipped_files: int
+    roots_examined: int
+    roots_skipped: int
 
 
 def _safe_root(raw_path: str) -> Path | None:
@@ -99,9 +125,32 @@ def _root_spec(
 def search_roots(
     root_paths: list[str | tuple[str, str | None]], query: str, limit: int
 ) -> tuple[list[RetrievalMatch], int, int]:
-    """Search bounded local roots through pinned directory descriptors only."""
+    """Search bounded local roots; returns (matches, files_examined, skipped_files).
+
+    Kept for callers that predate root accounting. Use ``search_roots_detailed``
+    when the caller must tell the person how many roots were not searched.
+    """
+    outcome = search_roots_detailed(root_paths, query, limit)
+    return outcome.matches, outcome.files_examined, outcome.skipped_files
+
+
+def search_roots_detailed(
+    root_paths: list[str | tuple[str, str | None]],
+    query: str,
+    limit: int,
+    *,
+    authorized_total: int | None = None,
+) -> RetrievalOutcome:
+    """Search bounded local roots through pinned directory descriptors only.
+
+    At most ``_MAX_ROOTS_PER_REQUEST`` roots are handled, counted before any
+    per-root filesystem work. ``authorized_total`` is how many roots the person
+    has authorized (the caller loads only a bounded page of them); the shortfall
+    is reported as ``roots_skipped``, separately from skipped files.
+    """
+    total_roots = max(len(root_paths), authorized_total or 0)
     if not secure_directory_traversal_supported():
-        return [], 0, len(root_paths)
+        return RetrievalOutcome([], 0, len(root_paths), 0, total_roots)
 
     refresh_mount_table()
     needle = query.casefold()
@@ -111,6 +160,7 @@ def search_roots(
     entries_examined = 0
     bytes_read = 0
     root_paths_seen: set[str] = set()
+    roots_examined = 0
     stop = False
     file_flags = (
         os.O_RDONLY
@@ -121,8 +171,11 @@ def search_roots(
     )
 
     for root_spec in root_paths:
-        if stop:
+        if stop or roots_examined >= _MAX_ROOTS_PER_REQUEST:
             break
+        # Count before any filesystem work: even a duplicate, invalid, or empty
+        # root costs validation, mount-table reads, and an open.
+        roots_examined += 1
         raw_root, approved_identity = _root_spec(root_spec)
         root = _safe_root(raw_root)
         if root is None or not approved_identity:
@@ -334,7 +387,13 @@ def search_roots(
                 except OSError:
                     pass
 
-    return matches, files_examined, skipped_files
+    return RetrievalOutcome(
+        matches=matches,
+        files_examined=files_examined,
+        skipped_files=skipped_files,
+        roots_examined=roots_examined,
+        roots_skipped=max(0, total_roots - roots_examined),
+    )
 
 
 @router.post("/search", response_model=RetrievalSearchResponse)
@@ -345,20 +404,27 @@ def search_local_files(
     enforce_local_origin(http_request)
     session = database_module.SessionLocal()
     try:
-        roots = _REPOSITORY.list_roots(session)
+        # Bound the query itself: a legacy database with more roots than the
+        # limit never loads the surplus rows. The count is a separate SQL
+        # aggregate so the response can say how many roots were not searched.
+        roots = _REPOSITORY.list_roots(session, limit=_MAX_ROOTS_PER_REQUEST)
+        authorized_total = _REPOSITORY.count_roots(session)
         root_specs = [(root.path, root.root_identity) for root in roots]
     finally:
         session.close()
 
-    matches, files_examined, skipped_files = search_roots(
-        root_specs, body.query, body.limit
+    outcome = search_roots_detailed(
+        root_specs, body.query, body.limit, authorized_total=authorized_total
     )
     return RetrievalSearchResponse(
         query=body.query,
-        matches=matches,
-        files_examined=files_examined,
-        skipped_files=skipped_files,
+        matches=outcome.matches,
+        files_examined=outcome.files_examined,
+        skipped_files=outcome.skipped_files,
+        roots_examined=outcome.roots_examined,
+        roots_skipped=outcome.roots_skipped,
+        roots_limit=_MAX_ROOTS_PER_REQUEST,
     )
 
 
-__all__ = ["router", "search_roots"]
+__all__ = ["RetrievalOutcome", "router", "search_roots", "search_roots_detailed"]

@@ -2,6 +2,18 @@
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Maximum number of authorized roots one search request may load and process.
+#
+# Each root costs real filesystem work (path validation, a component-by-component
+# no-follow open, mount-table refreshes, and at least one directory scan) even
+# when it is empty, so empty or low-entry roots are not bounded by the global
+# entry counter. 25 keeps the worst case (25 roots x 250 directories per root)
+# in the same order as the existing per-request ceilings (10,000 entries,
+# 1,000 files) and is far above the handful of folders a person authorizes.
+# The database query and the processing loop both enforce this value; roots
+# beyond it are reported as skipped, never silently implied to be searched.
+MAX_RETRIEVAL_ROOTS_PER_REQUEST = 25
+
 
 class RetrievalSearchRequest(BaseModel):
     """Search only explicitly authorized local roots."""
@@ -34,3 +46,11 @@ class RetrievalSearchResponse(BaseModel):
     matches: list[RetrievalMatch]
     files_examined: int
     skipped_files: int
+    # Root accounting is reported separately from file accounting so a skipped
+    # root is never disguised as a skipped file. ``roots_examined`` counts roots
+    # whose processing began; ``roots_skipped`` counts authorized roots that were
+    # not searched in this request because the per-request root limit or another
+    # global work limit stopped the search. Both default to 0 for older callers.
+    roots_examined: int = 0
+    roots_skipped: int = 0
+    roots_limit: int = MAX_RETRIEVAL_ROOTS_PER_REQUEST
