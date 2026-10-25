@@ -507,10 +507,10 @@ def test_confirmed_root_cannot_authorize_replacement_directory(
     challenge = body["challenge"]
 
     approved.rename(tmp_path / "moved-approved")
-    approved.mkdir()
-    (approved / "substitute.md").write_text(
-        "different directory identity", encoding="utf-8"
-    )
+    try:
+        approved.symlink_to(private, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symbolic links are unavailable")
 
     decided = _decide(
         client,
