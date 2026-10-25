@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -29,6 +30,14 @@ from rop.database import SessionLocal
 from rop.models.assistant_item import AssistantItem
 from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
+from rop.services.local_paths import (
+    contains_link_or_junction,
+    directory_identity_from_stat,
+    is_network_path,
+    local_directory_identity,
+    open_directory_descriptor,
+    refresh_mount_table,
+)
 from rop.schemas.authorization import (
     AuthorizationPolicy,
     OperationRule,
@@ -105,7 +114,7 @@ def build_workspace_policy() -> AuthorizationPolicy:
                 operation_id="workspace_root_add",
                 description="Authorize this folder for local-only retrieval.",
                 risk=RiskLevel.CONSEQUENTIAL,
-                required_parameters=(_KEY_NAME, "path"),
+                required_parameters=(_KEY_NAME, "path", "root_identity"),
             ),
             OperationRule(
                 operation_id="workspace_root_remove",
@@ -229,17 +238,32 @@ def _apply_root(session, operation: ProposedOperation) -> None:
     action = _ROOT_OPERATIONS[operation.operation_id]
     if action == "add":
         raw_path = operation.parameters.get("path")
-        if not raw_path:
-            raise ExecutorError("retrieval folder path missing")
-        try:
-            path = str(Path(raw_path).expanduser().resolve(strict=True))
-        except (OSError, RuntimeError, ValueError):
-            raise ExecutorError("retrieval folder is unavailable") from None
-        if not Path(path).is_dir():
-            raise ExecutorError("retrieval folder is not a directory")
-        if _REPOSITORY.get_root_by_path(session, path) is not None:
+        approved_identity = operation.parameters.get("root_identity")
+        if not raw_path or not approved_identity:
+            raise ExecutorError("retrieval folder approval identity missing")
+        path = Path(raw_path)
+        if (
+            not path.is_absolute()
+            or str(path) != os.path.abspath(raw_path)
+            or is_network_path(path)
+            or contains_link_or_junction(path)
+        ):
+            raise ExecutorError("retrieval folder no longer satisfies local policy")
+        refresh_mount_table()
+        current_identity = local_directory_identity(path)
+        if current_identity is None:
+            raise ExecutorError("retrieval folder cannot be verified securely")
+        if current_identity != approved_identity:
+            raise ExecutorError("retrieval folder identity changed after confirmation")
+
+        existing = _REPOSITORY.get_root_by_path(session, str(path))
+        if existing is not None:
+            if existing.root_identity != approved_identity:
+                raise ExecutorError("retrieval folder authorization identity conflicts")
             return
-        session.add(AssistantRetrievalRoot(path=path))
+        session.add(
+            AssistantRetrievalRoot(path=str(path), root_identity=approved_identity)
+        )
         return
     if operation.target is None:
         raise ExecutorError("retrieval folder target missing")
