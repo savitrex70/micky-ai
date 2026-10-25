@@ -1,4 +1,9 @@
-"""Bounded, offline retrieval from explicitly authorized local roots."""
+"""Bounded, offline retrieval from explicitly authorized local roots.
+
+Traversal requires descriptor-relative, no-follow filesystem primitives. On
+platforms that cannot provide them, retrieval refuses to read files rather than
+fall back to pathname-based checks followed by unsafe opens.
+"""
 
 from __future__ import annotations
 
@@ -16,10 +21,18 @@ from rop.schemas.retrieval import (
     RetrievalSearchRequest,
     RetrievalSearchResponse,
 )
-from rop.services.local_paths import contains_link_or_junction, refresh_mount_table
-from rop.services.local_paths import is_junction as _is_junction
-from rop.services.local_paths import is_network_path as _is_network_path
-from rop.services.local_paths import normalized_path_key as _path_key
+from rop.services.local_paths import (
+    contains_link_or_junction,
+    directory_identity_from_stat as _identity_from_stat,
+    is_junction as _is_junction,
+    is_network_path as _is_network_path,
+    local_directory_identity,
+    normalized_path_key as _path_key,
+    open_directory_descriptor,
+    refresh_mount_table,
+    secure_directory_open_flags,
+    secure_directory_traversal_supported,
+)
 
 router = APIRouter(prefix="/api/assistant/retrieval", tags=["assistant-retrieval"])
 _REPOSITORY = AssistantWorkspaceRepository()
@@ -32,52 +45,57 @@ _MAX_DIRECTORIES_PER_ROOT = 250
 
 
 def _safe_root(raw_path: str) -> Path | None:
-    """Reject a substituted path instead of authorizing its newly resolved target."""
+    """Validate a stored, normalized root spelling without resolving it."""
     try:
-        supplied = Path(raw_path).expanduser()
-        if _is_network_path(supplied) or contains_link_or_junction(supplied):
-            return None
-        root = supplied.resolve(strict=True)
-        if _is_network_path(root) or not root.is_dir():
-            return None
-        # Roots are stored in resolved form at authorization time. If the
-        # same spelling now resolves somewhere else, a link/junction or
-        # ancestor substitution occurred; do not silently authorize its target.
-        if _path_key(supplied) != _path_key(root):
-            return None
-        return root
-    except (OSError, RuntimeError, ValueError):
-        return None
-
-
-def _contained_local_path(
-    candidate: Path, root: Path, root_device: int, *, directory: bool
-) -> Path | None:
-    """Resolve and validate one candidate against the approved local root."""
-    try:
-        if _is_network_path(candidate) or contains_link_or_junction(candidate):
-            return None
-        resolved = candidate.resolve(strict=True)
+        supplied = Path(raw_path)
         if (
-            _path_key(candidate) != _path_key(resolved)
-            or not resolved.is_relative_to(root)
-            or _is_network_path(resolved)
+            not supplied.is_absolute()
+            or ".." in supplied.parts
+            or str(supplied) != os.path.abspath(raw_path)
+            or _is_network_path(supplied)
+            or contains_link_or_junction(supplied)
         ):
             return None
-        info = resolved.stat()
-        if info.st_dev != root_device:
-            return None
-        if directory:
-            return resolved if stat.S_ISDIR(info.st_mode) else None
-        return resolved if stat.S_ISREG(info.st_mode) else None
-    except (OSError, RuntimeError, ValueError):
+        return supplied
+    except (OSError, RuntimeError, TypeError, ValueError):
         return None
+
+
+def _after_root_validation(root: Path) -> None:
+    """Deterministic race-test seam; production intentionally does nothing."""
+
+
+def _before_candidate_open(path: Path, *, directory: bool) -> None:
+    """Deterministic race-test seam just before descriptor-relative open."""
+
+
+def _same_object(first: os.stat_result, second: os.stat_result) -> bool:
+    """Compare an observed directory entry with the object actually opened."""
+    return first.st_dev == second.st_dev and first.st_ino == second.st_ino
+
+
+def _root_spec(
+    item: str | tuple[str, str | None],
+) -> tuple[str, str | None]:
+    """Accept persisted path/identity pairs or capture identity for direct callers."""
+    if isinstance(item, tuple):
+        path, identity = item
+        return path, identity
+    path = item
+    try:
+        identity = local_directory_identity(Path(path))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        identity = None
+    return path, identity
 
 
 def search_roots(
-    root_paths: list[str], query: str, limit: int
+    root_paths: list[str | tuple[str, str | None]], query: str, limit: int
 ) -> tuple[list[RetrievalMatch], int, int]:
-    """Search bounded local directories without following links or crossing devices."""
+    """Search bounded local roots through pinned directory descriptors only."""
+    if not secure_directory_traversal_supported():
+        return [], 0, len(root_paths)
+
     refresh_mount_table()
     needle = query.casefold()
     matches: list[RetrievalMatch] = []
@@ -87,170 +105,223 @@ def search_roots(
     bytes_read = 0
     root_paths_seen: set[str] = set()
     stop = False
+    directory_flags = secure_directory_open_flags()
+    file_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
 
-    for raw_root in root_paths:
+    for root_spec in root_paths:
         if stop:
             break
+        raw_root, approved_identity = _root_spec(root_spec)
         root = _safe_root(raw_root)
-        if root is None:
+        if root is None or not approved_identity:
             skipped_files += 1
             continue
         root_key = _path_key(root)
         if root_key in root_paths_seen:
             continue
         root_paths_seen.add(root_key)
+
+        # The hook deliberately sits after lexical policy checks. Opening the
+        # path component-by-component below must still catch a race at this seam.
+        _after_root_validation(root)
         try:
-            root_info = root.stat()
-            if not stat.S_ISDIR(root_info.st_mode) or _is_network_path(root):
+            root_fd = open_directory_descriptor(root)
+            root_info = os.fstat(root_fd)
+            opened_identity = _identity_from_stat(root_info)
+            if (
+                opened_identity is None
+                or opened_identity != approved_identity
+                or _is_network_path(root)
+            ):
+                os.close(root_fd)
                 skipped_files += 1
                 continue
             root_device = root_info.st_dev
-        except OSError:
+        except (OSError, RuntimeError, ValueError):
             skipped_files += 1
             continue
 
-        pending: list[Path] = [root]
+        pending: list[tuple[Path, int]] = [(root, root_fd)]
         directories_seen = 0
-        while pending and not stop:
-            if directories_seen >= _MAX_DIRECTORIES_PER_ROOT:
-                skipped_files += 1
-                break
-            current = pending.pop()
-            directories_seen += 1
-            current = _contained_local_path(current, root, root_device, directory=True)
-            if current is None:
-                skipped_files += 1
-                continue
+        try:
+            while pending and not stop:
+                current, current_fd = pending.pop()
+                try:
+                    if directories_seen >= _MAX_DIRECTORIES_PER_ROOT:
+                        skipped_files += 1
+                        stop = True
+                        continue
+                    directories_seen += 1
 
-            entries = []
-            try:
-                # scandir is consumed only up to the request ceiling; an
-                # unbounded os.walk list/sort could exhaust memory before
-                # the directory count limit had any effect.
-                with os.scandir(current) as iterator:
-                    for entry in iterator:
-                        if entries_examined >= _MAX_ENTRIES_PER_REQUEST:
+                    refresh_mount_table()
+                    if _is_network_path(current):
+                        skipped_files += 1
+                        continue
+
+                    names: list[str] = []
+                    try:
+                        with os.scandir(current_fd) as iterator:
+                            for entry in iterator:
+                                if entries_examined >= _MAX_ENTRIES_PER_REQUEST:
+                                    skipped_files += 1
+                                    stop = True
+                                    break
+                                entries_examined += 1
+                                names.append(entry.name)
+                    except OSError:
+                        skipped_files += 1
+                        continue
+
+                    child_directories: list[tuple[Path, int]] = []
+                    for name in sorted(names):
+                        candidate = current / name
+                        try:
+                            refresh_mount_table()
+                            if _is_network_path(candidate):
+                                skipped_files += 1
+                                continue
+                            entry_info = os.stat(
+                                name, dir_fd=current_fd, follow_symlinks=False
+                            )
+                        except (OSError, RuntimeError, ValueError):
+                            skipped_files += 1
+                            continue
+
+                        if stat.S_ISLNK(entry_info.st_mode) or _is_junction(candidate):
+                            skipped_files += 1
+                            continue
+
+                        if stat.S_ISDIR(entry_info.st_mode):
+                            if entry_info.st_dev != root_device:
+                                skipped_files += 1
+                                continue
+                            queued_directories = (
+                                directories_seen + len(pending) + len(child_directories)
+                            )
+                            if queued_directories >= _MAX_DIRECTORIES_PER_ROOT:
+                                skipped_files += 1
+                                continue
+                            _before_candidate_open(candidate, directory=True)
+                            try:
+                                refresh_mount_table()
+                                if _is_network_path(candidate):
+                                    skipped_files += 1
+                                    continue
+                                child_fd = os.open(
+                                    name, directory_flags, dir_fd=current_fd
+                                )
+                                child_info = os.fstat(child_fd)
+                                if (
+                                    not stat.S_ISDIR(child_info.st_mode)
+                                    or not _same_object(entry_info, child_info)
+                                    or child_info.st_dev != root_device
+                                    or _is_network_path(candidate)
+                                ):
+                                    os.close(child_fd)
+                                    skipped_files += 1
+                                    continue
+                            except (OSError, RuntimeError, ValueError):
+                                skipped_files += 1
+                                continue
+                            child_directories.append((candidate, child_fd))
+                            continue
+
+                        if not stat.S_ISREG(entry_info.st_mode):
+                            continue
+                        if candidate.suffix.casefold() not in _ALLOWED_SUFFIXES:
+                            continue
+                        if files_examined >= _MAX_FILES_PER_REQUEST:
                             skipped_files += 1
                             stop = True
                             break
-                        entries_examined += 1
-                        entries.append(entry)
-            except OSError:
-                skipped_files += 1
-                continue
+                        files_examined += 1
 
-            child_directories: list[Path] = []
-            for entry in sorted(entries, key=lambda item: item.name):
-                candidate = Path(entry.path)
+                        remaining_bytes = _MAX_BYTES_PER_REQUEST - bytes_read
+                        if remaining_bytes <= 0:
+                            skipped_files += 1
+                            stop = True
+                            break
+                        read_limit = min(_MAX_FILE_BYTES, remaining_bytes)
+                        if (
+                            entry_info.st_dev != root_device
+                            or entry_info.st_size > read_limit
+                        ):
+                            skipped_files += 1
+                            continue
+
+                        _before_candidate_open(candidate, directory=False)
+                        try:
+                            refresh_mount_table()
+                            if _is_network_path(candidate):
+                                skipped_files += 1
+                                continue
+                            descriptor = os.open(name, file_flags, dir_fd=current_fd)
+                            with os.fdopen(descriptor, "rb") as stream:
+                                opened_info = os.fstat(stream.fileno())
+                                if (
+                                    not stat.S_ISREG(opened_info.st_mode)
+                                    or not _same_object(entry_info, opened_info)
+                                    or opened_info.st_dev != root_device
+                                    or opened_info.st_size > read_limit
+                                    or opened_info.st_size != entry_info.st_size
+                                ):
+                                    skipped_files += 1
+                                    continue
+                                content_bytes = stream.read(read_limit)
+                                bytes_read += len(content_bytes)
+                                final_info = os.fstat(stream.fileno())
+                                if (
+                                    not stat.S_ISREG(final_info.st_mode)
+                                    or not _same_object(opened_info, final_info)
+                                    or final_info.st_dev != root_device
+                                    or final_info.st_size > read_limit
+                                    or len(content_bytes) != final_info.st_size
+                                ):
+                                    skipped_files += 1
+                                    continue
+                            content = content_bytes.decode("utf-8")
+                        except (OSError, UnicodeError, RuntimeError, ValueError):
+                            skipped_files += 1
+                            continue
+
+                        index = content.casefold().find(needle)
+                        if index < 0:
+                            continue
+                        start = max(0, index - 120)
+                        end = min(len(content), index + len(query) + 240)
+                        snippet = " ".join(content[start:end].split())[:500]
+                        matches.append(
+                            RetrievalMatch(path=str(candidate), snippet=snippet)
+                        )
+                        if len(matches) >= limit:
+                            stop = True
+                            break
+
+                    # Preserve deterministic depth-first order while retaining
+                    # the already-opened descriptors for each approved child.
+                    pending.extend(reversed(child_directories))
+                    if stop:
+                        for _, child_fd in child_directories:
+                            if any(fd == child_fd for _, fd in pending):
+                                continue
+                            try:
+                                os.close(child_fd)
+                            except OSError:
+                                pass
+                finally:
+                    os.close(current_fd)
+        finally:
+            for _, descriptor in pending:
                 try:
-                    # Check the mount table before metadata calls that could
-                    # reach a mounted remote filesystem.
-                    if _is_network_path(candidate):
-                        skipped_files += 1
-                        continue
-                    if entry.is_symlink() or _is_junction(candidate):
-                        continue
-                    is_directory = entry.is_dir(follow_symlinks=False)
-                    is_regular_file = entry.is_file(follow_symlinks=False)
+                    os.close(descriptor)
                 except OSError:
-                    skipped_files += 1
-                    continue
-
-                if is_directory:
-                    resolved_directory = _contained_local_path(
-                        candidate, root, root_device, directory=True
-                    )
-                    if resolved_directory is None:
-                        skipped_files += 1
-                        continue
-                    queued_directories = (
-                        directories_seen + len(pending) + len(child_directories)
-                    )
-                    if queued_directories >= _MAX_DIRECTORIES_PER_ROOT:
-                        skipped_files += 1
-                        continue
-                    child_directories.append(resolved_directory)
-                    continue
-
-                # Do not open FIFOs, sockets, device nodes, or other special
-                # files even when their names use an allowed suffix.
-                if not is_regular_file:
-                    continue
-                if candidate.suffix.casefold() not in _ALLOWED_SUFFIXES:
-                    continue
-                if files_examined >= _MAX_FILES_PER_REQUEST:
-                    skipped_files += 1
-                    stop = True
-                    break
-                files_examined += 1
-
-                resolved_file = _contained_local_path(
-                    candidate, root, root_device, directory=False
-                )
-                if resolved_file is None:
-                    skipped_files += 1
-                    continue
-
-                remaining_bytes = _MAX_BYTES_PER_REQUEST - bytes_read
-                if remaining_bytes <= 0:
-                    skipped_files += 1
-                    stop = True
-                    break
-                read_limit = min(_MAX_FILE_BYTES, remaining_bytes)
-
-                try:
-                    file_info = resolved_file.stat()
-                    if (
-                        not stat.S_ISREG(file_info.st_mode)
-                        or file_info.st_dev != root_device
-                        or file_info.st_size > read_limit
-                    ):
-                        skipped_files += 1
-                        continue
-
-                    # O_NOFOLLOW closes the final-component symlink race on
-                    # platforms that support it. The descriptor size/type and
-                    # post-read size are checked before content is decoded.
-                    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-                    flags |= getattr(os, "O_NOFOLLOW", 0)
-                    descriptor = os.open(resolved_file, flags)
-                    with os.fdopen(descriptor, "rb") as stream:
-                        opened_info = os.fstat(stream.fileno())
-                        if (
-                            not stat.S_ISREG(opened_info.st_mode)
-                            or opened_info.st_dev != root_device
-                            or opened_info.st_size > read_limit
-                        ):
-                            skipped_files += 1
-                            continue
-                        content_bytes = stream.read(read_limit)
-                        bytes_read += len(content_bytes)
-                        final_info = os.fstat(stream.fileno())
-                        if (
-                            not stat.S_ISREG(final_info.st_mode)
-                            or final_info.st_dev != root_device
-                            or final_info.st_size > read_limit
-                            or len(content_bytes) != final_info.st_size
-                        ):
-                            skipped_files += 1
-                            continue
-                    content = content_bytes.decode("utf-8")
-                except (OSError, UnicodeError, RuntimeError, ValueError):
-                    skipped_files += 1
-                    continue
-
-                index = content.casefold().find(needle)
-                if index < 0:
-                    continue
-                start = max(0, index - 120)
-                end = min(len(content), index + len(query) + 240)
-                snippet = " ".join(content[start:end].split())[:500]
-                matches.append(RetrievalMatch(path=str(resolved_file), snippet=snippet))
-                if len(matches) >= limit:
-                    stop = True
-                    break
-
-            pending.extend(reversed(child_directories))
+                    pass
 
     return matches, files_examined, skipped_files
 
@@ -259,17 +330,17 @@ def search_roots(
 def search_local_files(
     body: RetrievalSearchRequest, http_request: Request
 ) -> RetrievalSearchResponse:
-    """Search only authorized folders using local bounded text reads."""
+    """Search only persistently authorized folders using local bounded reads."""
     enforce_local_origin(http_request)
     session = database_module.SessionLocal()
     try:
         roots = _REPOSITORY.list_roots(session)
-        root_paths = [root.path for root in roots]
+        root_specs = [(root.path, root.root_identity) for root in roots]
     finally:
         session.close()
 
     matches, files_examined, skipped_files = search_roots(
-        root_paths, body.query, body.limit
+        root_specs, body.query, body.limit
     )
     return RetrievalSearchResponse(
         query=body.query,
