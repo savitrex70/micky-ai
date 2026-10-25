@@ -494,3 +494,167 @@ def test_search_roots_skips_unsupported_formats(tmp_path: Path) -> None:
 
     assert matches == []
     assert examined == 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux no-follow primitives",
+)
+def test_root_substitution_after_validation_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    root = parent / "approved"
+    root.mkdir()
+    (root / "ordinary.md").write_text("ordinary local content", encoding="utf-8")
+    original_identity = local_paths.local_directory_identity(root)
+    assert original_identity is not None
+
+    def substitute_root(_root: Path) -> None:
+        root.rename(parent / "moved-approved")
+        root.mkdir()
+        (root / "secret.md").write_text(
+            "distinctive substituted root private marker", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(retrieval, "_after_root_validation", substitute_root)
+    matches, examined, skipped = search_roots(
+        [(str(root), original_identity)], "substituted root private marker", 10
+    )
+
+    assert matches == []
+    assert examined == 0
+    assert skipped >= 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux no-follow primitives",
+)
+def test_ancestor_replacement_after_validation_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    root = parent / "approved"
+    root.mkdir()
+    original_identity = local_paths.local_directory_identity(root)
+    assert original_identity is not None
+
+    def substitute_ancestor(_root: Path) -> None:
+        parent.rename(tmp_path / "moved-parent")
+        parent.mkdir()
+        substituted_root = parent / "approved"
+        substituted_root.mkdir()
+        (substituted_root / "secret.md").write_text(
+            "ancestor replacement private marker", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(retrieval, "_after_root_validation", substitute_ancestor)
+    matches, examined, skipped = search_roots(
+        [(str(root), original_identity)], "ancestor replacement private marker", 10
+    )
+
+    assert matches == []
+    assert examined == 0
+    assert skipped >= 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux no-follow primitives",
+)
+def test_directory_replaced_between_scan_and_open_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    child = root / "child"
+    child.mkdir()
+    outside_content = "same filesystem replacement directory private marker"
+    substituted = tmp_path / "replacement"
+    substituted.mkdir()
+    (substituted / "secret.md").write_text(outside_content, encoding="utf-8")
+    swapped = False
+
+    def replace_directory(path: Path, *, directory: bool) -> None:
+        nonlocal swapped
+        if not swapped and directory and path == child:
+            child.rename(root / "original-child")
+            os.replace(substituted, child)
+            swapped = True
+
+    monkeypatch.setattr(retrieval, "_before_candidate_open", replace_directory)
+    matches, _, skipped = search_roots([str(root)], "replacement directory private marker", 10)
+
+    assert swapped
+    assert matches == []
+    assert skipped >= 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux no-follow primitives",
+)
+def test_same_filesystem_symlink_substitution_before_file_open_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    candidate = root / "candidate.md"
+    candidate.write_text("ordinary original content", encoding="utf-8")
+    private = tmp_path / "private.md"
+    private.write_text("same filesystem private redirect marker", encoding="utf-8")
+    assert candidate.stat().st_dev == private.stat().st_dev
+    swapped = False
+
+    def replace_file(path: Path, *, directory: bool) -> None:
+        nonlocal swapped
+        if not swapped and not directory and path == candidate:
+            candidate.unlink()
+            try:
+                candidate.symlink_to(private)
+            except (OSError, NotImplementedError):
+                pytest.skip("symbolic links are unavailable")
+            swapped = True
+
+    monkeypatch.setattr(retrieval, "_before_candidate_open", replace_file)
+    matches, _, skipped = search_roots([str(root)], "same filesystem private redirect marker", 10)
+
+    assert swapped
+    assert matches == []
+    assert skipped >= 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux no-follow primitives",
+)
+def test_network_classification_change_before_open_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    candidate = root / "candidate.md"
+    candidate.write_text("ordinary original content", encoding="utf-8")
+    original_network_check = retrieval._is_network_path
+    network_changed = False
+
+    def change_policy(path: Path) -> bool:
+        if network_changed and path == candidate:
+            return True
+        return original_network_check(path)
+
+    def simulate_mount_change(path: Path, *, directory: bool) -> None:
+        nonlocal network_changed
+        if not directory and path == candidate:
+            network_changed = True
+
+    monkeypatch.setattr(retrieval, "_before_candidate_open", simulate_mount_change)
+    monkeypatch.setattr(retrieval, "_is_network_path", change_policy)
+    matches, _, skipped = search_roots([str(root)], "ordinary original content", 10)
+
+    assert network_changed
+    assert matches == []
+    assert skipped >= 1
