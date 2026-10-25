@@ -29,9 +29,10 @@ from rop.services.local_paths import (
     is_network_path as _is_network_path,
     local_directory_identity,
     normalized_path_key as _path_key,
+    open_directory_at,
     open_directory_descriptor,
+    open_regular_file_at,
     refresh_mount_table,
-    secure_directory_open_flags,
     secure_directory_traversal_supported,
 )
 
@@ -106,7 +107,6 @@ def search_roots(
     bytes_read = 0
     root_paths_seen: set[str] = set()
     stop = False
-    directory_flags = secure_directory_open_flags()
     file_flags = (
         os.O_RDONLY
         | getattr(os, "O_BINARY", 0)
@@ -216,9 +216,7 @@ def search_roots(
                                 if _is_network_path(candidate):
                                     skipped_files += 1
                                     continue
-                                child_fd = os.open(
-                                    name, directory_flags, dir_fd=current_fd
-                                )
+                                child_fd = open_directory_at(current_fd, name)
                                 child_info = os.fstat(child_fd)
                                 if (
                                     not stat.S_ISDIR(child_info.st_mode)
@@ -265,7 +263,9 @@ def search_roots(
                             if _is_network_path(candidate):
                                 skipped_files += 1
                                 continue
-                            descriptor = os.open(name, file_flags, dir_fd=current_fd)
+                            descriptor = open_regular_file_at(
+                                current_fd, name, file_flags
+                            )
                             with os.fdopen(descriptor, "rb") as stream:
                                 opened_info = os.fstat(stream.fileno())
                                 if (
