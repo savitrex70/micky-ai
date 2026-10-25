@@ -268,11 +268,12 @@ def search_roots(
                             )
                             with os.fdopen(descriptor, "rb") as stream:
                                 opened_info = os.fstat(stream.fileno())
+                                opened_mount_id = _descriptor_mount_id(stream.fileno())
                                 if (
                                     not stat.S_ISREG(opened_info.st_mode)
                                     or not _same_object(entry_info, opened_info)
                                     or opened_info.st_dev != root_device
-                                    or _descriptor_mount_id(stream.fileno()) != root_mount_id
+                                    or opened_mount_id != root_mount_id
                                     or opened_info.st_size > read_limit
                                     or opened_info.st_size != entry_info.st_size
                                 ):
@@ -281,11 +282,12 @@ def search_roots(
                                 content_bytes = stream.read(read_limit)
                                 bytes_read += len(content_bytes)
                                 final_info = os.fstat(stream.fileno())
+                                final_mount_id = _descriptor_mount_id(stream.fileno())
                                 if (
                                     not stat.S_ISREG(final_info.st_mode)
                                     or not _same_object(opened_info, final_info)
                                     or final_info.st_dev != root_device
-                                    or _descriptor_mount_id(stream.fileno()) != root_mount_id
+                                    or final_mount_id != root_mount_id
                                     or final_info.st_size > read_limit
                                     or len(content_bytes) != final_info.st_size
                                 ):
