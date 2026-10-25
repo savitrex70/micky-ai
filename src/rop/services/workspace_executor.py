@@ -32,10 +32,8 @@ from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.services.local_paths import (
     contains_link_or_junction,
-    directory_identity_from_stat,
     is_network_path,
     local_directory_identity,
-    open_directory_descriptor,
     refresh_mount_table,
 )
 from rop.schemas.authorization import (
