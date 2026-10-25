@@ -662,3 +662,70 @@ def test_network_classification_change_before_open_is_rejected(
     assert network_changed
     assert matches == []
     assert skipped >= 1
+
+
+def test_retrieval_fails_closed_for_legacy_root_without_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "legacy-root"
+    root.mkdir()
+    (root / "private.md").write_text(
+        "legacy root must not be searched", encoding="utf-8"
+    )
+
+    matches, examined, skipped = search_roots([(str(root), None)], "must not be searched", 10)
+
+    assert matches == []
+    assert examined == 0
+    assert skipped == 1
+
+
+def test_retrieval_fails_closed_without_secure_openat2_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    (root / "private.md").write_text(
+        "must not search with insecure pathname fallback", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        retrieval, "secure_directory_traversal_supported", lambda: False
+    )
+
+    matches, examined, skipped = search_roots([str(root)], "must not search", 10)
+
+    assert matches == []
+    assert examined == 0
+    assert skipped == 1
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="descriptor-relative race checks require Linux openat2 primitives",
+)
+def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    candidate = root / "candidate.md"
+    candidate.write_text("original approved data", encoding="utf-8")
+    swapped = False
+
+    def replace_root_before_open(path: Path, *, directory: bool) -> None:
+        nonlocal swapped
+        if not swapped and not directory and path == candidate:
+            root.rename(tmp_path / "moved-approved")
+            root.mkdir()
+            (root / "candidate.md").write_text(
+                "private replacement root marker", encoding="utf-8"
+            )
+            swapped = True
+
+    monkeypatch.setattr(
+        retrieval, "_before_candidate_open", replace_root_before_open
+    )
+    matches, _, _ = search_roots([str(root)], "private replacement root marker", 10)
+
+    assert swapped
+    assert matches == []
