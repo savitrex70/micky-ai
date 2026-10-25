@@ -801,3 +801,25 @@ def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
 
     assert swapped
     assert matches == []
+
+
+def test_workspace_root_add_fails_closed_without_openat2_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "local-root"
+    root.mkdir()
+    monkeypatch.setattr(local_paths, "_openat2_supported", lambda: False)
+    request = WorkspaceChangeRequest.model_validate(
+        {
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(uuid4()),
+            "path": str(root),
+        }
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        workspace_api._operation_for(request)
+
+    assert raised.value.status_code == 422
+    assert "securely verified" in str(raised.value.detail)
