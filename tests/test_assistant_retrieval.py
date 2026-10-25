@@ -292,8 +292,10 @@ def test_search_roots_rejects_mocked_linux_network_mount(
 
 
 @pytest.mark.skipif(
-    os.name != "posix" or not local_paths.sys.platform.startswith("linux"),
-    reason="Linux mountinfo behavior requires Linux",
+    os.name != "posix"
+    or not local_paths.sys.platform.startswith("linux")
+    or not local_paths.secure_directory_traversal_supported(),
+    reason="Linux network-mount authorization requires secure descriptor primitives",
 )
 def test_workspace_root_add_rejects_mocked_network_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -351,6 +353,10 @@ def test_workspace_root_add_rejects_link_ancestor_before_resolving(
     assert "linked paths" in str(raised.value.detail)
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="root authorization requires secure descriptor-relative primitives",
+)
 def test_workspace_root_add_refreshes_mount_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
