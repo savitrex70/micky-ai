@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
 import stat
 import sys
@@ -46,7 +47,7 @@ def _unescape_mount_field(value: str) -> str:
 
 @lru_cache(maxsize=1)
 def _linux_mount_table() -> tuple[tuple[Path, str], ...] | None:
-    """Read mount metadata once per retrieval request; None means unknown."""
+    """Read mount metadata once; None means the local/remote boundary is unknown."""
     if not sys.platform.startswith("linux"):
         return ()
     try:
@@ -72,7 +73,7 @@ def _linux_mount_table() -> tuple[tuple[Path, str], ...] | None:
 
 
 def refresh_mount_table() -> None:
-    """Refresh the per-request Linux mount snapshot when the platform supports it."""
+    """Refresh the cached Linux mount snapshot."""
     clear_cache = getattr(_linux_mount_table, "cache_clear", None)
     if clear_cache is not None:
         clear_cache()
@@ -93,12 +94,8 @@ def is_network_path(path: Path) -> bool:
     if os.name == "posix" and sys.platform.startswith("linux"):
         mounts = _linux_mount_table()
         if mounts is None:
-            # An unreadable mount table makes the network/local distinction
-            # unknowable. Retrieval must fail closed rather than guess.
             return True
         try:
-            # Classify by lexical path and mount metadata only: resolving a
-            # path inside an unavailable network mount could itself access it.
             target = Path(os.path.abspath(os.fspath(path)))
         except (OSError, RuntimeError, ValueError):
             return True
@@ -138,13 +135,15 @@ def is_junction(path: Path) -> bool:
 
 
 def contains_link_or_junction(path: Path) -> bool:
-    """Reject a path if any component is a symlink or junction.
+    """Reject a path if any component is a symlink, junction, or parent traversal.
 
-    Inspect prefixes in order so no filesystem call follows a detected link
-    or enters a path already identified as a remote mount.
+    Inspect prefixes in order and never resolve a pathname while validating it.
     """
     try:
-        absolute = Path(os.path.abspath(os.fspath(path)))
+        supplied = Path(os.fspath(path))
+        if ".." in supplied.parts:
+            return True
+        absolute = Path(os.path.abspath(os.fspath(supplied)))
         current = Path(absolute.anchor)
         for component in absolute.parts[1:]:
             current = current / component
@@ -155,6 +154,114 @@ def contains_link_or_junction(path: Path) -> bool:
         return False
     except (OSError, RuntimeError, TypeError, ValueError):
         return True
+
+
+def secure_directory_traversal_supported() -> bool:
+    """Whether this runtime supports descriptor-relative, no-follow traversal."""
+    supports_dir_fd = getattr(os, "supports_dir_fd", set())
+    supports_fd = getattr(os, "supports_fd", set())
+    supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    return bool(
+        os.name != "nt"
+        and getattr(os, "open", None) in supports_dir_fd
+        and getattr(os, "stat", None) in supports_dir_fd
+        and getattr(os, "stat", None) in supports_follow_symlinks
+        and getattr(os, "scandir", None) in supports_fd
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+    )
+
+
+def secure_directory_open_flags() -> int:
+    """Flags required to open a directory without following a link."""
+    if not secure_directory_traversal_supported():
+        raise OSError(errno.ENOTSUP, "secure directory traversal is unavailable")
+    return (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+
+
+def open_directory_descriptor(path: Path) -> int:
+    """Open an absolute directory by walking every component with no-follow openat.
+
+    The caller owns the returned descriptor. This deliberately refuses platforms
+    that do not provide the descriptor-relative primitives required by retrieval.
+    """
+    supplied = Path(os.fspath(path))
+    if not supplied.is_absolute() or ".." in supplied.parts:
+        raise OSError(errno.EINVAL, "directory path must be absolute and normalized")
+    absolute = Path(os.path.abspath(os.fspath(supplied)))
+    flags = secure_directory_open_flags()
+    current_path = Path(absolute.anchor)
+    descriptor = os.open(absolute.anchor, flags)
+    try:
+        for component in absolute.parts[1:]:
+            next_path = current_path / component
+            if is_network_path(next_path):
+                raise OSError(errno.EPERM, "remote filesystem paths are not allowed")
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            info = os.fstat(next_descriptor)
+            if not stat.S_ISDIR(info.st_mode):
+                os.close(next_descriptor)
+                raise OSError(errno.ENOTDIR, "path component is not a directory")
+            os.close(descriptor)
+            descriptor = next_descriptor
+            current_path = next_path
+
+        refresh_mount_table()
+        if is_network_path(absolute):
+            raise OSError(errno.EPERM, "remote filesystem paths are not allowed")
+        info = os.fstat(descriptor)
+        if not stat.S_ISDIR(info.st_mode):
+            raise OSError(errno.ENOTDIR, "path is not a directory")
+        result = descriptor
+        descriptor = -1
+        return result
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def directory_identity_from_stat(info: os.stat_result) -> str | None:
+    """Return the stable device/inode identity of a directory, or fail closed."""
+    if not stat.S_ISDIR(info.st_mode):
+        return None
+    device = getattr(info, "st_dev", None)
+    inode = getattr(info, "st_ino", None)
+    if (
+        not isinstance(device, int)
+        or not isinstance(inode, int)
+        or device < 0
+        or inode <= 0
+    ):
+        return None
+    return f"{device:x}:{inode:x}"
+
+
+def local_directory_identity(path: Path) -> str | None:
+    """Validate a local directory and return identity from its opened descriptor."""
+    if not secure_directory_traversal_supported():
+        return None
+    supplied = Path(os.fspath(path))
+    if not supplied.is_absolute() or ".." in supplied.parts:
+        return None
+    if is_network_path(supplied) or contains_link_or_junction(supplied):
+        return None
+    try:
+        descriptor = open_directory_descriptor(supplied)
+        try:
+            identity = directory_identity_from_stat(os.fstat(descriptor))
+        finally:
+            os.close(descriptor)
+        refresh_mount_table()
+        if identity is None or is_network_path(supplied):
+            return None
+        return identity
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
 
 
 def normalized_path_key(path: Path) -> str:
