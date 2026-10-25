@@ -481,7 +481,10 @@ def test_overdue_challenge_is_refused_and_settled_to_expired(
 def test_confirmed_root_cannot_authorize_replacement_directory(
     client: TestClient, tmp_path: Path
 ) -> None:
-    """A real challenge is consumed but cannot authorize a same-filesystem replacement."""
+    """A real challenge cannot authorize a replacement directory.
+
+    The same challenge is consumed on failure and cannot be replayed.
+    """
     approved = tmp_path / "approved"
     approved.mkdir()
     private = tmp_path / "private"
