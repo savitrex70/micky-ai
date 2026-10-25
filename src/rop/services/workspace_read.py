@@ -41,13 +41,13 @@ def run_workspace_read(operation: ProposedOperation) -> str:
         session = database_module.SessionLocal()
         try:
             roots = _REPOSITORY.list_roots(session)
-            root_paths = [root.path for root in roots]
+            root_specs = [(root.path, root.root_identity) for root in roots]
         finally:
             session.close()
         # The same bounded helper is used by the browser-facing retrieval API.
         from rop.api.retrieval import search_roots
 
-        matches, examined, skipped = search_roots(root_paths, query, 10)
+        matches, examined, skipped = search_roots(root_specs, query, 10)
         lines = [
             f"Local search examined {examined} files; skipped {skipped}; "
             f"found {len(matches)} matches."
