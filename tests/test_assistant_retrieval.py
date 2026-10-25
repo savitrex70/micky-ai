@@ -380,20 +380,20 @@ def test_search_roots_skips_files_from_another_device(
 ) -> None:
     candidate = tmp_path / "mounted.md"
     candidate.write_text("must not cross a mount boundary", encoding="utf-8")
-    resolved_candidate = candidate.resolve()
-    original_stat = Path.stat
+    original_entry_stat = retrieval._stat_entry
 
-    def fake_stat(path: Path, *args, **kwargs):
-        info = original_stat(path, *args, **kwargs)
-        if path == resolved_candidate:
+    def fake_entry_stat(name: str, directory_fd: int):
+        info = original_entry_stat(name, directory_fd)
+        if name == candidate.name:
             return SimpleNamespace(
                 st_mode=info.st_mode,
                 st_dev=info.st_dev + 1,
+                st_ino=info.st_ino,
                 st_size=info.st_size,
             )
         return info
 
-    monkeypatch.setattr(Path, "stat", fake_stat)
+    monkeypatch.setattr(retrieval, "_stat_entry", fake_entry_stat)
     matches, examined, skipped = search_roots([str(tmp_path)], "mount boundary", 10)
 
     assert matches == []
