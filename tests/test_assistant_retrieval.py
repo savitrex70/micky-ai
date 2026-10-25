@@ -26,6 +26,10 @@ def test_retrieval_request_rejects_blank_and_unknown_fields() -> None:
         RetrievalSearchRequest(query="private", network=True)
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_reads_only_allowlisted_files(tmp_path: Path) -> None:
     allowed = tmp_path / "notes.md"
     allowed.write_text("local private note with needle inside", encoding="utf-8")
@@ -43,6 +47,10 @@ def test_search_roots_reads_only_allowlisted_files(tmp_path: Path) -> None:
     assert "needle" in matches[0].snippet
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_does_not_escape_selected_folder(tmp_path: Path) -> None:
     root = tmp_path / "approved"
     root.mkdir()
@@ -57,6 +65,10 @@ def test_search_roots_does_not_escape_selected_folder(tmp_path: Path) -> None:
     assert matches == []
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_rejects_root_replaced_by_symlink(tmp_path: Path) -> None:
     authorized = tmp_path / "authorized"
     authorized.mkdir()
@@ -75,6 +87,10 @@ def test_search_roots_rejects_root_replaced_by_symlink(tmp_path: Path) -> None:
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_ancestor_symlink_is_rejected_before_resolving_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -102,6 +118,10 @@ def test_ancestor_symlink_is_rejected_before_resolving_target(
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_rejects_ancestor_symlink_substitution(tmp_path: Path) -> None:
     original_parent = tmp_path / "original-parent"
     original_parent.mkdir()
@@ -128,6 +148,10 @@ def test_search_roots_rejects_ancestor_symlink_substitution(tmp_path: Path) -> N
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_does_not_traverse_symlinked_directory(tmp_path: Path) -> None:
     root = tmp_path / "approved"
     root.mkdir()
@@ -143,6 +167,10 @@ def test_search_roots_does_not_traverse_symlinked_directory(tmp_path: Path) -> N
     assert matches == []
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_skips_junctions_when_detected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,7 +201,10 @@ def test_junction_detection_fails_closed_if_the_check_errors(
     assert local_paths.is_junction(tmp_path) is True
 
 
-@pytest.mark.skipif(os.name != "nt", reason="real junction creation requires Windows")
+@pytest.mark.skipif(
+    os.name != "nt" or not local_paths.secure_directory_traversal_supported(),
+    reason="a supported retrieval backend is required for a real junction test",
+)
 def test_search_roots_skips_real_windows_junction(tmp_path: Path) -> None:
     root = tmp_path / "approved"
     root.mkdir()
@@ -241,8 +272,10 @@ def test_mapped_network_drive_detection_fails_closed(
 
 
 @pytest.mark.skipif(
-    os.name != "posix" or not local_paths.sys.platform.startswith("linux"),
-    reason="Linux mountinfo behavior requires Linux",
+    os.name != "posix"
+    or not local_paths.sys.platform.startswith("linux")
+    or not local_paths.secure_directory_traversal_supported(),
+    reason="Linux network-mount retrieval requires secure descriptor primitives",
 )
 def test_search_roots_rejects_mocked_linux_network_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -375,6 +408,10 @@ def test_search_roots_fails_closed_if_linux_mount_metadata_is_unavailable(
         pytest.skip("Linux mountinfo boundary applies only on Linux")
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_skips_files_from_another_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -401,6 +438,10 @@ def test_search_roots_skips_files_from_another_device(
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_enforces_per_file_byte_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -414,6 +455,10 @@ def test_search_roots_enforces_per_file_byte_ceiling(
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_enforces_aggregate_byte_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -428,6 +473,10 @@ def test_search_roots_enforces_aggregate_byte_ceiling(
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_enforces_file_count_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -442,6 +491,10 @@ def test_search_roots_enforces_file_count_ceiling(
     assert skipped >= 1
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_enforces_total_entry_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -456,6 +509,10 @@ def test_search_roots_enforces_total_entry_ceiling(
     assert len(matches) <= 3
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_enforces_directory_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -472,7 +529,10 @@ def test_search_roots_enforces_directory_ceiling(
     assert len(matches) <= 1
 
 
-@pytest.mark.skipif(os.name == "nt", reason="FIFO special files are POSIX-specific")
+@pytest.mark.skipif(
+    os.name == "nt" or not local_paths.secure_directory_traversal_supported(),
+    reason="FIFO avoidance requires a supported POSIX retrieval backend",
+)
 def test_search_roots_never_opens_fifo_with_allowed_suffix(tmp_path: Path) -> None:
     fifo = tmp_path / "named-pipe.txt"
     try:
@@ -486,6 +546,10 @@ def test_search_roots_never_opens_fifo_with_allowed_suffix(tmp_path: Path) -> No
     assert skipped == 0
 
 
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
 def test_search_roots_skips_unsupported_formats(tmp_path: Path) -> None:
     (tmp_path / "memo.pdf").write_text("needle", encoding="utf-8")
     (tmp_path / "memo.txt").write_text("different contents", encoding="utf-8")
