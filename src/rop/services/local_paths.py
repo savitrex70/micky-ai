@@ -126,12 +126,44 @@ def open_directory_at(directory_fd: int, name: str) -> int:
 
 
 def open_regular_file_at(directory_fd: int, name: str, flags: int) -> int:
-    """Open one child file without links, escapes, or mount crossings."""
-    if not _openat2_supported():
+    """Open a pinned regular file without invoking special-file open behavior.
+
+    First acquire an O_PATH descriptor using openat2. Only after fstat confirms
+    a regular file do we open that pinned object through procfs, not through the
+    attacker-mutable directory entry. If procfs or O_PATH is unavailable, fail
+    closed instead of falling back to a pathname-based read open.
+    """
+    if not _openat2_supported() or not hasattr(os, "O_PATH"):
         raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
-    return _openat2(
-        directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE
+    pinned = _openat2(
+        directory_fd,
+        name,
+        flags=os.O_PATH | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        resolve=_OPENAT2_RESOLVE_SAFE,
     )
+    try:
+        pinned_info = os.fstat(pinned)
+        if not stat.S_ISREG(pinned_info.st_mode):
+            raise OSError(errno.EPERM, "candidate is not a regular file", name)
+        readable_flags = flags & ~getattr(os, "O_NOFOLLOW", 0)
+        readable = os.open(f"/proc/self/fd/{pinned}", readable_flags)
+        try:
+            readable_info = os.fstat(readable)
+            if (
+                not stat.S_ISREG(readable_info.st_mode)
+                or readable_info.st_dev != pinned_info.st_dev
+                or readable_info.st_ino != pinned_info.st_ino
+                or descriptor_mount_id(readable) != descriptor_mount_id(pinned)
+            ):
+                raise OSError(errno.EPERM, "pinned file identity changed", name)
+            result = readable
+            readable = -1
+            return result
+        finally:
+            if readable >= 0:
+                os.close(readable)
+    finally:
+        os.close(pinned)
 
 
 _REMOTE_FILESYSTEM_TYPES = frozenset(
