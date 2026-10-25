@@ -8,6 +8,7 @@ only after the existing trusted confirmation endpoint consumes it.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -36,7 +37,11 @@ from rop.schemas.workspace import (
     WorkspaceReceiptRead,
 )
 from rop.services.confirmation import ChallengeIssueOutcome, issue_challenge
-from rop.services.local_paths import contains_link_or_junction, refresh_mount_table
+from rop.services.local_paths import (
+    contains_link_or_junction,
+    local_directory_identity,
+    refresh_mount_table,
+)
 from rop.services.local_paths import is_network_path as _is_network_path
 from rop.services.workspace_executor import (
     build_workspace_executor_registry,
@@ -116,18 +121,23 @@ def _operation_for(request: WorkspaceChangeRequest) -> ProposedOperation:
                     ),
                 )
             try:
-                root = raw_root.resolve(strict=True)
-            except (OSError, RuntimeError, ValueError):
+                # Normalize spelling without resolving through a component. The
+                # descriptor-based identity check below opens every component
+                # with no-follow semantics and refuses unsupported platforms.
+                root = Path(os.path.abspath(os.fspath(raw_root)))
+                root_identity = local_directory_identity(root)
+            except (OSError, RuntimeError, TypeError, ValueError):
+                root_identity = None
+            if root_identity is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Choose an accessible local folder.",
-                ) from None
-            if _is_network_path(root) or not root.is_dir():
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="The selected path is not a directory.",
+                    detail=(
+                        "The folder cannot be securely verified as a local "
+                        "directory on this platform."
+                    ),
                 )
             params["path"] = str(root)
+            params["root_identity"] = root_identity
             operation_id = "workspace_root_add"
         else:
             target = str(request.item_id)
