@@ -10,6 +10,132 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+_OPENAT2_RESOLVE_NO_XDEV = 0x01
+_OPENAT2_RESOLVE_NO_MAGICLINKS = 0x02
+_OPENAT2_RESOLVE_NO_SYMLINKS = 0x04
+_OPENAT2_RESOLVE_BENEATH = 0x08
+_OPENAT2_RESOLVE_SAFE = (
+    _OPENAT2_RESOLVE_NO_XDEV
+    | _OPENAT2_RESOLVE_NO_MAGICLINKS
+    | _OPENAT2_RESOLVE_NO_SYMLINKS
+    | _OPENAT2_RESOLVE_BENEATH
+)
+
+
+class _OpenHow(ctypes.Structure):
+    """Linux openat2 request layout (three unsigned 64-bit fields)."""
+
+    _fields_ = [
+        ("flags", ctypes.c_uint64),
+        ("mode", ctypes.c_uint64),
+        ("resolve", ctypes.c_uint64),
+    ]
+
+
+def _openat2_syscall_number() -> int | None:
+    """Return the openat2 syscall number only for known Linux architectures."""
+    if not sys.platform.startswith("linux") or not hasattr(os, "uname"):
+        return None
+    machine = os.uname().machine.casefold()
+    if machine in {
+        "x86_64",
+        "amd64",
+        "i386",
+        "i486",
+        "i586",
+        "i686",
+        "aarch64",
+        "armv7l",
+        "ppc64",
+        "ppc64le",
+        "s390x",
+        "riscv64",
+        "loongarch64",
+    }:
+        return 437
+    return None
+
+
+def _openat2(
+    directory_fd: int, path: str, *, flags: int, resolve: int
+) -> int:
+    """Open a relative path atomically under Linux openat2 resolution rules."""
+    syscall_number = _openat2_syscall_number()
+    if syscall_number is None:
+        raise OSError(errno.ENOTSUP, "openat2 is unavailable on this platform")
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        syscall = libc.syscall
+        syscall.restype = ctypes.c_long
+        request = _OpenHow(flags=flags, mode=0, resolve=resolve)
+        ctypes.set_errno(0)
+        result = syscall(
+            ctypes.c_long(syscall_number),
+            ctypes.c_int(directory_fd),
+            ctypes.c_char_p(os.fsencode(path)),
+            ctypes.byref(request),
+            ctypes.c_size_t(ctypes.sizeof(request)),
+        )
+        if result < 0:
+            error_code = ctypes.get_errno()
+            raise OSError(error_code, os.strerror(error_code), path)
+        return int(result)
+    except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+        raise
+
+
+@lru_cache(maxsize=1)
+def _openat2_supported() -> bool:
+    """Probe the exact no-link, beneath, no-mount-crossing resolution contract."""
+    if _openat2_syscall_number() is None or not hasattr(os, "O_DIRECTORY"):
+        return False
+    descriptor = -1
+    probe = -1
+    try:
+        descriptor = os.open(
+            "/",
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0),
+        )
+        probe = _openat2(
+            descriptor,
+            ".",
+            flags=os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0),
+            resolve=_OPENAT2_RESOLVE_SAFE,
+        )
+        return stat.S_ISDIR(os.fstat(probe).st_mode)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    finally:
+        if probe >= 0:
+            os.close(probe)
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def open_directory_at(directory_fd: int, name: str) -> int:
+    """Open one child directory without links, escapes, or mount crossings."""
+    if not _openat2_supported():
+        raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    return _openat2(
+        directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE
+    )
+
+
+def open_regular_file_at(directory_fd: int, name: str, flags: int) -> int:
+    """Open one child file without links, escapes, or mount crossings."""
+    if not _openat2_supported():
+        raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
+    return _openat2(
+        directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE
+    )
+
+
 _REMOTE_FILESYSTEM_TYPES = frozenset(
     {
         "9p",
@@ -164,6 +290,7 @@ def secure_directory_traversal_supported() -> bool:
     return bool(
         sys.platform.startswith("linux")
         and _linux_mount_table() is not None
+        and _openat2_supported()
         and getattr(os, "open", None) in supports_dir_fd
         and getattr(os, "stat", None) in supports_dir_fd
         and getattr(os, "stat", None) in supports_follow_symlinks
