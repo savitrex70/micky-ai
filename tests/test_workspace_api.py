@@ -474,7 +474,6 @@ def test_overdue_challenge_is_refused_and_settled_to_expired(
         assert settled.status == "EXPIRED"
 
 
-
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
     reason="secure root authorization requires Linux descriptor-relative primitives",
