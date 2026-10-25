@@ -20,6 +20,8 @@ class AssistantRetrievalRoot(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # Null legacy rows fail closed until the user removes and reauthorizes the root.
+    root_identity: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
