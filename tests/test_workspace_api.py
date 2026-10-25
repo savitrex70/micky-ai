@@ -544,6 +544,78 @@ def test_confirmed_root_cannot_authorize_replacement_directory(
     not local_paths.secure_directory_traversal_supported(),
     reason="secure root authorization requires Linux descriptor-relative primitives",
 )
+def test_confirmed_root_cannot_authorize_real_directory_swapped_in(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Identity binding alone must reject a same-path, same-filesystem swap.
+
+    The replacement is a plain directory: no symlink, junction, or network path
+    exists, so every lexical policy check passes. Only the identity captured at
+    prepare time can tell it apart from the folder the user approved.
+    """
+    approved = tmp_path / "approved-swap"
+    approved.mkdir()
+    key = uuid4()
+    prepared = client.post(
+        "/api/assistant/workspace/changes",
+        headers=ORIGIN_HEADERS,
+        json={
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(key),
+            "path": str(approved),
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+    assert body["status"] == "confirmation-required"
+    challenge = body["challenge"]
+
+    approved.rename(tmp_path / "moved-approved-swap")
+    approved.mkdir()
+    (approved / "distinctive.md").write_text(
+        "swapped real directory private marker", encoding="utf-8"
+    )
+    assert not approved.is_symlink()
+
+    decided = _decide(
+        client,
+        challenge,
+        decision="confirm",
+        display_code=challenge["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "failed"
+
+    roots = client.get(
+        "/api/assistant/workspace/retrieval-roots", headers=ORIGIN_HEADERS
+    )
+    assert roots.status_code == 200, roots.text
+    assert roots.json() == []
+
+    searched = client.post(
+        "/api/assistant/retrieval/search",
+        headers=ORIGIN_HEADERS,
+        json={"query": "swapped real directory private marker", "limit": 10},
+    )
+    assert searched.status_code == 200, searched.text
+    assert searched.json()["matches"] == []
+
+    replay = _decide(
+        client,
+        challenge,
+        decision="confirm",
+        display_code=challenge["display_code"],
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "refused"
+    assert replay.json()["executed"] is False
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="secure root authorization requires Linux descriptor-relative primitives",
+)
 def test_confirmed_root_revalidates_network_policy_at_execution(
     client: TestClient, tmp_path: Path, monkeypatch
 ) -> None:
