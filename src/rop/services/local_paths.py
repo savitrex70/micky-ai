@@ -122,9 +122,7 @@ def open_directory_at(directory_fd: int, name: str) -> int:
         | os.O_NOFOLLOW
         | getattr(os, "O_CLOEXEC", 0)
     )
-    return _openat2(
-        directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE
-    )
+    return _openat2(directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE)
 
 
 def open_regular_file_at(directory_fd: int, name: str, flags: int) -> int:
