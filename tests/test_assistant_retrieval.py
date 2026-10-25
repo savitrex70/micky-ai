@@ -823,3 +823,35 @@ def test_workspace_root_add_fails_closed_without_openat2_support(
 
     assert raised.value.status_code == 422
     assert "securely verified" in str(raised.value.detail)
+
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or not local_paths.secure_directory_traversal_supported(),
+    reason="the special-file race check requires Linux O_PATH/openat2",
+)
+def test_regular_file_replaced_by_fifo_before_open_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    candidate = root / "candidate.txt"
+    candidate.write_text("original regular file content", encoding="utf-8")
+    replaced = False
+
+    def replace_with_fifo(path: Path, *, directory: bool) -> None:
+        nonlocal replaced
+        if not directory and path == candidate and not replaced:
+            candidate.unlink()
+            os.mkfifo(candidate)
+            replaced = True
+
+    monkeypatch.setattr(retrieval, "_before_candidate_open", replace_with_fifo)
+    matches, examined, skipped = search_roots(
+        [str(root)], "must not block or read fifo", 10
+    )
+
+    assert replaced
+    assert matches == []
+    assert examined == 1
+    assert skipped >= 1
