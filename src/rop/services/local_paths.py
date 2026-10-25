@@ -157,12 +157,13 @@ def contains_link_or_junction(path: Path) -> bool:
 
 
 def secure_directory_traversal_supported() -> bool:
-    """Whether this runtime supports descriptor-relative, no-follow traversal."""
+    """Whether Linux exposes the no-follow descriptors and mount identity we need."""
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
     supports_fd = getattr(os, "supports_fd", set())
     supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return bool(
-        os.name != "nt"
+        sys.platform.startswith("linux")
+        and _linux_mount_table() is not None
         and getattr(os, "open", None) in supports_dir_fd
         and getattr(os, "stat", None) in supports_dir_fd
         and getattr(os, "stat", None) in supports_follow_symlinks
@@ -225,20 +226,41 @@ def open_directory_descriptor(path: Path) -> int:
             os.close(descriptor)
 
 
-def directory_identity_from_stat(info: os.stat_result) -> str | None:
-    """Return the stable device/inode identity of a directory, or fail closed."""
+def descriptor_mount_id(descriptor: int) -> int | None:
+    """Return Linux's mount ID for an opened object, failing closed if unknown."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        lines = Path(f"/proc/self/fdinfo/{descriptor}").read_text(
+            encoding="ascii"
+        ).splitlines()
+        for line in lines:
+            name, separator, value = line.partition(":")
+            if separator and name == "mnt_id":
+                return int(value.strip())
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return None
+
+
+def directory_identity_from_descriptor(descriptor: int) -> str | None:
+    """Bind an approved directory to device, inode, and mount identity."""
+    info = os.fstat(descriptor)
     if not stat.S_ISDIR(info.st_mode):
         return None
     device = getattr(info, "st_dev", None)
     inode = getattr(info, "st_ino", None)
+    mount_id = descriptor_mount_id(descriptor)
     if (
         not isinstance(device, int)
         or not isinstance(inode, int)
         or device < 0
         or inode <= 0
+        or mount_id is None
+        or mount_id <= 0
     ):
         return None
-    return f"{device:x}:{inode:x}"
+    return f"{device:x}:{inode:x}:{mount_id:x}"
 
 
 def local_directory_identity(path: Path) -> str | None:
@@ -253,7 +275,7 @@ def local_directory_identity(path: Path) -> str | None:
     try:
         descriptor = open_directory_descriptor(supplied)
         try:
-            identity = directory_identity_from_stat(os.fstat(descriptor))
+            identity = directory_identity_from_descriptor(descriptor)
         finally:
             os.close(descriptor)
         refresh_mount_table()
