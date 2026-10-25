@@ -673,7 +673,9 @@ def test_retrieval_fails_closed_for_legacy_root_without_identity(
         "legacy root must not be searched", encoding="utf-8"
     )
 
-    matches, examined, skipped = search_roots([(str(root), None)], "must not be searched", 10)
+    matches, examined, skipped = search_roots(
+        [(str(root), None)], "must not be searched", 10
+    )
 
     assert matches == []
     assert examined == 0
