@@ -14,7 +14,7 @@ import rop.models  # noqa: F401
 from rop import database as database_module
 from rop.database import Base, get_db
 from rop.main import app
-from rop.services import workspace_executor
+from rop.services import local_paths, workspace_executor
 
 ORIGIN = "http://127.0.0.1:8000"
 ORIGIN_HEADERS = {
@@ -471,3 +471,115 @@ def test_overdue_challenge_is_refused_and_settled_to_expired(
         )
         assert settled is not None
         assert settled.status == "EXPIRED"
+
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="secure root authorization requires Linux descriptor-relative primitives",
+)
+def test_confirmed_root_cannot_authorize_replacement_directory(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A real challenge is consumed but cannot authorize a same-filesystem replacement."""
+    approved = tmp_path / "approved"
+    approved.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "distinctive.md").write_text(
+        "replacement directory private marker", encoding="utf-8"
+    )
+    key = uuid4()
+    prepared = client.post(
+        "/api/assistant/workspace/changes",
+        headers=ORIGIN_HEADERS,
+        json={
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(key),
+            "path": str(approved),
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+    assert body["status"] == "confirmation-required"
+    challenge = body["challenge"]
+
+    approved.rename(tmp_path / "moved-approved")
+    approved.mkdir()
+    (approved / "substitute.md").write_text(
+        "different directory identity", encoding="utf-8"
+    )
+
+    decided = _decide(
+        client,
+        challenge,
+        decision="confirm",
+        display_code=challenge["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "failed"
+
+    roots = client.get(
+        "/api/assistant/workspace/retrieval-roots", headers=ORIGIN_HEADERS
+    )
+    assert roots.status_code == 200, roots.text
+    assert roots.json() == []
+
+    replay = _decide(
+        client,
+        challenge,
+        decision="confirm",
+        display_code=challenge["display_code"],
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "refused"
+    assert replay.json()["executed"] is False
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="secure root authorization requires Linux descriptor-relative primitives",
+)
+def test_confirmed_root_revalidates_network_policy_at_execution(
+    client: TestClient, tmp_path: Path, monkeypatch
+) -> None:
+    """A policy change after prepare is rejected before registration."""
+    approved = tmp_path / "approved-network-change"
+    approved.mkdir()
+    key = uuid4()
+    prepared = client.post(
+        "/api/assistant/workspace/changes",
+        headers=ORIGIN_HEADERS,
+        json={
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(key),
+            "path": str(approved),
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+    assert body["status"] == "confirmation-required"
+    challenge = body["challenge"]
+
+    original_check = workspace_executor.is_network_path
+    monkeypatch.setattr(
+        workspace_executor,
+        "is_network_path",
+        lambda path: path == approved or original_check(path),
+    )
+    decided = _decide(
+        client,
+        challenge,
+        decision="confirm",
+        display_code=challenge["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "failed"
+
+    roots = client.get(
+        "/api/assistant/workspace/retrieval-roots", headers=ORIGIN_HEADERS
+    )
+    assert roots.status_code == 200, roots.text
+    assert roots.json() == []
