@@ -23,7 +23,8 @@ from rop.schemas.retrieval import (
 )
 from rop.services.local_paths import (
     contains_link_or_junction,
-    directory_identity_from_stat as _identity_from_stat,
+    descriptor_mount_id as _descriptor_mount_id,
+    directory_identity_from_descriptor as _identity_from_descriptor,
     is_junction as _is_junction,
     is_network_path as _is_network_path,
     local_directory_identity,
@@ -133,10 +134,12 @@ def search_roots(
         try:
             root_fd = open_directory_descriptor(root)
             root_info = os.fstat(root_fd)
-            opened_identity = _identity_from_stat(root_info)
+            opened_identity = _identity_from_descriptor(root_fd)
+            root_mount_id = _descriptor_mount_id(root_fd)
             if (
                 opened_identity is None
                 or opened_identity != approved_identity
+                or root_mount_id is None
                 or _is_network_path(root)
             ):
                 os.close(root_fd)
@@ -221,6 +224,7 @@ def search_roots(
                                     not stat.S_ISDIR(child_info.st_mode)
                                     or not _same_object(entry_info, child_info)
                                     or child_info.st_dev != root_device
+                                    or _descriptor_mount_id(child_fd) != root_mount_id
                                     or _is_network_path(candidate)
                                 ):
                                     os.close(child_fd)
@@ -268,6 +272,7 @@ def search_roots(
                                     not stat.S_ISREG(opened_info.st_mode)
                                     or not _same_object(entry_info, opened_info)
                                     or opened_info.st_dev != root_device
+                                    or _descriptor_mount_id(stream.fileno()) != root_mount_id
                                     or opened_info.st_size > read_limit
                                     or opened_info.st_size != entry_info.st_size
                                 ):
@@ -280,6 +285,7 @@ def search_roots(
                                     not stat.S_ISREG(final_info.st_mode)
                                     or not _same_object(opened_info, final_info)
                                     or final_info.st_dev != root_device
+                                    or _descriptor_mount_id(stream.fileno()) != root_mount_id
                                     or final_info.st_size > read_limit
                                     or len(content_bytes) != final_info.st_size
                                 ):
