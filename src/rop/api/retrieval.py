@@ -24,13 +24,17 @@ from rop.schemas.retrieval import (
     RetrievalSearchResponse,
 )
 from rop.services.local_paths import (
+    close_directory_descriptor,
     contains_link_or_junction,
+    iter_secure_directory_entries,
     local_directory_identity,
     open_directory_at,
     open_directory_descriptor,
     open_regular_file_at,
+    read_secure_file_handle,
     refresh_mount_table,
     secure_directory_traversal_supported,
+    secure_handle_info,
 )
 from rop.services.local_paths import (
     descriptor_mount_id as _descriptor_mount_id,
@@ -159,6 +163,239 @@ def search_roots(
     return outcome.matches, outcome.files_examined, outcome.skipped_files
 
 
+
+
+def _search_roots_windows(
+    root_paths: list[str | tuple[str, str | None]],
+    query: str,
+    limit: int,
+    *,
+    total_roots: int,
+) -> RetrievalOutcome:
+    """Search Windows roots using pinned native handles and no reparse traversal."""
+    needle = query.casefold()
+    matches: list[RetrievalMatch] = []
+    files_examined = 0
+    skipped_files = 0
+    skipped_entries = 0
+    entries_examined = 0
+    bytes_read = 0
+    root_paths_seen: set[str] = set()
+    roots_examined = 0
+    roots_rejected = 0
+    stop = False
+
+    for root_spec in root_paths:
+        if stop or roots_examined >= _MAX_ROOTS_PER_REQUEST:
+            break
+        roots_examined += 1
+        raw_root, approved_identity = _root_spec(root_spec)
+        root = _safe_root(raw_root)
+        if root is None or not approved_identity:
+            roots_rejected += 1
+            continue
+        root_key = _path_key(root)
+        if root_key in root_paths_seen:
+            continue
+        root_paths_seen.add(root_key)
+
+        _after_root_validation(root)
+        try:
+            root_handle = open_directory_descriptor(root)
+            root_info = secure_handle_info(root_handle)
+            root_volume = root_info.volume_id
+            if (
+                not root_info.is_directory
+                or root_info.is_reparse_point
+                or root_info.is_device
+                or root_info.delete_pending
+                or root_info.identity != approved_identity
+                or not root_volume
+                or _is_network_path(root)
+            ):
+                close_directory_descriptor(root_handle)
+                roots_rejected += 1
+                continue
+        except (OSError, RuntimeError, TypeError, ValueError):
+            roots_rejected += 1
+            continue
+
+        pending: list[tuple[Path, int]] = [(root, root_handle)]
+        directories_seen = 0
+        try:
+            while pending and not stop:
+                current, current_handle = pending.pop()
+                try:
+                    if directories_seen >= _MAX_DIRECTORIES_PER_ROOT:
+                        skipped_entries += 1
+                        stop = True
+                        continue
+                    directories_seen += 1
+
+                    if _is_network_path(current):
+                        skipped_entries += 1
+                        continue
+
+                    entries = []
+                    try:
+                        for entry in iter_secure_directory_entries(current_handle):
+                            if entries_examined >= _MAX_ENTRIES_PER_REQUEST:
+                                skipped_entries += 1
+                                stop = True
+                                break
+                            entries_examined += 1
+                            entries.append(entry)
+                    except (OSError, RuntimeError, TypeError, ValueError):
+                        skipped_entries += 1
+                        continue
+
+                    child_directories: list[tuple[Path, int]] = []
+                    for entry in sorted(entries, key=lambda item: item.name.casefold()):
+                        candidate = current / entry.name
+                        if entry.is_reparse_point or entry.is_device:
+                            skipped_entries += 1
+                            continue
+
+                        if entry.is_directory:
+                            if entry.volume_id != root_volume:
+                                skipped_entries += 1
+                                continue
+                            queued_directories = (
+                                directories_seen + len(pending) + len(child_directories)
+                            )
+                            if queued_directories >= _MAX_DIRECTORIES_PER_ROOT:
+                                skipped_entries += 1
+                                continue
+                            _before_candidate_open(candidate, directory=True)
+                            try:
+                                if _is_network_path(candidate):
+                                    skipped_entries += 1
+                                    continue
+                                child_handle = open_directory_at(
+                                    current_handle, entry.name
+                                )
+                                child_info = secure_handle_info(child_handle)
+                                if (
+                                    not child_info.is_directory
+                                    or child_info.is_reparse_point
+                                    or child_info.is_device
+                                    or child_info.delete_pending
+                                    or child_info.identity != entry.identity
+                                    or child_info.volume_id != root_volume
+                                    or _is_network_path(candidate)
+                                ):
+                                    close_directory_descriptor(child_handle)
+                                    skipped_entries += 1
+                                    continue
+                            except (OSError, RuntimeError, TypeError, ValueError):
+                                skipped_entries += 1
+                                continue
+                            child_directories.append((candidate, child_handle))
+                            continue
+
+                        if files_examined >= _MAX_FILES_PER_REQUEST:
+                            skipped_files += 1
+                            stop = True
+                            break
+                        files_examined += 1
+                        if candidate.suffix.casefold() not in _ALLOWED_SUFFIXES:
+                            skipped_files += 1
+                            continue
+
+                        remaining_bytes = _MAX_BYTES_PER_REQUEST - bytes_read
+                        if remaining_bytes <= 0:
+                            skipped_files += 1
+                            stop = True
+                            break
+                        read_limit = min(_MAX_FILE_BYTES, remaining_bytes)
+                        if entry.volume_id != root_volume or entry.size > read_limit:
+                            skipped_files += 1
+                            continue
+
+                        _before_candidate_open(candidate, directory=False)
+                        try:
+                            if _is_network_path(candidate):
+                                skipped_files += 1
+                                continue
+                            file_handle = open_regular_file_at(
+                                current_handle, entry.name, 0
+                            )
+                            try:
+                                opened_info = secure_handle_info(file_handle)
+                                if (
+                                    opened_info.is_directory
+                                    or opened_info.is_reparse_point
+                                    or opened_info.is_device
+                                    or opened_info.delete_pending
+                                    or opened_info.identity != entry.identity
+                                    or opened_info.volume_id != root_volume
+                                    or opened_info.size != entry.size
+                                    or opened_info.size > read_limit
+                                ):
+                                    skipped_files += 1
+                                    continue
+                                content_bytes, final_info = read_secure_file_handle(
+                                    file_handle, read_limit
+                                )
+                                if (
+                                    final_info.identity != opened_info.identity
+                                    or final_info.volume_id != root_volume
+                                    or final_info.size != opened_info.size
+                                    or len(content_bytes) != final_info.size
+                                ):
+                                    skipped_files += 1
+                                    continue
+                                bytes_read += len(content_bytes)
+                                content = content_bytes.decode("utf-8")
+                            finally:
+                                close_directory_descriptor(file_handle)
+                        except (OSError, UnicodeError, RuntimeError, TypeError, ValueError):
+                            skipped_files += 1
+                            continue
+
+                        index = content.casefold().find(needle)
+                        if index < 0:
+                            continue
+                        start = max(0, index - 120)
+                        end = min(len(content), index + len(query) + 240)
+                        snippet = " ".join(content[start:end].split())[:500]
+                        matches.append(
+                            RetrievalMatch(path=str(candidate), snippet=snippet)
+                        )
+                        if len(matches) >= limit:
+                            stop = True
+                            break
+
+                    pending.extend(reversed(child_directories))
+                    if stop:
+                        for _, child_handle in child_directories:
+                            if any(handle == child_handle for _, handle in pending):
+                                continue
+                            try:
+                                close_directory_descriptor(child_handle)
+                            except OSError:
+                                pass
+                finally:
+                    close_directory_descriptor(current_handle)
+        finally:
+            for _, handle in pending:
+                try:
+                    close_directory_descriptor(handle)
+                except OSError:
+                    pass
+
+    return RetrievalOutcome(
+        matches=matches,
+        files_examined=files_examined,
+        skipped_files=skipped_files,
+        roots_examined=roots_examined,
+        roots_skipped=max(0, total_roots - roots_examined),
+        roots_rejected=roots_rejected,
+        skipped_entries=skipped_entries,
+        secure_backend_available=True,
+    )
+
+
 def search_roots_detailed(
     root_paths: list[str | tuple[str, str | None]],
     query: str,
@@ -179,6 +416,10 @@ def search_roots_detailed(
         # authorized root is unsearched, and no file is reported as skipped.
         return RetrievalOutcome(
             [], 0, 0, 0, total_roots, 0, secure_backend_available=False
+        )
+    if os.name == "nt":
+        return _search_roots_windows(
+            root_paths, query, limit, total_roots=total_roots
         )
 
     refresh_mount_table()
