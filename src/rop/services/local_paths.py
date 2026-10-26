@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 import sys
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -30,6 +31,537 @@ class _OpenHow(ctypes.Structure):
         ("mode", ctypes.c_uint64),
         ("resolve", ctypes.c_uint64),
     ]
+
+
+# Windows backend constants. All traversal is handle-relative; pathname checks are
+# defense in depth, not the authority used to open entries.
+_WIN_FILE_READ_DATA = 0x0001
+_WIN_FILE_LIST_DIRECTORY = 0x0001
+_WIN_FILE_READ_ATTRIBUTES = 0x0080
+_WIN_SYNCHRONIZE = 0x00100000
+_WIN_FILE_OPEN = 1
+_WIN_FILE_DIRECTORY_FILE = 0x00000001
+_WIN_FILE_NON_DIRECTORY_FILE = 0x00000040
+_WIN_FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
+_WIN_FILE_OPEN_REPARSE_POINT = 0x00200000
+_WIN_OBJ_CASE_INSENSITIVE = 0x00000040
+_WIN_OBJ_DONT_REPARSE = 0x00001000
+_WIN_FILE_SHARE_READ = 0x00000001
+_WIN_FILE_SHARE_WRITE = 0x00000002
+_WIN_FILE_SHARE_DELETE = 0x00000004
+_WIN_FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+_WIN_FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+_WIN_FILE_ATTRIBUTE_DEVICE = 0x00000040
+_WIN_FILE_ATTRIBUTE_TAG_INFO = 9
+_WIN_FILE_STANDARD_INFO = 1
+_WIN_FILE_ID_INFO = 18
+_WIN_FILE_ID_EXTD_DIRECTORY_INFO = 19
+_WIN_FILE_ID_EXTD_DIRECTORY_RESTART_INFO = 20
+_WIN_ERROR_NO_MORE_FILES = 18
+_WIN_ERROR_HANDLE_EOF = 38
+_WIN_ERROR_NO_MORE_ITEMS = 259
+_WIN_DIRECTORY_RECORD_NAME_OFFSET = 88
+_WIN_DIRECTORY_RECORD_HEADER_SIZE = 88
+_WIN_DIRECTORY_BUFFER_SIZE = 65536
+
+
+class _WinFileId128(ctypes.Structure):
+    _fields_ = [("Identifier", ctypes.c_ubyte * 16)]
+
+
+class _WinFileIdInfo(ctypes.Structure):
+    _fields_ = [
+        ("VolumeSerialNumber", ctypes.c_uint64),
+        ("FileId", _WinFileId128),
+    ]
+
+
+class _WinFileAttributeTagInfo(ctypes.Structure):
+    _fields_ = [
+        ("FileAttributes", ctypes.c_uint32),
+        ("ReparseTag", ctypes.c_uint32),
+    ]
+
+
+class _WinFileStandardInfo(ctypes.Structure):
+    _fields_ = [
+        ("AllocationSize", ctypes.c_int64),
+        ("EndOfFile", ctypes.c_int64),
+        ("NumberOfLinks", ctypes.c_uint32),
+        ("DeletePending", ctypes.c_ubyte),
+        ("Directory", ctypes.c_ubyte),
+    ]
+
+
+class _WinUnicodeString(ctypes.Structure):
+    _fields_ = [
+        ("Length", ctypes.c_ushort),
+        ("MaximumLength", ctypes.c_ushort),
+        ("Buffer", ctypes.c_wchar_p),
+    ]
+
+
+class _WinObjectAttributes(ctypes.Structure):
+    _fields_ = [
+        ("Length", ctypes.c_ulong),
+        ("RootDirectory", ctypes.c_void_p),
+        ("ObjectName", ctypes.POINTER(_WinUnicodeString)),
+        ("Attributes", ctypes.c_ulong),
+        ("SecurityDescriptor", ctypes.c_void_p),
+        ("SecurityQualityOfService", ctypes.c_void_p),
+    ]
+
+
+class _WinIoStatusUnion(ctypes.Union):
+    _fields_ = [
+        ("Status", ctypes.c_long),
+        ("Pointer", ctypes.c_void_p),
+    ]
+
+
+class _WinIoStatusBlock(ctypes.Structure):
+    _anonymous_ = ("StatusUnion",)
+    _fields_ = [
+        ("StatusUnion", _WinIoStatusUnion),
+        ("Information", ctypes.c_size_t),
+    ]
+
+
+@dataclass(frozen=True)
+class SecureHandleInfo:
+    """Identity and classification queried from an open Windows file handle."""
+
+    identity: str
+    volume_id: int
+    file_id: str
+    size: int
+    is_directory: bool
+    is_reparse_point: bool
+    delete_pending: bool
+
+
+@dataclass(frozen=True)
+class SecureDirectoryEntry:
+    """A directory entry returned by a handle-based Windows enumeration."""
+
+    name: str
+    identity: str
+    volume_id: int
+    size: int
+    is_directory: bool
+    is_reparse_point: bool
+
+
+@lru_cache(maxsize=1)
+def _windows_api():
+    """Load the Windows handle APIs once, with explicit ctypes signatures."""
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "Windows filesystem APIs are unavailable")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    kernel.CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    kernel.GetFileInformationByHandleEx.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    kernel.GetFileInformationByHandleEx.restype = ctypes.c_int
+    kernel.ReadFile.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_void_p,
+    ]
+    kernel.ReadFile.restype = ctypes.c_int
+    kernel.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+    kernel.GetDriveTypeW.restype = ctypes.c_uint32
+    ntdll.NtCreateFile.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_uint32,
+        ctypes.POINTER(_WinObjectAttributes),
+        ctypes.POINTER(_WinIoStatusBlock),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    ntdll.NtCreateFile.restype = ctypes.c_long
+    ntdll.RtlNtStatusToDosError.argtypes = [ctypes.c_long]
+    ntdll.RtlNtStatusToDosError.restype = ctypes.c_uint32
+    return kernel, ntdll
+
+
+def _windows_os_error(operation: str, code: int | None = None) -> OSError:
+    error_code = ctypes.get_last_error() if code is None else code
+    if error_code <= 0:
+        error_code = errno.EIO
+    return OSError(error_code, f"{operation} failed with Windows error {error_code}")
+
+
+def close_directory_descriptor(descriptor: int) -> None:
+    """Close a descriptor or native directory handle using its owning API."""
+    if os.name == "nt":
+        kernel, _ = _windows_api()
+        if descriptor and not kernel.CloseHandle(ctypes.c_void_p(descriptor)):
+            raise _windows_os_error("CloseHandle")
+    else:
+        os.close(descriptor)
+
+
+def secure_handle_info(handle: int) -> SecureHandleInfo:
+    """Return file identity and type from an already opened Windows handle."""
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "native handle metadata is Windows-only")
+    kernel, _ = _windows_api()
+    handle_value = ctypes.c_void_p(handle)
+    tag = _WinFileAttributeTagInfo()
+    standard = _WinFileStandardInfo()
+    identity = _WinFileIdInfo()
+    for info_class, target in (
+        (_WIN_FILE_ATTRIBUTE_TAG_INFO, tag),
+        (_WIN_FILE_STANDARD_INFO, standard),
+        (_WIN_FILE_ID_INFO, identity),
+    ):
+        if not kernel.GetFileInformationByHandleEx(
+            handle_value, info_class, ctypes.byref(target), ctypes.sizeof(target)
+        ):
+            raise _windows_os_error("GetFileInformationByHandleEx")
+    file_id = bytes(identity.FileId.Identifier).hex()
+    volume_id = int(identity.VolumeSerialNumber)
+    attributes = int(tag.FileAttributes)
+    return SecureHandleInfo(
+        identity=f"{volume_id:x}:{file_id}:{volume_id:x}",
+        volume_id=volume_id,
+        file_id=file_id,
+        size=int(standard.EndOfFile),
+        is_directory=bool(standard.Directory),
+        is_reparse_point=bool(
+            attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or tag.ReparseTag
+        ),
+        delete_pending=bool(standard.DeletePending),
+    )
+
+
+def _windows_open_drive_root(drive: str) -> int:
+    """Open a fixed/removable drive root without following a reparse point."""
+    kernel, _ = _windows_api()
+    normalized_drive = drive if drive.endswith("\\") else drive + "\\"
+    drive_type = int(kernel.GetDriveTypeW(normalized_drive))
+    if drive_type not in (2, 3):
+        raise OSError(errno.EPERM, "only local fixed/removable drives are permitted")
+    flags = 0x02000000 | _WIN_FILE_OPEN_REPARSE_POINT  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+    raw_handle = kernel.CreateFileW(
+        normalized_drive,
+        _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_READ_ATTRIBUTES,
+        _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE,
+        None,
+        3,  # OPEN_EXISTING
+        flags,
+        None,
+    )
+    if raw_handle is None or raw_handle == ctypes.c_void_p(-1).value:
+        raise _windows_os_error("open local drive root")
+    handle = int(raw_handle)
+    try:
+        info = secure_handle_info(handle)
+        if (
+            not info.is_directory
+            or info.is_reparse_point
+            or info.delete_pending
+        ):
+            raise OSError(errno.EPERM, "drive root is not a permitted directory")
+        return handle
+    except Exception:
+        kernel.CloseHandle(ctypes.c_void_p(handle))
+        raise
+
+
+def _windows_open_relative(
+    parent_handle: int, name: str, *, directory: bool
+) -> int:
+    """Open one child relative to a pinned parent handle; never follow reparses."""
+    if (
+        not name
+        or name in {".", ".."}
+        or "\x00" in name
+        or "/" in name
+        or "\\" in name
+        or len(name.encode("utf-16-le")) > 65532
+    ):
+        raise OSError(errno.EINVAL, "invalid relative filename")
+    kernel, ntdll = _windows_api()
+    encoded_length = len(name.encode("utf-16-le"))
+    name_buffer = ctypes.create_unicode_buffer(name)
+    unicode_name = _WinUnicodeString(
+        encoded_length,
+        encoded_length + 2,
+        ctypes.cast(name_buffer, ctypes.c_wchar_p),
+    )
+    attributes = _WinObjectAttributes(
+        ctypes.sizeof(_WinObjectAttributes),
+        ctypes.c_void_p(parent_handle),
+        ctypes.pointer(unicode_name),
+        _WIN_OBJ_CASE_INSENSITIVE | _WIN_OBJ_DONT_REPARSE,
+        None,
+        None,
+    )
+    io_status = _WinIoStatusBlock()
+    output_handle = ctypes.c_void_p()
+    access = _WIN_FILE_READ_ATTRIBUTES | _WIN_SYNCHRONIZE
+    options = _WIN_FILE_OPEN_REPARSE_POINT | _WIN_FILE_SYNCHRONOUS_IO_NONALERT
+    if directory:
+        access |= _WIN_FILE_LIST_DIRECTORY
+        options |= _WIN_FILE_DIRECTORY_FILE
+        share = _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE
+    else:
+        # Refusing write/delete sharing prevents a new writer or rename/delete
+        # from racing the bounded read while this handle is open.
+        access |= _WIN_FILE_READ_DATA
+        options |= _WIN_FILE_NON_DIRECTORY_FILE
+        share = _WIN_FILE_SHARE_READ
+    status_code = int(
+        ntdll.NtCreateFile(
+            ctypes.byref(output_handle),
+            access,
+            ctypes.byref(attributes),
+            ctypes.byref(io_status),
+            None,
+            0,
+            share,
+            _WIN_FILE_OPEN,
+            options,
+            None,
+            0,
+        )
+    )
+    if status_code < 0:
+        error_code = int(ntdll.RtlNtStatusToDosError(status_code))
+        raise _windows_os_error("safe handle-relative file open", error_code)
+    if not output_handle.value:
+        raise OSError(errno.EIO, "safe handle-relative open returned no handle")
+    handle = int(output_handle.value)
+    try:
+        info = secure_handle_info(handle)
+        if (
+            info.is_reparse_point
+            or info.delete_pending
+            or info.is_directory != directory
+        ):
+            raise OSError(errno.EPERM, "relative entry type or reparse policy refused")
+        return handle
+    except Exception:
+        kernel.CloseHandle(ctypes.c_void_p(handle))
+        raise
+
+
+def iter_secure_directory_entries(handle: int):
+    """Yield entries enumerated by handle, using bounded native API buffers."""
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "native handle enumeration is Windows-only")
+    kernel, _ = _windows_api()
+    first = True
+    while True:
+        buffer = ctypes.create_string_buffer(_WIN_DIRECTORY_BUFFER_SIZE)
+        info_class = (
+            _WIN_FILE_ID_EXTD_DIRECTORY_RESTART_INFO
+            if first
+            else _WIN_FILE_ID_EXTD_DIRECTORY_INFO
+        )
+        first = False
+        if not kernel.GetFileInformationByHandleEx(
+            ctypes.c_void_p(handle),
+            info_class,
+            ctypes.byref(buffer),
+            ctypes.sizeof(buffer),
+        ):
+            error_code = ctypes.get_last_error()
+            if error_code in (
+                _WIN_ERROR_NO_MORE_FILES,
+                _WIN_ERROR_HANDLE_EOF,
+                _WIN_ERROR_NO_MORE_ITEMS,
+            ):
+                return
+            raise _windows_os_error("handle-relative directory enumeration", error_code)
+
+        base = ctypes.addressof(buffer)
+        offset = 0
+        while True:
+            if offset + _WIN_DIRECTORY_RECORD_HEADER_SIZE > _WIN_DIRECTORY_BUFFER_SIZE:
+                raise OSError(errno.EIO, "invalid native directory record bounds")
+            next_offset = int.from_bytes(
+                ctypes.string_at(base + offset, 4), "little", signed=False
+            )
+            file_size = int.from_bytes(
+                ctypes.string_at(base + offset + 40, 8), "little", signed=True
+            )
+            attributes = int.from_bytes(
+                ctypes.string_at(base + offset + 56, 4), "little", signed=False
+            )
+            name_length = int.from_bytes(
+                ctypes.string_at(base + offset + 60, 4), "little", signed=False
+            )
+            reparse_tag = int.from_bytes(
+                ctypes.string_at(base + offset + 68, 4), "little", signed=False
+            )
+            name_end = offset + _WIN_DIRECTORY_RECORD_NAME_OFFSET + name_length
+            if (
+                name_length <= 0
+                or name_length % 2
+                or name_end > _WIN_DIRECTORY_BUFFER_SIZE
+                or file_size < 0
+            ):
+                raise OSError(errno.EIO, "invalid native directory entry")
+            name = ctypes.string_at(
+                base + offset + _WIN_DIRECTORY_RECORD_NAME_OFFSET, name_length
+            ).decode("utf-16-le", errors="strict")
+            if (
+                name in {".", ".."}
+                or "\x00" in name
+                or "/" in name
+                or "\\" in name
+            ):
+                raise OSError(errno.EPERM, "unexpected native directory name")
+            file_id = ctypes.string_at(base + offset + 72, 16).hex()
+            volume_id = secure_handle_info(handle).volume_id
+            is_directory = bool(attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY)
+            is_reparse = bool(
+                attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or reparse_tag
+            )
+            yield SecureDirectoryEntry(
+                name=name,
+                identity=f"{volume_id:x}:{file_id}:{volume_id:x}",
+                volume_id=volume_id,
+                size=file_size,
+                is_directory=is_directory,
+                is_reparse_point=is_reparse,
+            )
+            if next_offset == 0:
+                break
+            if (
+                next_offset < _WIN_DIRECTORY_RECORD_HEADER_SIZE
+                or next_offset % 8
+                or offset + next_offset >= _WIN_DIRECTORY_BUFFER_SIZE
+            ):
+                raise OSError(errno.EIO, "invalid native directory entry offset")
+            offset += next_offset
+
+
+def read_secure_file_handle(handle: int, maximum_bytes: int) -> tuple[bytes, SecureHandleInfo]:
+    """Read a pinned Windows file only if identity, type, size and stability hold."""
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "native handle reading is Windows-only")
+    kernel, _ = _windows_api()
+    before = secure_handle_info(handle)
+    if (
+        before.is_directory
+        or before.is_reparse_point
+        or before.delete_pending
+        or before.size < 0
+        or before.size > maximum_bytes
+    ):
+        raise OSError(errno.EPERM, "file metadata violates retrieval policy")
+    chunks: list[bytes] = []
+    remaining = before.size
+    while remaining:
+        amount = min(65536, remaining)
+        buffer = ctypes.create_string_buffer(amount)
+        read_count = ctypes.c_uint32()
+        if not kernel.ReadFile(
+            ctypes.c_void_p(handle),
+            ctypes.byref(buffer),
+            amount,
+            ctypes.byref(read_count),
+            None,
+        ):
+            raise _windows_os_error("bounded file read")
+        if read_count.value == 0 or read_count.value > amount:
+            raise OSError(errno.EIO, "file read ended before the recorded size")
+        chunks.append(ctypes.string_at(ctypes.addressof(buffer), read_count.value))
+        remaining -= read_count.value
+    content = b"".join(chunks)
+    after = secure_handle_info(handle)
+    if (
+        before.identity != after.identity
+        or before.volume_id != after.volume_id
+        or before.size != after.size
+        or after.is_directory
+        or after.is_reparse_point
+        or after.delete_pending
+        or len(content) != after.size
+    ):
+        raise OSError(errno.EPERM, "file identity or size changed during retrieval")
+    return content, after
+
+
+@lru_cache(maxsize=1)
+def _windows_secure_backend_supported() -> bool:
+    """Probe the required Windows handle identity, relative-open, and enumeration APIs."""
+    if os.name != "nt":
+        return False
+    handle = -1
+    child = -1
+    try:
+        windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+        handle = _windows_open_drive_root(windir.drive or os.environ.get("SystemDrive", "C:"))
+        root_info = secure_handle_info(handle)
+        if not root_info.is_directory or root_info.is_reparse_point:
+            return False
+        # Probe a real relative directory open under a pinned handle. The
+        # Windows directory is expected to exist on the system volume.
+        parts = windir.parts[1:]
+        if parts:
+            child = _windows_open_relative(handle, parts[0], directory=True)
+            child_info = secure_handle_info(child)
+            if (
+                not child_info.is_directory
+                or child_info.is_reparse_point
+                or child_info.volume_id != root_info.volume_id
+            ):
+                return False
+            kernel, _ = _windows_api()
+            buffer = ctypes.create_string_buffer(_WIN_DIRECTORY_BUFFER_SIZE)
+            ok = kernel.GetFileInformationByHandleEx(
+                ctypes.c_void_p(child),
+                _WIN_FILE_ID_EXTD_DIRECTORY_RESTART_INFO,
+                ctypes.byref(buffer),
+                ctypes.sizeof(buffer),
+            )
+            if not ok and ctypes.get_last_error() not in (
+                _WIN_ERROR_NO_MORE_FILES,
+                _WIN_ERROR_HANDLE_EOF,
+                _WIN_ERROR_NO_MORE_ITEMS,
+            ):
+                return False
+        return True
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+    finally:
+        if child >= 0:
+            try:
+                close_directory_descriptor(child)
+            except OSError:
+                pass
+        if handle >= 0:
+            try:
+                close_directory_descriptor(handle)
+            except OSError:
+                pass
 
 
 def _openat2_syscall_number() -> int | None:
