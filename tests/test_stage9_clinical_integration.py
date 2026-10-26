@@ -111,6 +111,9 @@ def test_clinical_audited_workflow_is_separate_from_personal_conversations() -> 
     assert 'id="clinical-run-reasoning"' in page.text
     assert 'id="clinical-reasoning-result"' in page.text
     assert "/reasoning-run/execute-fully-audited" in javascript.text
+    assert 'jsonRequest("/sessions?offset=0&limit=50")' in javascript.text
+    assert 'jsonRequest("/sessions", {' in javascript.text
+    assert "/api/sessions" not in javascript.text
     assert "result.package_consistent === true" in javascript.text
     assert "clinicalReasoningResult.textContent = JSON.stringify(result, null, 2)" in (
         javascript.text

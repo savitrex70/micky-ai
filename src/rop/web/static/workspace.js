@@ -420,7 +420,7 @@
 
   async function loadClinicalSessions() {
     try {
-      const sessions = await jsonRequest("/api/sessions?offset=0&limit=50");
+      const sessions = await jsonRequest("/sessions?offset=0&limit=50");
       clinicalSessions.replaceChildren();
       if (!sessions.length) {
         clinicalSessions.appendChild(element("p", "No clinical reasoning sessions yet.", "help"));
@@ -453,7 +453,7 @@
     if (!selectedClinicalSession) return;
     try {
       const observations = await jsonRequest(
-        "/api/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/observations"
+        "/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/observations"
       );
       clinicalObservations.replaceChildren();
       if (!observations.length) clinicalObservations.appendChild(element("li", "No observations recorded."));
@@ -526,7 +526,7 @@
       metadata: {},
     };
     try {
-      const created = await jsonRequest("/api/sessions", {
+      const created = await jsonRequest("/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -550,7 +550,7 @@
     };
     try {
       await jsonRequest(
-        "/api/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/observations",
+        "/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/observations",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -568,7 +568,7 @@
     if (!selectedClinicalSession) return;
     try {
       const response = await jsonRequest(
-        "/api/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/extract-observations",
+        "/sessions/" + encodeURIComponent(selectedClinicalSession.id) + "/extract-observations",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -597,7 +597,7 @@
     );
     try {
       const result = await jsonRequest(
-        "/api/sessions/" +
+        "/sessions/" +
           encodeURIComponent(selectedClinicalSession.id) +
           "/reasoning-run/execute-fully-audited",
         { method: "POST" }
