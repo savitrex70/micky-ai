@@ -1,11 +1,11 @@
 """Contract and persistence tests for the bounded personal-data export."""
 
-from collections.abc import Generator
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import shutil
 import subprocess
+from collections.abc import Generator
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
