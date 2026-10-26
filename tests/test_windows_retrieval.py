@@ -145,3 +145,35 @@ def test_windows_open_directory_blocks_rename_until_handle_is_closed(
 
     child.rename(displaced)
     assert displaced.is_dir()
+
+
+def test_windows_file_replacement_after_enumeration_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _require_secure_windows_backend()
+    root = tmp_path / "approved"
+    root.mkdir()
+    candidate = root / "note.md"
+    candidate.write_text("authorized but not matched", encoding="utf-8")
+    identity = local_paths.local_directory_identity(root)
+    assert identity is not None
+    substituted = False
+
+    def replace_before_open(path: Path, *, directory: bool) -> None:
+        nonlocal substituted
+        if directory or path != candidate or substituted:
+            return
+        candidate.unlink()
+        candidate.write_text("replacement secret marker", encoding="utf-8")
+        substituted = True
+
+    monkeypatch.setattr(retrieval, "_before_candidate_open", replace_before_open)
+    outcome = retrieval.search_roots_detailed(
+        [(str(root), identity)], "replacement secret marker", 10
+    )
+
+    assert substituted
+    assert outcome.matches == []
+    assert outcome.files_examined == 1
+    assert outcome.skipped_files >= 1
+    assert outcome.roots_rejected == 0
