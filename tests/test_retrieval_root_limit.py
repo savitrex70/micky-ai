@@ -239,6 +239,7 @@ def test_response_contract_keeps_existing_fields_and_defaults() -> None:
     assert response.roots_skipped == 0
     assert response.roots_limit == LIMIT
     assert response.skipped_entries == 0
+    assert response.secure_backend_available is True
     assert LIMIT == 25
     with pytest.raises(ValueError):
         RetrievalSearchResponse(
@@ -248,6 +249,35 @@ def test_response_contract_keeps_existing_fields_and_defaults() -> None:
             skipped_files=0,
             surprise=True,  # type: ignore[call-arg]
         )
+
+
+def test_api_reports_unavailable_secure_backend_without_counting_files(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    specs = _make_roots(tmp_path, 1, files={0: "must not be opened"})
+    _persist(session_factory, specs)
+    monkeypatch.setattr(
+        retrieval, "secure_directory_traversal_supported", lambda: False
+    )
+
+    response = client.post(
+        "/api/assistant/retrieval/search",
+        headers=HEADERS,
+        json={"query": "must not", "limit": 20},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["secure_backend_available"] is False
+    assert body["matches"] == []
+    assert body["files_examined"] == 0
+    assert body["skipped_files"] == 0
+    assert body["roots_examined"] == 0
+    assert body["roots_rejected"] == 0
+    assert body["roots_skipped"] == 1
 
 
 @pytest.fixture
@@ -387,6 +417,7 @@ def test_api_with_more_roots_than_the_limit_is_bounded_and_honest(
     assert body["roots_examined"] == LIMIT
     assert body["roots_skipped"] == surplus
     assert body["roots_limit"] == LIMIT
+    assert body["secure_backend_available"] is True
     assert body["skipped_files"] == 0
     assert body["files_examined"] == 1
     # The bound holds at the database and at the filesystem.

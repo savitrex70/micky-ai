@@ -938,3 +938,13 @@ def test_records_ui_duplicate_delete_blocked_behavioural() -> None:
     assert out["postCalls"] == 1, (
         "duplicate Delete click issued " + str(out["postCalls"]) + " POSTs"
     )
+
+
+def test_retrieval_unavailable_backend_is_not_mislabeled_as_a_root_limit() -> None:
+    with TestClient(app) as client:
+        response = client.get("/static/workspace.js")
+
+    assert response.status_code == 200
+    assert "response.secure_backend_available === false" in response.text
+    assert "no folders were searched" in response.text
+    assert "response.roots_limit" in response.text

@@ -94,6 +94,7 @@ class RetrievalOutcome:
     roots_skipped: int
     roots_rejected: int = 0
     skipped_entries: int = 0
+    secure_backend_available: bool = True
 
 
 def _safe_root(raw_path: str) -> Path | None:
@@ -176,7 +177,9 @@ def search_roots_detailed(
     if not secure_directory_traversal_supported():
         # No file processing happened and no root was attempted: every
         # authorized root is unsearched, and no file is reported as skipped.
-        return RetrievalOutcome([], 0, 0, 0, total_roots, 0)
+        return RetrievalOutcome(
+            [], 0, 0, 0, total_roots, 0, secure_backend_available=False
+        )
 
     refresh_mount_table()
     needle = query.casefold()
@@ -458,6 +461,7 @@ def search_local_files(
         roots_rejected=outcome.roots_rejected,
         roots_limit=_MAX_ROOTS_PER_REQUEST,
         skipped_entries=outcome.skipped_entries,
+        secure_backend_available=outcome.secure_backend_available,
     )
 
 

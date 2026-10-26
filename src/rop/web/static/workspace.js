@@ -402,10 +402,13 @@
         ? " " + response.roots_rejected + " authorized folder(s) were not searched " +
           "because they failed a safety check (changed, unavailable, or not a permitted local folder)."
         : "") +
-      (response.roots_skipped
-        ? " " + response.roots_skipped + " authorized folder(s) were not searched " +
-          "in this request (limit " + response.roots_limit + " folders per search)."
-        : "")
+      (response.secure_backend_available === false
+        ? " Secure local retrieval is unavailable because the required safe " +
+          "filesystem primitives are not available; no folders were searched."
+        : (response.roots_skipped
+          ? " " + response.roots_skipped + " authorized folder(s) were not searched " +
+            "in this request (limit " + response.roots_limit + " folders per search)."
+          : ""))
     );
     if (!response.matches.length) {
       searchResults.appendChild(element("li", "No matches found in authorized folders."));

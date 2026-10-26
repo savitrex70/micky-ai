@@ -804,6 +804,7 @@ def test_retrieval_fails_closed_without_secure_openat2_support(
     assert outcome.roots_skipped == 1
     assert outcome.roots_rejected == 0
     assert outcome.skipped_files == 0
+    assert outcome.secure_backend_available is False
 
 
 @pytest.mark.skipif(

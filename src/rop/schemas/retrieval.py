@@ -61,3 +61,5 @@ class RetrievalSearchResponse(BaseModel):
     roots_limit: int = MAX_RETRIEVAL_ROOTS_PER_REQUEST
     # Non-file/unclassified entries refused by traversal; never a file count.
     skipped_entries: int = 0
+    # False means no root was searched because the strict secure backend is absent.
+    secure_backend_available: bool = True
