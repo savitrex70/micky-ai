@@ -673,6 +673,23 @@ def _openat2_supported() -> bool:
 
 def open_directory_at(directory_fd: int, name: str) -> int:
     """Open one child directory without links, escapes, or mount crossings."""
+    if os.name == "nt":
+        child = _windows_open_relative(directory_fd, name, directory=True)
+        try:
+            parent_info = secure_handle_info(directory_fd)
+            child_info = secure_handle_info(child)
+            if (
+                not child_info.is_directory
+                or child_info.is_reparse_point
+                or child_info.is_device
+                or child_info.delete_pending
+                or child_info.volume_id != parent_info.volume_id
+            ):
+                raise OSError(errno.EPERM, "child directory violated the local-handle policy")
+            return child
+        except Exception:
+            close_directory_descriptor(child)
+            raise
     if not _openat2_supported():
         raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
@@ -687,6 +704,21 @@ def open_regular_file_at(directory_fd: int, name: str, flags: int) -> int:
     attacker-mutable directory entry. If procfs or O_PATH is unavailable, fail
     closed instead of falling back to a pathname-based read open.
     """
+    if os.name == "nt":
+        opened = _windows_open_relative(directory_fd, name, directory=False)
+        try:
+            info = secure_handle_info(opened)
+            if (
+                info.is_directory
+                or info.is_reparse_point
+                or info.is_device
+                or info.delete_pending
+            ):
+                raise OSError(errno.EPERM, "candidate is not a permitted regular file")
+            return opened
+        except Exception:
+            close_directory_descriptor(opened)
+            raise
     if not _openat2_supported() or not hasattr(os, "O_PATH"):
         raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
     pinned = _openat2(
