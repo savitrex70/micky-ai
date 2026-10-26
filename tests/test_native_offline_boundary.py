@@ -286,3 +286,61 @@ def test_retrieval_search_route_stays_offline_under_runtime_network_guards(
     assert body["files_examined"] == 1
     assert body["roots_examined"] == 1
     assert body["roots_skipped"] == 0
+
+
+def _install_external_request_guards(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Guard outbound request/DNS seams while permitting ASGI loopback plumbing.
+
+    The ASGI TestClient event loop uses a local socketpair during startup, so
+    this startup check deliberately guards connection and request seams rather
+    than replacing the socket constructor. The stricter socket-constructor guard
+    remains active in the runtime inference/retrieval tests above.
+    """
+    attempts: list[str] = []
+
+    def guard(name: str):
+        def reject(*args: object, **kwargs: object):
+            attempts.append(name)
+            raise AssertionError(f"prohibited external call attempted: {name}")
+
+        return reject
+
+    monkeypatch.setattr(socket, "create_connection", guard("socket.create_connection"))
+    monkeypatch.setattr(socket, "getaddrinfo", guard("socket.getaddrinfo"))
+    monkeypatch.setattr(urllib.request, "urlopen", guard("urllib.request.urlopen"))
+    monkeypatch.setattr(
+        urllib.request, "build_opener", guard("urllib.request.build_opener")
+    )
+    monkeypatch.setattr(
+        http.client, "HTTPConnection", guard("http.client.HTTPConnection")
+    )
+    monkeypatch.setattr(
+        http.client, "HTTPSConnection", guard("http.client.HTTPSConnection")
+    )
+    return attempts
+
+
+def test_normal_local_startup_health_and_interface_need_no_external_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Start the real app and serve its local UI with outbound calls forbidden.
+
+    The test fixture disables the independent startup database-recovery sweep;
+    database recovery is exercised by its own PostgreSQL-backed tests. The
+    guards fail the test on any attempt to resolve an external name, open an
+    outbound connection, or use a Python HTTP/URL request seam.
+    """
+    from fastapi.testclient import TestClient
+
+    from rop.main import app
+
+    attempts = _install_external_request_guards(monkeypatch)
+    with TestClient(app) as client:
+        health = client.get("/health")
+        page = client.get("/")
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "healthy"}
+    assert page.status_code == 200
+    assert "Micky AI" in page.text
+    assert attempts == []
