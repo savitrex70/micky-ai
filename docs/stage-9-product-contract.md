@@ -325,12 +325,15 @@ Stage 9 capability inventory and remaining acceptance work:
     response preserves the previous rows, offset, total, and selection.
     The API adds backward-compatible `X-Total-Count` headers on its two
     list endpoints.
-  - Absent or not yet accepted: conversation export/import, per-message
-    editing, a general-purpose profile, a free-form model-backed chat path,
-    and the full Stage 9 end-to-end acceptance evidence. Conversation,
-    workspace, and clinical reasoning data remain separate domains.
-    Decisions H.1, H.3, and H.4 remain the approved boundaries for the
-    implementations described here.
+  - Absent or not yet accepted: conversation import, per-message editing,
+    a general-purpose profile, a free-form model-backed chat path, and the
+    full Stage 9 end-to-end acceptance evidence. A versioned, paginated JSON
+    export for saved conversations/messages and notes/tasks/reminders is now
+    implemented; confirmation records remain on their separate export
+    surface. Retrieval-root paths and clinical reasoning records are excluded
+    from this export. Conversation, workspace, confirmation, and clinical
+    reasoning data remain separate domains. Decisions H.1, H.3, and H.4
+    remain the approved boundaries for the implementations described here.
 
 #### B.1.6 Blocked or gated capabilities
 
@@ -778,9 +781,13 @@ Server-side status and remaining gaps:
   receipt recovery, uncertain outcomes, retry/replay behavior, and the
   browser-to-database flow on the current green test baseline.
 - **User-controlled records:** confirmation records have inspect/export/
-  delete controls. Conversations and workspace items have CRUD controls,
-  but full export/import for conversations and general workspace content
-  remains unimplemented.
+  delete controls. Conversations and workspace items have CRUD controls;
+  a v1 bounded JSON export of conversations/messages and notes/tasks/reminders
+  is implemented with API/UI regression coverage. Import remains unsupported.
+  Retrieval-root authorizations and clinical reasoning records are not included
+  in this general export; confirmation records remain separately exportable.
+  Full Stage 9 acceptance of the real browser download and concurrent-change
+  behavior is still required.
 
 ## F. Non-goals
 
