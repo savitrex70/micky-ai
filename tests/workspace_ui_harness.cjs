@@ -168,7 +168,7 @@ async function makePage() {
     if (path === "/api/assistant/workspace/retrieval-roots") {
       return response([]);
     }
-    if (path === "/api/sessions?offset=0&limit=50") {
+    if (path === "/sessions?offset=0&limit=50") {
       return response([]);
     }
     throw new Error("unexpected request: " + path);

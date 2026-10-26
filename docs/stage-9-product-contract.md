@@ -237,7 +237,7 @@ Current Stage 9.2-9.6 implementation on `main` (acceptance pending):
   Root selection is explicit, and traversal/symlink escape, unsupported
   file types, and network roots are excluded by the retrieval boundary.
 - **ROP reasoning integration (Stage 9.6):** a separate clinical-session
-  panel can run `/api/sessions/{session_id}/reasoning-run/execute-fully-audited`
+  panel can run `/sessions/{session_id}/reasoning-run/execute-fully-audited`
   and displays the result as text, with a distinction for package consistency.
   It does not turn the product into a free-form clinical chatbot; package
   consistency does not establish clinical validity, and reasoning-session IDs
