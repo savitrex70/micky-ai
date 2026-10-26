@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 from dataclasses import dataclass
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,6 +39,7 @@ class _OpenHow(ctypes.Structure):
 _WIN_FILE_READ_DATA = 0x0001
 _WIN_FILE_LIST_DIRECTORY = 0x0001
 _WIN_FILE_READ_ATTRIBUTES = 0x0080
+_WIN_FILE_TRAVERSE = 0x0020
 _WIN_SYNCHRONIZE = 0x00100000
 _WIN_FILE_OPEN = 1
 _WIN_FILE_DIRECTORY_FILE = 0x00000001
@@ -45,7 +47,6 @@ _WIN_FILE_NON_DIRECTORY_FILE = 0x00000040
 _WIN_FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
 _WIN_FILE_OPEN_REPARSE_POINT = 0x00200000
 _WIN_OBJ_CASE_INSENSITIVE = 0x00000040
-_WIN_OBJ_DONT_REPARSE = 0x00001000
 _WIN_FILE_SHARE_READ = 0x00000001
 _WIN_FILE_SHARE_WRITE = 0x00000002
 _WIN_FILE_SHARE_DELETE = 0x00000004
@@ -137,6 +138,7 @@ class SecureHandleInfo:
     size: int
     is_directory: bool
     is_reparse_point: bool
+    is_device: bool
     delete_pending: bool
 
 
@@ -150,6 +152,7 @@ class SecureDirectoryEntry:
     size: int
     is_directory: bool
     is_reparse_point: bool
+    is_device: bool
 
 
 @lru_cache(maxsize=1)
@@ -254,6 +257,7 @@ def secure_handle_info(handle: int) -> SecureHandleInfo:
         is_reparse_point=bool(
             attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or tag.ReparseTag
         ),
+        is_device=bool(attributes & _WIN_FILE_ATTRIBUTE_DEVICE),
         delete_pending=bool(standard.DeletePending),
     )
 
@@ -265,10 +269,14 @@ def _windows_open_drive_root(drive: str) -> int:
     drive_type = int(kernel.GetDriveTypeW(normalized_drive))
     if drive_type not in (2, 3):
         raise OSError(errno.EPERM, "only local fixed/removable drives are permitted")
-    flags = 0x02000000 | _WIN_FILE_OPEN_REPARSE_POINT  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+    flags = (
+        0x02000000 | _WIN_FILE_OPEN_REPARSE_POINT
+    )  # Backup semantics + open reparse point.
     raw_handle = kernel.CreateFileW(
         normalized_drive,
-        _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_READ_ATTRIBUTES,
+        _WIN_FILE_LIST_DIRECTORY
+        | _WIN_FILE_READ_ATTRIBUTES
+        | _WIN_FILE_TRAVERSE,
         _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE,
         None,
         3,  # OPEN_EXISTING
@@ -283,6 +291,7 @@ def _windows_open_drive_root(drive: str) -> int:
         if (
             not info.is_directory
             or info.is_reparse_point
+            or info.is_device
             or info.delete_pending
         ):
             raise OSError(errno.EPERM, "drive root is not a permitted directory")
@@ -302,6 +311,8 @@ def _windows_open_relative(
         or "\x00" in name
         or "/" in name
         or "\\" in name
+        or ":" in name
+        or name.endswith((".", " "))
         or len(name.encode("utf-16-le")) > 65532
     ):
         raise OSError(errno.EINVAL, "invalid relative filename")
@@ -317,7 +328,7 @@ def _windows_open_relative(
         ctypes.sizeof(_WinObjectAttributes),
         ctypes.c_void_p(parent_handle),
         ctypes.pointer(unicode_name),
-        _WIN_OBJ_CASE_INSENSITIVE | _WIN_OBJ_DONT_REPARSE,
+        _WIN_OBJ_CASE_INSENSITIVE,
         None,
         None,
     )
@@ -326,7 +337,7 @@ def _windows_open_relative(
     access = _WIN_FILE_READ_ATTRIBUTES | _WIN_SYNCHRONIZE
     options = _WIN_FILE_OPEN_REPARSE_POINT | _WIN_FILE_SYNCHRONOUS_IO_NONALERT
     if directory:
-        access |= _WIN_FILE_LIST_DIRECTORY
+        access |= _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_TRAVERSE
         options |= _WIN_FILE_DIRECTORY_FILE
         share = _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE
     else:
@@ -360,6 +371,7 @@ def _windows_open_relative(
         info = secure_handle_info(handle)
         if (
             info.is_reparse_point
+            or info.is_device
             or info.delete_pending
             or info.is_directory != directory
         ):
@@ -375,6 +387,15 @@ def iter_secure_directory_entries(handle: int):
     if os.name != "nt":
         raise OSError(errno.ENOTSUP, "native handle enumeration is Windows-only")
     kernel, _ = _windows_api()
+    parent_info = secure_handle_info(handle)
+    if (
+        not parent_info.is_directory
+        or parent_info.is_reparse_point
+        or parent_info.is_device
+        or parent_info.delete_pending
+    ):
+        raise OSError(errno.EPERM, "directory handle is not permitted")
+    volume_id = parent_info.volume_id
     first = True
     while True:
         buffer = ctypes.create_string_buffer(_WIN_DIRECTORY_BUFFER_SIZE)
@@ -438,11 +459,11 @@ def iter_secure_directory_entries(handle: int):
             ):
                 raise OSError(errno.EPERM, "unexpected native directory name")
             file_id = ctypes.string_at(base + offset + 72, 16).hex()
-            volume_id = secure_handle_info(handle).volume_id
             is_directory = bool(attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY)
             is_reparse = bool(
                 attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or reparse_tag
             )
+            is_device = bool(attributes & _WIN_FILE_ATTRIBUTE_DEVICE)
             yield SecureDirectoryEntry(
                 name=name,
                 identity=f"{volume_id:x}:{file_id}:{volume_id:x}",
@@ -450,6 +471,7 @@ def iter_secure_directory_entries(handle: int):
                 size=file_size,
                 is_directory=is_directory,
                 is_reparse_point=is_reparse,
+                is_device=is_device,
             )
             if next_offset == 0:
                 break
@@ -462,7 +484,9 @@ def iter_secure_directory_entries(handle: int):
             offset += next_offset
 
 
-def read_secure_file_handle(handle: int, maximum_bytes: int) -> tuple[bytes, SecureHandleInfo]:
+def read_secure_file_handle(
+    handle: int, maximum_bytes: int
+) -> tuple[bytes, SecureHandleInfo]:
     """Read a pinned Windows file only if identity, type, size and stability hold."""
     if os.name != "nt":
         raise OSError(errno.ENOTSUP, "native handle reading is Windows-only")
@@ -471,6 +495,7 @@ def read_secure_file_handle(handle: int, maximum_bytes: int) -> tuple[bytes, Sec
     if (
         before.is_directory
         or before.is_reparse_point
+        or before.is_device
         or before.delete_pending
         or before.size < 0
         or before.size > maximum_bytes
@@ -502,6 +527,7 @@ def read_secure_file_handle(handle: int, maximum_bytes: int) -> tuple[bytes, Sec
         or before.size != after.size
         or after.is_directory
         or after.is_reparse_point
+        or after.is_device
         or after.delete_pending
         or len(content) != after.size
     ):
@@ -511,14 +537,15 @@ def read_secure_file_handle(handle: int, maximum_bytes: int) -> tuple[bytes, Sec
 
 @lru_cache(maxsize=1)
 def _windows_secure_backend_supported() -> bool:
-    """Probe the required Windows handle identity, relative-open, and enumeration APIs."""
+    """Probe Windows handle identity, relative-open, and enumeration APIs."""
     if os.name != "nt":
         return False
     handle = -1
     child = -1
     try:
         windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
-        handle = _windows_open_drive_root(windir.drive or os.environ.get("SystemDrive", "C:"))
+        drive = windir.drive or os.environ.get("SystemDrive", "C:")
+        handle = _windows_open_drive_root(drive)
         root_info = secure_handle_info(handle)
         if not root_info.is_directory or root_info.is_reparse_point:
             return False
@@ -531,6 +558,8 @@ def _windows_secure_backend_supported() -> bool:
             if (
                 not child_info.is_directory
                 or child_info.is_reparse_point
+                or child_info.is_device
+                or child_info.delete_pending
                 or child_info.volume_id != root_info.volume_id
             ):
                 return False
