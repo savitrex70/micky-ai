@@ -3,7 +3,7 @@
 **Original Task 238 starting revision:** cfa5ad97c52a8cdc7ee7ee6b9af7a9497a946ab3  
 **Correction review base:** 440b2beef86bdfa63317c27d529bb51de0d3a8c5  
 **Scope:** Explicitly authorized local retrieval, path containment, bounded traversal and reads, and Python-level runtime network-denial tests.  
-**Status:** Implementation and tests are available for independent review; this document does not confer Stage 9 acceptance.
+**Status:** Linux secure-retrieval implementation and adversarial tests passed in the latest CI candidate; intended Windows target remains unsupported by the strict traversal backend. This task report does not confer Stage 9 acceptance.
 
 ## Confirmed defects addressed
 
@@ -27,11 +27,17 @@ tests/test_retrieval_root_limit.py proves the root bound by instrumenting the wo
 
 tests/test_native_offline_boundary.py also runs local retrieval, and the real in-process `POST /api/assistant/retrieval/search` route against a persisted root with a valid stored identity, under the suite's existing Python network guards. The guards record every attempt as well as raising, and the route test asserts the record is empty. The guards fail if the tested path attempts socket construction, socket-pair creation, connection creation, DNS resolution, urllib access, or HTTPConnection/HTTPSConnection calls.
 
+
+## Latest automated CI evidence
+
+The full PostgreSQL-backed CI run for code candidate `789d771fa4609b5c05091d6773f26fe040c9246d`, [run 40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463), passed: Ruff, Black, and pytest (**8,222 passed, 3 skipped, 36 warnings**). The real-junction integration and native Windows retrieval-policy tests are skipped on the Linux runner. These skips do not establish that Windows retrieval works.
+
 ## Verification limits
 
 - The local execution container had no repository checkout or Git metadata, and outbound DNS/network access was unavailable. Source files were read and updated directly through the repository API against the verified remote `main` history. Therefore no local working-tree status or local targeted pytest/Ruff/Black command could be run in this environment; only checks actually reported for the resulting SHA may be treated as executed.
 - The runtime offline test is a mocked Python-level boundary test, not proof of OS-wide network isolation. It does not verify network access attempted inside compiled dependency internals that bypass the guarded Python callables.
 - The Windows junction integration test, mapped-drive OS behavior, and network-mount classification have not been validated on a real Windows host or a real network-mounted filesystem. The network-policy race is deterministically simulated; it is not a live network-mount experiment. Mocked tests validate policy logic only. Linux mount containment is enforced using the opened object's mount ID, but no stress test with a concurrently mutated real mount namespace was performed.
-- No firewall-denied environment run, real browser walkthrough, PostgreSQL test, or Stage 9 acceptance is claimed by this task.
+- No firewall-denied environment run, real browser walkthrough, or Stage 9 acceptance is claimed by this task. The full PostgreSQL-backed CI suite ran successfully as described above.
+- The current strict retrieval backend is Linux-only. On the target Windows 10/11 environment, secure root authorization/search returns unavailable and fails closed. This is safer than a path-based fallback, but local retrieval is not functionally available on the intended target. Stage 9.5 cannot be accepted until a native Windows handle/file-identity/reparse-point-aware backend is implemented and tested on Windows, or the project owner explicitly changes the target-platform requirement.
 - Root limit: nothing yet caps how many roots a person may authorize. Roots beyond the 25 oldest are never searched until older roots are removed; the response and UI say so rather than implying full coverage. Capping authorization at add time, or paging searches across roots, is a product decision left open. `GET /api/assistant/workspace/retrieval-roots` still lists every root with a plain SQL query; it performs no filesystem work.
 - The route-level offline test starts the ASGI client and its event loop before the guards are installed (asyncio builds a socketpair at loop start), so the guards cover the request and retrieval work but not loop construction. Like the other runtime guards it is Python-level interception, not OS-wide network isolation.

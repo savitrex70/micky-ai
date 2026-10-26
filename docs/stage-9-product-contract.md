@@ -468,16 +468,10 @@ section E.1 applies to every entry below.
            reminder is silently dropped or duplicated.
 
 5. **Local retrieval from explicitly selected user data**
-   - Status: IMPLEMENTATION PRESENT; SECURITY/OFFLINE ACCEPTANCE PENDING.
-   - Outcome: user points the assistant at specific local files or
-     folders; the assistant retrieves from those only.
-   - Dependencies: the retrieval service and root management UI already
-     exist. The implementation reads only from explicitly authorized roots
-     and uses the tested `.txt`, `.md`, `.json`, and `.csv` allowlist;
-     path traversal, symlink escape, network roots, and unsupported formats
-     are excluded. Full security/offline acceptance remains pending.
-   - Acceptance: retrieval tests prove that unauthorized paths are not
-     read and that no external fetch occurs.
+   - Status: PARTIALLY IMPLEMENTED; Linux strict backend only; Windows target gap remains.
+   - Outcome: the UI can manage explicitly authorized roots, and a secure Linux backend can search within those roots. On Windows 10/11, the strict backend is unavailable and authorization/search deliberately fail closed; retrieval is therefore not functionally available on the target platform.
+   - Dependencies: Linux retrieval uses opened directory descriptors, no-follow traversal, identity binding, and the tested `.txt`, `.md`, `.json`, and `.csv` allowlist. It rejects symlink escapes, remote/network roots, unsupported formats, and bounded-work violations. It does not use an unsafe path-based fallback on Windows.
+   - Acceptance: implement and test a Windows handle/file-identity/reparse-point-aware traversal backend or obtain a separately approved target-platform change; validate local search and adversarial junction/mapped-drive cases on a real Windows host; complete the offline-boundary walkthrough.
 
 6. **Integration with existing ROP functionality**
    - Status: PARTIALLY IMPLEMENTED; ACCEPTANCE PENDING.
@@ -997,8 +991,11 @@ responsibility of the corresponding Stage 9.x design task.
   traversal outside a selected root, symlink escapes, unsupported extensions,
   and files crossing the root device boundary.
 - Full offline/security acceptance remains open and must be established in
-  Stage 9.8. The existence of these checks is not a claim that every runtime
-  boundary has been verified.
+  Stage 9.8. Linux CI verifies the Linux secure path, but it cannot substitute
+  for Windows traversal tests. As of 2026-10-26, the strict secure backend
+  requires Linux `openat2` and mount identity; Windows retrieval reports
+  `secure_backend_available=false` and fails closed. That is a known target
+  platform feature gap, not an accepted implementation of Windows retrieval.
 
 **Offline boundary:**
 
