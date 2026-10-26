@@ -57,6 +57,18 @@ def test_clinical_audited_workflow_is_separate_from_personal_conversations() -> 
             clinical_session_id = clinical_response.json()["id"]
             assert clinical_session_id != conversation_id
 
+            observation_response = client.post(
+                f"/sessions/{clinical_session_id}/observations",
+                json={
+                    "text": "Observed symptom marker",
+                    "type": "user_observation",
+                    "confidence": 0.9,
+                    "source": "user",
+                },
+            )
+            assert observation_response.status_code == 201
+            assert observation_response.json()["session_id"] == clinical_session_id
+
             audited = client.post(
                 f"/sessions/{clinical_session_id}/reasoning-run/execute-fully-audited"
             )
