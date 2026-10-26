@@ -55,6 +55,12 @@ def _seed(factory: sessionmaker[Session]) -> None:
                     completed=False,
                 ),
                 AssistantItem(
+                    kind="task",
+                    title="Finish lab assignment",
+                    content="",
+                    completed=False,
+                ),
+                AssistantItem(
                     kind="reminder",
                     title="Review appointment",
                     content="",
@@ -113,11 +119,11 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     third = page_three.json()
     assert first["export_format"] == "micky-ai-personal-data"
     assert first["schema_version"] == 1
-    assert first["total_records"] == 7
+    assert first["total_records"] == 8
     assert first["counts"] == {
         "conversations": 2,
         "messages": 3,
-        "workspace_items": 2,
+        "workspace_items": 3,
     }
     assert first["offset"] == 0 and first["limit"] == 3
     assert first["next_offset"] == 3 and first["complete"] is False
@@ -136,6 +142,7 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
         "message",
         "workspace_item",
         "workspace_item",
+        "workspace_item",
     ]
     assert "private user message" in {
         record.get("content")
@@ -149,6 +156,13 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     )
     assert reminder["timezone"] == "Europe/Amsterdam"
     assert reminder["due_at"] is not None
+    task = next(
+        record
+        for record in records
+        if record["record_type"] == "workspace_item" and record["kind"] == "task"
+    )
+    assert task["title"] == "Finish lab assignment"
+    assert task["completed"] is False
     allowed_fields = {
         "record_type",
         "id",
@@ -180,6 +194,7 @@ def test_personal_data_export_ui_discloses_scope_and_uses_local_api() -> None:
     assert page.status_code == 200
     assert 'id="personal-data-export"' in page.text
     assert "conversations, their messages," in page.text
+    assert "notes, tasks, and reminders" in page.text
     assert javascript.status_code == 200
     assert "/api/assistant/personal-data/export" in javascript.text
     assert "schema_version" in javascript.text
