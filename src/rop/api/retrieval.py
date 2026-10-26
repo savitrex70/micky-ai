@@ -349,7 +349,13 @@ def _search_roots_windows(
                                 content = content_bytes.decode("utf-8")
                             finally:
                                 close_directory_descriptor(file_handle)
-                        except (OSError, UnicodeError, RuntimeError, TypeError, ValueError):
+                        except (
+                            OSError,
+                            UnicodeError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ):
                             skipped_files += 1
                             continue
 

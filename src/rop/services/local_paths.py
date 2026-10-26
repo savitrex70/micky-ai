@@ -8,7 +8,6 @@ import os
 import stat
 import sys
 from dataclasses import dataclass
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -685,7 +684,9 @@ def open_directory_at(directory_fd: int, name: str) -> int:
                 or child_info.delete_pending
                 or child_info.volume_id != parent_info.volume_id
             ):
-                raise OSError(errno.EPERM, "child directory violated the local-handle policy")
+                raise OSError(
+                    errno.EPERM, "child directory violated the local-handle policy"
+                )
             return child
         except Exception:
             close_directory_descriptor(child)
@@ -922,7 +923,10 @@ def secure_directory_traversal_supported() -> bool:
 
 def secure_directory_open_flags() -> int:
     """POSIX flags required to open a directory without following a link."""
-    if not sys.platform.startswith("linux") or not secure_directory_traversal_supported():
+    if (
+        not sys.platform.startswith("linux")
+        or not secure_directory_traversal_supported()
+    ):
         raise OSError(errno.ENOTSUP, "secure directory traversal is unavailable")
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
@@ -1057,7 +1061,9 @@ def _windows_open_directory_path(path: Path) -> int:
         or ".." in supplied.parts
         or is_network_path(supplied)
     ):
-        raise OSError(errno.EPERM, "directory path is not a permitted local absolute path")
+        raise OSError(
+            errno.EPERM, "directory path is not a permitted local absolute path"
+        )
 
     descriptor = _windows_open_drive_root(supplied.drive)
     current_info = secure_handle_info(descriptor)
