@@ -334,7 +334,9 @@ def _windows_open_relative(parent_handle: int, name: str, *, directory: bool) ->
     if directory:
         access |= _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_TRAVERSE
         options |= _WIN_FILE_DIRECTORY_FILE
-        share = _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE
+        # Keep the opened directory's name pinned while it is being traversed.
+        # In particular, do not permit a concurrent rename/move outside the root.
+        share = _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE
     else:
         # Refusing write/delete sharing prevents a new writer or rename/delete
         # from racing the bounded read while this handle is open.

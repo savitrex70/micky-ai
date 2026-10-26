@@ -124,3 +124,24 @@ def test_windows_junction_substitution_before_directory_open_is_rejected(
     assert outcome.skipped_entries >= 1
     assert outcome.roots_examined == 1
     assert outcome.roots_rejected == 0
+
+
+def test_windows_open_directory_blocks_rename_until_handle_is_closed(
+    tmp_path: Path,
+) -> None:
+    _require_secure_windows_backend()
+    root = tmp_path / "approved"
+    root.mkdir()
+    child = root / "nested"
+    child.mkdir()
+    displaced = root / "moved"
+
+    handle = local_paths.open_directory_descriptor(child)
+    try:
+        with pytest.raises(OSError):
+            child.rename(displaced)
+    finally:
+        local_paths.close_directory_descriptor(handle)
+
+    child.rename(displaced)
+    assert displaced.is_dir()
