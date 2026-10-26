@@ -58,6 +58,41 @@ jobs:
       - name: Black
         run: uvx black==24.10.0 --diff --check .
 
+  windows-retrieval:
+    name: Windows retrieval (Python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ROP_APP_NAME: "Micky AI Windows CI"
+      ROP_ENVIRONMENT: testing
+      ROP_LOG_LEVEL: INFO
+      ROP_STARTUP_RECOVERY_ENABLED: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Run native Windows retrieval tests
+        run: >-
+          uv run pytest -q -ra
+          tests/test_windows_retrieval.py
+          tests/test_assistant_retrieval.py::test_search_roots_skips_real_windows_junction
+          tests/test_assistant_retrieval.py::test_mapped_network_drive_detection_fails_closed
+
   tests:
     name: Tests (Python 3.12, PostgreSQL)
     runs-on: ubuntu-latest
