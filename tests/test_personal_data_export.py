@@ -119,6 +119,9 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
         engine.dispose()
 
     assert page_one.status_code == page_two.status_code == page_three.status_code == 200
+    assert "no-store" in page_one.headers["cache-control"]
+    assert page_one.headers["pragma"] == "no-cache"
+    assert page_one.headers["x-content-type-options"] == "nosniff"
     first = page_one.json()
     second = page_two.json()
     third = page_three.json()

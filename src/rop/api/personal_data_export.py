@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -74,11 +74,16 @@ def _workspace_item_record(row: AssistantItem) -> dict[str, object]:
 
 @router.get("/export", response_model=PersonalDataExportPage)
 def export_personal_data(
+    response: Response,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=DEFAULT_EXPORT_PAGE_SIZE, ge=1, le=MAX_EXPORT_PAGE_SIZE),
     db: Session = Depends(get_db),
 ) -> PersonalDataExportPage:
     """Return one deterministic page of user-visible personal data."""
+    # Personal content must not be retained by a browser or intermediary cache.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     conversation_count = _count(db, AssistantConversation)
     message_count = _count(db, AssistantMessage)
     item_count = _count(db, AssistantItem)
