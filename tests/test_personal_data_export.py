@@ -2,10 +2,11 @@
 
 from collections.abc import Generator
 from datetime import UTC, datetime
+
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
 import rop.models  # noqa: F401
 from rop.database import Base, get_db
@@ -84,8 +85,12 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     try:
         _seed(factory)
         with TestClient(app, base_url=ORIGIN) as client:
-            page_one = client.get("/api/assistant/personal-data/export?offset=0&limit=3")
-            page_two = client.get("/api/assistant/personal-data/export?offset=3&limit=3")
+            page_one = client.get(
+                "/api/assistant/personal-data/export?offset=0&limit=3"
+            )
+            page_two = client.get(
+                "/api/assistant/personal-data/export?offset=3&limit=3"
+            )
             page_three = client.get(
                 "/api/assistant/personal-data/export?offset=6&limit=3"
             )
@@ -140,15 +145,24 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     reminder = next(
         record
         for record in records
-        if record["record_type"] == "workspace_item"
-        and record["kind"] == "reminder"
+        if record["record_type"] == "workspace_item" and record["kind"] == "reminder"
     )
     assert reminder["timezone"] == "Europe/Amsterdam"
     assert reminder["due_at"] is not None
     allowed_fields = {
-        "record_type", "id", "title", "created_at", "updated_at",
-        "conversation_id", "role", "content", "sequence", "kind",
-        "due_at", "timezone", "completed",
+        "record_type",
+        "id",
+        "title",
+        "created_at",
+        "updated_at",
+        "conversation_id",
+        "role",
+        "content",
+        "sequence",
+        "kind",
+        "due_at",
+        "timezone",
+        "completed",
     }
     assert all(set(record).issubset(allowed_fields) for record in records)
     assert {record["record_type"] for record in records}.issubset(

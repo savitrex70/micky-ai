@@ -40,8 +40,8 @@ def test_search_roots_reads_only_allowlisted_files(tmp_path: Path) -> None:
 
     matches, examined, skipped = search_roots([str(tmp_path)], "needle", 10)
 
-    assert examined == 2
-    assert skipped >= 1
+    assert examined == 3
+    assert skipped >= 2
     assert len(matches) == 1
     assert matches[0].path == str(allowed.resolve())
     assert "needle" in matches[0].snippet
@@ -518,11 +518,11 @@ def test_search_roots_enforces_total_entry_ceiling(
         (tmp_path / f"{index}.md").write_text("needle", encoding="utf-8")
     monkeypatch.setattr(retrieval, "_MAX_ENTRIES_PER_REQUEST", 3)
 
-    matches, examined, skipped = search_roots([str(tmp_path)], "needle", 10)
+    outcome = retrieval.search_roots_detailed([str(tmp_path)], "needle", 10)
 
-    assert examined <= 3
-    assert skipped >= 1
-    assert len(matches) <= 3
+    assert outcome.files_examined <= 3
+    assert outcome.skipped_entries >= 1
+    assert len(outcome.matches) <= 3
 
 
 @pytest.mark.skipif(
@@ -690,13 +690,13 @@ def test_directory_replaced_between_scan_and_open_is_rejected(
             swapped = True
 
     monkeypatch.setattr(retrieval, "_before_candidate_open", replace_directory)
-    matches, _, skipped = search_roots(
+    outcome = retrieval.search_roots_detailed(
         [str(root)], "replacement directory private marker", 10
     )
 
     assert swapped
-    assert matches == []
-    assert skipped >= 1
+    assert outcome.matches == []
+    assert outcome.skipped_entries >= 1
 
 
 @pytest.mark.skipif(

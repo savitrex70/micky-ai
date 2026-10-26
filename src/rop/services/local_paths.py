@@ -56,9 +56,7 @@ def _openat2_syscall_number() -> int | None:
     return None
 
 
-def _openat2(
-    directory_fd: int, path: str, *, flags: int, resolve: int
-) -> int:
+def _openat2(directory_fd: int, path: str, *, flags: int, resolve: int) -> int:
     """Open a relative path atomically under Linux openat2 resolution rules."""
     syscall_number = _openat2_syscall_number()
     if syscall_number is None:
@@ -116,12 +114,7 @@ def open_directory_at(directory_fd: int, name: str) -> int:
     """Open one child directory without links, escapes, or mount crossings."""
     if not _openat2_supported():
         raise OSError(errno.ENOTSUP, "safe descriptor-relative open is unavailable")
-    flags = (
-        os.O_RDONLY
-        | os.O_DIRECTORY
-        | os.O_NOFOLLOW
-        | getattr(os, "O_CLOEXEC", 0)
-    )
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     return _openat2(directory_fd, name, flags=flags, resolve=_OPENAT2_RESOLVE_SAFE)
 
 
@@ -334,12 +327,7 @@ def secure_directory_open_flags() -> int:
     """Flags required to open a directory without following a link."""
     if not secure_directory_traversal_supported():
         raise OSError(errno.ENOTSUP, "secure directory traversal is unavailable")
-    return (
-        os.O_RDONLY
-        | os.O_DIRECTORY
-        | os.O_NOFOLLOW
-        | getattr(os, "O_CLOEXEC", 0)
-    )
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
 def open_directory_descriptor(path: Path) -> int:
@@ -388,9 +376,11 @@ def descriptor_mount_id(descriptor: int) -> int | None:
     if not sys.platform.startswith("linux"):
         return None
     try:
-        lines = Path(f"/proc/self/fdinfo/{descriptor}").read_text(
-            encoding="ascii"
-        ).splitlines()
+        lines = (
+            Path(f"/proc/self/fdinfo/{descriptor}")
+            .read_text(encoding="ascii")
+            .splitlines()
+        )
         for line in lines:
             name, separator, value = line.partition(":")
             if separator and name == "mnt_id":

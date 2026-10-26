@@ -30,17 +30,17 @@ from rop.database import SessionLocal
 from rop.models.assistant_item import AssistantItem
 from rop.models.assistant_retrieval_root import AssistantRetrievalRoot
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
-from rop.services.local_paths import (
-    contains_link_or_junction,
-    is_network_path,
-    local_directory_identity,
-    refresh_mount_table,
-)
 from rop.schemas.authorization import (
     AuthorizationPolicy,
     OperationRule,
     ProposedOperation,
     RiskLevel,
+)
+from rop.services.local_paths import (
+    contains_link_or_junction,
+    is_network_path,
+    local_directory_identity,
+    refresh_mount_table,
 )
 
 logger = logging.getLogger(__name__)
