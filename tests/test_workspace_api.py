@@ -476,7 +476,7 @@ def test_overdue_challenge_is_refused_and_settled_to_expired(
 
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
-    reason="secure root authorization requires Linux descriptor-relative primitives",
+    reason="secure root authorization requires supported handle-relative primitives",
 )
 def test_confirmed_root_cannot_authorize_replacement_directory(
     client: TestClient, tmp_path: Path
@@ -542,7 +542,7 @@ def test_confirmed_root_cannot_authorize_replacement_directory(
 
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
-    reason="secure root authorization requires Linux descriptor-relative primitives",
+    reason="secure root authorization requires supported handle-relative primitives",
 )
 def test_confirmed_root_cannot_authorize_real_directory_swapped_in(
     client: TestClient, tmp_path: Path
@@ -614,7 +614,7 @@ def test_confirmed_root_cannot_authorize_real_directory_swapped_in(
 
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
-    reason="secure root authorization requires Linux descriptor-relative primitives",
+    reason="secure root authorization requires supported handle-relative primitives",
 )
 def test_confirmed_root_revalidates_network_policy_at_execution(
     client: TestClient, tmp_path: Path, monkeypatch
@@ -662,7 +662,7 @@ def test_confirmed_root_revalidates_network_policy_at_execution(
 
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
-    reason="secure root authorization requires Linux descriptor-relative primitives",
+    reason="secure root authorization requires supported handle-relative primitives",
 )
 def test_confirmed_root_identity_is_persisted_and_used_by_retrieval(
     client: TestClient, tmp_path: Path
