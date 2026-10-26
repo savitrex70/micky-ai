@@ -494,19 +494,25 @@ section E.1 applies to every entry below.
      semantics preserved.
 
 7. **User-controlled persistence**
-   - Status: PARTIALLY IMPLEMENTED - confirmation records and
-     conversations support inspect/export/delete or create/list/rename/
-     delete as appropriate. Notes/tasks/reminders have local CRUD UI and
-     confirmation-gated mutations; retrieval roots can be listed and
-     removed. Full export/import of conversation and workspace content is
-     not implemented.
-   - Outcome: the user can inspect, edit, delete, and export their
-     permitted personal information from the UI.
-   - Dependencies: existing repositories and per-domain controls exist.
-     A stable export path for conversations and general workspace content
-     remains a gap.
-   - Acceptance: UI and API tests for inspect, edit, delete, and
-     export for each permitted personal data type.
+   - Status: GENERAL EXPORT IMPLEMENTED; IMPORT NOT IMPLEMENTED;
+     FINAL ACCEPTANCE PENDING. Confirmation records retain their own
+     inspect/export/delete controls. Conversations and workspace items have
+     CRUD controls, and a v1 bounded JSON export covers conversations,
+     messages, notes, tasks, and reminders through a local API and browser
+     download.
+   - Outcome: the user can inspect, edit, delete, and export permitted
+     personal information from the interface. Export pagination has explicit
+     counts/completion metadata; the browser refuses to download when it
+     detects a missing page or changing record counts.
+   - Dependencies: the export uses a fixed allowlist of fields and excludes
+     clinical records, confirmation/clarification state, and retrieval-root
+     paths. Import remains unsupported until a separate schema validation,
+     authorization, transactionality, duplicate/conflict, and recovery design
+     is reviewed. The export is paginated but not a transactionally frozen
+     snapshot across all browser requests.
+   - Acceptance: automated API/UI coverage exists; the live browser download,
+     privacy boundaries, and concurrent-change behavior still require the
+     Stage 9.8 walkthrough and passing acceptance run.
 
 8. **Uniform error, refusal, and unsupported experience**
    - Status: IMPLEMENTED at the API/UI response-contract level; full
