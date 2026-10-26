@@ -797,7 +797,8 @@ def is_network_path(path: Path) -> bool:
 
     if os.name == "nt" and getattr(path, "drive", ""):
         try:
-            return ctypes.windll.kernel32.GetDriveTypeW(path.drive + "\\") == 4
+            drive_type = ctypes.windll.kernel32.GetDriveTypeW(path.drive + "\\")
+            return drive_type not in (2, 3)
         except (AttributeError, OSError, TypeError):
             return True
 
@@ -867,13 +868,16 @@ def contains_link_or_junction(path: Path) -> bool:
 
 
 def secure_directory_traversal_supported() -> bool:
-    """Whether Linux exposes the no-follow descriptors and mount identity we need."""
+    """Whether the platform exposes the pinned-handle primitives retrieval needs."""
+    if os.name == "nt":
+        return _windows_secure_backend_supported()
+    if not sys.platform.startswith("linux"):
+        return False
     supports_dir_fd = getattr(os, "supports_dir_fd", set())
     supports_fd = getattr(os, "supports_fd", set())
     supports_follow_symlinks = getattr(os, "supports_follow_symlinks", set())
     return bool(
-        sys.platform.startswith("linux")
-        and _linux_mount_table() is not None
+        _linux_mount_table() is not None
         and _openat2_supported()
         and getattr(os, "open", None) in supports_dir_fd
         and getattr(os, "stat", None) in supports_dir_fd
@@ -885,22 +889,20 @@ def secure_directory_traversal_supported() -> bool:
 
 
 def secure_directory_open_flags() -> int:
-    """Flags required to open a directory without following a link."""
-    if not secure_directory_traversal_supported():
+    """POSIX flags required to open a directory without following a link."""
+    if not sys.platform.startswith("linux") or not secure_directory_traversal_supported():
         raise OSError(errno.ENOTSUP, "secure directory traversal is unavailable")
     return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 
 
 def open_directory_descriptor(path: Path) -> int:
-    """Open an absolute directory by walking every component with no-follow openat.
-
-    The caller owns the returned descriptor. This deliberately refuses platforms
-    that do not provide the descriptor-relative primitives required by retrieval.
-    """
+    """Open an absolute directory without following links; caller owns the handle."""
     supplied = Path(os.fspath(path))
     if not supplied.is_absolute() or ".." in supplied.parts:
         raise OSError(errno.EINVAL, "directory path must be absolute and normalized")
     absolute = Path(os.path.abspath(os.fspath(supplied)))
+    if os.name == "nt":
+        return _windows_open_directory_path(absolute)
     flags = secure_directory_open_flags()
     current_path = Path(absolute.anchor)
     descriptor = os.open(absolute.anchor, flags)
@@ -933,7 +935,12 @@ def open_directory_descriptor(path: Path) -> int:
 
 
 def descriptor_mount_id(descriptor: int) -> int | None:
-    """Return Linux's mount ID for an opened object, failing closed if unknown."""
+    """Return Linux mount ID or Windows volume identity for an opened object."""
+    if os.name == "nt":
+        try:
+            return secure_handle_info(descriptor).volume_id
+        except (OSError, RuntimeError, ValueError):
+            return None
     if not sys.platform.startswith("linux"):
         return None
     try:
@@ -952,7 +959,20 @@ def descriptor_mount_id(descriptor: int) -> int | None:
 
 
 def directory_identity_from_descriptor(descriptor: int) -> str | None:
-    """Bind an approved directory to device, inode, and mount identity."""
+    """Bind an approved directory handle to stable filesystem/object identity."""
+    if os.name == "nt":
+        try:
+            info = secure_handle_info(descriptor)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if (
+            not info.is_directory
+            or info.is_reparse_point
+            or info.is_device
+            or info.delete_pending
+        ):
+            return None
+        return info.identity
     info = os.fstat(descriptor)
     if not stat.S_ISDIR(info.st_mode):
         return None
@@ -985,13 +1005,54 @@ def local_directory_identity(path: Path) -> str | None:
         try:
             identity = directory_identity_from_descriptor(descriptor)
         finally:
-            os.close(descriptor)
+            close_directory_descriptor(descriptor)
         refresh_mount_table()
         if identity is None or is_network_path(supplied):
             return None
         return identity
     except (OSError, RuntimeError, TypeError, ValueError):
         return None
+
+
+def _windows_open_directory_path(path: Path) -> int:
+    """Open a Windows absolute directory component-by-component from a pinned drive."""
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "Windows directory opens are unavailable")
+    supplied = Path(os.fspath(path))
+    if (
+        not supplied.is_absolute()
+        or not supplied.drive
+        or ".." in supplied.parts
+        or is_network_path(supplied)
+    ):
+        raise OSError(errno.EPERM, "directory path is not a permitted local absolute path")
+
+    descriptor = _windows_open_drive_root(supplied.drive)
+    current_info = secure_handle_info(descriptor)
+    try:
+        for component in supplied.parts[1:]:
+            next_descriptor = _windows_open_relative(
+                descriptor, component, directory=True
+            )
+            next_info = secure_handle_info(next_descriptor)
+            if (
+                not next_info.is_directory
+                or next_info.is_reparse_point
+                or next_info.is_device
+                or next_info.delete_pending
+                or next_info.volume_id != current_info.volume_id
+            ):
+                close_directory_descriptor(next_descriptor)
+                raise OSError(
+                    errno.EPERM, "directory component crossed a volume or reparse point"
+                )
+            close_directory_descriptor(descriptor)
+            descriptor = next_descriptor
+            current_info = next_info
+        return descriptor
+    except Exception:
+        close_directory_descriptor(descriptor)
+        raise
 
 
 def normalized_path_key(path: Path) -> str:
