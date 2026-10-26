@@ -807,6 +807,28 @@ def test_retrieval_fails_closed_without_secure_openat2_support(
     assert outcome.secure_backend_available is False
 
 
+@pytest.mark.skipif(os.name != "nt", reason="native Windows retrieval policy")
+def test_windows_retrieval_fails_closed_without_secure_backend(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "approved"
+    root.mkdir()
+    (root / "private.md").write_text(
+        "must remain unread on unsupported secure backend", encoding="utf-8"
+    )
+
+    assert not local_paths.secure_directory_traversal_supported()
+    outcome = search_roots_detailed([str(root)], "must remain unread", 10)
+
+    assert outcome.secure_backend_available is False
+    assert outcome.matches == []
+    assert outcome.files_examined == 0
+    assert outcome.skipped_files == 0
+    assert outcome.roots_examined == 0
+    assert outcome.roots_rejected == 0
+    assert outcome.roots_skipped == 1
+
+
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
     reason="descriptor-relative race checks require Linux openat2 primitives",
