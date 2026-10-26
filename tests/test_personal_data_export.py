@@ -111,6 +111,9 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
             negative = client.get(
                 "/api/assistant/personal-data/export?offset=-1&limit=10"
             )
+            offset_beyond_total = client.get(
+                "/api/assistant/personal-data/export?offset=9&limit=1"
+            )
     finally:
         if previous is not None:
             app.dependency_overrides[get_db] = previous
@@ -192,6 +195,7 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     )
     assert too_large.status_code == 422
     assert negative.status_code == 422
+    assert offset_beyond_total.status_code == 422
 
 
 def test_personal_data_export_ui_discloses_scope_and_uses_local_api() -> None:

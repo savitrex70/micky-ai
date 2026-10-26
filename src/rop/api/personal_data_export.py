@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -93,6 +93,11 @@ def export_personal_data(
         workspace_items=item_count,
     )
     total_records = conversation_count + message_count + item_count
+    if offset > total_records:
+        raise HTTPException(
+            status_code=422,
+            detail="offset exceeds the total number of export records",
+        )
     records: list[dict[str, object]] = []
     records_remaining = limit
     offset_remaining = offset
