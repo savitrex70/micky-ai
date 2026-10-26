@@ -591,10 +591,11 @@ def test_search_roots_skips_unsupported_formats(tmp_path: Path) -> None:
     (tmp_path / "memo.pdf").write_text("needle", encoding="utf-8")
     (tmp_path / "memo.txt").write_text("different contents", encoding="utf-8")
 
-    matches, examined, _ = search_roots([str(tmp_path)], "needle", 10)
+    matches, examined, skipped = search_roots([str(tmp_path)], "needle", 10)
 
     assert matches == []
-    assert examined == 1
+    assert examined == 2
+    assert skipped == 1
 
 
 @pytest.mark.skipif(
