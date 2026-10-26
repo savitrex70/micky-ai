@@ -67,9 +67,12 @@ class RetrievalOutcome:
 
     Accounting contract (files and folders are never mixed):
 
-    * ``files_examined`` / ``skipped_files`` count files only: files considered
-      for reading, and files (or entries inside a searched root) that were
-      skipped or rejected during traversal. A root is never counted here.
+    * ``files_examined`` counts regular files evaluated against retrieval policy,
+      including unsupported file types. ``skipped_files`` counts regular files
+      rejected by type, size, containment, encoding, or read policy.
+    * ``skipped_entries`` counts non-file or unclassified entries refused by
+      traversal policy and directories that cannot be entered. Roots are never
+      counted as files or entries.
     * ``roots_examined`` counts roots whose processing was attempted, i.e. the
       per-root loop body was entered. It includes roots that were then rejected.
     * ``roots_rejected`` is the subset of examined roots that were NOT searched
@@ -90,6 +93,7 @@ class RetrievalOutcome:
     roots_examined: int
     roots_skipped: int
     roots_rejected: int = 0
+    skipped_entries: int = 0
 
 
 def _safe_root(raw_path: str) -> Path | None:
@@ -179,6 +183,7 @@ def search_roots_detailed(
     matches: list[RetrievalMatch] = []
     files_examined = 0
     skipped_files = 0
+    skipped_entries = 0
     entries_examined = 0
     bytes_read = 0
     root_paths_seen: set[str] = set()
@@ -238,14 +243,14 @@ def search_roots_detailed(
                 current, current_fd = pending.pop()
                 try:
                     if directories_seen >= _MAX_DIRECTORIES_PER_ROOT:
-                        skipped_files += 1
+                        skipped_entries += 1
                         stop = True
                         continue
                     directories_seen += 1
 
                     refresh_mount_table()
                     if _is_network_path(current):
-                        skipped_files += 1
+                        skipped_entries += 1
                         continue
 
                     names: list[str] = []
@@ -253,13 +258,13 @@ def search_roots_detailed(
                         with os.scandir(current_fd) as iterator:
                             for entry in iterator:
                                 if entries_examined >= _MAX_ENTRIES_PER_REQUEST:
-                                    skipped_files += 1
+                                    skipped_entries += 1
                                     stop = True
                                     break
                                 entries_examined += 1
                                 names.append(entry.name)
                     except OSError:
-                        skipped_files += 1
+                        skipped_entries += 1
                         continue
 
                     child_directories: list[tuple[Path, int]] = []
@@ -268,32 +273,32 @@ def search_roots_detailed(
                         try:
                             refresh_mount_table()
                             if _is_network_path(candidate):
-                                skipped_files += 1
+                                skipped_entries += 1
                                 continue
                             entry_info = _stat_entry(name, current_fd)
                         except (OSError, RuntimeError, ValueError):
-                            skipped_files += 1
+                            skipped_entries += 1
                             continue
 
                         if stat.S_ISLNK(entry_info.st_mode) or _is_junction(candidate):
-                            skipped_files += 1
+                            skipped_entries += 1
                             continue
 
                         if stat.S_ISDIR(entry_info.st_mode):
                             if entry_info.st_dev != root_device:
-                                skipped_files += 1
+                                skipped_entries += 1
                                 continue
                             queued_directories = (
                                 directories_seen + len(pending) + len(child_directories)
                             )
                             if queued_directories >= _MAX_DIRECTORIES_PER_ROOT:
-                                skipped_files += 1
+                                skipped_entries += 1
                                 continue
                             _before_candidate_open(candidate, directory=True)
                             try:
                                 refresh_mount_table()
                                 if _is_network_path(candidate):
-                                    skipped_files += 1
+                                    skipped_entries += 1
                                     continue
                                 child_fd = open_directory_at(current_fd, name)
                                 child_info = os.fstat(child_fd)
@@ -305,23 +310,25 @@ def search_roots_detailed(
                                     or _is_network_path(candidate)
                                 ):
                                     os.close(child_fd)
-                                    skipped_files += 1
+                                    skipped_entries += 1
                                     continue
                             except (OSError, RuntimeError, ValueError):
-                                skipped_files += 1
+                                skipped_entries += 1
                                 continue
                             child_directories.append((candidate, child_fd))
                             continue
 
                         if not stat.S_ISREG(entry_info.st_mode):
-                            continue
-                        if candidate.suffix.casefold() not in _ALLOWED_SUFFIXES:
+                            skipped_entries += 1
                             continue
                         if files_examined >= _MAX_FILES_PER_REQUEST:
                             skipped_files += 1
                             stop = True
                             break
                         files_examined += 1
+                        if candidate.suffix.casefold() not in _ALLOWED_SUFFIXES:
+                            skipped_files += 1
+                            continue
 
                         remaining_bytes = _MAX_BYTES_PER_REQUEST - bytes_read
                         if remaining_bytes <= 0:
@@ -417,6 +424,7 @@ def search_roots_detailed(
         roots_examined=roots_examined,
         roots_skipped=max(0, total_roots - roots_examined),
         roots_rejected=roots_rejected,
+        skipped_entries=skipped_entries,
     )
 
 
@@ -449,6 +457,7 @@ def search_local_files(
         roots_skipped=outcome.roots_skipped,
         roots_rejected=outcome.roots_rejected,
         roots_limit=_MAX_ROOTS_PER_REQUEST,
+        skipped_entries=outcome.skipped_entries,
     )
 
 

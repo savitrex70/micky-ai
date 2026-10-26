@@ -538,11 +538,32 @@ def test_search_roots_enforces_directory_ceiling(
         (directory / "content.md").write_text("needle", encoding="utf-8")
     monkeypatch.setattr(retrieval, "_MAX_DIRECTORIES_PER_ROOT", 2)
 
-    matches, examined, skipped = search_roots([str(tmp_path)], "needle", 10)
+    outcome = retrieval.search_roots_detailed([str(tmp_path)], "needle", 10)
 
-    assert examined <= 1
-    assert skipped >= 1
-    assert len(matches) <= 1
+    assert outcome.files_examined <= 1
+    assert outcome.skipped_files == 0
+    assert outcome.skipped_entries >= 1
+    assert len(outcome.matches) <= 1
+
+
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="requires supported descriptor-relative retrieval primitives",
+)
+def test_directory_only_traversal_limit_never_counts_skipped_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("a", "b", "c", "d"):
+        (tmp_path / name).mkdir()
+    monkeypatch.setattr(retrieval, "_MAX_DIRECTORIES_PER_ROOT", 2)
+
+    outcome = retrieval.search_roots_detailed([str(tmp_path)], "needle", 10)
+
+    assert outcome.files_examined == 0
+    assert outcome.skipped_files == 0
+    assert outcome.skipped_entries >= 1
 
 
 @pytest.mark.skipif(

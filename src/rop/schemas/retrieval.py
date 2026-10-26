@@ -59,3 +59,5 @@ class RetrievalSearchResponse(BaseModel):
     roots_skipped: int = 0
     roots_rejected: int = 0
     roots_limit: int = MAX_RETRIEVAL_ROOTS_PER_REQUEST
+    # Non-file/unclassified entries refused by traversal; never a file count.
+    skipped_entries: int = 0

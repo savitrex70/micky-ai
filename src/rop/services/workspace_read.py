@@ -57,7 +57,9 @@ def run_workspace_read(operation: ProposedOperation) -> str:
         matches = outcome.matches
         lines = [
             f"Local search examined {outcome.files_examined} files; "
-            f"skipped {outcome.skipped_files} file(s); found {len(matches)} matches."
+            f"skipped {outcome.skipped_files} file(s); "
+            f"skipped {outcome.skipped_entries} filesystem entr(y/ies); "
+            f"found {len(matches)} matches."
         ]
         if outcome.roots_rejected:
             lines.append(

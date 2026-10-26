@@ -238,6 +238,7 @@ def test_response_contract_keeps_existing_fields_and_defaults() -> None:
     assert response.roots_examined == 0
     assert response.roots_skipped == 0
     assert response.roots_limit == LIMIT
+    assert response.skipped_entries == 0
     assert LIMIT == 25
     with pytest.raises(ValueError):
         RetrievalSearchResponse(

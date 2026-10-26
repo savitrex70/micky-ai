@@ -393,7 +393,9 @@
     setText(
       searchStatus,
       "Examined " + response.files_examined + " file(s); skipped " +
-      response.skipped_files + " file(s); found " + response.matches.length + " match(es)." +
+      response.skipped_files + " file(s); skipped " +
+      (response.skipped_entries || 0) + " filesystem entr(y/ies); found " +
+      response.matches.length + " match(es)." +
       (response.roots_rejected
         ? " " + response.roots_rejected + " authorized folder(s) were not searched " +
           "because they failed a safety check (changed, unavailable, or not a permitted local folder)."
