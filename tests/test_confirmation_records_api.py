@@ -69,17 +69,19 @@ def _skip_reason() -> str | None:
 
 @pytest.fixture(scope="session")
 def pg_engine():
+    if not TEST_DATABASE_URL:
+        pytest.skip("ROP_TEST_DATABASE_URL is not set; PostgreSQL tests are unavailable")
     reason = _skip_reason()
     if reason is not None:
-        pytest.skip(reason)
+        pytest.fail(reason)
     engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     try:
         with engine.connect() as connection:
             connection.execute(text("select 1"))
     except Exception as exc:
         engine.dispose()
-        pytest.skip(
-            "PostgreSQL test database is unreachable " f"({type(exc).__name__})"
+        pytest.fail(
+            "Configured PostgreSQL test database is unreachable " f"({type(exc).__name__})"
         )
     yield engine
     engine.dispose()
