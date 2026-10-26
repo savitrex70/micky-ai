@@ -163,8 +163,6 @@ def search_roots(
     return outcome.matches, outcome.files_examined, outcome.skipped_files
 
 
-
-
 def _search_roots_windows(
     root_paths: list[str | tuple[str, str | None]],
     query: str,
@@ -424,9 +422,7 @@ def search_roots_detailed(
             [], 0, 0, 0, total_roots, 0, secure_backend_available=False
         )
     if os.name == "nt":
-        return _search_roots_windows(
-            root_paths, query, limit, total_roots=total_roots
-        )
+        return _search_roots_windows(root_paths, query, limit, total_roots=total_roots)
 
     refresh_mount_table()
     needle = query.casefold()

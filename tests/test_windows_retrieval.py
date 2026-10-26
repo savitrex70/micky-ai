@@ -29,7 +29,9 @@ def test_windows_handle_backend_searches_only_authorized_files(tmp_path: Path) -
     root = tmp_path / "approved"
     root.mkdir()
     (root / "note.md").write_text("authorized needle", encoding="utf-8")
-    (root / "unsupported.pdf").write_text("needle must not be indexed", encoding="utf-8")
+    (root / "unsupported.pdf").write_text(
+        "needle must not be indexed", encoding="utf-8"
+    )
     nested = root / "nested"
     nested.mkdir()
     (nested / "table.csv").write_text("another local file", encoding="utf-8")
@@ -64,9 +66,7 @@ def test_windows_root_path_replacement_fails_closed(
     def replace_after_validation(_root: Path) -> None:
         root.rename(displaced)
         root.mkdir()
-        (root / "private.md").write_text(
-            "replacement secret marker", encoding="utf-8"
-        )
+        (root / "private.md").write_text("replacement secret marker", encoding="utf-8")
 
     monkeypatch.setattr(retrieval, "_after_root_validation", replace_after_validation)
     outcome = retrieval.search_roots_detailed(
@@ -108,7 +108,9 @@ def test_windows_junction_substitution_before_directory_open_is_rejected(
             check=False,
         )
         if result.returncode != 0:
-            pytest.skip(f"Windows junction creation unavailable: {result.stderr.strip()}")
+            pytest.skip(
+                f"Windows junction creation unavailable: {result.stderr.strip()}"
+            )
         substituted = True
 
     monkeypatch.setattr(retrieval, "_before_candidate_open", replace_before_open)

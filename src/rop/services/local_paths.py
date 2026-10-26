@@ -273,9 +273,7 @@ def _windows_open_drive_root(drive: str) -> int:
     )  # Backup semantics + open reparse point.
     raw_handle = kernel.CreateFileW(
         normalized_drive,
-        _WIN_FILE_LIST_DIRECTORY
-        | _WIN_FILE_READ_ATTRIBUTES
-        | _WIN_FILE_TRAVERSE,
+        _WIN_FILE_LIST_DIRECTORY | _WIN_FILE_READ_ATTRIBUTES | _WIN_FILE_TRAVERSE,
         _WIN_FILE_SHARE_READ | _WIN_FILE_SHARE_WRITE | _WIN_FILE_SHARE_DELETE,
         None,
         3,  # OPEN_EXISTING
@@ -300,9 +298,7 @@ def _windows_open_drive_root(drive: str) -> int:
         raise
 
 
-def _windows_open_relative(
-    parent_handle: int, name: str, *, directory: bool
-) -> int:
+def _windows_open_relative(parent_handle: int, name: str, *, directory: bool) -> int:
     """Open one child relative to a pinned parent handle; never follow reparses."""
     if (
         not name
@@ -450,28 +446,24 @@ def iter_secure_directory_entries(handle: int):
             name = ctypes.string_at(
                 base + offset + _WIN_DIRECTORY_RECORD_NAME_OFFSET, name_length
             ).decode("utf-16-le", errors="strict")
-            if (
-                name in {".", ".."}
-                or "\x00" in name
-                or "/" in name
-                or "\\" in name
-            ):
+            if "\x00" in name or "/" in name or "\\" in name:
                 raise OSError(errno.EPERM, "unexpected native directory name")
-            file_id = ctypes.string_at(base + offset + 72, 16).hex()
-            is_directory = bool(attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY)
-            is_reparse = bool(
-                attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or reparse_tag
-            )
-            is_device = bool(attributes & _WIN_FILE_ATTRIBUTE_DEVICE)
-            yield SecureDirectoryEntry(
-                name=name,
-                identity=f"{volume_id:x}:{file_id}:{volume_id:x}",
-                volume_id=volume_id,
-                size=file_size,
-                is_directory=is_directory,
-                is_reparse_point=is_reparse,
-                is_device=is_device,
-            )
+            if name not in {".", ".."}:
+                file_id = ctypes.string_at(base + offset + 72, 16).hex()
+                is_directory = bool(attributes & _WIN_FILE_ATTRIBUTE_DIRECTORY)
+                is_reparse = bool(
+                    attributes & _WIN_FILE_ATTRIBUTE_REPARSE_POINT or reparse_tag
+                )
+                is_device = bool(attributes & _WIN_FILE_ATTRIBUTE_DEVICE)
+                yield SecureDirectoryEntry(
+                    name=name,
+                    identity=f"{volume_id:x}:{file_id}:{volume_id:x}",
+                    volume_id=volume_id,
+                    size=file_size,
+                    is_directory=is_directory,
+                    is_reparse_point=is_reparse,
+                    is_device=is_device,
+                )
             if next_offset == 0:
                 break
             if (
