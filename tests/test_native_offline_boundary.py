@@ -193,21 +193,23 @@ def test_retrieval_search_stays_offline_under_runtime_network_guards(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """Exercise real local retrieval while all Python network seams fail closed."""
-    from rop.api.retrieval import search_roots
+    from rop.api.retrieval import search_roots_detailed
 
     root = tmp_path / "authorized"
     root.mkdir()
     (root / "notes.md").write_text("local-only retrieval marker", encoding="utf-8")
 
     _install_network_guards(monkeypatch)
-    matches, examined, skipped = search_roots(
+    outcome = search_roots_detailed(
         [str(root), r"\\network.example\share"], "retrieval marker", 10
     )
 
-    assert len(matches) == 1
-    assert "retrieval marker" in matches[0].snippet
-    assert examined == 1
-    assert skipped >= 1
+    assert len(outcome.matches) == 1
+    assert "retrieval marker" in outcome.matches[0].snippet
+    assert outcome.files_examined == 1
+    # The network root is a rejected folder, not a skipped file.
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(

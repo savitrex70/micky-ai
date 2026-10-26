@@ -63,13 +63,33 @@ _MAX_ROOTS_PER_REQUEST = MAX_RETRIEVAL_ROOTS_PER_REQUEST
 
 @dataclass(frozen=True)
 class RetrievalOutcome:
-    """Search result plus honest accounting of roots and files."""
+    """Search result plus honest accounting of roots and files.
+
+    Accounting contract (files and folders are never mixed):
+
+    * ``files_examined`` / ``skipped_files`` count files only: files considered
+      for reading, and files (or entries inside a searched root) that were
+      skipped or rejected during traversal. A root is never counted here.
+    * ``roots_examined`` counts roots whose processing was attempted, i.e. the
+      per-root loop body was entered. It includes roots that were then rejected.
+    * ``roots_rejected`` is the subset of examined roots that were NOT searched
+      because they failed validation: missing identity, path/network policy,
+      changed identity, or a failed secure open. Duplicates of an already
+      searched root are neither rejected nor skipped (they were covered).
+    * ``roots_skipped`` counts authorized roots never reached: the root limit,
+      another global ceiling that stopped the loop, roots not loaded by the
+      caller (``authorized_total``), or an unsupported secure backend.
+
+    Invariant: examined + skipped == authorized roots, and roots not searched
+    == roots_rejected + roots_skipped. No root appears in two counters.
+    """
 
     matches: list[RetrievalMatch]
     files_examined: int
     skipped_files: int
     roots_examined: int
     roots_skipped: int
+    roots_rejected: int = 0
 
 
 def _safe_root(raw_path: str) -> Path | None:
@@ -150,7 +170,9 @@ def search_roots_detailed(
     """
     total_roots = max(len(root_paths), authorized_total or 0)
     if not secure_directory_traversal_supported():
-        return RetrievalOutcome([], 0, len(root_paths), 0, total_roots)
+        # No file processing happened and no root was attempted: every
+        # authorized root is unsearched, and no file is reported as skipped.
+        return RetrievalOutcome([], 0, 0, 0, total_roots, 0)
 
     refresh_mount_table()
     needle = query.casefold()
@@ -161,6 +183,7 @@ def search_roots_detailed(
     bytes_read = 0
     root_paths_seen: set[str] = set()
     roots_examined = 0
+    roots_rejected = 0
     stop = False
     file_flags = (
         os.O_RDONLY
@@ -179,7 +202,7 @@ def search_roots_detailed(
         raw_root, approved_identity = _root_spec(root_spec)
         root = _safe_root(raw_root)
         if root is None or not approved_identity:
-            skipped_files += 1
+            roots_rejected += 1
             continue
         root_key = _path_key(root)
         if root_key in root_paths_seen:
@@ -201,11 +224,11 @@ def search_roots_detailed(
                 or _is_network_path(root)
             ):
                 os.close(root_fd)
-                skipped_files += 1
+                roots_rejected += 1
                 continue
             root_device = root_info.st_dev
         except (OSError, RuntimeError, ValueError):
-            skipped_files += 1
+            roots_rejected += 1
             continue
 
         pending: list[tuple[Path, int]] = [(root, root_fd)]
@@ -393,6 +416,7 @@ def search_roots_detailed(
         skipped_files=skipped_files,
         roots_examined=roots_examined,
         roots_skipped=max(0, total_roots - roots_examined),
+        roots_rejected=roots_rejected,
     )
 
 
@@ -423,6 +447,7 @@ def search_local_files(
         skipped_files=outcome.skipped_files,
         roots_examined=outcome.roots_examined,
         roots_skipped=outcome.roots_skipped,
+        roots_rejected=outcome.roots_rejected,
         roots_limit=_MAX_ROOTS_PER_REQUEST,
     )
 

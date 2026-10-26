@@ -57,12 +57,19 @@ def run_workspace_read(operation: ProposedOperation) -> str:
         matches = outcome.matches
         lines = [
             f"Local search examined {outcome.files_examined} files; "
-            f"skipped {outcome.skipped_files}; found {len(matches)} matches."
+            f"skipped {outcome.skipped_files} file(s); found {len(matches)} matches."
         ]
+        if outcome.roots_rejected:
+            lines.append(
+                f"{outcome.roots_rejected} authorized folder(s) were not searched "
+                "because they failed a safety check (changed, unavailable, or "
+                "not a permitted local folder)."
+            )
         if outcome.roots_skipped:
             lines.append(
                 f"{outcome.roots_skipped} authorized folder(s) were not searched "
-                "in this request because a search limit was reached."
+                "in this request because a search limit was reached or secure "
+                "folder search is unavailable."
             )
         for match in matches:
             lines.append(f"- {match.path}")

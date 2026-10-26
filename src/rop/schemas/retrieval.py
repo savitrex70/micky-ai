@@ -51,6 +51,11 @@ class RetrievalSearchResponse(BaseModel):
     # whose processing began; ``roots_skipped`` counts authorized roots that were
     # not searched in this request because the per-request root limit or another
     # global work limit stopped the search. Both default to 0 for older callers.
+    # ``roots_rejected`` is the subset of examined roots refused by validation
+    # (identity, path/network policy, failed secure open); they were not searched
+    # and are never counted in ``skipped_files``. Unsearched roots in total are
+    # ``roots_rejected + roots_skipped``.
     roots_examined: int = 0
     roots_skipped: int = 0
+    roots_rejected: int = 0
     roots_limit: int = MAX_RETRIEVAL_ROOTS_PER_REQUEST

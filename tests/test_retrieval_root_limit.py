@@ -171,6 +171,10 @@ def test_global_work_limit_stop_is_reported_as_unsearched_roots(
     assert outcome.files_examined == 3
     assert outcome.roots_examined == 2
     assert outcome.roots_skipped == 1
+    assert outcome.roots_rejected == 0
+    # The file ceiling skips one file; the never-reached root is reported
+    # separately and is not added to skipped_files.
+    assert outcome.skipped_files == 1
 
 
 def test_unsupported_platform_reports_every_root_as_unsearched(
@@ -187,6 +191,10 @@ def test_unsupported_platform_reports_every_root_as_unsearched(
     assert outcome.matches == []
     assert outcome.roots_examined == 0
     assert outcome.roots_skipped == 9
+    assert outcome.roots_rejected == 0
+    # No file processing occurred, so no file may be reported as skipped.
+    assert outcome.files_examined == 0
+    assert outcome.skipped_files == 0
 
 
 @requires_backend
@@ -217,7 +225,9 @@ def test_root_security_checks_still_apply_inside_the_bound(
 
     assert outcome.matches == []
     assert outcome.roots_examined == 2
-    assert outcome.skipped_files == 2
+    assert outcome.roots_rejected == 2
+    assert outcome.roots_skipped == 0
+    assert outcome.skipped_files == 0
 
 
 def test_response_contract_keeps_existing_fields_and_defaults() -> None:
@@ -441,3 +451,144 @@ def test_chat_search_shares_the_bound_and_discloses_skipped_roots(
     assert "found 1 matches" in result
     assert "5 authorized folder(s) were not searched" in result
     assert db_probe.rows_loaded == 4
+
+
+@requires_backend
+def test_missing_identity_root_is_rejected_not_a_skipped_file(
+    tmp_path: Path,
+) -> None:
+    specs = _make_roots(tmp_path, 2, files={1: "needle"})
+
+    outcome = retrieval.search_roots_detailed(
+        [(specs[0][0], None), (specs[0][0], ""), specs[1]], "needle", 10
+    )
+
+    assert outcome.roots_examined == 3
+    assert outcome.roots_rejected == 2
+    assert outcome.roots_skipped == 0
+    assert outcome.skipped_files == 0
+    assert len(outcome.matches) == 1
+
+
+@requires_backend
+def test_stale_identity_root_is_rejected_not_a_skipped_file(
+    tmp_path: Path,
+) -> None:
+    (first, identity), (second, _) = _make_roots(tmp_path, 2, files={0: "needle"})
+    # A different directory presented with the first root's approved identity.
+    outcome = retrieval.search_roots_detailed([(second, identity)], "needle", 10)
+
+    assert outcome.roots_examined == 1
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
+    assert outcome.matches == []
+    assert first != second
+
+
+@requires_backend
+def test_path_policy_rejection_is_counted_as_a_rejected_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (good, good_identity), (blocked, blocked_identity) = _make_roots(
+        tmp_path, 2, files={0: "needle", 1: "needle"}
+    )
+    network = retrieval._is_network_path
+    monkeypatch.setattr(
+        retrieval,
+        "_is_network_path",
+        lambda path: str(path).startswith(blocked) or network(path),
+    )
+
+    outcome = retrieval.search_roots_detailed(
+        [(good, good_identity), (blocked, blocked_identity), ("relative/dir", "x")],
+        "needle",
+        10,
+    )
+
+    assert outcome.roots_examined == 3
+    assert outcome.roots_rejected == 2  # network-policy root and relative path
+    assert outcome.skipped_files == 0
+    assert [m.path for m in outcome.matches] == [str(Path(good) / "note.md")]
+
+
+@requires_backend
+def test_failed_secure_open_is_a_rejected_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    specs = _make_roots(tmp_path, 1, files={0: "needle"})
+
+    def failing_open(path: Path):
+        raise OSError("cannot open securely")
+
+    monkeypatch.setattr(retrieval, "open_directory_descriptor", failing_open)
+
+    outcome = retrieval.search_roots_detailed(list(specs), "needle", 10)
+
+    assert outcome.roots_examined == 1
+    assert outcome.roots_rejected == 1
+    assert outcome.roots_skipped == 0
+    assert outcome.skipped_files == 0
+
+
+@requires_backend
+def test_rejected_unreached_and_searched_roots_never_double_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(retrieval, "_MAX_ROOTS_PER_REQUEST", 4)
+    specs = _make_roots(tmp_path, 6, files={1: "needle"})
+    specs[0] = (specs[0][0], None)  # rejected: no approved identity
+
+    outcome = retrieval.search_roots_detailed(list(specs), "needle", 10)
+
+    assert outcome.roots_examined == 4
+    assert outcome.roots_rejected == 1
+    assert outcome.roots_skipped == 2
+    assert outcome.roots_examined + outcome.roots_skipped == 6
+    assert outcome.skipped_files == 0
+    assert outcome.files_examined == 1
+    assert len(outcome.matches) == 1
+
+
+@requires_backend
+def test_successful_retrieval_reports_accurate_file_and_root_counts(
+    tmp_path: Path,
+) -> None:
+    specs = _make_roots(tmp_path, 3, files={0: "alpha", 2: "needle here"})
+
+    outcome = retrieval.search_roots_detailed(list(specs), "needle", 10)
+
+    assert outcome.files_examined == 2
+    assert outcome.skipped_files == 0
+    assert outcome.roots_examined == 3
+    assert outcome.roots_rejected == 0
+    assert outcome.roots_skipped == 0
+    assert len(outcome.matches) == 1
+
+
+def test_response_contract_defaults_roots_rejected_to_zero() -> None:
+    response = RetrievalSearchResponse(
+        query="q", matches=[], files_examined=0, skipped_files=0
+    )
+
+    assert response.roots_rejected == 0
+
+
+@requires_backend
+def test_chat_search_reports_rejected_folders_separately_from_files(
+    session_factory: sessionmaker[Session],
+    db_probe: SimpleNamespace,
+    tmp_path: Path,
+) -> None:
+    specs = _make_roots(tmp_path, 2, files={1: "chat-marker inside"})
+    specs[0] = (specs[0][0], "stale-identity")
+    _persist(session_factory, list(specs))
+
+    result = workspace_read.run_workspace_read(
+        ProposedOperation(
+            operation_id="workspace_search_files",
+            parameters={"query": "chat-marker"},
+        )
+    )
+
+    assert "skipped 0 file(s)" in result
+    assert "1 authorized folder(s) were not searched because they failed" in result

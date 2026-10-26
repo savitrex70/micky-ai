@@ -393,7 +393,11 @@
     setText(
       searchStatus,
       "Examined " + response.files_examined + " file(s); skipped " +
-      response.skipped_files + "; found " + response.matches.length + " match(es)." +
+      response.skipped_files + " file(s); found " + response.matches.length + " match(es)." +
+      (response.roots_rejected
+        ? " " + response.roots_rejected + " authorized folder(s) were not searched " +
+          "because they failed a safety check (changed, unavailable, or not a permitted local folder)."
+        : "") +
       (response.roots_skipped
         ? " " + response.roots_skipped + " authorized folder(s) were not searched " +
           "in this request (limit " + response.roots_limit + " folders per search)."

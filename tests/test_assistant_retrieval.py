@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 import rop.api.retrieval as retrieval
 import rop.api.workspace as workspace_api
-from rop.api.retrieval import search_roots
+from rop.api.retrieval import search_roots, search_roots_detailed
 from rop.schemas.retrieval import RetrievalSearchRequest
 from rop.schemas.workspace import WorkspaceChangeRequest
 from rop.services import local_paths
@@ -82,9 +82,11 @@ def test_search_roots_rejects_root_replaced_by_symlink(tmp_path: Path) -> None:
     except (OSError, NotImplementedError):
         pytest.skip("directory symbolic links are not available in this environment")
 
-    matches, _, skipped = search_roots([str(authorized)], "secret", 10)
-    assert matches == []
-    assert skipped >= 1
+    outcome = search_roots_detailed([str(authorized)], "secret", 10)
+    assert outcome.matches == []
+    # A rejected root is an unsearched folder, never a skipped file.
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -110,12 +112,13 @@ def test_ancestor_symlink_is_rejected_before_resolving_target(
 
     monkeypatch.setattr(Path, "resolve", prohibited_resolve)
 
-    matches, _, skipped = search_roots(
+    outcome = search_roots_detailed(
         [str(alias_parent / "approved")], "must not be read", 10
     )
 
-    assert matches == []
-    assert skipped >= 1
+    assert outcome.matches == []
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -143,9 +146,10 @@ def test_search_roots_rejects_ancestor_symlink_substitution(tmp_path: Path) -> N
     except (OSError, NotImplementedError):
         pytest.skip("directory symbolic links are not available in this environment")
 
-    matches, _, skipped = search_roots([str(authorized_root)], "secret", 10)
-    assert matches == []
-    assert skipped >= 1
+    outcome = search_roots_detailed([str(authorized_root)], "secret", 10)
+    assert outcome.matches == []
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -286,9 +290,10 @@ def test_search_roots_rejects_mocked_linux_network_mount(
     mounts = ((Path("/"), "overlay"), (root.resolve(), "cifs"))
     monkeypatch.setattr(local_paths, "_linux_mount_table", lambda: mounts)
 
-    matches, _, skipped = search_roots([str(root)], "secret", 10)
-    assert matches == []
-    assert skipped >= 1
+    outcome = search_roots_detailed([str(root)], "secret", 10)
+    assert outcome.matches == []
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -407,9 +412,14 @@ def test_search_roots_fails_closed_if_linux_mount_metadata_is_unavailable(
     monkeypatch.setattr(local_paths, "_linux_mount_table", lambda: None)
 
     if os.name == "posix" and local_paths.sys.platform.startswith("linux"):
-        matches, _, skipped = search_roots([str(root)], "secret", 10)
-        assert matches == []
-        assert skipped >= 1
+        outcome = search_roots_detailed([str(root)], "secret", 10)
+        assert outcome.matches == []
+        # Unreadable mount metadata makes secure traversal unavailable, so the
+        # root is never reached: unsearched root, zero skipped files.
+        assert outcome.roots_examined == 0
+        assert outcome.roots_skipped == 1
+        assert outcome.roots_rejected == 0
+        assert outcome.skipped_files == 0
     else:
         pytest.skip("Linux mountinfo boundary applies only on Linux")
 
@@ -589,13 +599,14 @@ def test_root_substitution_after_validation_fails_closed(
         )
 
     monkeypatch.setattr(retrieval, "_after_root_validation", substitute_root)
-    matches, examined, skipped = search_roots(
+    outcome = search_roots_detailed(
         [(str(root), original_identity)], "substituted root private marker", 10
     )
 
-    assert matches == []
-    assert examined == 0
-    assert skipped >= 1
+    assert outcome.matches == []
+    assert outcome.files_examined == 0
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -622,13 +633,14 @@ def test_ancestor_replacement_after_validation_fails_closed(
         )
 
     monkeypatch.setattr(retrieval, "_after_root_validation", substitute_ancestor)
-    matches, examined, skipped = search_roots(
+    outcome = search_roots_detailed(
         [(str(root), original_identity)], "ancestor replacement private marker", 10
     )
 
-    assert matches == []
-    assert examined == 0
-    assert skipped >= 1
+    assert outcome.matches == []
+    assert outcome.files_examined == 0
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -743,13 +755,13 @@ def test_retrieval_fails_closed_for_legacy_root_without_identity(
         "legacy root must not be searched", encoding="utf-8"
     )
 
-    matches, examined, skipped = search_roots(
-        [(str(root), None)], "must not be searched", 10
-    )
+    outcome = search_roots_detailed([(str(root), None)], "must not be searched", 10)
 
-    assert matches == []
-    assert examined == 0
-    assert skipped == 1
+    assert outcome.matches == []
+    assert outcome.files_examined == 0
+    assert outcome.roots_examined == 1
+    assert outcome.roots_rejected == 1
+    assert outcome.skipped_files == 0
 
 
 def test_retrieval_fails_closed_without_secure_openat2_support(
@@ -764,11 +776,14 @@ def test_retrieval_fails_closed_without_secure_openat2_support(
         retrieval, "secure_directory_traversal_supported", lambda: False
     )
 
-    matches, examined, skipped = search_roots([str(root)], "must not search", 10)
+    outcome = search_roots_detailed([str(root)], "must not search", 10)
 
-    assert matches == []
-    assert examined == 0
-    assert skipped == 1
+    assert outcome.matches == []
+    assert outcome.files_examined == 0
+    assert outcome.roots_examined == 0
+    assert outcome.roots_skipped == 1
+    assert outcome.roots_rejected == 0
+    assert outcome.skipped_files == 0
 
 
 @pytest.mark.skipif(
@@ -794,9 +809,7 @@ def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
             )
             swapped = True
 
-    monkeypatch.setattr(
-        retrieval, "_before_candidate_open", replace_root_before_open
-    )
+    monkeypatch.setattr(retrieval, "_before_candidate_open", replace_root_before_open)
     matches, _, _ = search_roots([str(root)], "private replacement root marker", 10)
 
     assert swapped
@@ -823,7 +836,6 @@ def test_workspace_root_add_fails_closed_without_openat2_support(
 
     assert raised.value.status_code == 422
     assert "securely verified" in str(raised.value.detail)
-
 
 
 @pytest.mark.skipif(
