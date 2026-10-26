@@ -279,6 +279,19 @@
       aria-atomic="false"></ul>
   </section>
 
+  <section id="personal-data-export-section" aria-labelledby="personal-data-export-heading">
+    <h2 id="personal-data-export-heading">Export personal conversations and workspace</h2>
+    <p class="help">
+      Download a versioned JSON export of saved conversations, their messages,
+      and notes, tasks, and reminders. The export uses bounded pages and checks
+      completeness before downloading. Confirmation records have their own
+      separate export below. Clinical reasoning records and retrieval-root
+      paths are not included. Import is not implemented.
+    </p>
+    <button id="personal-data-export" type="button">Download conversations + workspace JSON</button>
+    <p id="personal-data-export-status" role="status" aria-live="polite"></p>
+  </section>
+
   <section id="records-section" aria-labelledby="records-heading" class="records-section">
     <h2 id="records-heading">Confirmation records</h2>
     <p class="help">

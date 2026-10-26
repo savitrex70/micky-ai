@@ -3,6 +3,8 @@
 (function () {
   const byId = (id) => document.getElementById(id);
   const itemForm = byId("workspace-create-form");
+  const personalDataExportButton = byId("personal-data-export");
+  const personalDataExportStatus = byId("personal-data-export-status");
   const itemKind = byId("workspace-kind");
   const itemTitle = byId("workspace-title");
   const itemContent = byId("workspace-content");
@@ -690,6 +692,101 @@
     } catch (err) {
       setText(itemStatus, "The prior operation cannot yet be verified. Do not create a new operation key.");
     }
+  }
+
+
+  async function downloadPersonalDataExport() {
+    if (!personalDataExportButton) return;
+    personalDataExportButton.disabled = true;
+    setText(personalDataExportStatus, "Preparing the complete personal-data export…");
+    try {
+      const pageSize = 500;
+      let offset = 0;
+      let expectedTotal = null;
+      let expectedCounts = null;
+      let generatedAt = null;
+      const records = [];
+      while (true) {
+        const page = await jsonRequest(
+          "/api/assistant/personal-data/export?offset=" +
+            encodeURIComponent(offset) + "&limit=" + pageSize
+        );
+        if (!page || page.export_format !== "micky-ai-personal-data" ||
+            page.schema_version !== 1 || page.offset !== offset ||
+            !Array.isArray(page.records) ||
+            typeof page.total_records !== "number" ||
+            !page.counts || typeof page.complete !== "boolean") {
+          throw new Error("The export response did not match the supported format.");
+        }
+        if (expectedTotal === null) {
+          expectedTotal = page.total_records;
+          expectedCounts = page.counts;
+          generatedAt = page.generated_at;
+        } else if (page.total_records !== expectedTotal ||
+            page.counts.conversations !== expectedCounts.conversations ||
+            page.counts.messages !== expectedCounts.messages ||
+            page.counts.workspace_items !== expectedCounts.workspace_items) {
+          throw new Error("Personal data changed while exporting. Run the export again.");
+        }
+        if (page.records.length > pageSize) {
+          throw new Error("The export service returned an oversized page.");
+        }
+        records.push(...page.records);
+        if (page.complete) {
+          if (page.next_offset !== null || records.length !== expectedTotal) {
+            throw new Error("The export was incomplete; no file was downloaded.");
+          }
+          break;
+        }
+        if (page.next_offset !== offset + page.records.length ||
+            page.records.length === 0 || page.next_offset <= offset) {
+          throw new Error("The export pagination did not advance safely.");
+        }
+        offset = page.next_offset;
+        setText(
+          personalDataExportStatus,
+          "Collected " + records.length + " of " + expectedTotal + " records…"
+        );
+      }
+      const payload = {
+        export_format: "micky-ai-personal-data",
+        schema_version: 1,
+        generated_at: generatedAt,
+        counts: expectedCounts,
+        total_records: records.length,
+        records: records,
+        import_supported: false
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8"
+      });
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = element("a");
+      anchor.href = objectUrl;
+      anchor.download = "micky-ai-personal-export-" +
+        new Date().toISOString().replace(/[:.]/g, "-") + ".json";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+      setText(
+        personalDataExportStatus,
+        "Export downloaded: " + records.length +
+          " records (conversations, messages, notes, tasks, and reminders)."
+      );
+    } catch (err) {
+      setText(
+        personalDataExportStatus,
+        "Export failed: " + err.message +
+          " Do not silently treat an incomplete export as complete."
+      );
+    } finally {
+      personalDataExportButton.disabled = false;
+    }
+  }
+
+  if (personalDataExportButton) {
+    personalDataExportButton.addEventListener("click", downloadPersonalDataExport);
   }
 
   timezoneInput.value = currentTimezone();
