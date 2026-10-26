@@ -2,7 +2,12 @@
 
 from collections.abc import Generator
 from datetime import UTC, datetime
+import json
+from pathlib import Path
+import shutil
+import subprocess
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -199,3 +204,71 @@ def test_personal_data_export_ui_discloses_scope_and_uses_local_api() -> None:
     assert "/api/assistant/personal-data/export" in javascript.text
     assert "schema_version" in javascript.text
     assert "Do not silently treat an incomplete export as complete" in javascript.text
+
+
+def _run_export_ui_harness(export_pages: list[dict[str, object]]) -> dict[str, object]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available; export UI behavior test requires it")
+    here = Path(__file__).resolve().parent
+    harness = here / "workspace_ui_harness.cjs"
+    workspace_js = here.parent / "src" / "rop" / "web" / "static" / "workspace.js"
+    result = subprocess.run(
+        [node, str(harness), str(workspace_js), "[]", json.dumps(export_pages)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "personal-data export UI harness failed:\n"
+        + result.stdout
+        + "\n"
+        + result.stderr
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_personal_data_export_ui_downloads_only_after_all_pages_are_complete() -> None:
+    counts = {"conversations": 1, "messages": 1, "workspace_items": 1}
+    first = {
+        "export_format": "micky-ai-personal-data",
+        "schema_version": 1,
+        "generated_at": "2026-10-26T12:00:00Z",
+        "offset": 0,
+        "limit": 500,
+        "total_records": 2,
+        "counts": counts,
+        "next_offset": 1,
+        "complete": False,
+        "records": [{"record_type": "conversation", "id": "conversation-1"}],
+    }
+    second = {
+        **first,
+        "offset": 1,
+        "next_offset": None,
+        "complete": True,
+        "records": [{"record_type": "message", "id": "message-1"}],
+    }
+
+    success = _run_export_ui_harness([first, second])
+    assert len(success["downloads"]) == 1
+    assert len(success["exportedPayloads"]) == 1
+    payload = success["exportedPayloads"][0]["payload"]
+    assert payload["schema_version"] == 1
+    assert payload["total_records"] == 2
+    assert [record["id"] for record in payload["records"]] == [
+        "conversation-1",
+        "message-1",
+    ]
+    assert payload["import_supported"] is False
+    assert "Export downloaded: 2 records" in success["exportStatus"]
+
+    # Deliberately omit the second page: the browser must not save a partial file.
+    incomplete = _run_export_ui_harness([first])
+    assert incomplete["downloads"] == []
+    assert incomplete["exportedPayloads"] == []
+    assert "Export failed:" in incomplete["exportStatus"]
+    assert "Do not silently treat an incomplete export as complete" in (
+        incomplete["exportStatus"]
+    )

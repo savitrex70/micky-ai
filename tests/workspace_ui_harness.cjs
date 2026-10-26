@@ -3,7 +3,10 @@
 const fs = require("fs");
 const vm = require("vm");
 
-const [scriptPath, itemsJson] = process.argv.slice(2);
+const [scriptPath, itemsJson, exportPagesJson] = process.argv.slice(2);
+const exportPages = exportPagesJson ? JSON.parse(exportPagesJson) : null;
+const downloadedFiles = [];
+const capturedBlobs = [];
 if (!scriptPath || !itemsJson) {
   console.error("usage: node workspace_ui_harness.cjs <workspace.js> <items-json>");
   process.exit(2);
@@ -62,6 +65,9 @@ function makeElement(id, tagName = "div") {
       child.parentNode = null;
       return child;
     },
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    },
     setAttribute(name, value) {
       attrs[name] = String(value);
     },
@@ -106,12 +112,20 @@ function textOf(node) {
 
 function response(payload) {
   return {
-    ok: true,
-    status: 200,
+    ok: payload !== null,
+    status: payload === null ? 404 : 200,
     async json() {
       return payload;
     },
   };
+}
+
+class CapturedBlob {
+  constructor(parts, options = {}) {
+    this.content = parts.map(String).join("");
+    this.type = options.type || "";
+    capturedBlobs.push(this);
+  }
 }
 
 async function flushPromises() {
@@ -120,17 +134,24 @@ async function flushPromises() {
   for (let i = 0; i < 10; i += 1) await Promise.resolve();
 }
 
-async function makePage() {
+async function makePage({ triggerExport = false } = {}) {
   const elements = new Map();
   const intervals = [];
   const fetchLog = [];
   const document = {
+    body: makeElement("body", "body"),
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, makeElement(id));
       return elements.get(id);
     },
     createElement(tagName) {
-      return makeElement("", tagName);
+      const node = makeElement("", tagName);
+      if (String(tagName).toLowerCase() === "a") {
+        node.click = function () {
+          downloadedFiles.push({ download: this.download, href: this.href });
+        };
+      }
+      return node;
     },
   };
   for (const match of source.matchAll(/byId\("([^"]+)"\)/g)) {
@@ -151,6 +172,12 @@ async function makePage() {
       return intervals.length;
     },
     addEventListener() {},
+    URL: {
+      createObjectURL(blob) {
+        return "blob:micky-ai-local-" + capturedBlobs.length;
+      },
+      revokeObjectURL() {},
+    },
     confirm() {
       return true;
     },
@@ -171,6 +198,13 @@ async function makePage() {
     if (path === "/sessions?offset=0&limit=50") {
       return response([]);
     }
+    if (path.startsWith("/api/assistant/personal-data/export")) {
+      if (!exportPages) throw new Error("unexpected personal-data export request");
+      const match = path.match(/[?&]offset=(\d+)/);
+      const offset = match ? Number(match[1]) : 0;
+      const page = exportPages.find((item) => item.offset === offset);
+      return response(page || null);
+    }
     throw new Error("unexpected request: " + path);
   }
 
@@ -182,6 +216,7 @@ async function makePage() {
       fetch: fetchMock,
       Date: FixedDate,
       TextEncoder,
+      Blob: CapturedBlob,
       console,
     },
     { filename: scriptPath }
@@ -208,16 +243,31 @@ async function makePage() {
   await intervals[0].callback();
   await flushPromises();
   const refreshed = summary();
+  let exportStatus = null;
+  if (triggerExport) {
+    const button = document.getElementById("personal-data-export");
+    const listeners = button._listeners.click || [];
+    if (listeners.length !== 1) throw new Error("export button listener was not registered");
+    await listeners[0]();
+    await flushPromises();
+    exportStatus = textOf(document.getElementById("personal-data-export-status"));
+  }
   return {
     initial,
     refreshed,
     intervalMilliseconds: intervals[0].milliseconds,
+    exportStatus,
+    downloads: downloadedFiles.slice(),
+    exportedPayloads: capturedBlobs.map((blob) => ({
+      type: blob.type,
+      payload: JSON.parse(blob.content),
+    })),
   };
 }
 
 (async function main() {
   try {
-    const firstPage = await makePage();
+    const firstPage = await makePage({ triggerExport: Boolean(exportPages) });
     // The API's persisted item response is reused to model a clean page context
     // after an API restart; no browser-local copy is used for the item list.
     const restartedPage = await makePage();
@@ -226,6 +276,9 @@ async function makePage() {
       refreshed: firstPage.refreshed,
       afterReload: restartedPage.initial,
       intervalMilliseconds: firstPage.intervalMilliseconds,
+      exportStatus: firstPage.exportStatus,
+      downloads: firstPage.downloads,
+      exportedPayloads: firstPage.exportedPayloads,
     };
     for (const phase of [output.initial, output.refreshed, output.afterReload]) {
       if (!phase.apiListRequested) throw new Error("workspace API item list was not read");
