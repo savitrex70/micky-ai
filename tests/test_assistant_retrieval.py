@@ -546,8 +546,6 @@ def test_search_roots_enforces_directory_ceiling(
     assert len(outcome.matches) <= 1
 
 
-
-
 @pytest.mark.skipif(
     not local_paths.secure_directory_traversal_supported(),
     reason="requires supported descriptor-relative retrieval primitives",

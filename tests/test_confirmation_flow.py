@@ -109,7 +109,9 @@ def _skip_reason() -> str | None:
 @pytest.fixture(scope="session")
 def pg_engine():
     if not TEST_DATABASE_URL:
-        pytest.skip("ROP_TEST_DATABASE_URL is not set; PostgreSQL tests are unavailable")
+        pytest.skip(
+            "ROP_TEST_DATABASE_URL is not set; PostgreSQL tests are unavailable"
+        )
     reason = _skip_reason()
     if reason is not None:
         pytest.fail(reason)
