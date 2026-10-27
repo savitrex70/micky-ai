@@ -178,6 +178,7 @@ def test_windows_file_replacement_after_enumeration_fails_closed(
     assert outcome.skipped_files >= 1
     assert outcome.roots_rejected == 0
 
+
 def test_windows_search_skips_entries_from_another_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,7 +210,7 @@ def test_windows_search_skips_entries_from_another_volume(
         ),
     )
     monkeypatch.setattr(
-        local_paths,
+        retrieval,
         "iter_secure_directory_entries",
         lambda _handle: iter(entries),
     )
@@ -217,8 +218,8 @@ def test_windows_search_skips_entries_from_another_volume(
     def reject_child_open(*_args: object, **_kwargs: object) -> int:
         raise AssertionError("cross-volume entry reached a child-open operation")
 
-    monkeypatch.setattr(local_paths, "open_directory_at", reject_child_open)
-    monkeypatch.setattr(local_paths, "open_regular_file_at", reject_child_open)
+    monkeypatch.setattr(retrieval, "open_directory_at", reject_child_open)
+    monkeypatch.setattr(retrieval, "open_regular_file_at", reject_child_open)
 
     outcome = retrieval.search_roots_detailed([(str(root), identity)], "needle", 10)
 
