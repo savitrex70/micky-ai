@@ -65,8 +65,17 @@ def _install_network_guards(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         attempts.append(_PROHIBITED_ATTEMPT_REASON)
         raise AssertionError(_PROHIBITED_ATTEMPT_REASON)
 
-    monkeypatch.setattr(socket, "socket", _raise)
-    monkeypatch.setattr(socket, "socketpair", _raise)
+    # Do NOT replace socket.socket or socket.socketpair with a non-class.
+    # asyncio's ProactorEventLoop on Windows performs
+    # isinstance(conn, socket.socket) internally on every event-loop
+    # pipe read; when socket.socket has been rebound to a plain function,
+    # that isinstance() call raises TypeError, the loop dies, and the
+    # TestClient hangs forever waiting for a reply that never arrives.
+    # Guard the connection-establishment methods on the class instead.
+    monkeypatch.setattr(socket.socket, "connect", _raise)
+    monkeypatch.setattr(socket.socket, "connect_ex", _raise)
+    monkeypatch.setattr(socket.socket, "sendto", _raise)
+    # socket.socketpair stays real: the loop uses it for self-pipe IPC.
     monkeypatch.setattr(socket, "create_connection", _raise)
     monkeypatch.setattr(socket, "getaddrinfo", _raise)
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
