@@ -843,7 +843,10 @@ def test_windows_retrieval_fails_closed_without_secure_backend(
 
 @pytest.mark.skipif(
     os.name != "posix" or not local_paths.secure_directory_traversal_supported(),
-    reason="requires Linux openat2 primitives and the ability to rename a directory with an open handle",
+    reason=(
+        "requires Linux openat2 primitives and the ability to rename "
+        "a directory with an open handle"
+    ),
 )
 def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
