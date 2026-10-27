@@ -172,8 +172,10 @@ def test_search_roots_does_not_traverse_symlinked_directory(tmp_path: Path) -> N
 
 
 @pytest.mark.skipif(
-    not local_paths.secure_directory_traversal_supported(),
-    reason="requires supported descriptor-relative retrieval primitives",
+    os.name != "posix" or not local_paths.secure_directory_traversal_supported(),
+    reason="tests the posix _is_junction path; on Windows junction detection "
+    "is exercised by test_search_roots_skips_real_windows_junction via native "
+    "reparse-point handles",
 )
 def test_search_roots_skips_junctions_when_detected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -387,6 +389,10 @@ def test_workspace_root_add_refreshes_mount_snapshot(
     assert refresh_calls == [True]
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="linux mount table is only consulted on posix",
+)
 def test_linux_network_mount_classification_does_not_resolve_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -425,8 +431,10 @@ def test_search_roots_fails_closed_if_linux_mount_metadata_is_unavailable(
 
 
 @pytest.mark.skipif(
-    not local_paths.secure_directory_traversal_supported(),
-    reason="requires supported descriptor-relative retrieval primitives",
+    os.name != "posix" or not local_paths.secure_directory_traversal_supported(),
+    reason="tests the posix _stat_entry/dir_fd cross-device path; the Windows "
+    "path compares entry.volume_id to the root volume instead. A dedicated "
+    "Windows cross-device test is a follow-up coverage gap.",
 )
 def test_search_roots_skips_files_from_another_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -807,7 +815,11 @@ def test_retrieval_fails_closed_without_secure_openat2_support(
     assert outcome.secure_backend_available is False
 
 
-@pytest.mark.skipif(os.name != "nt", reason="native Windows retrieval policy")
+@pytest.mark.skip(
+    reason="obsolete: local_paths._windows_secure_backend_supported now provides "
+    "a real Windows backend via native handles, so the 'Windows unsupported' "
+    "scenario this test asserts is no longer reachable",
+)
 def test_windows_retrieval_fails_closed_without_secure_backend(
     tmp_path: Path,
 ) -> None:
@@ -830,8 +842,8 @@ def test_windows_retrieval_fails_closed_without_secure_backend(
 
 
 @pytest.mark.skipif(
-    not local_paths.secure_directory_traversal_supported(),
-    reason="descriptor-relative race checks require Linux openat2 primitives",
+    os.name != "posix" or not local_paths.secure_directory_traversal_supported(),
+    reason="requires Linux openat2 primitives and the ability to rename a directory with an open handle",
 )
 def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -859,6 +871,10 @@ def test_root_path_replaced_after_scan_keeps_opened_directory_authority(
     assert matches == []
 
 
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="openat2 is a linux syscall",
+)
 def test_workspace_root_add_fails_closed_without_openat2_support(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
