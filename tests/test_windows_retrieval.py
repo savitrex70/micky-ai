@@ -177,3 +177,55 @@ def test_windows_file_replacement_after_enumeration_fails_closed(
     assert outcome.files_examined == 1
     assert outcome.skipped_files >= 1
     assert outcome.roots_rejected == 0
+
+def test_windows_search_skips_entries_from_another_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-volume entries must be skipped before any child open is attempted."""
+    _require_secure_windows_backend()
+    root = tmp_path / "approved"
+    root.mkdir()
+    identity = local_paths.local_directory_identity(root)
+    assert identity is not None
+
+    entries = (
+        local_paths.SecureDirectoryEntry(
+            name="outside-directory",
+            identity="other-volume-directory",
+            volume_id=-1,
+            size=0,
+            is_directory=True,
+            is_reparse_point=False,
+            is_device=False,
+        ),
+        local_paths.SecureDirectoryEntry(
+            name="outside.md",
+            identity="other-volume-file",
+            volume_id=-1,
+            size=len(b"forbidden needle"),
+            is_directory=False,
+            is_reparse_point=False,
+            is_device=False,
+        ),
+    )
+    monkeypatch.setattr(
+        local_paths,
+        "iter_secure_directory_entries",
+        lambda _handle: iter(entries),
+    )
+
+    def reject_child_open(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("cross-volume entry reached a child-open operation")
+
+    monkeypatch.setattr(local_paths, "open_directory_at", reject_child_open)
+    monkeypatch.setattr(local_paths, "open_regular_file_at", reject_child_open)
+
+    outcome = retrieval.search_roots_detailed([(str(root), identity)], "needle", 10)
+
+    assert outcome.secure_backend_available is True
+    assert outcome.matches == []
+    assert outcome.files_examined == 1
+    assert outcome.skipped_files == 1
+    assert outcome.skipped_entries == 1
+    assert outcome.roots_examined == 1
+    assert outcome.roots_rejected == 0
