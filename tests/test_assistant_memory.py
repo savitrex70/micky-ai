@@ -125,6 +125,24 @@ def test_memory_create_rejects_invalid_values(
     assert client.get("/api/assistant/memories").json()["total"] == 0
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "my API key is ABCD-SECRET-VALUE",
+        "password: never-store-this-value",
+        "patient ID: MRN123456",
+        "medical record number is 1234567",
+        "-----BEGIN RSA PRIVATE KEY-----",
+    ],
+)
+def test_memory_rejects_obvious_secrets_and_patient_identifiers(
+    client: TestClient, content: str
+) -> None:
+    response = create_entry(client, "Private entry", content)
+    assert response.status_code == 422
+    assert client.get("/api/assistant/memories").json()["total"] == 0
+
+
 def test_clear_all_requires_exact_confirmation(client: TestClient) -> None:
     assert create_entry(client, "First", "One").status_code == 201
     assert create_entry(client, "Second", "Two").status_code == 201

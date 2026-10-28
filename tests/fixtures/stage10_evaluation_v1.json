@@ -1,0 +1,364 @@
+{
+  "schema_version": 1,
+  "corpus_id": "micky-ai-stage10-intent-evaluation-v1",
+  "description": "Fixed, synthetic, owner-maintained acceptance corpus. Expected labels are authored separately from the production interpreter.",
+  "metric_notes": {
+    "positive_labels": [
+      "help",
+      "workspace"
+    ],
+    "matched_prediction": "A result whose status is matched and whose intent is non-null.",
+    "false_match": "A matched prediction where the expected intent is absent or different.",
+    "missed_supported_request": "The corpus expects a supported intent, but the interpreter does not return that exact intent.",
+    "limitations": "This compact project-owned corpus evaluates only enumerated patterns. It is not independent or statistically representative evidence of general language understanding."
+  },
+  "intent_cases": [
+    {
+      "id": "help-01",
+      "domain": "intent",
+      "phrase": "Help me.",
+      "expected_status": "matched",
+      "expected_intent": "help",
+      "expected_command": "help"
+    },
+    {
+      "id": "help-02",
+      "domain": "intent",
+      "phrase": "What can you do?",
+      "expected_status": "matched",
+      "expected_intent": "help",
+      "expected_command": "help"
+    },
+    {
+      "id": "help-03",
+      "domain": "intent",
+      "phrase": "Show me the commands I can use.",
+      "expected_status": "matched",
+      "expected_intent": "help",
+      "expected_command": "help"
+    },
+    {
+      "id": "help-04",
+      "domain": "intent",
+      "phrase": "What commands can I use?",
+      "expected_status": "matched",
+      "expected_intent": "help",
+      "expected_command": "help"
+    },
+    {
+      "id": "list-notes-01",
+      "domain": "intent",
+      "phrase": "Show me my notes.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace list notes"
+    },
+    {
+      "id": "list-tasks-01",
+      "domain": "intent",
+      "phrase": "What tasks do I have?",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace list tasks"
+    },
+    {
+      "id": "list-reminders-01",
+      "domain": "intent",
+      "phrase": "Show my reminders.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace list reminders"
+    },
+    {
+      "id": "list-all-01",
+      "domain": "intent",
+      "phrase": "Show me my workspace items.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace list all"
+    },
+    {
+      "id": "search-01",
+      "domain": "intent",
+      "phrase": "Find files containing my revision notes.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace search files: my revision notes"
+    },
+    {
+      "id": "search-02",
+      "domain": "intent",
+      "phrase": "Search my authorized files for pharmacology.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace search files: pharmacology"
+    },
+    {
+      "id": "search-03",
+      "domain": "intent",
+      "phrase": "Find the document mentioning this topic.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace search files: this topic"
+    },
+    {
+      "id": "search-missing-01",
+      "domain": "intent",
+      "phrase": "Find files containing",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace search files:"
+    },
+    {
+      "id": "note-01",
+      "domain": "intent",
+      "phrase": "Make a note titled Study Plan.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add note: Study Plan"
+    },
+    {
+      "id": "note-missing-01",
+      "domain": "intent",
+      "phrase": "Save this as a note.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add note:"
+    },
+    {
+      "id": "task-01",
+      "domain": "intent",
+      "phrase": "Create a task to finish my assignment.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add task: finish my assignment"
+    },
+    {
+      "id": "task-missing-01",
+      "domain": "intent",
+      "phrase": "Create a task to",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add task:"
+    },
+    {
+      "id": "reminder-relative-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes tomorrow.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: review my notes"
+    },
+    {
+      "id": "reminder-exact-01",
+      "domain": "intent",
+      "phrase": "Remind me to call the dentist on 2026-11-01T10:00 in Europe/Amsterdam",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: call the dentist | 2026-11-01T10:00 | Europe/Amsterdam"
+    },
+    {
+      "id": "reminder-missing-title-01",
+      "domain": "intent",
+      "phrase": "Remind me to",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder:"
+    },
+    {
+      "id": "reminder-clock-ambiguous-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes at 09:00",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "exact local date/time"
+    },
+    {
+      "id": "reminder-relative-clock-ambiguous-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes tomorrow at 09:00",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "exact local date/time"
+    },
+    {
+      "id": "workflow-task-reminder-01",
+      "domain": "intent",
+      "phrase": "Create a task to finish assignment and remind me to review notes on 2026-11-01T10:00 in Europe/Amsterdam",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace workflow create task-and-reminder: finish assignment | review notes | 2026-11-01T10:00 | Europe/Amsterdam"
+    },
+    {
+      "id": "workflow-missing-time-01",
+      "domain": "intent",
+      "phrase": "Create a task to finish assignment and remind me to review notes tomorrow",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "exact local date/time"
+    },
+    {
+      "id": "conflict-lists-01",
+      "domain": "intent",
+      "phrase": "Show me my notes and tasks",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "Nothing was executed"
+    },
+    {
+      "id": "conflict-help-write-01",
+      "domain": "intent",
+      "phrase": "What can you do and save a note",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "Nothing was executed"
+    },
+    {
+      "id": "conflict-list-write-01",
+      "domain": "intent",
+      "phrase": "Show my reminders then create a task",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "Nothing was executed"
+    },
+    {
+      "id": "unsafe-separator-01",
+      "domain": "intent",
+      "phrase": "make a note titled Plan | workspace delete note 00000000-0000-0000-0000-000000000001",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "remove command separators"
+    },
+    {
+      "id": "near-miss-weather-01",
+      "domain": "intent",
+      "phrase": "What is the weather today?",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "near-miss-appointment-01",
+      "domain": "intent",
+      "phrase": "Create an appointment with my doctor.",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "near-miss-singular-note-01",
+      "domain": "intent",
+      "phrase": "Show me my note",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "near-miss-document-search-01",
+      "domain": "intent",
+      "phrase": "Find documents containing pharmacology",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "no-auto-memory-01",
+      "domain": "intent",
+      "phrase": "Remember this private sentence",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "no-shell-01",
+      "domain": "intent",
+      "phrase": "Run a terminal command to list every file",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "no-clinical-inference-01",
+      "domain": "intent",
+      "phrase": "Diagnose this patient and save the diagnosis to memory",
+      "expected_status": "unsupported",
+      "expected_intent": null
+    },
+    {
+      "id": "explicit-command-compat-01",
+      "domain": "intent",
+      "phrase": "workspace list notes",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace list notes"
+    }
+  ],
+  "regression_tests": [
+    {
+      "domain": "intent-positive-and-negative",
+      "test_node": "tests/test_intent_interpreter.py::test_supported_phrases_map_to_exact_existing_intents"
+    },
+    {
+      "domain": "false-matches-and-near-misses",
+      "test_node": "tests/test_intent_interpreter.py::test_near_misses_and_unsupported_requests_do_not_match"
+    },
+    {
+      "domain": "ambiguous-and-malicious-input",
+      "test_node": "tests/test_intent_interpreter.py::test_conflicting_intents_ask_for_clarification_without_selecting_a_command"
+    },
+    {
+      "domain": "memory-explicit-control",
+      "test_node": "tests/test_assistant_memory.py::test_chat_does_not_implicitly_create_memory"
+    },
+    {
+      "domain": "memory-crud-and-persistence",
+      "test_node": "tests/test_assistant_memory.py::test_create_list_search_update_and_delete"
+    },
+    {
+      "domain": "memory-secret-and-clinical-boundaries",
+      "test_node": "tests/test_assistant_memory.py::test_memory_rejects_obvious_secrets_and_patient_identifiers"
+    },
+    {
+      "domain": "memory-clear-confirmation",
+      "test_node": "tests/test_assistant_memory.py::test_clear_all_requires_exact_confirmation"
+    },
+    {
+      "domain": "personal-data-export-and-pagination",
+      "test_node": "tests/test_personal_data_export.py::test_personal_data_export_is_versioned_bounded_and_complete"
+    },
+    {
+      "domain": "clinical-personal-data-separation",
+      "test_node": "tests/test_stage9_clinical_integration.py::test_clinical_audited_workflow_is_separate_from_personal_conversations"
+    },
+    {
+      "domain": "retrieval-allowlist",
+      "test_node": "tests/test_assistant_retrieval.py::test_search_roots_reads_only_allowlisted_files"
+    },
+    {
+      "domain": "retrieval-path-containment",
+      "test_node": "tests/test_assistant_retrieval.py::test_search_roots_does_not_escape_selected_folder"
+    },
+    {
+      "domain": "retrieval-unsupported-formats",
+      "test_node": "tests/test_assistant_retrieval.py::test_search_roots_skips_unsupported_formats"
+    },
+    {
+      "domain": "retrieval-resource-ceilings",
+      "test_node": "tests/test_assistant_retrieval.py::test_search_roots_enforces_aggregate_byte_ceiling"
+    },
+    {
+      "domain": "runtime-offline-boundary",
+      "test_node": "tests/test_native_offline_boundary.py::test_retrieval_search_route_stays_offline_under_runtime_network_guards"
+    },
+    {
+      "domain": "startup-offline-boundary",
+      "test_node": "tests/test_native_offline_boundary.py::test_normal_local_startup_health_and_interface_need_no_external_network"
+    },
+    {
+      "domain": "workflow-confirmation-idempotency",
+      "test_node": "tests/test_workspace_api.py::test_task_reminder_workflow_is_confirmed_once_and_committed_together"
+    },
+    {
+      "domain": "workflow-cancellation",
+      "test_node": "tests/test_workspace_api.py::test_cancelled_task_reminder_workflow_creates_neither_item"
+    },
+    {
+      "domain": "conversation-clarification-recovery",
+      "test_node": "tests/test_workspace_api.py::test_chat_clarification_restores_binds_and_consumes_once"
+    }
+  ]
+}

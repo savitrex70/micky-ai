@@ -294,8 +294,14 @@ def interpret_request(message: str) -> IntentInterpretation:
         if match.group(1) is not None and title is None:
             return _ambiguous(_UNSAFE_VALUE_MESSAGE)
         if title:
+            if _CLOCK_END_RE.search(title):
+                return _ambiguous(
+                    "I received a reminder clock time but cannot safely infer its "
+                    "calendar date or timezone. Provide the exact local date/time "
+                    "in YYYY-MM-DDTHH:MM format and an IANA timezone. Nothing was "
+                    "executed or changed."
+                )
             title = _RELATIVE_TIME_END_RE.sub("", title).strip()
-            title = _CLOCK_END_RE.sub("", title).strip()
         return _matched_workspace("workspace add reminder: " + (title or ""))
 
     return IntentInterpretation(status="unsupported")
