@@ -1,6 +1,7 @@
 """API and persistence tests for user-controlled memory."""
 
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -78,10 +79,7 @@ def test_create_list_search_update_and_delete(client: TestClient) -> None:
     assert updated.json()["content"] == "Use concise explanations."
 
     # A separate request-scoped database session can read the committed row.
-    assert (
-        client.get("/api/assistant/memories").json()["items"][0]["id"]
-        == entry["id"]
-    )
+    assert client.get("/api/assistant/memories").json()["items"][0]["id"] == entry["id"]
     deleted = client.delete("/api/assistant/memories/" + entry["id"], headers=HEADERS)
     assert deleted.status_code == 204
     assert client.get("/api/assistant/memories").json()["total"] == 0
@@ -141,6 +139,60 @@ def test_memory_rejects_obvious_secrets_and_patient_identifiers(
     response = create_entry(client, "Private entry", content)
     assert response.status_code == 422
     assert client.get("/api/assistant/memories").json()["total"] == 0
+
+
+
+def test_memory_persists_after_client_and_database_recreation(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "persistent-memory.sqlite3"
+    database_url = f"sqlite+pysqlite:///{database_path.as_posix()}"
+    first_engine = create_engine(database_url)
+    Base.metadata.create_all(first_engine)
+    first_factory = sessionmaker(bind=first_engine, expire_on_commit=False)
+    previous_override = app.dependency_overrides.get(get_db)
+
+    def first_db() -> Generator[Session, None, None]:
+        with first_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = first_db
+    second_engine = None
+    try:
+        with TestClient(app, base_url=ORIGIN) as first_client:
+            created = create_entry(
+                first_client,
+                "Across restart",
+                "This approved preference stays local.",
+            )
+            assert created.status_code == 201, created.text
+            entry_id = created.json()["id"]
+        first_engine.dispose()
+
+        second_engine = create_engine(database_url)
+        second_factory = sessionmaker(bind=second_engine, expire_on_commit=False)
+
+        def second_db() -> Generator[Session, None, None]:
+            with second_factory() as session:
+                yield session
+
+        app.dependency_overrides[get_db] = second_db
+        with TestClient(app, base_url=ORIGIN) as second_client:
+            restored = second_client.get("/api/assistant/memories")
+            assert restored.status_code == 200, restored.text
+            assert restored.json()["total"] == 1
+            assert restored.json()["items"][0]["id"] == entry_id
+            assert restored.json()["items"][0]["content"] == (
+                "This approved preference stays local."
+            )
+    finally:
+        if previous_override is not None:
+            app.dependency_overrides[get_db] = previous_override
+        else:
+            app.dependency_overrides.pop(get_db, None)
+        first_engine.dispose()
+        if second_engine is not None:
+            second_engine.dispose()
 
 
 def test_clear_all_requires_exact_confirmation(client: TestClient) -> None:

@@ -258,6 +258,7 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
         "task_title",
         "reminder_title",
         "due_at",
+        "due_at_local",
         "timezone",
     }:
         raise ExecutorError("workflow payload shape invalid")
@@ -265,6 +266,7 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
     task_title = payload["task_title"]
     reminder_title = payload["reminder_title"]
     due_at_text = payload["due_at"]
+    due_at_local_text = payload["due_at_local"]
     timezone_name = payload["timezone"]
     if (
         not isinstance(task_title, str)
@@ -277,6 +279,8 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
         or not reminder_title.isprintable()
         or not isinstance(due_at_text, str)
         or len(due_at_text) > 32
+        or not isinstance(due_at_local_text, str)
+        or len(due_at_local_text) > 32
         or not isinstance(timezone_name, str)
         or len(timezone_name) > 96
     ):
@@ -285,7 +289,15 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
         due_at = datetime.fromisoformat(due_at_text)
         if due_at.tzinfo is None or due_at.utcoffset() is None:
             raise ValueError("timezone offset missing")
-        ZoneInfo(timezone_name)
+        zone = ZoneInfo(timezone_name)
+        local_due_at = datetime.fromisoformat(due_at_local_text)
+        resolved_local = (
+            local_due_at.replace(tzinfo=zone)
+            if local_due_at.tzinfo is None
+            else local_due_at.astimezone(zone)
+        )
+        if resolved_local.astimezone(UTC) != due_at.astimezone(UTC):
+            raise ValueError("local and normalized reminder times disagree")
     except (TypeError, ValueError, ZoneInfoNotFoundError):
         raise ExecutorError("workflow reminder time invalid") from None
 

@@ -714,6 +714,26 @@ def test_confirmed_root_identity_is_persisted_and_used_by_retrieval(
     assert len(result["matches"]) == 1
     assert "approved root retrieval marker" in result["matches"][0]["snippet"]
 
+    conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Natural-language file search"},
+    )
+    assert conversation.status_code == 201, conversation.text
+    natural = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "Search my authorized files for approved root retrieval marker",
+            "conversation_id": conversation.json()["id"],
+            "idempotency_key": str(uuid4()),
+        },
+    )
+    assert natural.status_code == 200, natural.text
+    assert natural.json()["status"] == "success"
+    assert "clinical-notes.md" in natural.json()["message"]
+    assert "approved root retrieval marker" in natural.json()["message"]
+
 
 def _items_of_kind(client: TestClient, kind: str) -> list[dict]:
     response = client.get(
@@ -755,6 +775,7 @@ def test_task_reminder_workflow_is_confirmed_once_and_committed_together(
     assert "Workflow preview" in body["challenge"]["summary"]
     assert "finish assignment" in body["challenge"]["summary"]
     assert "review notes" in body["challenge"]["summary"]
+    assert "2026-11-01T10:00 (Europe/Amsterdam)" in body["challenge"]["summary"]
     assert _items_of_kind(client, "task") == []
     assert _items_of_kind(client, "reminder") == []
 

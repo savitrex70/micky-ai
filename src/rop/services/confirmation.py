@@ -263,14 +263,14 @@ def build_operation_summary(
             payload = json.loads(raw_payload)
             task_title = payload["task_title"]
             reminder_title = payload["reminder_title"]
-            due_at = payload["due_at"]
+            due_at_local = payload["due_at_local"]
             timezone_name = payload["timezone"]
             if not all(
                 isinstance(value, str)
                 for value in (
                     task_title,
                     reminder_title,
-                    due_at,
+                    due_at_local,
                     timezone_name,
                 )
             ):
@@ -283,7 +283,7 @@ def build_operation_summary(
             + "; create reminder "
             + repr(reminder_title)
             + " due at "
-            + due_at
+            + due_at_local
             + " ("
             + timezone_name
             + ")."

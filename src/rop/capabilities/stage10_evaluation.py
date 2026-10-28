@@ -79,15 +79,17 @@ def evaluate_intent_cases(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if expected_status == "matched" and result.status != "matched":
             missed_supported += 1
 
-        results.append({
-            "id": case_id,
-            "passed": correct,
-            "failure_reasons": reasons,
-            "expected_status": expected_status,
-            "actual_status": result.status,
-            "expected_intent": expected_intent,
-            "actual_intent": predicted_intent,
-        })
+        results.append(
+            {
+                "id": case_id,
+                "passed": correct,
+                "failure_reasons": reasons,
+                "expected_status": expected_status,
+                "actual_status": result.status,
+                "expected_intent": expected_intent,
+                "actual_intent": predicted_intent,
+            }
+        )
 
     passed = sum(item["passed"] for item in results)
     precision = true_positive / predicted_matched if predicted_matched else 0.0
@@ -100,11 +102,13 @@ def evaluate_intent_cases(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             **counts,
             "precision": (
                 counts["true_positive"] / denominator_precision
-                if denominator_precision else 0.0
+                if denominator_precision
+                else 0.0
             ),
             "recall": (
                 counts["true_positive"] / denominator_recall
-                if denominator_recall else 0.0
+                if denominator_recall
+                else 0.0
             ),
         }
 

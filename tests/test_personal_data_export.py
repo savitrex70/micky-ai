@@ -224,8 +224,11 @@ def test_personal_data_export_ui_discloses_scope_and_uses_local_api() -> None:
     assert 'id="personal-data-export"' in page.text
     assert "conversations, their messages," in page.text
     assert "notes, tasks, and reminders" in page.text
+    assert 'id="memory-form"' in page.text
+    assert "Private memory and preferences" in page.text
     assert javascript.status_code == 200
     assert "/api/assistant/personal-data/export" in javascript.text
+    assert "/api/assistant/memories" in javascript.text
     assert "schema_version" in javascript.text
     assert "Do not silently treat an incomplete export as complete" in javascript.text
 

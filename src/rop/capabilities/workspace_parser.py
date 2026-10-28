@@ -233,6 +233,7 @@ class WorkspaceCommandParser:
                     "task_title": task_title,
                     "reminder_title": reminder_title,
                     "due_at": normalized_due_at,
+                    "due_at_local": due_at,
                     "timezone": timezone_name,
                 },
                 ensure_ascii=False,
