@@ -198,6 +198,12 @@ async function makePage({ triggerExport = false } = {}) {
     if (path === "/sessions?offset=0&limit=50") {
       return response([]);
     }
+    if (path.startsWith("/api/assistant/memories")) {
+      if (path.includes("/clear") || path.includes("PATCH") || path.includes("DELETE")) {
+        throw new Error("unexpected memory mutation in startup harness");
+      }
+      return response({ items: [], total: 0, offset: 0, limit: 100 });
+    }
     if (path.startsWith("/api/assistant/personal-data/export")) {
       if (!exportPages) throw new Error("unexpected personal-data export request");
       const match = path.match(/[?&]offset=(\d+)/);

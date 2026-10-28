@@ -231,7 +231,8 @@ def delete_memory(
             detail="The memory could not be deleted. Inspect the local state.",
         ) from None
     _set_private_headers(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 __all__ = ["CLEAR_ALL_PHRASE", "router"]
