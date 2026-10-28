@@ -66,8 +66,6 @@ def test_help_aliases_normalize_in_endpoint(message: str) -> None:
     "message",
     [
         "help me create a reminder",
-        "what can you do and save a note",
-        "help me",
         "please help",
         "capabilities",
     ],
@@ -81,6 +79,31 @@ def test_unregistered_phrases_return_unsupported(message: str) -> None:
         "status": "unsupported-capability",
         "message": UNSUPPORTED_MESSAGE,
     }
+
+
+def test_help_me_is_a_supported_exact_help_phrase() -> None:
+    response = _post("Help me.")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "message": HELP_RESPONSE}
+
+
+def test_conflicting_intents_are_not_dispatched() -> None:
+    response = _post("what can you do and save a note")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unsupported-capability"
+    assert "Nothing was executed" in body["message"]
+
+
+def test_natural_workspace_phrase_is_recognized_but_still_needs_conversation() -> None:
+    response = _post("show me my notes")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "refused"
+    assert "Select or create a saved conversation" in body["message"]
 
 
 def test_ordinary_request_remains_unsupported() -> None:
