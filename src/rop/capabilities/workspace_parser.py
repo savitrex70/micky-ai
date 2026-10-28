@@ -49,6 +49,11 @@ _WORKFLOW_CREATE_RE = re.compile(
     r"^\s*workspace\s+workflow\s+create\s+task-and-reminder\s*:\s*(.*?)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
+_WORKFLOW_SEARCH_CREATE_RE = re.compile(
+    r"^\s*workspace\s+workflow\s+search-and-create-item\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 
 def _parts(value: str) -> list[str]:
@@ -199,6 +204,39 @@ class WorkspaceCommandParser:
     ) -> ProposedOperation:
         if pending_context is not None:
             return self._continue_clarification(message, pending_context)
+
+        search_create = _WORKFLOW_SEARCH_CREATE_RE.fullmatch(message)
+        if search_create:
+            parts = _parts(search_create.group(1))
+            if len(parts) != 3 or any(not part for part in parts):
+                raise CapabilityParseError(
+                    "workflow",
+                    "Provide item type, search terms, and an item title separated by |.",
+                )
+            kind, query, title = parts
+            if (
+                kind not in {"note", "task"}
+                or len(query) > 200
+                or len(title) > 100
+                or any(not part.isprintable() for part in parts)
+            ):
+                raise CapabilityParseError(
+                    "workflow",
+                    "The search-and-create workflow contains an unsupported value.",
+                )
+            payload = json.dumps(
+                {"kind": kind, "query": query, "title": title},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            return _operation(
+                "workspace_workflow_search_and_create_item",
+                parameters={
+                    "idempotency_key": idempotency_key or "",
+                    "workflow_payload": payload,
+                },
+            )
 
         workflow = _WORKFLOW_CREATE_RE.fullmatch(message)
         if workflow:

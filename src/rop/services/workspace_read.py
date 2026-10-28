@@ -1,10 +1,40 @@
 """Read-only operations for the deterministic personal workspace."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from rop import database as database_module
 from rop.repositories.assistant_workspace import AssistantWorkspaceRepository
 from rop.schemas.authorization import ProposedOperation
 
+if TYPE_CHECKING:
+    from rop.api.retrieval import RetrievalOutcome
+
 _REPOSITORY = AssistantWorkspaceRepository()
+
+
+def search_authorized_local_files(query: str) -> RetrievalOutcome:
+    """Search only stored, identity-bound roots through the secure bounded reader."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        raise ValueError("search query missing or outside the supported limit")
+
+    # Lazy import avoids adding a retrieval dependency to application startup.
+    from rop.api import retrieval as retrieval_api
+
+    session = database_module.SessionLocal()
+    try:
+        roots = _REPOSITORY.list_roots(
+            session, limit=retrieval_api._MAX_ROOTS_PER_REQUEST
+        )
+        authorized_total = _REPOSITORY.count_roots(session)
+        root_specs = [(root.path, root.root_identity) for root in roots]
+    finally:
+        session.close()
+
+    return retrieval_api.search_roots_detailed(
+        root_specs, query.strip(), 10, authorized_total=authorized_total
+    )
 
 
 def run_workspace_read(operation: ProposedOperation) -> str:
@@ -36,24 +66,7 @@ def run_workspace_read(operation: ProposedOperation) -> str:
 
     if operation.operation_id == "workspace_search_files":
         query = operation.parameters.get("query", "").strip()
-        if not query:
-            raise ValueError("search query missing")
-        # Lazy import, as before: the browser-facing retrieval API and this chat
-        # search share one bounded helper and one SQL-level root limit.
-        from rop.api import retrieval as retrieval_api
-
-        session = database_module.SessionLocal()
-        try:
-            roots = _REPOSITORY.list_roots(
-                session, limit=retrieval_api._MAX_ROOTS_PER_REQUEST
-            )
-            authorized_total = _REPOSITORY.count_roots(session)
-            root_specs = [(root.path, root.root_identity) for root in roots]
-        finally:
-            session.close()
-        outcome = retrieval_api.search_roots_detailed(
-            root_specs, query, 10, authorized_total=authorized_total
-        )
+        outcome = search_authorized_local_files(query)
         matches = outcome.matches
         lines = [
             f"Local search examined {outcome.files_examined} files; "
@@ -81,4 +94,4 @@ def run_workspace_read(operation: ProposedOperation) -> str:
     raise ValueError("unsupported read operation")
 
 
-__all__ = ["run_workspace_read"]
+__all__ = ["run_workspace_read", "search_authorized_local_files"]

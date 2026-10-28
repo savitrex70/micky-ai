@@ -112,6 +112,30 @@ _TASK_REMINDER_SKELETON_RE = re.compile(
     r"^create (?:a )?task to .+? and remind me to .+$",
     re.IGNORECASE,
 )
+_SEARCH_CREATE_TASK_PATTERNS = (
+    re.compile(
+        r"^(?:find files containing|search my authorized files for)\s+(.+?)"
+        r"\s+and create a task to\s+(.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:find files containing|search my authorized files for)\s+(.+?)"
+        r"\s+and create a task titled\s+(.+)$",
+        re.IGNORECASE,
+    ),
+)
+_SEARCH_CREATE_NOTE_PATTERNS = (
+    re.compile(
+        r"^(?:find files containing|search my authorized files for)\s+(.+?)"
+        r"\s+and prepare a note titled\s+(.+)$",
+        re.IGNORECASE,
+    ),
+)
+_SEARCH_CREATE_SKELETON_RE = re.compile(
+    r"^(?:find files containing|search my authorized files for)\s+.+?"
+    r"\s+and (?:create a task(?: to| titled)?|prepare a note(?: titled)?)\s*$",
+    re.IGNORECASE,
+)
 _REMINDER_EXPLICIT_RE = re.compile(
     r"^remind me to\s+(.+?)\s+(?:on\s+)?"
     r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})"
@@ -190,6 +214,34 @@ def interpret_request(message: str) -> IntentInterpretation:
     lowered = re.sub(r"\s+", " ", normalized).casefold()
     if lowered in _HELP_PHRASES:
         return _matched_help()
+
+    for patterns, kind in (
+        (_SEARCH_CREATE_TASK_PATTERNS, "task"),
+        (_SEARCH_CREATE_NOTE_PATTERNS, "note"),
+    ):
+        for pattern in patterns:
+            search_create = pattern.fullmatch(normalized)
+            if search_create is None:
+                continue
+            query = _safe_field(search_create.group(1))
+            title = _safe_field(search_create.group(2))
+            if (
+                not query
+                or not title
+                or len(query) > 200
+                or len(title) > 100
+            ):
+                return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+            return _matched_workspace(
+                "workspace workflow search-and-create-item: "
+                + " | ".join((kind, query, title))
+            )
+
+    if _SEARCH_CREATE_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "To prepare a note or task from local files, provide an exact search "
+            "query and item title. Nothing was executed or changed."
+        )
 
     workflow = _TASK_REMINDER_WORKFLOW_RE.fullmatch(normalized)
     if workflow:

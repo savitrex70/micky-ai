@@ -290,6 +290,35 @@ def build_operation_summary(
         )
         omitted_parameters.add("workflow_payload")
 
+    if operation.operation_id == "workspace_workflow_search_and_create_item":
+        raw_payload = operation.parameters.get("workflow_payload", "")
+        try:
+            payload = json.loads(raw_payload)
+            kind = payload["kind"]
+            query = payload["query"]
+            title = payload["title"]
+            if (
+                kind not in {"note", "task"}
+                or not isinstance(query, str)
+                or not isinstance(title, str)
+            ):
+                raise ValueError("workflow values are invalid")
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                "search-and-create preview could not be validated"
+            ) from None
+        parts.append(
+            "Workflow preview: search explicitly authorized local files for "
+            + repr(query)
+            + " and create a "
+            + kind
+            + " titled "
+            + repr(title)
+            + " from one matching source excerpt. If secure search is incomplete "
+            "or no match is found, no item will be created."
+        )
+        omitted_parameters.add("workflow_payload")
+
     rendered = ", ".join(
         f"{name}={value}"
         for name, value in sorted(operation.parameters.items())

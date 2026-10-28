@@ -211,6 +211,7 @@ def create_memory(
     _set_private_headers(response)
     return MemoryRead.model_validate(row)
 
+
 @router.patch("/{entry_id}", response_model=MemoryRead)
 def update_memory(
     entry_id: UUID,

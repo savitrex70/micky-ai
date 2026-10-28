@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 _REPOSITORY = AssistantWorkspaceRepository()
 _KEY_NAME = "idempotency_key"
 _WORKFLOW_OPERATION = "workspace_workflow_create_task_and_reminder"
+_SEARCH_CREATE_OPERATION = "workspace_workflow_search_and_create_item"
 _MISSING = object()
 
 _ITEM_OPERATIONS: dict[str, tuple[str, str]] = {
@@ -127,6 +128,18 @@ def build_workspace_policy() -> AuthorizationPolicy:
     )
     rules.append(
         OperationRule(
+            operation_id=_SEARCH_CREATE_OPERATION,
+            description=(
+                "Search authorized local files and prepare the exact note or task "
+                "shown in the confirmation preview."
+            ),
+            risk=RiskLevel.CONSEQUENTIAL,
+            prohibited=False,
+            required_parameters=(_KEY_NAME, "workflow_payload"),
+        )
+    )
+    rules.append(
+        OperationRule(
             operation_id=_WORKFLOW_OPERATION,
             description=(
                 "Create the exact task and reminder shown in the workflow preview."
@@ -159,7 +172,12 @@ def build_workspace_policy() -> AuthorizationPolicy:
 def build_workspace_executor_registry() -> ExecutorRegistry:
     """Create the explicit registry for reviewed workspace-only operations."""
     registry = ExecutorRegistry()
-    for operation_id in (*_ITEM_OPERATIONS, *_ROOT_OPERATIONS, _WORKFLOW_OPERATION):
+    for operation_id in (
+        *_ITEM_OPERATIONS,
+        *_ROOT_OPERATIONS,
+        _WORKFLOW_OPERATION,
+        _SEARCH_CREATE_OPERATION,
+    ):
         registry.register(operation_id, execute_workspace_operation)
     return registry
 
@@ -326,6 +344,76 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
     )
 
 
+def _apply_search_create_item(
+    session, operation: ProposedOperation
+) -> None:
+    """Prepare a user-requested note/task from one verified authorized match."""
+    raw_payload = operation.parameters.get("workflow_payload")
+    if not isinstance(raw_payload, str) or not raw_payload or len(raw_payload) > 512:
+        raise ExecutorError("search-and-create payload missing or oversized")
+    try:
+        payload = json.loads(raw_payload)
+    except (TypeError, ValueError):
+        raise ExecutorError("search-and-create payload invalid") from None
+    if not isinstance(payload, dict) or set(payload) != {"kind", "query", "title"}:
+        raise ExecutorError("search-and-create payload shape invalid")
+
+    kind = payload["kind"]
+    query = payload["query"]
+    title = payload["title"]
+    if (
+        kind not in {"note", "task"}
+        or not isinstance(query, str)
+        or not query.strip()
+        or len(query) > 200
+        or not query.isprintable()
+        or not isinstance(title, str)
+        or not title.strip()
+        or len(title) > 100
+        or not title.isprintable()
+    ):
+        raise ExecutorError("search-and-create values invalid")
+
+    # File content is untrusted data. It never becomes a command or instruction.
+    from rop.services.workspace_read import search_authorized_local_files
+
+    try:
+        outcome = search_authorized_local_files(query)
+    except ValueError:
+        raise ExecutorError("authorized local search could not be performed") from None
+    if not outcome.secure_backend_available:
+        raise ExecutorError("secure authorized local search is unavailable")
+    if outcome.roots_rejected or outcome.roots_skipped:
+        raise ExecutorError(
+            "not all authorized folders could be searched safely; no item was created"
+        )
+    if not outcome.matches:
+        raise ExecutorError("no matching authorized local content was found")
+
+    match = outcome.matches[0]
+    source_path = str(match.path).strip()
+    if len(source_path) > 280:
+        source_path = "..." + source_path[-277:]
+    snippet = " ".join(str(match.snippet).split())[:120]
+    item_content = (
+        f"Query: {query[:60]}\n"
+        f"Source: {source_path}\n"
+        f"Excerpt: {snippet}"
+    )
+    if len(item_content) > 512:
+        item_content = item_content[:512]
+    session.add(
+        AssistantItem(
+            kind=kind,
+            title=title,
+            content=item_content,
+            due_at=None,
+            timezone=None,
+            completed=False,
+        )
+    )
+
+
 def _apply_root(session, operation: ProposedOperation) -> None:
     action = _ROOT_OPERATIONS[operation.operation_id]
     if action == "add":
@@ -396,6 +484,8 @@ def execute_workspace_operation(
         receipt.status = "RUNNING"
         if operation.operation_id == _WORKFLOW_OPERATION:
             _apply_task_reminder_workflow(session, operation)
+        elif operation.operation_id == _SEARCH_CREATE_OPERATION:
+            _apply_search_create_item(session, operation)
         elif operation.operation_id in _ITEM_OPERATIONS:
             _apply_item(session, operation)
         elif operation.operation_id in _ROOT_OPERATIONS:
