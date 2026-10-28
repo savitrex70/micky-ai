@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from rop.database import get_db
 from rop.models.assistant_conversation import AssistantConversation
 from rop.models.assistant_item import AssistantItem
+from rop.models.assistant_memory_entry import AssistantMemoryEntry
 from rop.models.assistant_message import AssistantMessage
 from rop.schemas.personal_data_export import (
     PersonalDataExportCounts,
@@ -72,6 +73,18 @@ def _workspace_item_record(row: AssistantItem) -> dict[str, object]:
     }
 
 
+def _memory_record(row: AssistantMemoryEntry) -> dict[str, object]:
+    return {
+        "record_type": "memory_entry",
+        "id": str(row.id),
+        "entry_type": row.entry_type,
+        "title": row.title,
+        "content": row.content,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
 @router.get("/export", response_model=PersonalDataExportPage)
 def export_personal_data(
     response: Response,
@@ -87,12 +100,14 @@ def export_personal_data(
     conversation_count = _count(db, AssistantConversation)
     message_count = _count(db, AssistantMessage)
     item_count = _count(db, AssistantItem)
+    memory_count = _count(db, AssistantMemoryEntry)
     counts = PersonalDataExportCounts(
         conversations=conversation_count,
         messages=message_count,
         workspace_items=item_count,
+        memories=memory_count,
     )
-    total_records = conversation_count + message_count + item_count
+    total_records = conversation_count + message_count + item_count + memory_count
     if offset > total_records:
         raise HTTPException(
             status_code=422,
@@ -125,6 +140,13 @@ def export_personal_data(
                 AssistantItem.created_at.asc(), AssistantItem.id.asc()
             ),
             _workspace_item_record,
+        ),
+        (
+            memory_count,
+            select(AssistantMemoryEntry).order_by(
+                AssistantMemoryEntry.created_at.asc(), AssistantMemoryEntry.id.asc()
+            ),
+            _memory_record,
         ),
     )
 
