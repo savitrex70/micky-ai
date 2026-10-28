@@ -18,6 +18,7 @@ from rop.database import Base, get_db
 from rop.main import app
 from rop.models.assistant_conversation import AssistantConversation
 from rop.models.assistant_item import AssistantItem
+from rop.models.assistant_memory_entry import AssistantMemoryEntry
 from rop.models.assistant_message import AssistantMessage
 
 ORIGIN = "http://127.0.0.1:8000"
@@ -75,6 +76,13 @@ def _seed(factory: sessionmaker[Session]) -> None:
                 ),
             ]
         )
+        session.add(
+            AssistantMemoryEntry(
+                entry_type="preference",
+                title="Answer style",
+                content="Use concise explanations.",
+            )
+        )
         session.commit()
 
 
@@ -112,7 +120,7 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
                 "/api/assistant/personal-data/export?offset=-1&limit=10"
             )
             offset_beyond_total = client.get(
-                "/api/assistant/personal-data/export?offset=9&limit=1"
+                "/api/assistant/personal-data/export?offset=10&limit=1"
             )
     finally:
         if previous is not None:
@@ -130,11 +138,12 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     third = page_three.json()
     assert first["export_format"] == "micky-ai-personal-data"
     assert first["schema_version"] == 1
-    assert first["total_records"] == 8
+    assert first["total_records"] == 9
     assert first["counts"] == {
         "conversations": 2,
         "messages": 3,
         "workspace_items": 3,
+        "memories": 1,
     }
     assert first["offset"] == 0 and first["limit"] == 3
     assert first["next_offset"] == 3 and first["complete"] is False
@@ -154,6 +163,7 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
         "workspace_item",
         "workspace_item",
         "workspace_item",
+        "memory_entry",
     ]
     assert "private user message" in {
         record.get("content")
@@ -174,6 +184,10 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     )
     assert task["title"] == "Finish lab assignment"
     assert task["completed"] is False
+    memory = next(record for record in records if record["record_type"] == "memory_entry")
+    assert memory["entry_type"] == "preference"
+    assert memory["title"] == "Answer style"
+    assert memory["content"] == "Use concise explanations."
     allowed_fields = {
         "record_type",
         "id",
@@ -188,10 +202,11 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
         "due_at",
         "timezone",
         "completed",
+        "entry_type",
     }
     assert all(set(record).issubset(allowed_fields) for record in records)
     assert {record["record_type"] for record in records}.issubset(
-        {"conversation", "message", "workspace_item"}
+        {"conversation", "message", "workspace_item", "memory_entry"}
     )
     assert too_large.status_code == 422
     assert negative.status_code == 422
