@@ -14,6 +14,7 @@ class MemoryCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    idempotency_key: UUID
     entry_type: MemoryEntryType = "memory"
     title: str = Field(min_length=1, max_length=120)
     content: str = Field(min_length=1, max_length=4000)

@@ -54,6 +54,7 @@
   let busy = false;
   let pending = readPendingKey();
   let memoryBusy = false;
+  let memoryIdempotencyKey = null;
 
   function setText(node, message) {
     if (node) node.textContent = message || "";
@@ -745,6 +746,16 @@
   async function saveMemory(event) {
     event.preventDefault();
     if (memoryBusy) return;
+    if (!memoryIdempotencyKey) {
+      if (!window.crypto || typeof window.crypto.randomUUID !== "function") {
+        setText(
+          memoryStatus,
+          "This browser cannot create a safe save-request key. No entry was saved."
+        );
+        return;
+      }
+      memoryIdempotencyKey = window.crypto.randomUUID();
+    }
     memoryBusy = true;
     memorySaveButton.disabled = true;
     try {
@@ -752,6 +763,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          idempotency_key: memoryIdempotencyKey,
           entry_type: memoryType.value,
           title: memoryTitle.value,
           content: memoryContent.value
@@ -759,10 +771,22 @@
       });
       memoryTitle.value = "";
       memoryContent.value = "";
+      memoryIdempotencyKey = null;
       setText(memoryStatus, "Saved entry: " + saved.title);
       await refreshMemories();
     } catch (err) {
-      setText(memoryStatus, "Entry was not saved: " + err.message);
+      if (err.status === 409) {
+        memoryIdempotencyKey = null;
+        await refreshMemories();
+        setText(
+          memoryStatus,
+          "The save key was already used for different content. Saved entries " +
+            "were refreshed; review them before starting another save."
+        );
+      } else {
+        setText(memoryStatus, "Save could not be confirmed: " + err.message +
+          " Retry without changing the content to resolve the same request.");
+      }
     } finally {
       memoryBusy = false;
       memorySaveButton.disabled = false;

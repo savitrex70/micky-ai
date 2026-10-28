@@ -2,6 +2,7 @@
 
 from collections.abc import Generator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,11 +46,22 @@ def client() -> Generator[TestClient, None, None]:
         engine.dispose()
 
 
-def create_entry(client: TestClient, title: str, content: str):
+def create_entry(
+    client: TestClient,
+    title: str,
+    content: str,
+    *,
+    idempotency_key: str | None = None,
+):
     return client.post(
         "/api/assistant/memories",
         headers=HEADERS,
-        json={"entry_type": "memory", "title": title, "content": content},
+        json={
+            "idempotency_key": idempotency_key or str(uuid4()),
+            "entry_type": "memory",
+            "title": title,
+            "content": content,
+        },
     )
 
 
@@ -82,7 +94,41 @@ def test_create_list_search_update_and_delete(client: TestClient) -> None:
     assert client.get("/api/assistant/memories").json()["items"][0]["id"] == entry["id"]
     deleted = client.delete("/api/assistant/memories/" + entry["id"], headers=HEADERS)
     assert deleted.status_code == 204
+    repeated_delete = client.delete(
+        "/api/assistant/memories/" + entry["id"], headers=HEADERS
+    )
+    assert repeated_delete.status_code == 204
     assert client.get("/api/assistant/memories").json()["total"] == 0
+
+
+def test_memory_create_is_idempotent_and_rejects_key_reuse_with_different_content(
+    client: TestClient,
+) -> None:
+    key = str(uuid4())
+    first = create_entry(
+        client,
+        "One explicit save",
+        "A stable request can safely be retried.",
+        idempotency_key=key,
+    )
+    replay = create_entry(
+        client,
+        "One explicit save",
+        "A stable request can safely be retried.",
+        idempotency_key=key,
+    )
+    collision = create_entry(
+        client,
+        "Different content",
+        "Do not reinterpret a previously used request key.",
+        idempotency_key=key,
+    )
+
+    assert first.status_code == 201, first.text
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["id"] == first.json()["id"]
+    assert collision.status_code == 409
+    assert client.get("/api/assistant/memories").json()["total"] == 1
 
 
 def test_chat_does_not_implicitly_create_memory(client: TestClient) -> None:
@@ -101,7 +147,11 @@ def test_memory_write_rejects_cross_origin_request(client: TestClient) -> None:
             "origin": "https://attacker.invalid",
             "content-type": "application/json",
         },
-        json={"title": "Entry", "content": "Content"},
+        json={
+            "idempotency_key": str(uuid4()),
+            "title": "Entry",
+            "content": "Content",
+        },
     )
     assert response.status_code == 403
     assert client.get("/api/assistant/memories").json()["total"] == 0
@@ -110,9 +160,22 @@ def test_memory_write_rejects_cross_origin_request(client: TestClient) -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        {"title": " ", "content": "nonblank"},
-        {"title": "Valid", "content": " "},
-        {"title": "Valid", "content": "content", "conversation_id": "forged"},
+        {
+            "idempotency_key": "00000000-0000-4000-8000-000000000001",
+            "title": " ",
+            "content": "nonblank",
+        },
+        {
+            "idempotency_key": "00000000-0000-4000-8000-000000000001",
+            "title": "Valid",
+            "content": " ",
+        },
+        {
+            "idempotency_key": "00000000-0000-4000-8000-000000000001",
+            "title": "Valid",
+            "content": "content",
+            "conversation_id": "forged",
+        },
     ],
 )
 def test_memory_create_rejects_invalid_values(

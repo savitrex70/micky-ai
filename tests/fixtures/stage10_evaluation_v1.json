@@ -359,6 +359,14 @@
     {
       "domain": "conversation-clarification-recovery",
       "test_node": "tests/test_workspace_api.py::test_chat_clarification_restores_binds_and_consumes_once"
+    },
+    {
+      "domain": "memory-idempotency",
+      "test_node": "tests/test_assistant_memory.py::test_memory_create_is_idempotent_and_rejects_key_reuse_with_different_content"
+    },
+    {
+      "domain": "memory-restart-persistence",
+      "test_node": "tests/test_assistant_memory.py::test_memory_persists_after_client_and_database_recreation"
     }
   ]
 }

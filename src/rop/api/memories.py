@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rop.api.origin import enforce_local_origin
@@ -76,6 +76,26 @@ def _set_private_headers(response: Response) -> None:
     response.headers["X-Content-Type-Options"] = "nosniff"
 
 
+def _matches_create_request(
+    row: AssistantMemoryEntry, body: MemoryCreate
+) -> bool:
+    return (
+        row.entry_type == body.entry_type
+        and row.title == body.title
+        and row.content == body.content
+    )
+
+
+def _find_by_idempotency_key(
+    db: Session, body: MemoryCreate
+) -> AssistantMemoryEntry | None:
+    return db.scalar(
+        select(AssistantMemoryEntry).where(
+            AssistantMemoryEntry.idempotency_key == body.idempotency_key
+        )
+    )
+
+
 @router.get("", response_model=MemoryListResponse)
 def list_memories(
     response: Response,
@@ -121,10 +141,34 @@ def create_memory(
     response: Response,
     db: Session = Depends(get_db),
 ) -> MemoryRead:
-    """Save one entry only after an explicit, local user submission."""
+    """Save one entry; the request key makes retries safe after uncertain outcomes."""
     enforce_local_origin(request)
     _validate_personal_content(body.title, body.content)
+
+    try:
+        existing = _find_by_idempotency_key(db, body)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.warning("assistant memory idempotency lookup failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The save request could not be checked. Retry with the same key.",
+        ) from None
+    if existing is not None:
+        if not _matches_create_request(existing, body):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This request key already represents different memory content. "
+                    "Refresh saved entries before starting a new save."
+                ),
+            )
+        response.status_code = status.HTTP_200_OK
+        _set_private_headers(response)
+        return MemoryRead.model_validate(existing)
+
     row = AssistantMemoryEntry(
+        idempotency_key=body.idempotency_key,
         entry_type=body.entry_type,
         title=body.title,
         content=body.content,
@@ -133,16 +177,41 @@ def create_memory(
         db.add(row)
         db.commit()
         db.refresh(row)
+    except IntegrityError:
+        db.rollback()
+        try:
+            existing = _find_by_idempotency_key(db, body)
+        except SQLAlchemyError:
+            logger.warning("assistant memory idempotency resolution failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "The save outcome could not be confirmed. Retry with the same key."
+                ),
+            ) from None
+        if existing is not None and _matches_create_request(existing, body):
+            response.status_code = status.HTTP_200_OK
+            _set_private_headers(response)
+            return MemoryRead.model_validate(existing)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This request key already represents different memory content.",
+            ) from None
+        logger.warning("assistant memory create conflict could not be resolved")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The save outcome could not be confirmed. Retry with the same key.",
+        ) from None
     except SQLAlchemyError:
         db.rollback()
         logger.warning("assistant memory create failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The memory could not be saved. No success is claimed.",
+            detail="The memory could not be saved. Retry with the same key.",
         ) from None
     _set_private_headers(response)
     return MemoryRead.model_validate(row)
-
 
 @router.patch("/{entry_id}", response_model=MemoryRead)
 def update_memory(
@@ -216,7 +285,9 @@ def delete_memory(
     enforce_local_origin(request)
     row = db.get(AssistantMemoryEntry, entry_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="The memory entry does not exist.")
+        _set_private_headers(response)
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
     try:
         db.delete(row)
         db.commit()

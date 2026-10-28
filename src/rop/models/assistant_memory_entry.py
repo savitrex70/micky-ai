@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, func
+from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from rop.database import Base
@@ -31,6 +31,11 @@ class AssistantMemoryEntry(Base):
             "updated_at",
             "id",
         ),
+        Index(
+            "uq_assistant_memory_entries_idempotency_key",
+            "idempotency_key",
+            unique=True,
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -39,6 +44,9 @@ class AssistantMemoryEntry(Base):
     )
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

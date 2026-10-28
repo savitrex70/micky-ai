@@ -55,6 +55,8 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         "memory-crud-and-persistence",
         "memory-secret-and-clinical-boundaries",
         "memory-clear-confirmation",
+        "memory-idempotency",
+        "memory-restart-persistence",
         "personal-data-export-and-pagination",
         "clinical-personal-data-separation",
         "retrieval-allowlist",
