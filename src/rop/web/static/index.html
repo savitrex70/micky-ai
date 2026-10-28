@@ -130,6 +130,35 @@
     <div id="workspace-items" class="workspace-items" aria-live="polite"></div>
   </section>
 
+  <section id="memory-section" aria-labelledby="memory-heading">
+    <h2 id="memory-heading">Private memory and preferences</h2>
+    <p class="help">
+      Entries are saved only when you explicitly submit this form. Do not save
+      credentials, patient identifiers, or clinical-session content. This
+      store is separate from conversation history and clinical records.
+    </p>
+    <form id="memory-form" class="workspace-form">
+      <label for="memory-type">Entry type</label>
+      <select id="memory-type" required>
+        <option value="memory">Memory</option>
+        <option value="preference">Preference</option>
+      </select>
+      <label for="memory-title">Title</label>
+      <input id="memory-title" maxlength="120" required>
+      <label for="memory-content">Content</label>
+      <textarea id="memory-content" maxlength="4000" rows="3" required></textarea>
+      <button id="memory-save" type="submit">Save entry</button>
+    </form>
+    <div class="workspace-toolbar">
+      <label for="memory-query">Filter saved entries</label>
+      <input id="memory-query" maxlength="200" placeholder="Search title or content">
+      <button id="memory-refresh" type="button">Refresh saved entries</button>
+      <button id="memory-clear-all" type="button" class="danger-button">Clear saved entries</button>
+    </div>
+    <p id="memory-status" role="status" aria-live="polite"></p>
+    <ul id="memory-items" class="workspace-items" aria-live="polite"></ul>
+  </section>
+
   <section id="retrieval-section" aria-labelledby="retrieval-heading">
     <h2 id="retrieval-heading">Private local-file retrieval</h2>
     <p class="help">
@@ -283,12 +312,13 @@
     <h2 id="personal-data-export-heading">Export personal conversations and workspace</h2>
     <p class="help">
       Download a versioned JSON export of saved conversations, their messages,
-      and notes, tasks, and reminders. The export uses bounded pages and checks
-      completeness before downloading. Confirmation records have their own
-      separate export below. Clinical reasoning records and retrieval-root
-      paths are not included. Import is not implemented.
+      notes, tasks, reminders, and explicitly saved memories/preferences. The
+      export uses bounded pages and checks completeness before downloading.
+      Confirmation records have their own separate export below. Clinical
+      reasoning records and retrieval-root paths are not included. Import is
+      not implemented.
     </p>
-    <button id="personal-data-export" type="button">Download conversations + workspace JSON</button>
+    <button id="personal-data-export" type="button">Download complete personal-data JSON</button>
     <p id="personal-data-export-status" role="status" aria-live="polite"></p>
   </section>
 

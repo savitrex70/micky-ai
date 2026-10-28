@@ -5,6 +5,16 @@
   const itemForm = byId("workspace-create-form");
   const personalDataExportButton = byId("personal-data-export");
   const personalDataExportStatus = byId("personal-data-export-status");
+  const memoryForm = byId("memory-form");
+  const memorySaveButton = byId("memory-save");
+  const memoryType = byId("memory-type");
+  const memoryTitle = byId("memory-title");
+  const memoryContent = byId("memory-content");
+  const memoryQuery = byId("memory-query");
+  const memoryRefreshButton = byId("memory-refresh");
+  const memoryClearButton = byId("memory-clear-all");
+  const memoryStatus = byId("memory-status");
+  const memoryList = byId("memory-items");
   const itemKind = byId("workspace-kind");
   const itemTitle = byId("workspace-title");
   const itemContent = byId("workspace-content");
@@ -43,6 +53,7 @@
   let clinicalRunInFlight = false;
   let busy = false;
   let pending = readPendingKey();
+  let memoryBusy = false;
 
   function setText(node, message) {
     if (node) node.textContent = message || "";
@@ -698,6 +709,133 @@
   }
 
 
+  async function refreshMemories() {
+    const query = (memoryQuery.value || "").trim();
+    const url = "/api/assistant/memories?limit=100" +
+      (query ? "&q=" + encodeURIComponent(query) : "");
+    try {
+      const payload = await jsonRequest(url);
+      if (!payload || !Array.isArray(payload.items) ||
+          typeof payload.total !== "number") {
+        throw new Error("The saved-entry response was not valid.");
+      }
+      memoryList.replaceChildren();
+      payload.items.forEach((entry) => {
+        const card = element("li", undefined, "workspace-card");
+        card.appendChild(element("h3", entry.title));
+        card.appendChild(element(
+          "p",
+          entry.entry_type === "preference" ? "Preference" : "Memory",
+          "help"
+        ));
+        card.appendChild(element("p", entry.content));
+        const actions = element("div", undefined, "workspace-actions");
+        actions.appendChild(button("Edit", () => editMemory(entry)));
+        actions.appendChild(button("Delete", () => deleteMemory(entry)));
+        card.appendChild(actions);
+        memoryList.appendChild(card);
+      });
+      setText(memoryStatus, "Loaded " + payload.items.length + " of " +
+        payload.total + " saved entries.");
+    } catch (err) {
+      setText(memoryStatus, "Saved entries could not be loaded: " + err.message);
+    }
+  }
+
+  async function saveMemory(event) {
+    event.preventDefault();
+    if (memoryBusy) return;
+    memoryBusy = true;
+    memorySaveButton.disabled = true;
+    try {
+      const saved = await jsonRequest("/api/assistant/memories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entry_type: memoryType.value,
+          title: memoryTitle.value,
+          content: memoryContent.value
+        })
+      });
+      memoryTitle.value = "";
+      memoryContent.value = "";
+      setText(memoryStatus, "Saved entry: " + saved.title);
+      await refreshMemories();
+    } catch (err) {
+      setText(memoryStatus, "Entry was not saved: " + err.message);
+    } finally {
+      memoryBusy = false;
+      memorySaveButton.disabled = false;
+    }
+  }
+
+  async function editMemory(entry) {
+    if (memoryBusy || typeof window.prompt !== "function") return;
+    const title = window.prompt("Edit entry title", entry.title);
+    if (title === null) return;
+    const content = window.prompt("Edit entry content", entry.content);
+    if (content === null) return;
+    memoryBusy = true;
+    try {
+      const updated = await jsonRequest(
+        "/api/assistant/memories/" + encodeURIComponent(entry.id),
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: title, content: content })
+        }
+      );
+      setText(memoryStatus, "Updated entry: " + updated.title);
+      await refreshMemories();
+    } catch (err) {
+      setText(memoryStatus, "Entry was not updated: " + err.message);
+    } finally {
+      memoryBusy = false;
+    }
+  }
+
+  async function deleteMemory(entry) {
+    if (memoryBusy || typeof window.confirm !== "function") return;
+    if (!window.confirm("Permanently remove the saved entry '" + entry.title + "'?")) {
+      return;
+    }
+    memoryBusy = true;
+    try {
+      await jsonRequest(
+        "/api/assistant/memories/" + encodeURIComponent(entry.id),
+        { method: "DELETE" }
+      );
+      setText(memoryStatus, "Removed saved entry.");
+      await refreshMemories();
+    } catch (err) {
+      setText(memoryStatus, "Entry was not removed: " + err.message);
+    } finally {
+      memoryBusy = false;
+    }
+  }
+
+  async function clearAllMemories() {
+    if (memoryBusy || typeof window.confirm !== "function" ||
+        typeof window.prompt !== "function") return;
+    if (!window.confirm("Remove every saved memory and preference?")) return;
+    const phrase = window.prompt("Type CLEAR ALL SAVED MEMORY to confirm.");
+    if (phrase === null) return;
+    memoryBusy = true;
+    try {
+      const result = await jsonRequest("/api/assistant/memories/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation_phrase: phrase })
+      });
+      setText(memoryStatus, "Removed " + result.deleted_count + " saved entries.");
+      await refreshMemories();
+    } catch (err) {
+      setText(memoryStatus, "Saved entries were not cleared: " + err.message);
+    } finally {
+      memoryBusy = false;
+    }
+  }
+
   async function downloadPersonalDataExport() {
     if (!personalDataExportButton) return;
     personalDataExportButton.disabled = true;
@@ -728,7 +866,8 @@
         } else if (page.total_records !== expectedTotal ||
             page.counts.conversations !== expectedCounts.conversations ||
             page.counts.messages !== expectedCounts.messages ||
-            page.counts.workspace_items !== expectedCounts.workspace_items) {
+            page.counts.workspace_items !== expectedCounts.workspace_items ||
+            page.counts.memories !== expectedCounts.memories) {
           throw new Error("Personal data changed while exporting. Run the export again.");
         }
         if (page.records.length > pageSize) {
@@ -775,7 +914,7 @@
       setText(
         personalDataExportStatus,
         "Export downloaded: " + records.length +
-          " records (conversations, messages, notes, tasks, and reminders)."
+          " records (conversations, messages, notes, tasks, reminders, and saved entries)."
       );
     } catch (err) {
       setText(
@@ -792,9 +931,14 @@
     personalDataExportButton.addEventListener("click", downloadPersonalDataExport);
   }
 
+  memoryForm.addEventListener("submit", saveMemory);
+  memoryRefreshButton.addEventListener("click", refreshMemories);
+  memoryClearButton.addEventListener("click", clearAllMemories);
+
   timezoneInput.value = currentTimezone();
   dueFields.hidden = true;
   refreshWorkspace();
+  refreshMemories();
   loadClinicalSessions();
   refreshRecovery();
   // In-app reminder surfacing only; no background or OS notification.
