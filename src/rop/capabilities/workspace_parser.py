@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -13,7 +14,7 @@ from rop.capabilities.parser import CapabilityParseError
 from rop.schemas.authorization import ProposedOperation
 
 _COMMAND_PREFIX = re.compile(
-    r"^\s*workspace\s+(list|search|add|delete|complete|reopen|update)\b",
+    r"^\s*workspace\s+(list|search|add|delete|complete|reopen|update|workflow)\b",
     re.IGNORECASE,
 )
 _LIST_RE = re.compile(
@@ -42,6 +43,10 @@ _TASK_STATE_RE = re.compile(
 )
 _UPDATE_RE = re.compile(
     r"^\s*workspace\s+update\s+(note|task|reminder)\s+([^:\s]+)\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_WORKFLOW_CREATE_RE = re.compile(
+    r"^\s*workspace\s+workflow\s+create\s+task-and-reminder\s*:\s*(.*?)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -194,6 +199,54 @@ class WorkspaceCommandParser:
     ) -> ProposedOperation:
         if pending_context is not None:
             return self._continue_clarification(message, pending_context)
+
+        workflow = _WORKFLOW_CREATE_RE.fullmatch(message)
+        if workflow:
+            parts = _parts(workflow.group(1))
+            if len(parts) != 4 or any(not part for part in parts):
+                raise CapabilityParseError(
+                    "workflow",
+                    "Provide a task title, reminder title, exact local date/time, "
+                    "and IANA timezone separated by |.",
+                )
+            task_title, reminder_title, due_at, timezone_name = parts
+            if (
+                len(task_title) > 100
+                or len(reminder_title) > 100
+                or len(due_at) > 32
+                or len(timezone_name) > 96
+                or any(not part.isprintable() for part in parts)
+            ):
+                raise CapabilityParseError(
+                    "workflow",
+                    "The workflow contains a value outside the supported limits.",
+                )
+            try:
+                normalized_due_at = _normalize_reminder_due(due_at, timezone_name)
+            except _ReminderTimeError as error:
+                raise CapabilityParseError(
+                    error.field_name,
+                    error.question,
+                ) from None
+            payload = json.dumps(
+                {
+                    "task_title": task_title,
+                    "reminder_title": reminder_title,
+                    "due_at": normalized_due_at,
+                    "timezone": timezone_name,
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            return _operation(
+                "workspace_workflow_create_task_and_reminder",
+                parameters={
+                    "idempotency_key": idempotency_key or "",
+                    "workflow_payload": payload,
+                },
+            )
+
         if _LIST_RE.fullmatch(message):
             match = _LIST_RE.fullmatch(message)
             assert match is not None

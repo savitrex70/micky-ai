@@ -42,6 +42,7 @@ Security-relevant behaviour:
 from __future__ import annotations
 
 import hashlib
+import json
 import hmac
 import logging
 import re
@@ -254,12 +255,47 @@ def build_operation_summary(
         parts.append(f"Target: {operation.target}.")
     if operation.scope is not None:
         parts.append(f"Scope: {operation.scope}.")
-    if operation.parameters:
-        rendered = ", ".join(
-            f"{name}={value}"
-            for name, value in sorted(operation.parameters.items())
-            if name != "idempotency_key"
+
+    omitted_parameters = {"idempotency_key"}
+    if operation.operation_id == "workspace_workflow_create_task_and_reminder":
+        raw_payload = operation.parameters.get("workflow_payload", "")
+        try:
+            payload = json.loads(raw_payload)
+            task_title = payload["task_title"]
+            reminder_title = payload["reminder_title"]
+            due_at = payload["due_at"]
+            timezone_name = payload["timezone"]
+            if not all(
+                isinstance(value, str)
+                for value in (
+                    task_title,
+                    reminder_title,
+                    due_at,
+                    timezone_name,
+                )
+            ):
+                raise ValueError("workflow values are not strings")
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("workflow preview could not be validated") from None
+        parts.append(
+            "Workflow preview: create task "
+            + repr(task_title)
+            + "; create reminder "
+            + repr(reminder_title)
+            + " due at "
+            + due_at
+            + " ("
+            + timezone_name
+            + ")."
         )
+        omitted_parameters.add("workflow_payload")
+
+    rendered = ", ".join(
+        f"{name}={value}"
+        for name, value in sorted(operation.parameters.items())
+        if name not in omitted_parameters
+    )
+    if rendered:
         parts.append(f"Parameters: {rendered}.")
     parts.append(f"Risk: {risk.value}.")
     return " ".join(parts)

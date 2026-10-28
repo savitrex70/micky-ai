@@ -102,6 +102,16 @@ _TASK_TITLE_RE = re.compile(
     r"^(?:create|make|add) (?:me )?a? ?task to(?:\s+(.+))?$",
     re.IGNORECASE,
 )
+_TASK_REMINDER_WORKFLOW_RE = re.compile(
+    r"^create (?:a )?task to (.+?) and remind me to (.+?) on "
+    r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}) in "
+    r"([A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)*|UTC)$",
+    re.IGNORECASE,
+)
+_TASK_REMINDER_SKELETON_RE = re.compile(
+    r"^create (?:a )?task to .+? and remind me to .+$",
+    re.IGNORECASE,
+)
 _REMINDER_EXPLICIT_RE = re.compile(
     r"^remind me to\s+(.+?)\s+(?:on\s+)?"
     r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})"
@@ -183,7 +193,42 @@ def interpret_request(message: str) -> IntentInterpretation:
     if lowered in _HELP_PHRASES:
         return _matched_help()
 
+    workflow = _TASK_REMINDER_WORKFLOW_RE.fullmatch(normalized)
+    if workflow:
+        task_title = _safe_field(workflow.group(1))
+        reminder_title = _safe_field(workflow.group(2))
+        due_at = _safe_field(workflow.group(3))
+        timezone_name = _safe_field(workflow.group(4))
+        if (
+            not task_title
+            or not reminder_title
+            or not due_at
+            or not timezone_name
+            or len(task_title) > 100
+            or len(reminder_title) > 100
+            or len(timezone_name) > 96
+        ):
+            return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+        return _matched_workspace(
+            "workspace workflow create task-and-reminder: "
+            + " | ".join((task_title, reminder_title, due_at, timezone_name))
+        )
+    if _TASK_REMINDER_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "To prepare a task and reminder together, provide both titles, an "
+            "exact local date/time in YYYY-MM-DDTHH:MM format, and an IANA "
+            "timezone such as Europe/Amsterdam. Nothing was executed or changed."
+        )
+
     if _multiple_action_conflict(normalized):
+        if re.search(r"\b(?:find|search)\b.*\bfiles?\b", normalized, re.I) and re.search(
+            r"\b(?:task|note)\b", normalized, re.I
+        ):
+            return _ambiguous(
+                "I can search your authorized files, but need the exact task or "
+                "note title before preparing a saved item. Tell me the title and "
+                "the search terms. Nothing was executed or changed."
+            )
         return _ambiguous()
 
     for pattern, kind in _LIST_PATTERNS:

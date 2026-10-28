@@ -16,6 +16,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import IntegrityError
 
@@ -46,6 +47,7 @@ from rop.services.local_paths import (
 logger = logging.getLogger(__name__)
 _REPOSITORY = AssistantWorkspaceRepository()
 _KEY_NAME = "idempotency_key"
+_WORKFLOW_OPERATION = "workspace_workflow_create_task_and_reminder"
 _MISSING = object()
 
 _ITEM_OPERATIONS: dict[str, tuple[str, str]] = {
@@ -123,6 +125,17 @@ def build_workspace_policy() -> AuthorizationPolicy:
             ),
         )
     )
+    rules.append(
+        OperationRule(
+            operation_id=_WORKFLOW_OPERATION,
+            description=(
+                "Create the exact task and reminder shown in the workflow preview."
+            ),
+            risk=RiskLevel.CONSEQUENTIAL,
+            prohibited=False,
+            required_parameters=(_KEY_NAME, "workflow_payload"),
+        )
+    )
     rules.extend(
         (
             OperationRule(
@@ -146,7 +159,7 @@ def build_workspace_policy() -> AuthorizationPolicy:
 def build_workspace_executor_registry() -> ExecutorRegistry:
     """Create the explicit registry for reviewed workspace-only operations."""
     registry = ExecutorRegistry()
-    for operation_id in (*_ITEM_OPERATIONS, *_ROOT_OPERATIONS):
+    for operation_id in (*_ITEM_OPERATIONS, *_ROOT_OPERATIONS, _WORKFLOW_OPERATION):
         registry.register(operation_id, execute_workspace_operation)
     return registry
 
@@ -232,6 +245,75 @@ def _apply_item(session, operation: ProposedOperation) -> None:
                 raise ExecutorError("reminder fields invalid") from None
 
 
+def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None:
+    """Apply the two reviewed workspace writes in the receipt transaction."""
+    raw_payload = operation.parameters.get("workflow_payload")
+    if not raw_payload or len(raw_payload) > 512:
+        raise ExecutorError("workflow payload missing or oversized")
+    try:
+        payload = json.loads(raw_payload)
+    except (TypeError, ValueError):
+        raise ExecutorError("workflow payload invalid") from None
+    if not isinstance(payload, dict) or set(payload) != {
+        "task_title",
+        "reminder_title",
+        "due_at",
+        "timezone",
+    }:
+        raise ExecutorError("workflow payload shape invalid")
+
+    task_title = payload["task_title"]
+    reminder_title = payload["reminder_title"]
+    due_at_text = payload["due_at"]
+    timezone_name = payload["timezone"]
+    if (
+        not isinstance(task_title, str)
+        or not task_title.strip()
+        or len(task_title) > 100
+        or not task_title.isprintable()
+        or not isinstance(reminder_title, str)
+        or not reminder_title.strip()
+        or len(reminder_title) > 100
+        or not reminder_title.isprintable()
+        or not isinstance(due_at_text, str)
+        or len(due_at_text) > 32
+        or not isinstance(timezone_name, str)
+        or len(timezone_name) > 96
+    ):
+        raise ExecutorError("workflow values invalid")
+    try:
+        due_at = datetime.fromisoformat(due_at_text)
+        if due_at.tzinfo is None or due_at.utcoffset() is None:
+            raise ValueError("timezone offset missing")
+        ZoneInfo(timezone_name)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        raise ExecutorError("workflow reminder time invalid") from None
+
+    # Both items and the durable operation receipt are committed together by
+    # execute_workspace_operation. No partial task/reminder pair can be
+    # published by an established transaction.
+    session.add_all(
+        [
+            AssistantItem(
+                kind="task",
+                title=task_title,
+                content="",
+                due_at=None,
+                timezone=None,
+                completed=False,
+            ),
+            AssistantItem(
+                kind="reminder",
+                title=reminder_title,
+                content="",
+                due_at=due_at.astimezone(UTC),
+                timezone=timezone_name,
+                completed=False,
+            ),
+        ]
+    )
+
+
 def _apply_root(session, operation: ProposedOperation) -> None:
     action = _ROOT_OPERATIONS[operation.operation_id]
     if action == "add":
@@ -300,7 +382,9 @@ def execute_workspace_operation(
             raise ExecutorInterrupted("prior operation has no established result")
 
         receipt.status = "RUNNING"
-        if operation.operation_id in _ITEM_OPERATIONS:
+        if operation.operation_id == _WORKFLOW_OPERATION:
+            _apply_task_reminder_workflow(session, operation)
+        elif operation.operation_id in _ITEM_OPERATIONS:
             _apply_item(session, operation)
         elif operation.operation_id in _ROOT_OPERATIONS:
             _apply_root(session, operation)
