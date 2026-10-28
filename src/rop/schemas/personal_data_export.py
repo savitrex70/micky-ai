@@ -14,6 +14,7 @@ class PersonalDataExportCounts(BaseModel):
     conversations: int
     messages: int
     workspace_items: int
+    memories: int
 
 
 class PersonalDataExportPage(BaseModel):
