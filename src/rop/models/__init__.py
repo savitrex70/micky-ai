@@ -3,6 +3,7 @@
 from rop.models.assistant_confirmation import AssistantConfirmation
 from rop.models.assistant_conversation import AssistantConversation
 from rop.models.assistant_item import AssistantItem
+from rop.models.assistant_memory_entry import AssistantMemoryEntry
 from rop.models.assistant_message import AssistantMessage
 from rop.models.assistant_operation_receipt import AssistantOperationReceipt
 from rop.models.assistant_pending_clarification import AssistantPendingClarification
@@ -24,6 +25,7 @@ __all__ = [
     "AssistantConversation",
     "AssistantMessage",
     "AssistantItem",
+    "AssistantMemoryEntry",
     "AssistantMessage",
     "AssistantOperationReceipt",
     "AssistantPendingClarification",
