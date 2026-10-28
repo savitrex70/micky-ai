@@ -53,10 +53,7 @@ _PATIENT_IDENTIFIER_RE = re.compile(
 def _validate_personal_content(title: str, content: str) -> None:
     """Reject obvious credential material and explicit patient identifiers."""
     combined = f"{title}\n{content}"
-    if (
-        _SECRET_ASSIGNMENT_RE.search(combined)
-        or _PRIVATE_KEY_RE.search(combined)
-    ):
+    if _SECRET_ASSIGNMENT_RE.search(combined) or _PRIVATE_KEY_RE.search(combined):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(

@@ -48,7 +48,8 @@ from rop.capabilities.intent_interpreter import interpret_request
         (
             "Remind me to call the dentist on 2026-11-01T10:00 in Europe/Amsterdam",
             "workspace",
-            "workspace add reminder: call the dentist | 2026-11-01T10:00 | Europe/Amsterdam",
+            "workspace add reminder: call the dentist | 2026-11-01T10:00 | "
+            "Europe/Amsterdam",
         ),
         (
             "workspace list notes",
@@ -101,7 +102,8 @@ def test_conflicting_intents_ask_for_clarification_without_selecting_a_command(
 
 def test_extracted_command_separator_is_rejected() -> None:
     result = interpret_request(
-        "make a note titled Plan | workspace delete note 00000000-0000-0000-0000-000000000001"
+        "make a note titled Plan | workspace delete note "
+        "00000000-0000-0000-0000-000000000001"
     )
     assert result.status == "ambiguous"
     assert result.command is None

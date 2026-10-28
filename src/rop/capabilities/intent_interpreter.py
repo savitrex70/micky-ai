@@ -144,9 +144,7 @@ def _matched_help() -> IntentInterpretation:
 
 
 def _matched_workspace(command: str) -> IntentInterpretation:
-    return IntentInterpretation(
-        status="matched", intent="workspace", command=command
-    )
+    return IntentInterpretation(status="matched", intent="workspace", command=command)
 
 
 def _ambiguous(message: str = _AMBIGUOUS_MESSAGE) -> IntentInterpretation:
@@ -221,9 +219,9 @@ def interpret_request(message: str) -> IntentInterpretation:
         )
 
     if _multiple_action_conflict(normalized):
-        if re.search(r"\b(?:find|search)\b.*\bfiles?\b", normalized, re.I) and re.search(
-            r"\b(?:task|note)\b", normalized, re.I
-        ):
+        if re.search(
+            r"\b(?:find|search)\b.*\bfiles?\b", normalized, re.I
+        ) and re.search(r"\b(?:task|note)\b", normalized, re.I):
             return _ambiguous(
                 "I can search your authorized files, but need the exact task or "
                 "note title before preparing a saved item. Tell me the title and "
@@ -248,7 +246,12 @@ def interpret_request(message: str) -> IntentInterpretation:
                 return _matched_workspace("workspace search files:")
             return _matched_workspace("workspace search files: " + query)
 
-    if lowered in {"save this as a note", "save as a note", "make a note", "create a note"}:
+    if lowered in {
+        "save this as a note",
+        "save as a note",
+        "make a note",
+        "create a note",
+    }:
         return _matched_workspace("workspace add note:")
 
     for pattern in _NOTE_TITLE_PATTERNS:

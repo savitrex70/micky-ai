@@ -28,8 +28,8 @@ from rop.api.origin import enforce_local_origin
 from rop.authorization.dispatch import authorize_capability_dispatch
 from rop.authorization.executors import ExecutorRegistry
 from rop.authorization.policy import AuthorizationPolicy, evaluate_authorization
-from rop.capabilities.parser import CapabilityParseError
 from rop.capabilities.intent_interpreter import interpret_request
+from rop.capabilities.parser import CapabilityParseError
 from rop.capabilities.registry import (
     Capability,
     CapabilityRegistry,
@@ -413,7 +413,10 @@ def _dispatch_workspace_command(
             parse_message = request.message
             if request.clarification_id is None:
                 interpretation = interpret_request(request.message)
-                if interpretation.status == "matched" and interpretation.intent == "workspace":
+                if (
+                    interpretation.status == "matched"
+                    and interpretation.intent == "workspace"
+                ):
                     parse_message = interpretation.command or request.message
             operation = _WORKSPACE_CAPABILITY.parser.parse(
                 parse_message,
@@ -774,7 +777,9 @@ def submit_request(
             )
         if interpretation.status == "matched" and interpretation.intent == "help":
             capability = _REGISTRY.match("help")
-        elif interpretation.status == "matched" and interpretation.intent == "workspace":
+        elif (
+            interpretation.status == "matched" and interpretation.intent == "workspace"
+        ):
             capability = _WORKSPACE_CAPABILITY
         else:
             capability = _REGISTRY.match(request.message)

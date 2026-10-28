@@ -1,4 +1,5 @@
 """API and persistence tests for user-controlled memory."""
+
 from collections.abc import Generator
 
 import pytest
@@ -13,8 +14,6 @@ from rop.main import app
 
 ORIGIN = "http://127.0.0.1:8000"
 HEADERS = {"origin": ORIGIN, "content-type": "application/json"}
-
-
 
 
 @pytest.fixture
@@ -79,10 +78,11 @@ def test_create_list_search_update_and_delete(client: TestClient) -> None:
     assert updated.json()["content"] == "Use concise explanations."
 
     # A separate request-scoped database session can read the committed row.
-    assert client.get("/api/assistant/memories").json()["items"][0]["id"] == entry["id"]
-    deleted = client.delete(
-        "/api/assistant/memories/" + entry["id"], headers=HEADERS
+    assert (
+        client.get("/api/assistant/memories").json()["items"][0]["id"]
+        == entry["id"]
     )
+    deleted = client.delete("/api/assistant/memories/" + entry["id"], headers=HEADERS)
     assert deleted.status_code == 204
     assert client.get("/api/assistant/memories").json()["total"] == 0
 
@@ -99,7 +99,10 @@ def test_chat_does_not_implicitly_create_memory(client: TestClient) -> None:
 def test_memory_write_rejects_cross_origin_request(client: TestClient) -> None:
     response = client.post(
         "/api/assistant/memories",
-        headers={"origin": "https://attacker.invalid", "content-type": "application/json"},
+        headers={
+            "origin": "https://attacker.invalid",
+            "content-type": "application/json",
+        },
         json={"title": "Entry", "content": "Content"},
     )
     assert response.status_code == 403

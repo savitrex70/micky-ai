@@ -184,7 +184,9 @@ def test_personal_data_export_is_versioned_bounded_and_complete(monkeypatch) -> 
     )
     assert task["title"] == "Finish lab assignment"
     assert task["completed"] is False
-    memory = next(record for record in records if record["record_type"] == "memory_entry")
+    memory = next(
+        record for record in records if record["record_type"] == "memory_entry"
+    )
     assert memory["entry_type"] == "preference"
     assert memory["title"] == "Answer style"
     assert memory["content"] == "Use concise explanations."
