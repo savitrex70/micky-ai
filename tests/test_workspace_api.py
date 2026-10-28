@@ -713,3 +713,104 @@ def test_confirmed_root_identity_is_persisted_and_used_by_retrieval(
     result = searched.json()
     assert len(result["matches"]) == 1
     assert "approved root retrieval marker" in result["matches"][0]["snippet"]
+
+
+def _items_of_kind(client: TestClient, kind: str) -> list[dict]:
+    response = client.get(
+        f"/api/assistant/workspace/items?kind={kind}",
+        headers=ORIGIN_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_task_reminder_workflow_is_confirmed_once_and_committed_together(
+    client: TestClient,
+) -> None:
+    conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Bounded workflow"},
+    )
+    assert conversation.status_code == 201, conversation.text
+    conversation_id = conversation.json()["id"]
+    key = uuid4()
+    request_body = {
+        "message": (
+            "Create a task to finish assignment and remind me to review notes "
+            "on 2026-11-01T10:00 in Europe/Amsterdam"
+        ),
+        "conversation_id": conversation_id,
+        "idempotency_key": str(key),
+    }
+
+    prepared = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json=request_body,
+    )
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+    assert body["status"] == "confirmation-required"
+    assert "Workflow preview" in body["challenge"]["summary"]
+    assert "finish assignment" in body["challenge"]["summary"]
+    assert "review notes" in body["challenge"]["summary"]
+    assert _items_of_kind(client, "task") == []
+    assert _items_of_kind(client, "reminder") == []
+
+    executed = _decide(
+        client,
+        body["challenge"],
+        decision="confirm",
+        display_code=body["challenge"]["display_code"],
+    )
+    assert executed.status_code == 200, executed.text
+    assert executed.json()["status"] == "executed"
+    tasks = _items_of_kind(client, "task")
+    reminders = _items_of_kind(client, "reminder")
+    assert len(tasks) == len(reminders) == 1
+    assert tasks[0]["title"] == "finish assignment"
+    assert reminders[0]["title"] == "review notes"
+    assert reminders[0]["timezone"] == "Europe/Amsterdam"
+    assert reminders[0]["due_at"] is not None
+
+    # Repeating the exact operation key and material reports the prior result.
+    replay = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json=request_body,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "success"
+    assert len(_items_of_kind(client, "task")) == 1
+    assert len(_items_of_kind(client, "reminder")) == 1
+
+
+def test_cancelled_task_reminder_workflow_creates_neither_item(
+    client: TestClient,
+) -> None:
+    conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Cancelled workflow"},
+    )
+    assert conversation.status_code == 201, conversation.text
+    prepared = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": (
+                "Create a task to submit assignment and remind me to check "
+                "submission on 2026-11-03T09:00 in Europe/Amsterdam"
+            ),
+            "conversation_id": conversation.json()["id"],
+            "idempotency_key": str(uuid4()),
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+    assert body["status"] == "confirmation-required"
+    cancelled = _decide(client, body["challenge"], decision="cancel")
+    assert cancelled.status_code == 200, cancelled.text
+    assert _items_of_kind(client, "task") == []
+    assert _items_of_kind(client, "reminder") == []

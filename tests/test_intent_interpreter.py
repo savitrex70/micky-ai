@@ -112,3 +112,25 @@ def test_explicit_command_is_preserved_without_rewriting() -> None:
     result = interpret_request(command)
     assert result.status == "matched"
     assert result.command == command
+
+
+def test_task_and_reminder_workflow_requires_all_exact_fields() -> None:
+    result = interpret_request(
+        "Create a task to finish assignment and remind me to review notes "
+        "on 2026-11-01T10:00 in Europe/Amsterdam"
+    )
+    assert result.status == "matched"
+    assert result.intent == "workspace"
+    assert result.command == (
+        "workspace workflow create task-and-reminder: finish assignment | "
+        "review notes | 2026-11-01T10:00 | Europe/Amsterdam"
+    )
+
+
+def test_task_and_reminder_workflow_without_date_requests_clarification() -> None:
+    result = interpret_request(
+        "Create a task to finish assignment and remind me to review notes tomorrow"
+    )
+    assert result.status == "ambiguous"
+    assert result.command is None
+    assert "exact local date/time" in (result.message or "")

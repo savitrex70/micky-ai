@@ -235,7 +235,7 @@ class WorkspaceCommandParser:
                     "due_at": normalized_due_at,
                     "timezone": timezone_name,
                 },
-                ensure_ascii=True,
+                ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
             )
