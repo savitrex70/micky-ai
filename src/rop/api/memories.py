@@ -76,9 +76,7 @@ def _set_private_headers(response: Response) -> None:
     response.headers["X-Content-Type-Options"] = "nosniff"
 
 
-def _matches_create_request(
-    row: AssistantMemoryEntry, body: MemoryCreate
-) -> bool:
+def _matches_create_request(row: AssistantMemoryEntry, body: MemoryCreate) -> bool:
     return (
         row.entry_type == body.entry_type
         and row.title == body.title
