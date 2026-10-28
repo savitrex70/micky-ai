@@ -141,7 +141,6 @@ def test_memory_rejects_obvious_secrets_and_patient_identifiers(
     assert client.get("/api/assistant/memories").json()["total"] == 0
 
 
-
 def test_memory_persists_after_client_and_database_recreation(
     tmp_path: Path,
 ) -> None:
