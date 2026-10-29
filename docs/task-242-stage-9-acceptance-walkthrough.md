@@ -6,7 +6,7 @@
 **CI run:** [40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463)  
 **Verdict:** **Stage 9 is NOT YET ACCEPTED.**
 
-This closeout distinguishes implementation and automated evidence from machine-specific validation that has not actually been performed. It also records a target-platform functional gap that prevents Stage 9.5 from being considered complete.
+This closeout first records the evidence for its historical code candidate. The Windows-backend gap described in the original assessment was superseded by later implementation and a dedicated Windows CI run; see §7 for the current reassessment. Machine-specific browser, OS-level offline, and resource evidence remains open, so the Stage 9 acceptance verdict is still NOT APPROVED.
 
 ## 1. Work completed on main
 
@@ -14,13 +14,13 @@ This closeout distinguishes implementation and automated evidence from machine-s
 |---|---|---|
 | 236 — Clarification expiry cleanup | Bounded transactional startup cleanup removes expired/consumed clarification rows, including temporary source and partial-operation values. Cleanup failures roll back and are reported without leaking database details. Tests cover active-vs-expired rows, bounded batches, recovery/redaction and cleanup failures. | Implemented; CI-backed |
 | 237 — Workspace lifecycle matrix | `tests/test_workspace_lifecycle_matrix.py` covers note/task/reminder mutations through real routes, confirmation/receipt behavior, cancellation, wrong code, expiry, invalid/deleted targets, key conflicts, replay, uncertain commits, restart persistence, and overdue UI visibility. | Implemented; CI-backed |
-| 238 — Retrieval security/offline | Authorized-root identity binding, Linux descriptor-relative/no-follow traversal, network/mount checks, file/byte/directory/entry/root ceilings, truthful root/file/entry counters, runtime Python-level network guards, and honest secure-backend availability status. | Linux security path tested; **target Windows retrieval remains unavailable** |
+| 238 — Retrieval security/offline | Authorized-root identity binding, Linux descriptor-relative/no-follow traversal, network/mount checks, file/byte/directory/entry/root ceilings, truthful root/file/entry counters, runtime Python-level network guards, and honest secure-backend availability status. | Original candidate: Linux path tested; Windows backend gap was superseded by the native implementation and later Windows CI (see §7). |
 | 239 — General personal-data export | Versioned bounded JSON export for conversation metadata, messages, notes, tasks and reminders. Browser validates format/version, counts, page progression and completeness before downloading. Responses are no-store/no-cache/nosniff. Clinical data, retrieval-root paths, and confirmation/clarification internals are excluded; import is unsupported. | Implemented; API and browser-harness tests included in green CI |
 | 240 — Clinical workflow boundary | Automated test creates a personal conversation and separate clinical session, adds an observation, runs the existing fully audited endpoint, rejects cross-domain identifiers, and verifies clinical-only content is excluded from general export. Corrected six browser session URLs to use the mounted `/sessions` routes and updated the UI harness. | Automated tests passed; manual browser walkthrough outstanding |
 | 241 — PostgreSQL/migration CI | CI provisions isolated PostgreSQL 16, upgrades Alembic to head, sets explicit application/test settings, fails on an unreachable configured database, reports skip reasons, and fixes migration-test cleanup to restore head. | Implemented; green PostgreSQL-backed CI |
 | 242 — Stage 9.8 closeout | Records evidence and remaining gaps without inventing machine-specific results. | Report complete; Stage 9 acceptance pending |
 
-## 2. Verified automated evidence
+## 2. Verified automated evidence for the original candidate
 
 The latest verified run for code candidate `789d771fa4609b5c05091d6773f26fe040c9246d` is [GitHub Actions run 40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463):
 
@@ -34,7 +34,7 @@ The three reported skips were:
 2. `tests/test_assistant_retrieval.py`: native Windows retrieval-policy test is Windows-only and does not execute on Linux.
 3. `tests/test_reasoning_run_stage_7_evidence_package_audit.py`: `None` is an intentionally valid Task 166 snapshot value.
 
-The passing run includes the export-all-workspace-kind tests, Node-based browser export success/incomplete-pagination harness, export cache headers and beyond-total offset check, clinical route/harness correction, local-startup offline guard, retrieval-backend status, and PostgreSQL migration tests. It still does not prove that local retrieval functions on Windows.
+The passing run includes the export-all-workspace-kind tests, Node-based browser export success/incomplete-pagination harness, export cache headers and beyond-total offset check, clinical route/harness correction, local-startup offline guard, retrieval-backend status, and PostgreSQL migration tests. That historical run did not establish Windows retrieval; the later native Windows backend and dedicated Windows CI result are documented in §7.
 
 A documentation-only follow-up to this report triggers its own CI run. The run above is the verified functional-code candidate; any later source changes must be checked separately.
 
@@ -46,13 +46,13 @@ A documentation-only follow-up to this report triggers its own CI run. The run a
 - General export excludes clinical records and retrieval-root authorization information; confirmation records retain their separate export surface.
 - Unsupported secure traversal fails closed. No unsafe path-based fallback was added to make Windows appear to work.
 
-## 4. Remaining blockers
+## 4. Original blockers identified for the historical candidate (reassessed in §7)
 
-### 4.1 Target Windows retrieval is safe but unavailable
+### 4.1 Historical Windows-backend gap — superseded
 
-The product contract targets Windows 10/11, approximately 8 GB RAM and CPU-only. The current secure retrieval backend requires Linux `openat2`, descriptor-relative traversal and Linux mount-identity information. On Windows, the capability check is false; new root authorization/search refuses to proceed and the UI says secure local retrieval is unavailable.
+At the original code candidate, the product contract targeted Windows 10/11, approximately 8 GB RAM and CPU-only, but the secure traversal implementation used Linux `openat2`, descriptor-relative traversal and Linux mount-identity information. On that candidate, Windows authorization/search failed closed. This was a real gap at the time, not a security bypass. The native Windows handle/file-identity/reparse-point-aware backend was added later; the previous claim that the current Windows backend is unavailable is superseded by §7 and CI run 40871167595.
 
-This is **not a security bypass**, but it is a real Stage 9.5 functional gap on the intended platform. A safe Windows implementation needs pinned Windows handles/file IDs and a reparse-point policy, with directory enumeration and file opens bound to the approved directory objects. Do not replace it with ordinary path-based `open()`, `resolve()` or `os.walk()` fallbacks. It needs Windows-hosted adversarial tests before acceptance.
+The required implementation shape was pinned Windows handles/file IDs and reparse-point-aware directory enumeration and child opens. The later native implementation follows that approach; it has dedicated Windows CI regression tests. Owner-target use and OS-level offline/resource evidence are still required before the entire product can be accepted.
 
 ### 4.2 Target-machine and browser acceptance was not performed here
 
@@ -89,11 +89,11 @@ git rev-parse HEAD
 
 Local PostgreSQL-specific tests may intentionally skip unless a **dedicated disposable** `ROP_TEST_DATABASE_URL` is configured. Do not point destructive tests at the application's real database.
 
-## 6. Final Stage 9 decision
+## 6. Original Stage 9 decision for the historical candidate
 
-The implementation and automated corrections for Tasks 236–242 are on `main`, and the latest observed functional-code CI run is green. **Formal Stage 9 acceptance remains NOT APPROVED** because secure local retrieval is unavailable on the target Windows platform and the required target-machine/browser/offline/resource evidence has not been performed or formally dispositioned.
+The decision for the code candidate at the time of the original report was **NOT APPROVED**: Windows retrieval was then unavailable and target-machine/browser/offline/resource evidence had not been performed or formally dispositioned. The native Windows backend has since been implemented and independently exercised in Windows CI, so the first reason is no longer current. See §7 for the current decision.
 
-**Stage 10 remains blocked.**
+**Formal Stage 9 acceptance remains NOT APPROVED**, and Stage 10 closeout remains gated until the remaining target-machine evidence is recorded and reviewed.
 
 ## 7. Post-closeout reassessment — 2026-10-29
 
