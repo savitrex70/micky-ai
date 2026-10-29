@@ -178,7 +178,7 @@ def _matched_help() -> IntentInterpretation:
 def _matched_workspace(
     command: str,
     *,
-    relative_date_hint: Literal["today", "tomorrow", "tonight", "next_week"] | None = None,
+    relative_date_hint: RelativeDateHint | None = None,
     relative_clock_time: str | None = None,
 ) -> IntentInterpretation:
     return IntentInterpretation(
