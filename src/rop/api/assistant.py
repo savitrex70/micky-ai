@@ -65,7 +65,10 @@ from rop.services.workspace_executor import (
     build_workspace_policy,
     operation_fingerprint,
 )
-from rop.services.workspace_read import run_workspace_read
+from rop.services.workspace_read import (
+    prepare_search_create_operation,
+    run_workspace_read,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +236,7 @@ def _prepare_workspace_confirmation(
     conversation_id: UUID,
     pending_row,
 ) -> AssistantResponse:
-    """Bind an operation key and challenge in one transaction."""
+    """Bind one canonical operation key and exact challenge in one transaction."""
     raw_key = operation.parameters.get("idempotency_key")
     try:
         key = UUID(raw_key or "")
@@ -274,7 +277,26 @@ def _prepare_workspace_confirmation(
                 "confirmation records before proceeding; no second challenge was "
                 "created."
             )
-    else:
+
+    if operation.operation_id == "workspace_workflow_search_and_create_item":
+        try:
+            operation = prepare_search_create_operation(
+                operation,
+                db_session=session,
+            )
+        except Exception:
+            logger.warning("search-and-create preview could not be prepared safely")
+            return _workspace_refusal(
+                "A matching authorized source could not be safely previewed. "
+                "Nothing was created or changed."
+            )
+        if operation_fingerprint(operation) != fingerprint:
+            return _workspace_refusal(
+                "The proposed source preview could not be bound safely. "
+                "Nothing was created or changed."
+            )
+
+    if receipt is None:
         receipt = AssistantOperationReceipt(
             idempotency_key=key,
             operation_id=operation.operation_id,
@@ -316,7 +338,6 @@ def _prepare_workspace_confirmation(
             expires_at=challenge.expires_at,
         ),
     )
-
 
 def _persist_clarified_success(
     session,

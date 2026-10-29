@@ -297,10 +297,19 @@ def build_operation_summary(
             kind = payload["kind"]
             query = payload["query"]
             title = payload["title"]
+            source_path = payload["source_path"]
+            snippet = payload["snippet"]
             if (
                 kind not in {"note", "task"}
                 or not isinstance(query, str)
                 or not isinstance(title, str)
+                or not isinstance(source_path, str)
+                or not source_path
+                or len(source_path) > 280
+                or any(ord(char) < 32 or ord(char) == 127 for char in source_path)
+                or not isinstance(snippet, str)
+                or not snippet
+                or len(snippet) > 120
             ):
                 raise ValueError("workflow values are invalid")
         except (KeyError, TypeError, ValueError):
@@ -314,8 +323,11 @@ def build_operation_summary(
             + kind
             + " titled "
             + repr(title)
-            + " from one matching source excerpt. If secure search is incomplete "
-            "or no match is found, no item will be created."
+            + " using source "
+            + repr(source_path)
+            + " and excerpt "
+            + repr(snippet)
+            + ". If the source changes before execution, no item will be created."
         )
         omitted_parameters.add("workflow_payload")
 

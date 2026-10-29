@@ -376,7 +376,7 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
     from rop.services.workspace_read import search_authorized_local_files
 
     try:
-        outcome = search_authorized_local_files(query)
+        outcome = search_authorized_local_files(query, db_session=session)
     except ValueError:
         raise ExecutorError("authorized local search could not be performed") from None
     if not outcome.secure_backend_available:
