@@ -32,6 +32,10 @@ def _case_outcome(case: Mapping[str, Any], result: IntentInterpretation):
         or expected_message not in result.message
     ):
         reasons.append("message_mismatch")
+    if result.relative_date_hint != case.get("expected_relative_date_hint"):
+        reasons.append("relative_date_hint_mismatch")
+    if result.relative_clock_time != case.get("expected_relative_clock_time"):
+        reasons.append("relative_clock_time_mismatch")
     return not reasons, reasons
 
 
