@@ -138,7 +138,6 @@ def test_task_and_reminder_workflow_without_date_requests_clarification() -> Non
     assert "exact local date/time" in (result.message or "")
 
 
-
 @pytest.mark.parametrize(
     ("phrase", "command"),
     [
@@ -190,9 +189,7 @@ def test_search_and_create_workflow_requires_explicit_query_and_title(
 
 
 def test_search_and_create_workflow_with_missing_title_asks_for_clarification() -> None:
-    result = interpret_request(
-        "Find files containing renal marker and prepare a note"
-    )
+    result = interpret_request("Find files containing renal marker and prepare a note")
     assert result.status == "ambiguous"
     assert result.command is None
     assert "item title" in (result.message or "")
