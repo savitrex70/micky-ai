@@ -209,6 +209,7 @@ def test_search_and_create_workflow_rejects_command_separator() -> None:
     assert result.status == "ambiguous"
     assert result.command is None
 
+
 @pytest.mark.parametrize(
     ("phrase", "date_hint", "clock_time"),
     [
