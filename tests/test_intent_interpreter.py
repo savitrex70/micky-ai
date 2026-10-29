@@ -208,3 +208,28 @@ def test_search_and_create_workflow_rejects_command_separator() -> None:
     )
     assert result.status == "ambiguous"
     assert result.command is None
+
+@pytest.mark.parametrize(
+    ("phrase", "date_hint", "clock_time"),
+    [
+        ("Remind me to review my notes today.", "today", None),
+        ("Remind me to review my notes tomorrow.", "tomorrow", None),
+        ("Remind me to review my notes tomorrow at 09:00.", "tomorrow", "09:00"),
+        ("Remind me to review my notes tonight.", "tonight", None),
+        ("Remind me to review my notes tonight at 20:00.", "tonight", "20:00"),
+        ("Remind me to review my notes this evening at 19:30.", "tonight", "19:30"),
+        ("Remind me to review my notes next week.", "next_week", None),
+    ],
+)
+def test_relative_reminder_date_is_preserved_as_structured_metadata(
+    phrase: str,
+    date_hint: str,
+    clock_time: str | None,
+) -> None:
+    result = interpret_request(phrase)
+
+    assert result.status == "matched"
+    assert result.intent == "workspace"
+    assert result.command == "workspace add reminder: review my notes"
+    assert result.relative_date_hint == date_hint
+    assert result.relative_clock_time == clock_time
