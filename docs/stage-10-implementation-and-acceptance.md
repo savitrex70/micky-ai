@@ -3,7 +3,7 @@
 Repository: savitrex70/micky-ai
 Baseline before Stage 10: `0091815be0733c299468ded38db147d53c4eac38`
 Implementation status: Tasks 243–248 cover all defined Stage 10 implementation areas and are present on `main`.
-Latest code revision audited: `f07d7086ad6306db676e30d85125c604af01e995`.
+Latest corrective code revision audited: `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`.
 Acceptance status: **NOT APPROVED**. Green CI and the fixed-corpus result validate the enumerated software contracts; they do not close the separately required Stage 9 product-acceptance gate or provide target-machine/manual evidence.
 
 ## Scope delivered
@@ -52,3 +52,35 @@ The interpreter is deterministic and intentionally narrow; no model, hosted prov
 **Stage 10 is implementation-complete for the currently defined Tasks 243–248, but this does not mean the product is accepted.** Stage 9 remains NOT APPROVED, so the repository's acceptance gate still blocks Stage 10 closeout. The older [Task 242 closeout](task-242-stage-9-acceptance-walkthrough.md) has been reassessed: native Windows handle-based retrieval is now implemented and the dedicated Windows CI job passed on code revision `f07d7086ad6306db676e30d85125c604af01e995` in [run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595). The remaining owner-target evidence is the real browser/end-to-end walkthrough, OS-level use with outbound networking denied, measured startup/resource observations, and disposition of any target-specific filesystem/network scenarios. Passing CI is not a substitute for that evidence. Stage 8 model acceptance and Stage 9 product acceptance remain separate gates; neither is accepted by this record.
 
 This is an implementation/automated-validation handoff, not owner sign-off or a declaration of Stage 10 product acceptance.
+
+
+## Corrective review closeout — 2026-10-29
+
+The two findings in the consolidated corrective assignment were addressed on `main` without changing the Stage 10 scope:
+
+- **Untrusted Host / private read exposure:** `TrustedLocalHostMiddleware` is registered at the ASGI application boundary and checks the single Host authority against the configured local origin before dispatch. This covers private GET endpoints as well as the root page and static assets, rejects missing/duplicate/untrusted Host values, and returns a value-free 403 with `Cache-Control: no-store`. State-changing requests retain the separate Origin, Host, and JSON content-type checks. The documentation retains the limitation that this is not authentication against malicious code running as the same local user.
+- **Relative reminder clarification:** the deterministic interpreter now carries a validated relative-date hint and optional clock time separately from the title. The pending server-owned operation persists the original request-time UTC anchor, and resolution uses the selected IANA timezone, checks that the resulting time has not passed, and fails closed for missing/invalid timezone, ambiguous daylight-saving wall times, and stale requests. Clarification remains on the existing confirmation/idempotency path; no reminder is written before confirmation. The fixed corpus and regression coverage include relative-date clarification, including a clarification that crosses local midnight.
+
+Corrective commit sequence on `main` (oldest to newest):
+
+- `f1c21b072ad3f68590879136d5a2b45df49c9fb3` — document the relative-date anchor regression in the evaluation record.
+- `b54dbcbb63e3b6a52c9bbb6530f9328bc7cab55a` — refuse stale relative dates safely.
+- `b65bc97cfbedf83bd97f3c8932e674e18b665d69` — clarify stale relative-date clarification safely.
+- `035e0b47a221ad073045bf295e78d65525820620` — format the anchor regression test.
+- `03b0c6f2b8a0e6964959b8c682c8c103a294d72c` — align the end-to-end reminder expectation with the exact title supplied by the user (lowercase in that test input).
+
+### Verification for the corrective revision
+
+GitHub Actions [run 40926106993](https://github.com/savitrex70/micky-ai/actions/runs/40926106993) completed successfully for exact commit `03b0c6f2b8a0e6964959b8c682c8c103a294d72c` on `main`:
+
+| Check | Exact result |
+| --- | --- |
+| Stage 10 fixed intent evaluation | Passed; evaluator reported `outcome_accuracy: 1.0` |
+| Full test suite (Python 3.12, PostgreSQL) | **8,316 passed, 9 skipped, 42 warnings** in 946.76 seconds |
+| Ruff | Passed |
+| Black 24.10.0 | Passed; 712 files unchanged |
+| Native Windows retrieval tests | **14 passed**, 2 deprecation warnings |
+
+The nine full-suite skips are reported by pytest and include backend/host-specific scenarios; the dedicated Windows job passed its 14 selected retrieval tests. The PostgreSQL log contains expected constraint-violation messages from negative tests; the overall test job concluded successfully. CI job results are independently visible in the linked run.
+
+The correction commits above are on `main`; the current code SHA verified by CI was `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`. This record update is a separate documentation commit and will receive its own CI run. Stage 10 remains **NOT APPROVED for product closeout** until the owner completes the outstanding Stage 9 target-machine/browser/network-denial and resource-observation acceptance evidence. Stage 8 model acceptance is also separate and is not claimed.
