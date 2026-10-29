@@ -184,9 +184,7 @@ def build_workspace_executor_registry() -> ExecutorRegistry:
 
 def operation_fingerprint(operation: ProposedOperation) -> str:
     parameters = {
-        key: value
-        for key, value in operation.parameters.items()
-        if key != _KEY_NAME
+        key: value for key, value in operation.parameters.items() if key != _KEY_NAME
     }
     if operation.operation_id == _SEARCH_CREATE_OPERATION:
         raw_payload = parameters.get("workflow_payload")
@@ -197,8 +195,7 @@ def operation_fingerprint(operation: ProposedOperation) -> str:
                 payload = None
             if isinstance(payload, dict) and (
                 set(payload) == {"kind", "query", "title"}
-                or set(payload)
-                == {"kind", "query", "title", "source_path", "snippet"}
+                or set(payload) == {"kind", "query", "title", "source_path", "snippet"}
             ):
                 # Bind idempotency to the requested action; the challenge itself
                 # stores and authenticates the exact source preview material.
@@ -447,9 +444,7 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
         )
 
     item_content = (
-        f"Query: {query[:60]}\n"
-        f"Source: {source_path}\n"
-        f"Excerpt: {snippet}"
+        f"Query: {query[:60]}\n" f"Source: {source_path}\n" f"Excerpt: {snippet}"
     )
     if len(item_content) > 512:
         item_content = item_content[:512]
