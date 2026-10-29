@@ -478,6 +478,10 @@
     {
       "domain": "relative-reminder-metadata",
       "test_node": "tests/test_intent_interpreter.py::test_relative_reminder_date_is_preserved_as_structured_metadata"
+    },
+    {
+      "domain": "relative-reminder-anchor-stability",
+      "test_node": "tests/test_workspace_parser.py::test_relative_tomorrow_uses_request_anchor_when_clarification_crosses_midnight"
     }
   ]
 }
