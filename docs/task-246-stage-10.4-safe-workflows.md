@@ -24,4 +24,4 @@ No generic planner, unbounded chain, arbitrary shell/code execution, destructive
 
 ## Limits
 
-Only the task-plus-reminder workflow above is implemented as a multi-write workflow. Other multi-action language, including a file search followed by creating a note or task, does not silently execute a chain; it asks for clarification or remains unsupported. This is intentional fail-closed behavior, not a promise that all natural-language workflows are supported.
+Task 246 implements the bounded task-plus-reminder workflow. Task 248 separately extends Stage 10.4 with a confirmed local-search-to-note/task workflow, documented in docs/task-248-stage-10.4-search-and-create-workflow.md. Other multi-action language remains unsupported or requires clarification. Neither workflow enables general-purpose planning or autonomous chains.

@@ -9,7 +9,7 @@ Current status: implementation is in progress; final review and validation of th
 - **10.1 — Deterministic intent:** an explicit allowlisted grammar maps selected user phrases to existing capabilities. Conflicts and unsafe fields fail closed; the existing parser, policy, confirmation and executor remain authoritative.
 - **10.2 — Private memory:** local structured memories/preferences can be explicitly saved, listed/searched, edited, deleted, exported, and cleared after exact confirmation. Database migrations, no-store responses, UI integration, obvious-secret/patient-identifier checks, create idempotency, and repeat-delete safety are included. No conversation or clinical-session ingestion occurs automatically.
 - **10.3 — Local retrieval:** natural-language file-search phrases route into the already authorized, bounded, fail-closed local retrieval path.
-- **10.4 — Safe workflows:** the exact task-plus-reminder workflow requires one preview/confirmation and executes both writes in the existing transaction/receipt path. Unsupported multi-step chains do not execute.
+- **10.4 — Safe workflows:** the task-plus-reminder workflow requires one preview/confirmation and commits both writes in the existing receipt transaction. A second bounded workflow searches authorized local files and prepares one note/task from a matching source; it requires confirmation, is idempotent on replay, and fails closed if secure search is unavailable, incomplete, or empty. Other multi-step chains do not execute.
 - **10.5 — Evaluation:** a versioned fixed phrase corpus, precision/recall calculator, regression-test matrix, runnable script, and limitations are documented.
 
 ## Validation commands
@@ -19,7 +19,7 @@ uv run python scripts/evaluate_stage10.py
 uv run pytest tests/test_intent_interpreter.py tests/test_stage10_evaluation.py -q
 uv run pytest tests/test_assistant_memory.py tests/test_personal_data_export.py -q
 uv run pytest tests/test_workspace_api.py::test_confirmed_root_identity_is_persisted_and_used_by_retrieval -q
-uv run pytest tests/test_workspace_api.py::test_task_reminder_workflow_is_confirmed_once_and_committed_together tests/test_workspace_api.py::test_cancelled_task_reminder_workflow_creates_neither_item -q
+uv run pytest tests/test_workspace_api.py -k "search_and_create or task_reminder_workflow" -q
 uv run ruff check .
 uv run black --diff --check .
 ```

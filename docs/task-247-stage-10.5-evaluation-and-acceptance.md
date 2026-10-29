@@ -5,9 +5,9 @@ Scope: fixed deterministic intent evaluation, regression mapping, and honest acc
 
 ## Evaluation corpus
 
-`tests/fixtures/stage10_evaluation_v1.json` is a versioned synthetic corpus with 35 exact natural-language cases authored independently from the production interpreter. It covers help, item listing, local-file search, create-note/task/reminder requests, exact-time reminder handling, the bounded task-plus-reminder workflow, conflicts, malformed values, near-miss phrases, unsupported requests, and explicit-command compatibility.
+`tests/fixtures/stage10_evaluation_v1.json` is a versioned synthetic corpus with 38 exact natural-language cases authored independently from the production interpreter. It covers help, item listing, local-file search, create-note/task/reminder requests, exact-time reminder handling, the bounded task-plus-reminder workflow, conflicts, malformed values, near-miss phrases, unsupported requests, and explicit-command compatibility.
 
-The corpus includes a separate matrix linking 20 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, and workflow confirmation/cancellation/replay. The test verifies that each matrix entry points to a real test function.
+The corpus includes a separate matrix linking 23 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, and workflow confirmation/cancellation/replay. The test verifies that each matrix entry points to a real test function.
 
 ## Metrics and commands
 
@@ -17,7 +17,7 @@ Run the deterministic evaluation from the repository root:
 uv run python scripts/evaluate_stage10.py
 uv run pytest tests/test_stage10_evaluation.py tests/test_intent_interpreter.py -q
 uv run pytest tests/test_assistant_memory.py tests/test_personal_data_export.py -q
-uv run pytest tests/test_workspace_api.py::test_task_reminder_workflow_is_confirmed_once_and_committed_together tests/test_workspace_api.py::test_cancelled_task_reminder_workflow_creates_neither_item -q
+uv run pytest tests/test_workspace_api.py -k "search_and_create or task_reminder_workflow" -q
 ```
 
 The report includes exact-outcome accuracy, false-match count, missed-supported-request count, micro intent precision and recall, and per-intent precision/recall. Precision is true positives divided by all predicted matches; recall is true positives divided by all expected supported matches. The script fails if exact expected outcomes are wrong, either precision or recall falls below 0.98, or false matches/missed supported requests are nonzero. The fixed-corpus tests independently enforce the expected case outcomes and metric bounds.
