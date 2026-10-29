@@ -121,3 +121,37 @@ target-specific filesystem/network scenarios have not been recorded or
 formally dispositioned. No such machine-specific evidence is inferred from CI.
 
 **Stage 10 remains gated on the full Stage 9 acceptance decision.**
+
+## 8. Remaining owner-target acceptance evidence — checklist
+
+This is the remaining acceptance work that repository code and CI cannot
+honestly perform on behalf of the owner. Use one exact candidate SHA for the
+walkthrough, and write observations and artifacts rather than recording a
+bare “pass.” Do not mark a row PASS when it was only source-reviewed or
+covered by a mock.
+
+| Gate | Required execution on the owner target | Evidence to record | Current status |
+| --- | --- | --- | --- |
+| Candidate and environment | Update/inspect local `main`; record `git rev-parse HEAD`, Windows edition/build, Python version, RAM, and database/runtime mode. Confirm the candidate is the reviewed repository head. | Exact SHA and environment details | NOT RUN HERE |
+| Offline startup and use | With dependencies already installed and migrations applied, enforce outbound-network denial at the OS/network-policy layer. Start the API, check `/health`, `/health/ready`, open `/`, and exercise local help, workspace and memory operations while the denial remains active. Do not treat Python socket mocks or simply reading source as OS-level proof. | Firewall/network policy used, startup result, endpoint results, any attempted/blocked egress, app log excerpt | NOT RUN HERE |
+| Startup/resource measurements | On the target machine, measure time from application process launch to readiness and sample/record peak working set during startup and representative local use. Record whether the database is warm/cold and whether Docker is involved. Do not invent target numbers. | Start-to-ready duration, peak working set, conditions, repeated observations if any | NOT RUN HERE |
+| Conversations and clarifications | In the actual browser, create/list/open/rename/delete/reopen conversations. Exercise a clarification, resume it, test expiry, and verify state remains bound to the correct conversation. | Actions, visible outcomes, API/server evidence for failures | NOT RUN HERE |
+| Workspace lifecycle and recovery | Create/list/edit/delete notes, tasks, and reminders. Test exact timezone handling and ambiguous/nonexistent daylight-saving times. Confirm, cancel, use a wrong/expired challenge, retry/replay, and restart/recovery paths. Ensure cancellations create no writes and replay does not duplicate writes. | Before/after item counts, operation keys/receipt outcomes, restart behavior | NOT RUN HERE |
+| Private memory and export | Create/list/search/update/delete memory, test idempotency replay/conflict, prove clear-all requires the exact confirmation phrase, and verify obvious credential/patient identifiers are rejected. Export all supported personal-data sections from the browser and inspect the downloaded JSON for completeness and exclusion of clinical data, confirmation internals, and retrieval-root paths. | Sanitized result summary, export version/count/completeness fields, privacy observations; do not attach real private data | NOT RUN HERE |
+| Windows retrieval | In the actual Windows environment, authorize a test directory and verify supported formats are found only within that root. Exercise a junction/reparse point, root replacement, mapped/network-drive policy, unsupported formats, and read/resource bounds where the host supports them. Never replace fail-closed behavior with a path-based fallback. | Root identities/results, relevant OS behavior, blocked or skipped entries and counters | CI PASS; OWNER TARGET NOT RUN |
+| Stage 10 workflow 1 | Use a task-plus-reminder request. Inspect the preview, cancel one attempt and confirm neither record is written; then confirm another and verify both writes commit together. Replay the same request and verify no duplicates. | Preview fields, post-cancel/post-confirm item counts, replay receipt/result | Automated CI PASS; BROWSER NOT RUN |
+| Stage 10 workflow 2 | Search authorized test files and prepare a note/task. Verify the preview contains the exact source path and bounded excerpt. Test cancel, no match, source changed after preview, successful confirmation, and completed-request replay. Confirm no write occurs for cancelled/failed/stale previews. | Preview evidence, item counts, changed-source rejection, replay result | Automated CI PASS; BROWSER NOT RUN |
+| Clinical/personal separation | In the browser, use a personal conversation and separate clinical session. Run the fully audited ROP reasoning action, observe visible package/failure handling, and verify clinical identifiers/content do not leak into personal conversations or personal-data export. Do not interpret package consistency as clinical validity. | Distinct identifiers and sanitized output/export checks | Automated CI PASS; BROWSER NOT RUN |
+| Final review decision | Review the captured evidence for the same exact candidate SHA; disposition every failed/unsupported/skipped scenario and retain the Stage 8 model gate as blocked unless its separate owner prerequisites are satisfied. | Signed acceptance decision with SHA, reviewers, exceptions and unresolved risks | NOT APPROVED |
+
+The CI evidence currently verified for code revision
+`f07d7086ad6306db676e30d85125c604af01e995` is documented above and in
+[run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595).
+Subsequent commits through `61ea26da1e1787e733d4345cb4c1c503d707b7a7`
+changed documentation only; no production or test code changed. The latest
+document-only push's CI result could not be independently retrieved through
+the available run-status interface, so it is not claimed here.
+
+**Closeout rule:** Stage 9 and therefore formal Stage 10 acceptance remain
+NOT APPROVED until the NOT RUN HERE items above are completed, the results are
+reviewed on one candidate SHA, and the owner records the final decision.
