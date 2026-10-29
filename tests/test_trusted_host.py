@@ -80,7 +80,10 @@ def test_configured_host_can_read_private_api_and_serve_local_ui(
         "/api/assistant/workspace/retrieval-roots",
         "/api/assistant/conversations",
         "/api/assistant/confirmation-records",
-        "/api/assistant/clarifications?conversation_id=00000000-0000-4000-8000-000000000001",
+        (
+            "/api/assistant/clarifications?"
+            "conversation_id=00000000-0000-4000-8000-000000000001"
+        ),
         "/sessions",
         "/docs",
         "/openapi.json",
