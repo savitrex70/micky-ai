@@ -62,7 +62,10 @@ def test_configured_host_can_read_private_api_and_serve_local_ui(
             "idempotency_key": str(uuid4()),
             "entry_type": "memory",
             "title": "private-host-boundary-marker",
-            "content": "private content must remain available to the trusted loopback host",
+            "content": (
+                "private content must remain available to the trusted "
+                "loopback host"
+            ),
         },
     )
     assert save.status_code == 201, save.text
