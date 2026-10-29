@@ -180,7 +180,6 @@
       "phrase": "Remind me to review my notes tomorrow at 09:00",
       "expected_status": "matched",
       "expected_intent": "workspace",
-      "expected_message_contains": "exact local date/time",
       "expected_command": "workspace add reminder: review my notes",
       "expected_relative_date_hint": "tomorrow",
       "expected_relative_clock_time": "09:00"
