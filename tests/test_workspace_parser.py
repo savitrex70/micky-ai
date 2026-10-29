@@ -366,9 +366,13 @@ def test_relative_reminder_rejects_invalid_and_past_clock_values(
     assert caught.value.field_name == "due_at"
     assert "already passed" in caught.value.question
 
+    pending_without_clock = _relative_reminder_pending(parser, "today")
     with pytest.raises(CapabilityParseError) as invalid_clock:
-        _continue_relative_reminder(parser, pending, "not-a-time | Europe/Amsterdam")
+        _continue_relative_reminder(
+            parser, pending_without_clock, "not-a-time | Europe/Amsterdam"
+        )
     assert invalid_clock.value.field_name == "due_at"
+    assert "HH:MM" in invalid_clock.value.question
 
 
 def test_relative_reminder_handles_nonexistent_dst_wall_time(
