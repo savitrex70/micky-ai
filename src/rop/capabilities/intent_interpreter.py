@@ -23,6 +23,8 @@ class IntentInterpretation:
     intent: IntentKind | None = None
     command: str | None = None
     message: str | None = None
+    relative_date_hint: Literal["today", "tomorrow", "tonight", "next_week"] | None = None
+    relative_clock_time: str | None = None
 
 
 _AMBIGUOUS_MESSAGE = (
@@ -40,9 +42,10 @@ _MULTIPLE_LISTS_RE = re.compile(
     r"\b(?:and|or)\b.*\b(?:notes|tasks|reminders)\b",
     re.IGNORECASE,
 )
-_RELATIVE_TIME_END_RE = re.compile(
-    r"\s+(?:tomorrow|today|tonight|this evening|next week)"
-    r"(?:\s+at\s+\d{1,2}:\d{2})?$",
+_REMINDER_RELATIVE_RE = re.compile(
+    r"^remind me to\s+(.+?)\s+"
+    r"(today|tomorrow|tonight|this evening|next week)"
+    r"(?:\s+at\s+((?:[01]?\d|2[0-3]):[0-5]\d))?$",
     re.IGNORECASE,
 )
 _CLOCK_END_RE = re.compile(r"\s+at\s+\d{1,2}:\d{2}$", re.IGNORECASE)
@@ -171,8 +174,19 @@ def _matched_help() -> IntentInterpretation:
     return IntentInterpretation(status="matched", intent="help", command="help")
 
 
-def _matched_workspace(command: str) -> IntentInterpretation:
-    return IntentInterpretation(status="matched", intent="workspace", command=command)
+def _matched_workspace(
+    command: str,
+    *,
+    relative_date_hint: Literal["today", "tomorrow", "tonight", "next_week"] | None = None,
+    relative_clock_time: str | None = None,
+) -> IntentInterpretation:
+    return IntentInterpretation(
+        status="matched",
+        intent="workspace",
+        command=command,
+        relative_date_hint=relative_date_hint,
+        relative_clock_time=relative_clock_time,
+    )
 
 
 def _ambiguous(message: str = _AMBIGUOUS_MESSAGE) -> IntentInterpretation:
@@ -348,20 +362,34 @@ def interpret_request(message: str) -> IntentInterpretation:
             return _ambiguous(_UNSAFE_VALUE_MESSAGE)
         return _matched_workspace(f"workspace add reminder: {title} | {due_at}")
 
+    relative_match = _REMINDER_RELATIVE_RE.fullmatch(normalized)
+    if relative_match:
+        title = _safe_field(relative_match.group(1))
+        relative_phrase = relative_match.group(2).casefold()
+        clock_time = relative_match.group(3)
+        if not title:
+            return _ambiguous("Please specify what the reminder is about.")
+        relative_hint = (
+            "tonight" if relative_phrase == "this evening" else relative_phrase
+        )
+        return _matched_workspace(
+            "workspace add reminder: " + title,
+            relative_date_hint=relative_hint,
+            relative_clock_time=clock_time,
+        )
+
     match = _REMINDER_RE.fullmatch(normalized)
     if match:
         title = _safe_field(match.group(1))
         if match.group(1) is not None and title is None:
             return _ambiguous(_UNSAFE_VALUE_MESSAGE)
-        if title:
-            if _CLOCK_END_RE.search(title):
-                return _ambiguous(
-                    "I received a reminder clock time but cannot safely infer its "
-                    "calendar date or timezone. Provide the exact local date/time "
-                    "in YYYY-MM-DDTHH:MM format and an IANA timezone. Nothing was "
-                    "executed or changed."
-                )
-            title = _RELATIVE_TIME_END_RE.sub("", title).strip()
+        if title and _CLOCK_END_RE.search(title):
+            return _ambiguous(
+                "I received a reminder clock time but cannot safely infer its "
+                "calendar date or timezone. Provide the exact local date/time "
+                "in YYYY-MM-DDTHH:MM format and an IANA timezone. Nothing was "
+                "executed or changed."
+            )
         return _matched_workspace(
             "workspace add reminder:" + (f" {title}" if title else "")
         )
