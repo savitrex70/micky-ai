@@ -1092,3 +1092,93 @@ def test_cancelled_task_reminder_workflow_creates_neither_item(
     assert cancelled.status_code == 200, cancelled.text
     assert _items_of_kind(client, "task") == []
     assert _items_of_kind(client, "reminder") == []
+
+def test_natural_language_relative_reminder_survives_clarification_and_confirmation(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    """Tomorrow remains explicit server-side until the timezone/time is resolved."""
+    from rop.capabilities import workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    created_conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Relative reminder"},
+    )
+    assert created_conversation.status_code == 201, created_conversation.text
+    conversation_id = created_conversation.json()["id"]
+    key = uuid4()
+
+    initial = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "Remind me to review my notes tomorrow.",
+            "conversation_id": conversation_id,
+            "idempotency_key": str(key),
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    first_body = initial.json()
+    assert first_body["status"] == "clarification-required"
+    prompt = first_body["clarification_prompt"]
+    assert set(prompt["missing_fields"]) == {"due_at", "timezone"}
+    assert "tomorrow" not in prompt["question"].casefold()
+
+    restored = client.get(
+        f"/api/assistant/clarifications?conversation_id={conversation_id}"
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json() == [prompt]
+
+    continued = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "09:00 | Europe/Amsterdam",
+            "conversation_id": conversation_id,
+            "clarification_id": prompt["clarification_id"],
+        },
+    )
+    assert continued.status_code == 200, continued.text
+    prepared = continued.json()
+    assert prepared["status"] == "confirmation-required"
+    assert prepared["challenge"]["summary"]
+    assert client.get("/api/assistant/workspace/items?kind=reminder").json() == []
+
+    decided = _decide(
+        client,
+        prepared["challenge"],
+        decision="confirm",
+        display_code=prepared["challenge"]["display_code"],
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["status"] == "executed"
+
+    reminders = client.get(
+        "/api/assistant/workspace/items?kind=reminder"
+    ).json()
+    assert len(reminders) == 1
+    assert reminders[0]["title"] == "Review my notes"
+    assert reminders[0]["timezone"] == "Europe/Amsterdam"
+    assert reminders[0]["due_at"].startswith("2026-10-30T08:00:00")
+
+    replay = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": "09:00 | Europe/Amsterdam",
+            "conversation_id": conversation_id,
+            "clarification_id": prompt["clarification_id"],
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "refused"
+    assert len(
+        client.get("/api/assistant/workspace/items?kind=reminder").json()
+    ) == 1
