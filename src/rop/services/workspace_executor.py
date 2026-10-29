@@ -460,7 +460,6 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
     )
 
 
-
 def _apply_root(session, operation: ProposedOperation) -> None:
     action = _ROOT_OPERATIONS[operation.operation_id]
     if action == "add":
