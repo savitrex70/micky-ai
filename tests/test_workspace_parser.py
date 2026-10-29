@@ -248,6 +248,7 @@ def test_reminder_update_preserves_timezone_values_while_target_is_missing() -> 
     assert completed.parameters["due_at"] == "2026-10-24T06:30:00+00:00"
     assert completed.parameters["timezone"] == "Europe/Bucharest"
 
+
 def _relative_reminder_pending(
     parser: WorkspaceCommandParser,
     hint: str,
