@@ -147,7 +147,8 @@
       "phrase": "Remind me to review my notes tomorrow.",
       "expected_status": "matched",
       "expected_intent": "workspace",
-      "expected_command": "workspace add reminder: review my notes"
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "tomorrow"
     },
     {
       "id": "reminder-exact-01",
@@ -177,9 +178,12 @@
       "id": "reminder-relative-clock-ambiguous-01",
       "domain": "intent",
       "phrase": "Remind me to review my notes tomorrow at 09:00",
-      "expected_status": "ambiguous",
-      "expected_intent": null,
-      "expected_message_contains": "exact local date/time"
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_message_contains": "exact local date/time",
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "tomorrow",
+      "expected_relative_clock_time": "09:00"
     },
     {
       "id": "workflow-task-reminder-01",
@@ -317,6 +321,46 @@
       "expected_status": "ambiguous",
       "expected_intent": null,
       "expected_message_contains": "note"
+    },
+    {
+      "id": "reminder-relative-today-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes today.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "today",
+      "expected_relative_clock_time": null
+    },
+    {
+      "id": "reminder-relative-tonight-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes tonight at 20:00.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "tonight",
+      "expected_relative_clock_time": "20:00"
+    },
+    {
+      "id": "reminder-relative-evening-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes this evening at 19:30.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "tonight",
+      "expected_relative_clock_time": "19:30"
+    },
+    {
+      "id": "reminder-relative-next-week-01",
+      "domain": "intent",
+      "phrase": "Remind me to review my notes next week.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace add reminder: review my notes",
+      "expected_relative_date_hint": "next_week",
+      "expected_relative_clock_time": null
     }
   ],
   "regression_tests": [
