@@ -1163,7 +1163,7 @@ def test_natural_language_relative_reminder_survives_clarification_and_confirmat
 
     reminders = client.get("/api/assistant/workspace/items?kind=reminder").json()
     assert len(reminders) == 1
-    assert reminders[0]["title"] == "Review my notes"
+    assert reminders[0]["title"] == "review my notes"
     assert reminders[0]["timezone"] == "Europe/Amsterdam"
     assert reminders[0]["due_at"].startswith("2026-10-30T08:00:00")
 
