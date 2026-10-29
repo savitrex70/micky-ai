@@ -70,6 +70,7 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         "workflow-search-and-create-grounded",
         "workflow-search-and-create-cancelled",
         "workflow-search-and-create-no-match",
+        "workflow-search-and-create-source-change",
         "conversation-clarification-recovery",
     }
     assert required_domains.issubset({entry["domain"] for entry in matrix})

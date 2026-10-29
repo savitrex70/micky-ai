@@ -14,9 +14,9 @@ The deterministic interpreter requires an explicit supported search phrase, quer
 
 ## Authorization and execution
 
-The request is translated to one typed workspace operation. The existing authorization/policy and durable confirmation path presents the exact query, target item type, and title. No search or write is performed during interpretation or preview.
+The request is translated to one typed workspace operation. Before issuing a challenge, the service performs a bounded, read-only search across the user's identity-bound authorized roots and binds the selected source path and normalized excerpt into the exact operation. The confirmation preview presents the query, target item type, title, source path, and excerpt. No write occurs before confirmation.
 
-After confirmation, execution reuses the same identity-bound authorized-root search helper as read-only workspace search. It fails without writing if the secure backend is unavailable, any authorized root is rejected or skipped, or no matches are found. If a match is found, the executor saves one note/task with the source path and a bounded excerpt. The source text is untrusted data and is never interpreted as instructions. The new item and durable operation receipt are committed through the existing executor transaction. Replaying the same request returns the prior result without duplicating the item.
+After confirmation, execution reuses the same identity-bound authorized-root search helper as read-only workspace search. It fails without writing if the secure backend is unavailable, any authorized root is rejected or skipped, no matches are found, or the exact previewed source path/excerpt no longer matches. If the original match is still present, the executor saves one note/task with that exact source path and bounded excerpt. The source text is untrusted data and is never interpreted as instructions. The new item and durable operation receipt are committed through the existing executor transaction. Replaying the same request returns the prior result without duplicating the item.
 
 ## Regression coverage
 
@@ -24,6 +24,7 @@ After confirmation, execution reuses the same identity-bound authorized-root sea
 - tests/test_workspace_api.py::test_search_and_create_note_is_confirmed_and_source_grounded
 - tests/test_workspace_api.py::test_cancelled_search_and_create_task_does_not_write
 - tests/test_workspace_api.py::test_search_and_create_task_fails_closed_without_matches
+- tests/test_workspace_api.py::test_search_and_create_fails_if_previewed_source_changes
 
 The source-grounding integration test uses a temporary authorized Markdown root and is skipped where the native secure traversal primitives are unavailable. Such a skip is not evidence of successful retrieval on that host.
 

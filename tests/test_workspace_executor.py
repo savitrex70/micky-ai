@@ -1,5 +1,6 @@
 """Policy and idempotency-contract tests for workspace executors."""
 
+import json
 from uuid import uuid4
 
 from rop.schemas.authorization import ProposedOperation
@@ -19,6 +20,53 @@ def test_workspace_registry_has_only_named_workspace_operations() -> None:
     assert "workspace_task_complete" in registry
     assert "workspace_root_add" in registry
     assert "help" not in registry
+
+
+def test_search_create_fingerprint_binds_request_not_dynamic_preview() -> None:
+    request_payload = json.dumps(
+        {"kind": "note", "query": "renal physiology", "title": "Revision"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    bound_payload = json.dumps(
+        {
+            "kind": "note",
+            "query": "renal physiology",
+            "title": "Revision",
+            "source_path": "/authorized/revision.md",
+            "snippet": "autoregulation controls renal blood flow",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    original = ProposedOperation(
+        operation_id="workspace_workflow_search_and_create_item",
+        parameters={
+            "workflow_payload": request_payload,
+            "idempotency_key": str(uuid4()),
+        },
+    )
+    bound = ProposedOperation(
+        operation_id="workspace_workflow_search_and_create_item",
+        parameters={
+            "workflow_payload": bound_payload,
+            "idempotency_key": str(uuid4()),
+        },
+    )
+    changed_request = ProposedOperation(
+        operation_id="workspace_workflow_search_and_create_item",
+        parameters={
+            "workflow_payload": json.dumps(
+                {"kind": "note", "query": "different query", "title": "Revision"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "idempotency_key": str(uuid4()),
+        },
+    )
+
+    assert operation_fingerprint(original) == operation_fingerprint(bound)
+    assert operation_fingerprint(original) != operation_fingerprint(changed_request)
 
 
 def test_operation_fingerprint_ignores_only_the_idempotency_key() -> None:

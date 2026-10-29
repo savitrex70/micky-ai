@@ -411,6 +411,10 @@
     {
       "domain": "workflow-search-and-create-no-match",
       "test_node": "tests/test_workspace_api.py::test_search_and_create_task_fails_closed_without_matches"
+    },
+    {
+      "domain": "workflow-search-and-create-source-change",
+      "test_node": "tests/test_workspace_api.py::test_search_and_create_fails_if_previewed_source_changes"
     }
   ]
 }

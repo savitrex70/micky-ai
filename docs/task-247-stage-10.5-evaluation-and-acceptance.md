@@ -7,7 +7,7 @@ Scope: fixed deterministic intent evaluation, regression mapping, and honest acc
 
 `tests/fixtures/stage10_evaluation_v1.json` is a versioned synthetic corpus with 39 exact natural-language cases authored independently from the production interpreter. It covers help, item listing, local-file search, create-note/task/reminder requests, exact-time reminder handling, the bounded task-plus-reminder workflow, conflicts, malformed values, near-miss phrases, unsupported requests, and explicit-command compatibility.
 
-The corpus includes a separate matrix linking 23 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, and workflow confirmation/cancellation/replay. The test verifies that each matrix entry points to a real test function.
+The corpus includes a separate matrix linking 24 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, and workflow confirmation/cancellation/replay. The test verifies that each matrix entry points to a real test function.
 
 ## Metrics and commands
 

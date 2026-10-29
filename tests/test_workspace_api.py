@@ -748,6 +748,10 @@ def _items_of_kind(client: TestClient, kind: str) -> list[dict]:
     not local_paths.secure_directory_traversal_supported(),
     reason="secure root authorization requires supported handle-relative primitives",
 )
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="secure root authorization requires supported handle-relative primitives",
+)
 def test_search_and_create_note_is_confirmed_and_source_grounded(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -803,6 +807,10 @@ def test_search_and_create_note_is_confirmed_and_source_grounded(
     assert body["status"] == "confirmation-required"
     assert "renal physiology revision anchor" in body["challenge"]["summary"]
     assert "Renal physiology review" in body["challenge"]["summary"]
+    assert "revision-material.md" in body["challenge"]["summary"]
+    assert (
+        "autoregulation controls renal blood flow" in body["challenge"]["summary"]
+    )
     assert _items_of_kind(client, "note") == []
 
     executed = _decide(
@@ -819,6 +827,8 @@ def test_search_and_create_note_is_confirmed_and_source_grounded(
     assert "revision-material.md" in notes[0]["content"]
     assert "autoregulation controls renal blood flow" in notes[0]["content"]
 
+    # A completed replay must not re-search a source that has since disappeared.
+    source.unlink()
     replay = client.post(
         "/api/assistant/requests",
         headers=ORIGIN_HEADERS,
@@ -830,8 +840,27 @@ def test_search_and_create_note_is_confirmed_and_source_grounded(
 
 
 def test_cancelled_search_and_create_task_does_not_write(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from types import SimpleNamespace
+
+    from rop.services import workspace_read
+
+    monkeypatch.setattr(
+        workspace_read,
+        "search_authorized_local_files",
+        lambda _query, **_kwargs: SimpleNamespace(
+            secure_backend_available=True,
+            roots_rejected=0,
+            roots_skipped=0,
+            matches=[
+                SimpleNamespace(
+                    path="/authorized/revision-material.md",
+                    snippet="revision material supporting chapter review",
+                )
+            ],
+        ),
+    )
     conversation = client.post(
         "/api/assistant/conversations",
         headers=ORIGIN_HEADERS,
@@ -853,6 +882,7 @@ def test_cancelled_search_and_create_task_does_not_write(
     assert prepared.status_code == 200, prepared.text
     body = prepared.json()
     assert body["status"] == "confirmation-required"
+    assert "revision-material.md" in body["challenge"]["summary"]
     cancelled = _decide(client, body["challenge"], decision="cancel")
     assert cancelled.status_code == 200, cancelled.text
     assert _items_of_kind(client, "task") == []
@@ -868,7 +898,7 @@ def test_search_and_create_task_fails_closed_without_matches(
     monkeypatch.setattr(
         workspace_read,
         "search_authorized_local_files",
-        lambda _query: SimpleNamespace(
+        lambda _query, **_kwargs: SimpleNamespace(
             secure_backend_available=True,
             roots_rejected=0,
             roots_skipped=0,
@@ -894,8 +924,76 @@ def test_search_and_create_task_fails_closed_without_matches(
         },
     )
     assert prepared.status_code == 200, prepared.text
+    assert prepared.json()["status"] == "refused"
+    assert _items_of_kind(client, "task") == []
+
+
+@pytest.mark.skipif(
+    not local_paths.secure_directory_traversal_supported(),
+    reason="secure root authorization requires supported handle-relative primitives",
+)
+def test_search_and_create_fails_if_previewed_source_changes(
+    client: TestClient, tmp_path: Path
+) -> None:
+    root = tmp_path / "search-create-source-change"
+    root.mkdir()
+    source = root / "revision-material.md"
+    source.write_text(
+        "renal physiology revision anchor: autoregulation controls renal blood flow",
+        encoding="utf-8",
+    )
+    prepared_root = client.post(
+        "/api/assistant/workspace/changes",
+        headers=ORIGIN_HEADERS,
+        json={
+            "kind": "retrieval_root",
+            "action": "add",
+            "idempotency_key": str(uuid4()),
+            "path": str(root),
+        },
+    )
+    assert prepared_root.status_code == 200, prepared_root.text
+    root_challenge = prepared_root.json()["challenge"]
+    authorized = _decide(
+        client,
+        root_challenge,
+        decision="confirm",
+        display_code=root_challenge["display_code"],
+    )
+    assert authorized.status_code == 200, authorized.text
+    assert authorized.json()["status"] == "executed"
+
+    conversation = client.post(
+        "/api/assistant/conversations",
+        headers=ORIGIN_HEADERS,
+        json={"title": "Changed source preview"},
+    )
+    assert conversation.status_code == 201, conversation.text
+    prepared = client.post(
+        "/api/assistant/requests",
+        headers=ORIGIN_HEADERS,
+        json={
+            "message": (
+                "Search my authorized files for renal physiology revision anchor "
+                "and prepare a note titled Renal physiology review"
+            ),
+            "conversation_id": conversation.json()["id"],
+            "idempotency_key": str(uuid4()),
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
     body = prepared.json()
     assert body["status"] == "confirmation-required"
+    assert "revision-material.md" in body["challenge"]["summary"]
+    assert (
+        "autoregulation controls renal blood flow" in body["challenge"]["summary"]
+    )
+    assert _items_of_kind(client, "note") == []
+
+    source.write_text(
+        "the requested renal physiology revision anchor has been removed",
+        encoding="utf-8",
+    )
     executed = _decide(
         client,
         body["challenge"],
@@ -904,7 +1002,7 @@ def test_search_and_create_task_fails_closed_without_matches(
     )
     assert executed.status_code == 200, executed.text
     assert executed.json()["status"] == "failed"
-    assert _items_of_kind(client, "task") == []
+    assert _items_of_kind(client, "note") == []
 
 
 def test_task_reminder_workflow_is_confirmed_once_and_committed_together(
