@@ -13,6 +13,7 @@ from typing import Literal
 
 IntentStatus = Literal["matched", "ambiguous", "unsupported"]
 IntentKind = Literal["help", "workspace"]
+RelativeDateHint = Literal["today", "tomorrow", "tonight", "next_week"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +24,7 @@ class IntentInterpretation:
     intent: IntentKind | None = None
     command: str | None = None
     message: str | None = None
-    relative_date_hint: Literal["today", "tomorrow", "tonight", "next_week"] | None = None
+    relative_date_hint: RelativeDateHint | None = None
     relative_clock_time: str | None = None
 
 
