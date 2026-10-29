@@ -278,6 +278,16 @@ def _prepare_workspace_confirmation(
                 "created."
             )
 
+    if receipt is None:
+        receipt = AssistantOperationReceipt(
+            idempotency_key=key,
+            operation_id=operation.operation_id,
+            operation_fingerprint=fingerprint,
+            status="PENDING",
+        )
+        session.add(receipt)
+        session.flush()
+
     if operation.operation_id == "workspace_workflow_search_and_create_item":
         try:
             operation = prepare_search_create_operation(
@@ -295,16 +305,6 @@ def _prepare_workspace_confirmation(
                 "The proposed source preview could not be bound safely. "
                 "Nothing was created or changed."
             )
-
-    if receipt is None:
-        receipt = AssistantOperationReceipt(
-            idempotency_key=key,
-            operation_id=operation.operation_id,
-            operation_fingerprint=fingerprint,
-            status="PENDING",
-        )
-        session.add(receipt)
-        session.flush()
 
     result = issue_challenge(
         session,
