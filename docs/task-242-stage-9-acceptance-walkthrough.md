@@ -22,7 +22,7 @@ This closeout first records the evidence for its historical code candidate. The 
 
 ## 2. Verified automated evidence for the original candidate
 
-The latest verified run for code candidate `789d771fa4609b5c05091d6773f26fe040c9246d` is [GitHub Actions run 40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463):
+The verified run for the original code candidate `789d771fa4609b5c05091d6773f26fe040c9246d` is [GitHub Actions run 40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463):
 
 - **Ruff:** PASS
 - **Black 24.10.0:** PASS
@@ -147,10 +147,11 @@ covered by a mock.
 The CI evidence currently verified for code revision
 `f07d7086ad6306db676e30d85125c604af01e995` is documented above and in
 [run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595).
-Subsequent commits through `61ea26da1e1787e733d4345cb4c1c503d707b7a7`
-changed documentation only; no production or test code changed. The latest
-document-only push's CI result could not be independently retrieved through
-the available run-status interface, so it is not claimed here.
+All subsequent commits to current `main` have been verified as
+documentation-only changes; no production or test code changed after that
+tested code revision. The CI result for those later document-only pushes
+could not be independently retrieved through the available run-status
+interface, so no new passing test result is claimed for them.
 
 **Closeout rule:** Stage 9 and therefore formal Stage 10 acceptance remain
 NOT APPROVED until the NOT RUN HERE items above are completed, the results are
