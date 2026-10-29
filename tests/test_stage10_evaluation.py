@@ -77,6 +77,7 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         "relative-reminder-clarification",
         "relative-reminder-timezone-dst",
         "relative-reminder-metadata",
+        "relative-reminder-anchor-stability",
     }
     assert required_domains.issubset({entry["domain"] for entry in matrix})
     assert len(matrix) >= len(required_domains)
