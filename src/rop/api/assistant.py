@@ -433,6 +433,8 @@ def _dispatch_workspace_command(
 
         try:
             parse_message = request.message
+            relative_date_hint = None
+            relative_clock_time = None
             if request.clarification_id is None:
                 interpretation = interpret_request(request.message)
                 if (
@@ -440,10 +442,14 @@ def _dispatch_workspace_command(
                     and interpretation.intent == "workspace"
                 ):
                     parse_message = interpretation.command or request.message
+                    relative_date_hint = interpretation.relative_date_hint
+                    relative_clock_time = interpretation.relative_clock_time
             operation = _WORKSPACE_CAPABILITY.parser.parse(
                 parse_message,
                 pending_context=context,
                 idempotency_key=idempotency_key,
+                relative_date_hint=relative_date_hint,
+                relative_clock_time=relative_clock_time,
             )
         except CapabilityParseError as exc:
             if exc.partial_operation is None:
