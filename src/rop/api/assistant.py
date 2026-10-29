@@ -460,11 +460,19 @@ def _dispatch_workspace_command(
                     session.commit()
                 else:
                     session.rollback()
-                return (
-                    _workspace_refusal(
+                refusal_message = (
+                    exc.question
+                    if (
+                        exc.field_name == "clarification"
+                        and "original relative-date reference" in exc.question
+                    )
+                    else (
                         "The command could not be processed safely. "
                         "Nothing was executed."
-                    ),
+                    )
+                )
+                return (
+                    _workspace_refusal(refusal_message),
                     turn_message,
                     False,
                 )
