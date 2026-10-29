@@ -309,6 +309,14 @@
       "expected_status": "ambiguous",
       "expected_intent": null,
       "expected_message_contains": "item title"
+    },
+    {
+      "id": "note-missing-title-02",
+      "domain": "intent",
+      "phrase": "Create a note titled",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "note"
     }
   ],
   "regression_tests": [

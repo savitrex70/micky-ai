@@ -98,6 +98,10 @@ _NOTE_TITLE_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+_NOTE_TITLE_SKELETON_RE = re.compile(
+    r"^(?:make|create|write) (?:me )?a note (?:titled|called|named)$",
+    re.IGNORECASE,
+)
 _TASK_TITLE_RE = re.compile(
     r"^(?:create|make|add) (?:me )?a? ?task to(?:\s+(.+))?$",
     re.IGNORECASE,
@@ -310,6 +314,11 @@ def interpret_request(message: str) -> IntentInterpretation:
             return _matched_workspace(
                 "workspace add note:" + (f" {title}" if title else "")
             )
+
+    if _NOTE_TITLE_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Please provide a title for the note. Nothing was executed or changed."
+        )
 
     match = _TASK_TITLE_RE.fullmatch(normalized)
     if match:

@@ -143,7 +143,6 @@ def test_task_and_reminder_workflow_without_date_requests_clarification() -> Non
     [
         ("Create a task to", "workspace add task:"),
         ("Remind me to", "workspace add reminder:"),
-        ("Create a note titled", "workspace add note:"),
     ],
 )
 def test_missing_optional_title_never_adds_trailing_command_whitespace(
@@ -186,6 +185,13 @@ def test_search_and_create_workflow_requires_explicit_query_and_title(
     assert result.status == "matched"
     assert result.intent == "workspace"
     assert result.command == expected_command
+
+
+def test_note_with_missing_title_asks_for_clarification() -> None:
+    result = interpret_request("Create a note titled")
+    assert result.status == "ambiguous"
+    assert result.command is None
+    assert "note" in (result.message or "")
 
 
 def test_search_and_create_workflow_with_missing_title_asks_for_clarification() -> None:
