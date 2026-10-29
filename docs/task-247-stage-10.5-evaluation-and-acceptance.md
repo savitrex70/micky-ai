@@ -7,7 +7,7 @@ Scope: fixed deterministic intent evaluation, regression mapping, and honest acc
 
 `tests/fixtures/stage10_evaluation_v1.json` is a versioned synthetic corpus with 43 exact natural-language cases authored independently from the production interpreter. It asserts the relative-date metadata returned for today, tomorrow, tonight/this evening, and next week, including the clock-time variant. It covers help, item listing, local-file search, create-note/task/reminder requests, exact-time reminder handling, the bounded task-plus-reminder workflow, conflicts, malformed values, near-miss phrases, unsupported requests, and explicit-command compatibility.
 
-The corpus includes a separate matrix linking 29 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, workflow confirmation/cancellation/replay, hostile-Host denial for private reads, and relative-date persistence/resolution across clarification. The test verifies that each matrix entry points to a real test function.
+The corpus includes a separate matrix linking 30 security/privacy/functional domains to existing named automated tests, including memory CRUD and clear confirmation, personal-data export, clinical/personal separation, retrieval containment and limits, offline guards, clarification recovery, workflow confirmation/cancellation/replay, hostile-Host denial for private reads, and relative-date persistence/resolution across clarification including a midnight-crossing request-time anchor regression. The test verifies that each matrix entry points to a real test function.
 
 ## Metrics and commands
 
