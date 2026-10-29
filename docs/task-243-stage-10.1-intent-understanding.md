@@ -11,13 +11,20 @@ The interpreter performs no execution and grants no permission. Unsupported requ
 
 Relative reminder phrases (today, tomorrow, tonight/this evening, and next
 week) are returned as structured date-hint metadata, not appended to the
-reminder title. The assistant passes that metadata into the existing
-server-owned clarification record. Today/tomorrow/tonight require an explicit
-local clock time and IANA timezone before the date is resolved; next week
-requires an exact date/time and timezone because the phrase does not identify
-a particular day. Invalid timezone names, past times, and nonexistent or
-ambiguous daylight-saving wall times remain clarification errors. The
-existing authorization and confirmation path still gates every write.
+reminder title. The parser captures an aware UTC reference instant when the
+original request is first interpreted and stores it with the server-owned
+clarification state. Date phrases are resolved against that request-time
+anchor in the timezone the user supplies, so a clarification that crosses
+local midnight cannot shift "tomorrow" to the wrong date. The current clock
+is still checked to refuse an intended time that has already passed. A pending
+relative reminder with a missing/corrupt anchor fails closed and asks the user
+to restart rather than silently substituting the reply time.
+Today/tomorrow/tonight require an explicit local clock time and IANA timezone
+before the date is resolved; next week requires an exact date/time and timezone
+because the phrase does not identify a particular day. Invalid timezone
+names and nonexistent or ambiguous daylight-saving wall times remain
+clarification errors. The existing authorization and confirmation path still
+gates every write.
 
 
 ## Test coverage
