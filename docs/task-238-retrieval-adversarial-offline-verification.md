@@ -3,13 +3,13 @@
 **Original Task 238 starting revision:** cfa5ad97c52a8cdc7ee7ee6b9af7a9497a946ab3  
 **Correction review base:** 440b2beef86bdfa63317c27d529bb51de0d3a8c5  
 **Scope:** Explicitly authorized local retrieval, path containment, bounded traversal and reads, and Python-level runtime network-denial tests.  
-**Status:** Linux secure-retrieval implementation and adversarial tests passed in the latest CI candidate; intended Windows target remains unsupported by the strict traversal backend. This task report does not confer Stage 9 acceptance.
+**Status:** The Linux secure-retrieval implementation and adversarial tests passed for this task's original candidate. The native Windows handle-based backend was added later and passed the dedicated Windows retrieval CI job in [run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595). Owner-target browser, OS-level offline, and resource acceptance remains open; this task report does not confer Stage 9 acceptance.
 
 ## Confirmed defects addressed
 
 - **Authorized-root substitution:** the approval operation stores a stable identity from the opened directory (device, inode, and Linux mount ID). The executor rechecks the local-path policy and opens the stored absolute path component-by-component without following links; it registers the root only if the identity still matches the identity bound into the confirmation and operation receipt. Legacy roots without an identity fail closed and require removal and explicit reauthorization.
 - **Filesystem TOCTOU:** retrieval requires Linux descriptor-relative directory traversal and no-follow flags. It scans pinned directory descriptors, uses descriptor-relative no-follow metadata/open calls, compares the entry's device/inode with the object actually opened, and requires every opened file/directory to remain on the approved root mount ID as well as its device. This rejects replacement by another object even on the same filesystem and rejects mount boundaries by descriptor identity, not only pathname classification.
-- **Platform fail-closed behavior:** when the required Linux `openat2`, `O_NOFOLLOW`, directory-descriptor, `/proc/self/fdinfo` mount-identity, or mount-table primitives are unavailable, retrieval and new root authorizations fail closed rather than falling back to path-based opens. Windows junction and mapped-drive cases remain covered by policy tests but are not an active retrieval backend under this strict mode.
+- **Platform fail-closed behavior at the original Task 238 revision:** when the required Linux `openat2`, `O_NOFOLLOW`, directory-descriptor, `/proc/self/fdinfo` mount-identity, or mount-table primitives are unavailable, retrieval and new root authorizations fail closed rather than falling back to path-based opens. At that revision, Windows was not an active secure backend. A native Windows handle-based backend was added later and its tests are now run on a Windows CI runner; see the current status and evidence below.
 - **Network paths and mounts:** shared path policy rejects UNC/device-style paths, mapped Windows network drives, and known remote filesystem types reported by Linux mountinfo. If Linux mount metadata cannot be read, retrieval fails closed. Root addition and retrieval use the same network-path decision.
 - **Hard read bounds:** each file is capped at 1,000,000 bytes; the opened file descriptor is checked and only the remaining request byte budget is read before post-read size validation.
 - **Total-work bounds:** a search is limited to 20,000,000 bytes read, 1,000 allowlisted files, and 10,000 directory entries; each root is limited to 250 visited directories.
@@ -28,7 +28,7 @@ tests/test_retrieval_root_limit.py proves the root bound by instrumenting the wo
 tests/test_native_offline_boundary.py also runs local retrieval, and the real in-process `POST /api/assistant/retrieval/search` route against a persisted root with a valid stored identity, under the suite's existing Python network guards. The guards record every attempt as well as raising, and the route test asserts the record is empty. The guards fail if the tested path attempts socket construction, socket-pair creation, connection creation, DNS resolution, urllib access, or HTTPConnection/HTTPSConnection calls.
 
 
-## Latest automated CI evidence
+## Automated CI evidence for the original Task 238 candidate
 
 The full PostgreSQL-backed CI run for code candidate `789d771fa4609b5c05091d6773f26fe040c9246d`, [run 40360442463](https://github.com/savitrex70/micky-ai/actions/runs/40360442463), passed: Ruff, Black, and pytest (**8,222 passed, 3 skipped, 36 warnings**). The real-junction integration and native Windows retrieval-policy tests are skipped on the Linux runner. These skips do not establish that Windows retrieval works.
 
@@ -36,8 +36,28 @@ The full PostgreSQL-backed CI run for code candidate `789d771fa4609b5c05091d6773
 
 - The local execution container had no repository checkout or Git metadata, and outbound DNS/network access was unavailable. Source files were read and updated directly through the repository API against the verified remote `main` history. Therefore no local working-tree status or local targeted pytest/Ruff/Black command could be run in this environment; only checks actually reported for the resulting SHA may be treated as executed.
 - The runtime offline test is a mocked Python-level boundary test, not proof of OS-wide network isolation. It does not verify network access attempted inside compiled dependency internals that bypass the guarded Python callables.
-- The Windows junction integration test, mapped-drive OS behavior, and network-mount classification have not been validated on a real Windows host or a real network-mounted filesystem. The network-policy race is deterministically simulated; it is not a live network-mount experiment. Mocked tests validate policy logic only. Linux mount containment is enforced using the opened object's mount ID, but no stress test with a concurrently mutated real mount namespace was performed.
+- The Windows backend now has native handle/reparse-point regression tests run by the dedicated Windows CI job. The owner's target Windows machine and a real network-mounted filesystem have not been independently exercised here. The network-policy race is deterministically simulated; it is not a live network-mount experiment. Mocked tests validate policy logic only. Linux mount containment is enforced using the opened object's mount ID, but no stress test with a concurrently mutated real mount namespace was performed.
 - No firewall-denied environment run, real browser walkthrough, or Stage 9 acceptance is claimed by this task. The full PostgreSQL-backed CI suite ran successfully as described above.
-- The current strict retrieval backend is Linux-only. On the target Windows 10/11 environment, secure root authorization/search returns unavailable and fails closed. This is safer than a path-based fallback, but local retrieval is not functionally available on the intended target. Stage 9.5 cannot be accepted until a native Windows handle/file-identity/reparse-point-aware backend is implemented and tested on Windows, or the project owner explicitly changes the target-platform requirement.
+- The original Task 238 revision had no active secure Windows backend. That specific limitation is superseded: the current main tree includes native Windows handle/file-identity/reparse-point-aware traversal and the dedicated Windows CI job passed on code revision `f07d7086ad6306db676e30d85125c604af01e995` in [run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595). Stage 9.5 still requires owner-target use and the offline/browser/resource acceptance evidence; do not infer those observations from CI.
 - Root limit: nothing yet caps how many roots a person may authorize. Roots beyond the 25 oldest are never searched until older roots are removed; the response and UI say so rather than implying full coverage. Capping authorization at add time, or paging searches across roots, is a product decision left open. `GET /api/assistant/workspace/retrieval-roots` still lists every root with a plain SQL query; it performs no filesystem work.
 - The route-level offline test starts the ASGI client and its event loop before the guards are installed (asyncio builds a socketpair at loop start), so the guards cover the request and retrieval work but not loop construction. Like the other runtime guards it is Python-level interception, not OS-wide network isolation.
+
+## Current-code reassessment — 2026-10-29
+
+The following historical statements in this Task 238 report were superseded by
+subsequent commits: “Windows ... not an active retrieval backend” and
+“current strict retrieval backend is Linux-only.” Native Windows directory
+handles, file identity checks, handle-relative child opens, reparse-point
+rejection, and cross-volume policy were added and hardened after the original
+Task 238 candidate. The dedicated Windows job in
+[CI run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595)
+passed on code revision
+[`f07d7086ad6306db676e30d85125c604af01e995`](https://github.com/savitrex70/micky-ai/commit/f07d7086ad6306db676e30d85125c604af01e995).
+
+This does **not** close Stage 9 acceptance. The Python-level network guards
+are not OS-level isolation; owner-target browser and restart/recovery
+walkthroughs, outbound-network-denied operation, measured startup/resource
+observations, and any target-specific mapped-drive/network-filesystem
+behavior still require evidence. The final acceptance decision must use the
+current product contract and Task 242 reassessment, not treat this historical
+report as current for platform support.
