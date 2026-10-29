@@ -152,8 +152,20 @@ def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
                 "That time has already passed in the selected timezone. Choose a "
                 "later time today or use tomorrow.",
             )
-        # Validate wall-time gaps/repeats before any confirmation challenge.
-        _normalize_reminder_due(local_due.isoformat(), timezone_name)
+        # Relative clock input is HH:MM only, so a repeated DST wall time
+        # cannot be disambiguated with an explicit offset. Ask for another
+        # local clock time rather than suggesting an unsupported correction.
+        try:
+            _normalize_reminder_due(local_due.isoformat(), timezone_name)
+        except _ReminderTimeError as error:
+            if "occurs twice" in error.question:
+                raise _ReminderTimeError(
+                    "due_at",
+                    "That clock time occurs twice because of a daylight-saving "
+                    "change. Choose a different HH:MM time for this relative "
+                    "reminder; nothing has been saved.",
+                ) from None
+            raise
         return local_due.isoformat()
 
     due_at = parameters.get("due_at")
