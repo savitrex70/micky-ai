@@ -345,20 +345,28 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
 
 
 def _apply_search_create_item(session, operation: ProposedOperation) -> None:
-    """Prepare a user-requested note/task from one verified authorized match."""
+    """Create one note/task from the exact source excerpt the user approved."""
     raw_payload = operation.parameters.get("workflow_payload")
-    if not isinstance(raw_payload, str) or not raw_payload or len(raw_payload) > 512:
+    if not isinstance(raw_payload, str) or not raw_payload or len(raw_payload) > 1024:
         raise ExecutorError("search-and-create payload missing or oversized")
     try:
         payload = json.loads(raw_payload)
     except (TypeError, ValueError):
         raise ExecutorError("search-and-create payload invalid") from None
-    if not isinstance(payload, dict) or set(payload) != {"kind", "query", "title"}:
+    if not isinstance(payload, dict) or set(payload) != {
+        "kind",
+        "query",
+        "title",
+        "source_path",
+        "snippet",
+    }:
         raise ExecutorError("search-and-create payload shape invalid")
 
     kind = payload["kind"]
     query = payload["query"]
     title = payload["title"]
+    source_path = payload["source_path"]
+    snippet = payload["snippet"]
     if (
         kind not in {"note", "task"}
         or not isinstance(query, str)
@@ -369,11 +377,22 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
         or not title.strip()
         or len(title) > 100
         or not title.isprintable()
+        or not isinstance(source_path, str)
+        or not source_path
+        or len(source_path) > 280
+        or any(ord(char) < 32 or ord(char) == 127 for char in source_path)
+        or not isinstance(snippet, str)
+        or not snippet
+        or len(snippet) > 120
+        or not snippet.isprintable()
     ):
         raise ExecutorError("search-and-create values invalid")
 
     # File content is untrusted data. It never becomes a command or instruction.
-    from rop.services.workspace_read import search_authorized_local_files
+    from rop.services.workspace_read import (
+        normalize_match_preview,
+        search_authorized_local_files,
+    )
 
     try:
         outcome = search_authorized_local_files(query, db_session=session)
@@ -388,13 +407,25 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
     if not outcome.matches:
         raise ExecutorError("no matching authorized local content was found")
 
-    match = outcome.matches[0]
-    source_path = str(match.path).strip()
-    if len(source_path) > 280:
-        source_path = "..." + source_path[-277:]
-    snippet = " ".join(str(match.snippet).split())[:120]
+    source_is_unchanged = False
+    for match in outcome.matches:
+        try:
+            current_path, current_snippet = normalize_match_preview(match)
+        except ValueError:
+            continue
+        if current_path == source_path and current_snippet == snippet:
+            source_is_unchanged = True
+            break
+    if not source_is_unchanged:
+        raise ExecutorError(
+            "The previewed source changed or is no longer available; "
+            "no item was created"
+        )
+
     item_content = (
-        f"Query: {query[:60]}\n" f"Source: {source_path}\n" f"Excerpt: {snippet}"
+        f"Query: {query[:60]}\n"
+        f"Source: {source_path}\n"
+        f"Excerpt: {snippet}"
     )
     if len(item_content) > 512:
         item_content = item_content[:512]
@@ -408,6 +439,7 @@ def _apply_search_create_item(session, operation: ProposedOperation) -> None:
             completed=False,
         )
     )
+
 
 
 def _apply_root(session, operation: ProposedOperation) -> None:
