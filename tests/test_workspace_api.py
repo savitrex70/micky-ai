@@ -808,9 +808,7 @@ def test_search_and_create_note_is_confirmed_and_source_grounded(
     assert "renal physiology revision anchor" in body["challenge"]["summary"]
     assert "Renal physiology review" in body["challenge"]["summary"]
     assert "revision-material.md" in body["challenge"]["summary"]
-    assert (
-        "autoregulation controls renal blood flow" in body["challenge"]["summary"]
-    )
+    assert "autoregulation controls renal blood flow" in body["challenge"]["summary"]
     assert _items_of_kind(client, "note") == []
 
     executed = _decide(
