@@ -1,6 +1,7 @@
 """Regression tests for the configured local Host boundary."""
 
 from collections.abc import Generator
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,6 +55,18 @@ def trusted_client(monkeypatch) -> Generator[TestClient, None, None]:
 def test_configured_host_can_read_private_api_and_serve_local_ui(
     trusted_client: TestClient,
 ) -> None:
+    save = trusted_client.post(
+        "/api/assistant/memories",
+        headers={"origin": TRUSTED_ORIGIN},
+        json={
+            "idempotency_key": str(uuid4()),
+            "entry_type": "memory",
+            "title": "private-host-boundary-marker",
+            "content": "private content must remain available to the trusted loopback host",
+        },
+    )
+    assert save.status_code == 201, save.text
+
     root = trusted_client.get("/")
     asset = trusted_client.get("/static/app.js")
     memories = trusted_client.get("/api/assistant/memories?limit=10")
@@ -62,10 +75,12 @@ def test_configured_host_can_read_private_api_and_serve_local_ui(
     assert root.status_code == 200
     assert asset.status_code == 200
     assert memories.status_code == 200
-    assert memories.json()["total"] == 0
+    assert memories.json()["total"] == 1
+    assert memories.json()["items"][0]["title"] == "private-host-boundary-marker"
     assert memories.headers["cache-control"].startswith("no-store")
     assert export.status_code == 200
-    assert export.json()["total_records"] == 0
+    assert export.json()["total_records"] == 1
+    assert "private-host-boundary-marker" in export.text
     assert export.headers["cache-control"].startswith("no-store")
 
 
@@ -125,3 +140,31 @@ def test_nonconfigured_loopback_port_is_not_trusted() -> None:
         )
 
     assert response.status_code == 403
+
+def test_untrusted_host_cannot_read_seeded_private_memory_or_export(
+    trusted_client: TestClient,
+) -> None:
+    save = trusted_client.post(
+        "/api/assistant/memories",
+        headers={"origin": TRUSTED_ORIGIN},
+        json={
+            "idempotency_key": str(uuid4()),
+            "entry_type": "memory",
+            "title": "host-secret-marker",
+            "content": "this must not be disclosed to a hostile host header",
+        },
+    )
+    assert save.status_code == 201, save.text
+    assert "host-secret-marker" in trusted_client.get(
+        "/api/assistant/memories"
+    ).text
+
+    headers = {"host": "attacker.invalid"}
+    for path in (
+        "/api/assistant/memories",
+        "/api/assistant/personal-data/export",
+    ):
+        response = trusted_client.get(path, headers=headers)
+        assert response.status_code == 403, path
+        assert "host-secret-marker" not in response.text
+        assert "must not be disclosed" not in response.text
