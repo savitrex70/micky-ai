@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -93,6 +93,99 @@ class _ReminderTimeError(ValueError):
         super().__init__("reminder time needs clarification")
 
 
+_RELATIVE_DATE_HINTS = {"today", "tomorrow", "tonight", "next_week"}
+_RELATIVE_DAY_HINTS = {"today", "tomorrow", "tonight"}
+_CLOCK_TIME_RE = re.compile(r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+
+
+def _current_utc() -> datetime:
+    """Return the clock used for relative reminder resolution (patchable in tests)."""
+    return datetime.now(UTC)
+
+
+def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
+    """Resolve relative intent using a caller-selected timezone and exact inputs."""
+    hint = parameters.get("relative_date_hint")
+    timezone_name = parameters.get("timezone")
+    if hint not in _RELATIVE_DATE_HINTS:
+        raise _ReminderTimeError(
+            "due_at",
+            "That relative date is not supported. Start the reminder again with "
+            "today, tomorrow, tonight, or an exact local date/time.",
+        )
+    if not timezone_name:
+        raise _ReminderTimeError(
+            "timezone",
+            "Which IANA timezone should I use? For example, Europe/Amsterdam.",
+        )
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise _ReminderTimeError(
+            "timezone",
+            "That timezone was not recognized. Enter an IANA timezone such as "
+            "Europe/Amsterdam.",
+        ) from None
+
+    now_local = _current_utc().astimezone(zone)
+    if hint in _RELATIVE_DAY_HINTS:
+        clock_time = parameters.get("relative_clock_time", "")
+        if not _CLOCK_TIME_RE.fullmatch(clock_time):
+            raise _ReminderTimeError(
+                "due_at",
+                "What local clock time should I use? Reply with HH:MM and an "
+                "IANA timezone, for example 09:30 | Europe/Amsterdam.",
+            )
+        hour, minute = (int(value) for value in clock_time.split(":"))
+        if hint == "tonight" and hour < 17:
+            raise _ReminderTimeError(
+                "due_at",
+                "For tonight, choose an evening time from 17:00 to 23:59.",
+            )
+        target_date = now_local.date()
+        if hint == "tomorrow":
+            target_date += timedelta(days=1)
+        local_due = datetime.combine(target_date, time(hour, minute))
+        if local_due <= now_local.replace(tzinfo=None):
+            raise _ReminderTimeError(
+                "due_at",
+                "That time has already passed in the selected timezone. Choose a "
+                "later time today or use tomorrow.",
+            )
+        # Validate wall-time gaps/repeats before any confirmation challenge.
+        _normalize_reminder_due(local_due.isoformat(), timezone_name)
+        return local_due.isoformat()
+
+    due_at = parameters.get("due_at")
+    if not due_at:
+        raise _ReminderTimeError(
+            "due_at",
+            "Next week does not identify a particular day. Provide the exact "
+            "local date/time and timezone, for example "
+            "2026-11-03T09:30 | Europe/Amsterdam.",
+        )
+    try:
+        local = datetime.fromisoformat(due_at)
+    except (TypeError, ValueError):
+        raise _ReminderTimeError(
+            "due_at",
+            "Enter an exact local date/time in YYYY-MM-DDTHH:MM format.",
+        ) from None
+    local_date = (
+        local.astimezone(zone).date() if local.tzinfo is not None else local.date()
+    )
+    today = now_local.date()
+    next_monday = today + timedelta(days=7 - today.weekday())
+    next_sunday = next_monday + timedelta(days=6)
+    if not next_monday <= local_date <= next_sunday:
+        raise _ReminderTimeError(
+            "due_at",
+            "Choose a date in the next calendar week in the selected timezone, "
+            "then include its local time.",
+        )
+    return due_at
+
+
 def _normalize_reminder_due(due_at: str, timezone_name: str) -> str:
     """Validate local time against its IANA zone and return canonical UTC ISO."""
     try:
@@ -149,15 +242,48 @@ def _normalize_reminder_due(due_at: str, timezone_name: str) -> str:
 
 
 def _validate_reminder_operation(operation: ProposedOperation) -> ProposedOperation:
-    """Resolve a reminder's named local timezone before confirmation."""
+    """Resolve relative dates and normalize reminder times before confirmation."""
     if operation.operation_id not in {
         "workspace_reminder_create",
         "workspace_reminder_update",
     }:
         return operation
     parameters = dict(operation.parameters)
-    due_at = parameters.get("due_at")
     timezone_name = parameters.get("timezone")
+    relative_hint = parameters.get("relative_date_hint")
+    if relative_hint is not None:
+        if not timezone_name:
+            return operation
+        if relative_hint in _RELATIVE_DAY_HINTS and not parameters.get(
+            "relative_clock_time"
+        ):
+            return operation
+        if relative_hint == "next_week" and not parameters.get("due_at"):
+            return operation
+        try:
+            due_at = _resolve_relative_reminder_due(parameters)
+            parameters["due_at"] = _normalize_reminder_due(due_at, timezone_name)
+        except _ReminderTimeError as error:
+            partial = _operation(
+                operation.operation_id,
+                target=operation.target,
+                parameters=parameters,
+            )
+            raise CapabilityParseError(
+                error.field_name,
+                error.question,
+                partial_operation=partial,
+                missing_fields=[error.field_name],
+            ) from None
+        parameters.pop("relative_date_hint", None)
+        parameters.pop("relative_clock_time", None)
+        return _operation(
+            operation.operation_id,
+            target=operation.target,
+            parameters=parameters,
+        )
+
+    due_at = parameters.get("due_at")
     if not due_at or not timezone_name:
         return operation
     try:
@@ -200,6 +326,8 @@ class WorkspaceCommandParser:
         *,
         pending_context: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
+        relative_date_hint: str | None = None,
+        relative_clock_time: str | None = None,
     ) -> ProposedOperation:
         if pending_context is not None:
             return self._continue_clarification(message, pending_context)
@@ -345,6 +473,44 @@ class WorkspaceCommandParser:
                     ),
                 )
             params["title"] = title[:200]
+            if relative_date_hint is not None:
+                if relative_date_hint not in _RELATIVE_DATE_HINTS:
+                    raise CapabilityParseError(
+                        "due_at",
+                        "That relative date is not supported. Provide an exact "
+                        "local date/time and IANA timezone.",
+                    )
+                params["relative_date_hint"] = relative_date_hint
+                if relative_clock_time:
+                    params["relative_clock_time"] = relative_clock_time
+                if relative_date_hint == "next_week":
+                    missing = ["due_at", "timezone"]
+                    question = (
+                        "Next week does not identify a particular day. Provide "
+                        "the exact local date/time and timezone as "
+                        "YYYY-MM-DDTHH:MM | Europe/Amsterdam."
+                    )
+                elif relative_clock_time:
+                    missing = ["timezone"]
+                    question = (
+                        "Which IANA timezone should I use for that clock time? "
+                        "For example, Europe/Amsterdam."
+                    )
+                else:
+                    missing = ["due_at", "timezone"]
+                    question = (
+                        "What local clock time and IANA timezone should I use? "
+                        "Reply HH:MM | Europe/Amsterdam. Nothing will be saved "
+                        "until you confirm the proposed reminder."
+                    )
+                raise CapabilityParseError(
+                    missing[0],
+                    question,
+                    partial_operation=_operation(
+                        "workspace_reminder_create", parameters=params
+                    ),
+                    missing_fields=missing,
+                )
             if len(parts) > 1 and parts[1]:
                 params["due_at"] = parts[1][:32]
             if len(parts) > 2 and parts[2]:
@@ -519,7 +685,53 @@ class WorkspaceCommandParser:
         parameters = dict(operation.parameters)
         target = operation.target
         first = fields[0]
-        if first in {"title", "query"}:
+        relative_hint = parameters.get("relative_date_hint")
+        if relative_hint in _RELATIVE_DAY_HINTS and first in {"due_at", "timezone"}:
+            if set(fields) == {"due_at", "timezone"}:
+                clock_answer = parts[0] if parts else ""
+                timezone_answer = parts[1] if len(parts) > 1 else ""
+                if clock_answer:
+                    if not _CLOCK_TIME_RE.fullmatch(clock_answer):
+                        raise CapabilityParseError(
+                            "due_at",
+                            "Enter a local clock time as HH:MM, followed by an "
+                            "IANA timezone separated by |. Nothing was saved.",
+                            operation,
+                            fields,
+                        )
+                    parameters["relative_clock_time"] = clock_answer
+                if timezone_answer:
+                    parameters["timezone"] = timezone_answer[:128]
+                still_missing = []
+                if not parameters.get("relative_clock_time"):
+                    still_missing.append("due_at")
+                if not parameters.get("timezone"):
+                    still_missing.append("timezone")
+                if still_missing:
+                    question = (
+                        "Which IANA timezone should I use? For example, "
+                        "Europe/Amsterdam."
+                        if still_missing == ["timezone"]
+                        else "What local clock time should I use? Reply HH:MM."
+                    )
+                    raise CapabilityParseError(
+                        still_missing[0],
+                        question,
+                        _operation(
+                            operation.operation_id,
+                            target=target,
+                            parameters=parameters,
+                        ),
+                        still_missing,
+                    )
+                fields = []
+            elif first == "due_at":
+                if answer.strip():
+                    parameters["relative_clock_time"] = answer.strip()[:16]
+            elif first == "timezone":
+                if answer.strip():
+                    parameters["timezone"] = answer.strip()[:128]
+        elif first in {"title", "query"}:
             value = answer.strip()
             if not value:
                 raise CapabilityParseError(
