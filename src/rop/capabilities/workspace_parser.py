@@ -166,12 +166,19 @@ def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
             target_date += timedelta(days=1)
         local_due = datetime.combine(target_date, time(hour, minute))
         if local_due <= now_local.replace(tzinfo=None):
-            raise _ReminderTimeError(
-                "due_at",
-                "That time has already passed today in the selected timezone. "
-                "Choose a later HH:MM time today, or cancel and start a new "
-                "reminder for tomorrow.",
-            )
+            if target_date == now_local.date():
+                question = (
+                    "That time has already passed today in the selected timezone. "
+                    "Choose a later HH:MM time today, or start a new reminder "
+                    "for tomorrow; nothing has been saved."
+                )
+            else:
+                question = (
+                    "The original relative date has passed in the selected "
+                    "timezone before confirmation. Start a new reminder request "
+                    "with a future date/time; nothing has been saved."
+                )
+            raise _ReminderTimeError("due_at", question)
         # Relative clock input is HH:MM only, so a repeated DST wall time
         # cannot be disambiguated with an explicit offset. Ask for another
         # local clock time rather than suggesting an unsupported correction.
