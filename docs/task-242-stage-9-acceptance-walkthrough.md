@@ -94,3 +94,30 @@ Local PostgreSQL-specific tests may intentionally skip unless a **dedicated disp
 The implementation and automated corrections for Tasks 236–242 are on `main`, and the latest observed functional-code CI run is green. **Formal Stage 9 acceptance remains NOT APPROVED** because secure local retrieval is unavailable on the target Windows platform and the required target-machine/browser/offline/resource evidence has not been performed or formally dispositioned.
 
 **Stage 10 remains blocked.**
+
+## 7. Post-closeout reassessment — 2026-10-29
+
+This report captured the earlier state of `main`. Its statement that Windows
+secure retrieval was unavailable has since been superseded by the native
+Windows handle-based backend and its adversarial regression coverage. The
+implementation was added and hardened in commits including
+[`7767ad8`](https://github.com/savitrex70/micky-ai/commit/7767ad82e98d5f39e098080b2b9cc9f5f640f6ef),
+[`2c6683a`](https://github.com/savitrex70/micky-ai/commit/2c6683a8ef4a67237c09bc82b2ec7da3e1caa459),
+and
+[`3c81dca`](https://github.com/savitrex70/micky-ai/commit/3c81dca8408124a25ba40efa9a3fa5cdab8710aa).
+The later code revision
+[`f07d7086ad6306db676e30d85125c604af01e995`](https://github.com/savitrex70/micky-ai/commit/f07d7086ad6306db676e30d85125c604af01e995)
+passed [CI run 40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595),
+including its dedicated **Windows retrieval** job. That job exercises native
+Windows handle/reparse-point behavior; it is stronger evidence than Linux
+policy mocks, but it is not proof of the owner's own machine configuration or
+OS-wide network isolation.
+
+Accordingly, the current Stage 9 blocker is no longer “no Windows retrieval
+backend.” Formal Stage 9 acceptance remains **NOT APPROVED** because the
+owner-target browser and end-to-end walkthrough, OS-level outbound-network-
+denied run, measured startup/resource observations, and any remaining
+target-specific filesystem/network scenarios have not been recorded or
+formally dispositioned. No such machine-specific evidence is inferred from CI.
+
+**Stage 10 remains gated on the full Stage 9 acceptance decision.**
