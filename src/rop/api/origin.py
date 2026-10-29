@@ -1,21 +1,15 @@
-"""Loopback same-origin enforcement for state-changing assistant requests.
+"""Loopback host/origin enforcement for the local assistant.
 
-The application is documented and started on loopback for a single local
-user, so every state-changing assistant request must come from the
-configured local origin: the ``Origin`` header must match it, the ``Host``
-header must name that origin, and the body must be JSON. A missing or
-mismatched header is refused with a static, value-free body.
+The ASGI middleware rejects every HTTP request whose Host authority does not
+match the configured loopback origin. This includes private read APIs, static
+assets, and the root page, so a DNS-rebinding hostname cannot use a sensitive
+GET route as an alternate path around the write-side origin checks.
 
-Used by the confirmation decision endpoint and the confirmation-record
-management endpoints (including deletion), and by the conversation HTTP
-API for its state-changing operations (create, rename, delete, and
-append user message). Read-only endpoints do not invoke it.
-
-This is not a security boundary against code running as the same local
-user, and it is not authentication. It defends the documented loopback
-application against a cross-site page silently submitting a state-changing
-request. The trusted origin is read from configuration, never derived from
-an incoming request header, and no permissive CORS behaviour is added.
+State-changing JSON requests additionally use enforce_local_origin, which
+validates Origin, Host, and content type. These controls are not
+authentication and do not protect against malicious code running as the same
+local user. The configured trusted origin is never derived from an incoming
+request header, and no permissive CORS behaviour is added.
 """
 
 from __future__ import annotations
@@ -23,11 +17,57 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request, status
+from starlette.responses import JSONResponse
 
 from rop.config import get_settings
 
 REFUSED_DETAIL = "This request was refused."
 """Value-free body for every origin, host, or content-type refusal."""
+
+
+class TrustedLocalHostMiddleware:
+    """Reject every HTTP request not addressed to the configured local origin.
+
+    The comparison uses the configured authority (host plus port), not a value
+    copied from request headers. TestClient's synthetic authority is accepted
+    only when the application itself is configured for the testing environment.
+    """
+
+    def __init__(
+        self,
+        app,
+        *,
+        trusted_origin: str,
+        allow_testserver: bool = False,
+    ) -> None:
+        self.app = app
+        authority = urlparse(trusted_origin).netloc.casefold()
+        if not authority:
+            raise ValueError("trusted local origin has no authority")
+        self.allowed_authorities = {authority}
+        if allow_testserver:
+            self.allowed_authorities.add("testserver")
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        host_values = [
+            value.decode("latin-1").casefold()
+            for name, value in scope.get("headers", ())
+            if name.lower() == b"host"
+        ]
+        if len(host_values) != 1 or host_values[0] not in self.allowed_authorities:
+            response = JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": REFUSED_DETAIL},
+                headers={"Cache-Control": "no-store"},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
 
 
 def _trusted_origin() -> str:
@@ -70,4 +110,9 @@ async def require_local_origin(request: Request) -> None:
     enforce_local_origin(request)
 
 
-__all__ = ["REFUSED_DETAIL", "enforce_local_origin", "require_local_origin"]
+__all__ = [
+    "REFUSED_DETAIL",
+    "TrustedLocalHostMiddleware",
+    "enforce_local_origin",
+    "require_local_origin",
+]
