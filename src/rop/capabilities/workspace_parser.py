@@ -127,6 +127,25 @@ def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
             "Europe/Amsterdam.",
         ) from None
 
+    anchor_text = parameters.get("relative_anchor_utc")
+    try:
+        anchor_utc = datetime.fromisoformat(anchor_text) if anchor_text else None
+    except (TypeError, ValueError):
+        anchor_utc = None
+    if (
+        anchor_utc is None
+        or anchor_utc.tzinfo is None
+        or anchor_utc.utcoffset() is None
+    ):
+        raise _ReminderTimeError(
+            "due_at",
+            "I could not safely recover the original date reference for this "
+            "reminder. Start a new reminder request so I do not guess the date.",
+        )
+    anchor_local = anchor_utc.astimezone(zone)
+    # Use the request-time anchor to interpret words such as tomorrow/next
+    # week, but use the current clock to refuse a proposed time that has since
+    # passed while the user was answering a clarification.
     now_local = _current_utc().astimezone(zone)
     if hint in _RELATIVE_DAY_HINTS:
         clock_time = parameters.get("relative_clock_time", "")
@@ -142,7 +161,7 @@ def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
                 "due_at",
                 "For tonight, choose an evening time from 17:00 to 23:59.",
             )
-        target_date = now_local.date()
+        target_date = anchor_local.date()
         if hint == "tomorrow":
             target_date += timedelta(days=1)
         local_due = datetime.combine(target_date, time(hour, minute))
@@ -187,7 +206,7 @@ def _resolve_relative_reminder_due(parameters: Mapping[str, str]) -> str:
     local_date = (
         local.astimezone(zone).date() if local.tzinfo is not None else local.date()
     )
-    today = now_local.date()
+    today = anchor_local.date()
     next_monday = today + timedelta(days=7 - today.weekday())
     next_sunday = next_monday + timedelta(days=6)
     if not next_monday <= local_date <= next_sunday:
@@ -265,6 +284,12 @@ def _validate_reminder_operation(operation: ProposedOperation) -> ProposedOperat
     timezone_name = parameters.get("timezone")
     relative_hint = parameters.get("relative_date_hint")
     if relative_hint is not None:
+        if not parameters.get("relative_anchor_utc"):
+            raise CapabilityParseError(
+                "clarification",
+                "The original relative-date reference was not preserved. "
+                "Start this reminder request again; nothing was saved.",
+            )
         if not timezone_name:
             return operation
         if relative_hint in _RELATIVE_DAY_HINTS and not parameters.get(
@@ -290,6 +315,7 @@ def _validate_reminder_operation(operation: ProposedOperation) -> ProposedOperat
             ) from None
         parameters.pop("relative_date_hint", None)
         parameters.pop("relative_clock_time", None)
+        parameters.pop("relative_anchor_utc", None)
         return _operation(
             operation.operation_id,
             target=operation.target,
@@ -494,6 +520,10 @@ class WorkspaceCommandParser:
                         "local date/time and IANA timezone.",
                     )
                 params["relative_date_hint"] = relative_date_hint
+                # Pin "today"/"tomorrow"/"next week" to the instant of the
+                # original request. Clarification may cross local midnight;
+                # resolving against the reply time would change its meaning.
+                params["relative_anchor_utc"] = _current_utc().isoformat()
                 if relative_clock_time:
                     params["relative_clock_time"] = relative_clock_time
                 if relative_date_hint == "next_week":
