@@ -357,9 +357,7 @@ def test_relative_tomorrow_uses_request_anchor_when_clarification_crosses_midnig
         "_current_utc",
         lambda: datetime(2026, 10, 29, 23, 5, tzinfo=UTC),
     )
-    completed = _continue_relative_reminder(
-        parser, pending, "09:00 | Europe/Amsterdam"
-    )
+    completed = _continue_relative_reminder(parser, pending, "09:00 | Europe/Amsterdam")
     assert completed.parameters["due_at"] == "2026-10-30T08:00:00+00:00"
     assert "relative_anchor_utc" not in completed.parameters
 
