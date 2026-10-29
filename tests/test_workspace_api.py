@@ -983,9 +983,7 @@ def test_search_and_create_fails_if_previewed_source_changes(
     body = prepared.json()
     assert body["status"] == "confirmation-required"
     assert "revision-material.md" in body["challenge"]["summary"]
-    assert (
-        "autoregulation controls renal blood flow" in body["challenge"]["summary"]
-    )
+    assert "autoregulation controls renal blood flow" in body["challenge"]["summary"]
     assert _items_of_kind(client, "note") == []
 
     source.write_text(
