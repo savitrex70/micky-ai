@@ -339,6 +339,7 @@ def _prepare_workspace_confirmation(
         ),
     )
 
+
 def _persist_clarified_success(
     session,
     *,
