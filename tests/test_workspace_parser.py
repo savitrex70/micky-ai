@@ -331,6 +331,67 @@ def test_relative_day_hints_resolve_with_a_timezone_and_clock(
     assert completed.parameters["timezone"] == "Europe/Amsterdam"
 
 
+def test_relative_tomorrow_uses_request_anchor_when_clarification_crosses_midnight(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 22, 55, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow")
+    assert pending.partial_operation is not None
+    assert (
+        pending.partial_operation.parameters["relative_anchor_utc"]
+        == "2026-10-29T22:55:00+00:00"
+    )
+
+    # Amsterdam passes midnight while the ten-minute clarification is active.
+    # The request was made at 23:55 local on October 29, so "tomorrow" remains
+    # October 30 even though the answer arrives after local midnight.
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 23, 5, tzinfo=UTC),
+    )
+    completed = _continue_relative_reminder(
+        parser, pending, "09:00 | Europe/Amsterdam"
+    )
+    assert completed.parameters["due_at"] == "2026-10-30T08:00:00+00:00"
+    assert "relative_anchor_utc" not in completed.parameters
+
+
+def test_relative_reminder_without_original_anchor_fails_closed(monkeypatch) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow")
+    assert pending.partial_operation is not None
+    partial = pending.partial_operation.model_dump(mode="json")
+    partial["parameters"].pop("relative_anchor_utc")
+
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "09:00 | Europe/Amsterdam",
+            pending_context={
+                "partial_operation": partial,
+                "missing_fields": list(pending.missing_fields),
+            },
+        )
+
+    assert caught.value.partial_operation is None
+    assert "original relative-date reference was not preserved" in caught.value.question
+    assert "nothing was saved" in caught.value.question
+
+
 def test_relative_reminder_reasks_for_timezone_after_invalid_timezone(
     monkeypatch,
 ) -> None:
