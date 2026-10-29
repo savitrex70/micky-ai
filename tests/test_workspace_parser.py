@@ -248,7 +248,11 @@ def test_reminder_update_preserves_timezone_values_while_target_is_missing() -> 
     assert completed.parameters["due_at"] == "2026-10-24T06:30:00+00:00"
     assert completed.parameters["timezone"] == "Europe/Bucharest"
 
-def _relative_reminder_pending(parser: WorkspaceCommandParser, hint: str, time_text: str | None = None):
+def _relative_reminder_pending(
+    parser: WorkspaceCommandParser,
+    hint: str,
+    time_text: str | None = None,
+):
     with pytest.raises(CapabilityParseError) as caught:
         parser.parse(
             "workspace add reminder: Review my notes",
@@ -431,6 +435,8 @@ def test_next_week_requires_an_exact_date_inside_the_next_calendar_week(
     assert completed.parameters["due_at"] == "2026-11-04T08:30:00+00:00"
 
     with pytest.raises(CapabilityParseError) as caught:
-        _continue_relative_reminder(parser, pending, "2026-10-30T09:30 | Europe/Amsterdam")
+        _continue_relative_reminder(
+            parser, pending, "2026-10-30T09:30 | Europe/Amsterdam"
+        )
     assert caught.value.field_name == "due_at"
     assert "next calendar week" in caught.value.question
