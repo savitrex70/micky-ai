@@ -459,6 +459,26 @@
     {
       "domain": "workflow-search-and-create-source-change",
       "test_node": "tests/test_workspace_api.py::test_search_and_create_fails_if_previewed_source_changes"
+    },
+    {
+      "domain": "private-read-host-boundary",
+      "test_node": "tests/test_trusted_host.py::test_untrusted_host_is_rejected_before_private_route_or_asset"
+    },
+    {
+      "domain": "private-read-host-boundary-trusted-origin",
+      "test_node": "tests/test_trusted_host.py::test_configured_host_can_read_private_api_and_serve_local_ui"
+    },
+    {
+      "domain": "relative-reminder-clarification",
+      "test_node": "tests/test_workspace_api.py::test_natural_language_relative_reminder_survives_clarification_and_confirmation"
+    },
+    {
+      "domain": "relative-reminder-timezone-dst",
+      "test_node": "tests/test_workspace_parser.py::test_relative_reminder_handles_nonexistent_dst_wall_time"
+    },
+    {
+      "domain": "relative-reminder-metadata",
+      "test_node": "tests/test_intent_interpreter.py::test_relative_reminder_date_is_preserved_as_structured_metadata"
     }
   ]
 }
