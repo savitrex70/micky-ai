@@ -1,5 +1,6 @@
 """Unit tests for deterministic assistant workspace command parsing."""
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -246,3 +247,186 @@ def test_reminder_update_preserves_timezone_values_while_target_is_missing() -> 
     assert completed.parameters["content"] == "bring notes"
     assert completed.parameters["due_at"] == "2026-10-24T06:30:00+00:00"
     assert completed.parameters["timezone"] == "Europe/Bucharest"
+
+def _relative_reminder_pending(parser: WorkspaceCommandParser, hint: str, time_text: str | None = None):
+    with pytest.raises(CapabilityParseError) as caught:
+        parser.parse(
+            "workspace add reminder: Review my notes",
+            idempotency_key=str(uuid4()),
+            relative_date_hint=hint,
+            relative_clock_time=time_text,
+        )
+    error = caught.value
+    assert error.partial_operation is not None
+    return error
+
+
+def _continue_relative_reminder(parser: WorkspaceCommandParser, error, answer: str):
+    assert error.partial_operation is not None
+    return parser.parse(
+        answer,
+        pending_context={
+            "partial_operation": error.partial_operation.model_dump(mode="json"),
+            "missing_fields": list(error.missing_fields),
+        },
+    )
+
+
+def test_relative_tomorrow_date_survives_clarification_and_uses_selected_timezone(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow")
+    assert pending.missing_fields == ["due_at", "timezone"]
+    assert pending.partial_operation.parameters["relative_date_hint"] == "tomorrow"
+    assert "tomorrow" not in pending.partial_operation.parameters["title"]
+
+    completed = _continue_relative_reminder(
+        parser, pending, "09:00 | Europe/Amsterdam"
+    )
+    assert completed.operation_id == "workspace_reminder_create"
+    assert completed.parameters["title"] == "Review my notes"
+    assert completed.parameters["timezone"] == "Europe/Amsterdam"
+    assert completed.parameters["due_at"] == "2026-10-30T08:00:00+00:00"
+    assert "relative_date_hint" not in completed.parameters
+    assert "relative_clock_time" not in completed.parameters
+
+
+@pytest.mark.parametrize(
+    ("hint", "clock_time", "expected_utc"),
+    [
+        ("today", "09:30", "2026-10-29T08:30:00+00:00"),
+        ("tomorrow", "09:30", "2026-10-30T08:30:00+00:00"),
+        ("tonight", "20:00", "2026-10-29T19:00:00+00:00"),
+    ],
+)
+def test_relative_day_hints_resolve_with_a_timezone_and_clock(
+    monkeypatch,
+    hint: str,
+    clock_time: str,
+    expected_utc: str,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, hint, clock_time)
+    assert pending.missing_fields == ["timezone"]
+    completed = _continue_relative_reminder(parser, pending, "Europe/Amsterdam")
+    assert completed.parameters["due_at"] == expected_utc
+    assert completed.parameters["timezone"] == "Europe/Amsterdam"
+
+
+def test_relative_reminder_reasks_for_timezone_after_invalid_timezone(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow", "09:00")
+    with pytest.raises(CapabilityParseError) as caught:
+        _continue_relative_reminder(parser, pending, "Not/AZone")
+    invalid_zone = caught.value
+    assert invalid_zone.field_name == "timezone"
+    assert invalid_zone.missing_fields == ["timezone"]
+    completed = _continue_relative_reminder(parser, invalid_zone, "Europe/Amsterdam")
+    assert completed.parameters["due_at"] == "2026-10-30T08:00:00+00:00"
+
+
+def test_relative_reminder_rejects_invalid_and_past_clock_values(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 12, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "today", "09:00")
+    with pytest.raises(CapabilityParseError) as caught:
+        _continue_relative_reminder(parser, pending, "Europe/Amsterdam")
+    assert caught.value.field_name == "due_at"
+    assert "already passed" in caught.value.question
+
+    with pytest.raises(CapabilityParseError) as invalid_clock:
+        _continue_relative_reminder(parser, pending, "not-a-time | Europe/Amsterdam")
+    assert invalid_clock.value.field_name == "due_at"
+
+
+def test_relative_reminder_handles_nonexistent_dst_wall_time(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 3, 7, 12, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow", "02:30")
+    with pytest.raises(CapabilityParseError) as caught:
+        _continue_relative_reminder(parser, pending, "America/New_York")
+    assert caught.value.field_name == "due_at"
+    assert "does not exist" in caught.value.question
+    corrected = _continue_relative_reminder(parser, caught.value, "03:30")
+    assert corrected.parameters["due_at"] == "2026-03-08T07:30:00+00:00"
+
+
+def test_relative_reminder_handles_ambiguous_dst_wall_time_without_guessing(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 31, 12, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "tomorrow", "01:30")
+    with pytest.raises(CapabilityParseError) as caught:
+        _continue_relative_reminder(parser, pending, "America/New_York")
+    assert caught.value.field_name == "due_at"
+    assert "occurs twice" in caught.value.question
+
+
+def test_next_week_requires_an_exact_date_inside_the_next_calendar_week(
+    monkeypatch,
+) -> None:
+    import rop.capabilities.workspace_parser as workspace_parser
+
+    monkeypatch.setattr(
+        workspace_parser,
+        "_current_utc",
+        lambda: datetime(2026, 10, 29, 6, 0, tzinfo=UTC),
+    )
+    parser = WorkspaceCommandParser()
+    pending = _relative_reminder_pending(parser, "next_week")
+    completed = _continue_relative_reminder(
+        parser, pending, "2026-11-04T09:30 | Europe/Amsterdam"
+    )
+    assert completed.parameters["due_at"] == "2026-11-04T08:30:00+00:00"
+
+    with pytest.raises(CapabilityParseError) as caught:
+        _continue_relative_reminder(parser, pending, "2026-10-30T09:30 | Europe/Amsterdam")
+    assert caught.value.field_name == "due_at"
+    assert "next calendar week" in caught.value.question
