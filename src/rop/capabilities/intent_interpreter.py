@@ -370,9 +370,10 @@ def interpret_request(message: str) -> IntentInterpretation:
         clock_time = relative_match.group(3)
         if not title:
             return _ambiguous("Please specify what the reminder is about.")
-        relative_hint = (
-            "tonight" if relative_phrase == "this evening" else relative_phrase
-        )
+        relative_hint = {
+            "this evening": "tonight",
+            "next week": "next_week",
+        }.get(relative_phrase, relative_phrase)
         return _matched_workspace(
             "workspace add reminder: " + title,
             relative_date_hint=relative_hint,
