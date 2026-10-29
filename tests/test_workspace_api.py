@@ -1093,6 +1093,7 @@ def test_cancelled_task_reminder_workflow_creates_neither_item(
     assert _items_of_kind(client, "task") == []
     assert _items_of_kind(client, "reminder") == []
 
+
 def test_natural_language_relative_reminder_survives_clarification_and_confirmation(
     client: TestClient,
     monkeypatch,
@@ -1160,9 +1161,7 @@ def test_natural_language_relative_reminder_survives_clarification_and_confirmat
     assert decided.status_code == 200, decided.text
     assert decided.json()["status"] == "executed"
 
-    reminders = client.get(
-        "/api/assistant/workspace/items?kind=reminder"
-    ).json()
+    reminders = client.get("/api/assistant/workspace/items?kind=reminder").json()
     assert len(reminders) == 1
     assert reminders[0]["title"] == "Review my notes"
     assert reminders[0]["timezone"] == "Europe/Amsterdam"
@@ -1179,6 +1178,4 @@ def test_natural_language_relative_reminder_survives_clarification_and_confirmat
     )
     assert replay.status_code == 200, replay.text
     assert replay.json()["status"] == "refused"
-    assert len(
-        client.get("/api/assistant/workspace/items?kind=reminder").json()
-    ) == 1
+    assert len(client.get("/api/assistant/workspace/items?kind=reminder").json()) == 1
