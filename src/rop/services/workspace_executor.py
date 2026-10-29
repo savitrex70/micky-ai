@@ -183,15 +183,39 @@ def build_workspace_executor_registry() -> ExecutorRegistry:
 
 
 def operation_fingerprint(operation: ProposedOperation) -> str:
+    parameters = {
+        key: value
+        for key, value in operation.parameters.items()
+        if key != _KEY_NAME
+    }
+    if operation.operation_id == _SEARCH_CREATE_OPERATION:
+        raw_payload = parameters.get("workflow_payload")
+        if isinstance(raw_payload, str):
+            try:
+                payload = json.loads(raw_payload)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict) and (
+                set(payload) == {"kind", "query", "title"}
+                or set(payload)
+                == {"kind", "query", "title", "source_path", "snippet"}
+            ):
+                # Bind idempotency to the requested action; the challenge itself
+                # stores and authenticates the exact source preview material.
+                stable_payload = {
+                    key: payload[key] for key in ("kind", "query", "title")
+                }
+                parameters["workflow_payload"] = json.dumps(
+                    stable_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                )
     material = {
         "operation_id": operation.operation_id,
         "target": operation.target,
         "scope": operation.scope,
-        "parameters": {
-            key: value
-            for key, value in operation.parameters.items()
-            if key != _KEY_NAME
-        },
+        "parameters": parameters,
     }
     canonical = json.dumps(
         material, sort_keys=True, separators=(",", ":"), ensure_ascii=True
