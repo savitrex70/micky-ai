@@ -109,12 +109,16 @@ between runs.
 ### Local assistant web interface
 
 Micky AI has a local browser interface served by the existing FastAPI
-application at `GET /`. It is intentionally minimal: routing is
-deterministic and only the `help` capability is registered, so any other
-well-formed request receives an explicit `unsupported-capability`
-response and no conversation or message is saved. (Confirmation
-records for operations that require confirmation are a separate,
-durable store; see the confirmation-records section below.) A matched capability is not answered
+application at `GET /`. Request handling is deterministic, not a
+free-form model-backed agent. The allowlisted intent interpreter routes
+supported phrases to existing workspace operations; the existing parser,
+authorization policy, clarification flow, confirmation challenge, and
+executor remain authoritative. Unsupported or conflicting requests are
+not silently converted into operations. A request that requires
+clarification, authorization, or confirmation is stopped or routed to the
+corresponding explicit flow rather than executed immediately.
+(Confirmation records are a separate, durable store; see the
+confirmation-records section below.) A matched capability is not answered
 until the authorization policy allows it, so a request that would need
 clarification or confirmation, or that is not permitted, is stopped
 instead of run.
@@ -138,12 +142,13 @@ assistant interface and does not represent a completed personal assistant.
   for notes/tasks/reminders, explicit local-retrieval root selection and
   search, and a separate clinical reasoning panel. These are existing UI
   surfaces, not proof that all end-to-end acceptance criteria pass.
-- Chat handling is deterministic. It supports the registered help phrases
-  and explicit workspace commands such as `workspace list notes`,
-  `workspace add note: title`, and
-  `workspace search files: terms`. It does not guess free-form intent,
-  fuzzy-match commands, or call an external model. Unsupported input is not
-  silently converted into a capability.
+- Chat handling is deterministic. The narrow allowlisted grammar supports
+  help, workspace listing, selected local-file searches, note/task/reminder
+  creation, and two bounded confirmed workflows: task-plus-reminder and
+  search-to-source-grounded-note/task. It does not use fuzzy matching,
+  generic planning, or external models. Unsupported or ambiguous input is
+  not silently converted into a capability. Private memory is explicitly
+  managed through its own panel and API; it is not ingested from chat.
 - Saved conversations persist successful request/response exchanges as
   atomic user/assistant pairs. Non-success results are not stored as
   successful turns. Server-owned clarification state is short-lived, bound
@@ -155,10 +160,12 @@ assistant interface and does not represent a completed personal assistant.
   daylight-saving-time wall times instead of guessing. The interface surfaces
   overdue reminders in-app; it does not send OS notifications.
 - Local retrieval is limited to user-authorized roots and the tested
-  `.txt`, `.md`, `.json`, and `.csv` allowlist. Path traversal,
-  symlink escapes, unsupported file types, and network roots are rejected or
-  skipped. This design does not authorize disk-wide scanning or ordinary
-  network fetching.
+  `.txt`, `.md`, `.json`, and `.csv` allowlist. Linux uses secure
+  descriptor-relative traversal; Windows has a native handle-based backend
+  with file-identity and reparse-point checks. Both paths enforce retrieval
+  policy and fail closed if required secure primitives or root identity
+  checks are unavailable. This does not authorize disk-wide scanning or
+  ordinary network fetching.
 - The clinical panel can invoke the existing fully audited deterministic ROP
   reasoning workflow and displays its result as text. Package consistency is
   not clinical validity. Clinical reasoning session IDs remain separate from
@@ -170,10 +177,13 @@ assistant interface and does not represent a completed personal assistant.
   confirmation-gated mutation path. No arbitrary shell/code execution,
   hosted model, Ollama, third-party pretrained model, hidden provider
   fallback, or automatic model download is permitted.
-- Stage 8 native-intelligence acceptance is incomplete, so model integration
-  remains gated. Stage 9 is **not accepted**: the current main-tree test run,
-  full privacy/security/offline/recovery verification, and manual end-to-end
-  walkthrough must be reviewed before Stage 9 can close.
+- Stage 8 native-intelligence acceptance remains incomplete, so the optional
+  model path is gated. Stage 9 product acceptance remains **NOT APPROVED**:
+  current automated checks include native Windows retrieval CI, but the
+  owner-target browser/end-to-end walkthrough, OS-level outbound-network-
+  denied verification, and measured startup/resource evidence remain
+  outstanding. Stage 10 Tasks 243–248 are implemented on `main`; their
+  formal acceptance remains gated by Stage 9's acceptance decision.
 
 ### Stage 7 release-readiness evidence chain
 
@@ -533,10 +543,26 @@ empty. Workspace writes use their separate confirmation-gated flow; no
 arbitrary shell/code execution is introduced.
 
 See [`docs/stage-9-product-contract.md`](docs/stage-9-product-contract.md)
-for the agreed roadmap and
+for the Stage 9 contract and
 [`docs/task-233-stage-9-implementation-consolidation.md`](docs/task-233-stage-9-implementation-consolidation.md)
-for the current implementation inventory, CI evidence, and remaining
-acceptance blockers. See also
-[`docs/task-234-stage-9-implementation-status-reconciliation.md`](docs/task-234-stage-9-implementation-status-reconciliation.md)
-for the full contract/README reconciliation. Stage 10 must not begin until
-those blockers are closed.
+and [`docs/task-234-stage-9-implementation-status-reconciliation.md`](docs/task-234-stage-9-implementation-status-reconciliation.md)
+for the Stage 9 implementation and acceptance record. The earlier Windows
+retrieval-unavailable finding in Task 242 was superseded by the native
+Windows backend and dedicated CI coverage; see the reassessment in
+[`docs/task-242-stage-9-acceptance-walkthrough.md`](docs/task-242-stage-9-acceptance-walkthrough.md).
+
+### Stage 10 — Local deterministic assistant capabilities
+
+Tasks 243–248 implement the scoped Stage 10 areas: deterministic intent
+interpretation, explicit private memory, natural-language authorized local
+retrieval, two bounded confirmation-gated workflows, and a fixed evaluation
+corpus. The implementation record, verified code SHA, automated results, and
+limits are documented in
+[`docs/stage-10-implementation-and-acceptance.md`](docs/stage-10-implementation-and-acceptance.md).
+The fixed-corpus run covers 39 cases; this does not establish general
+language understanding or product acceptance.
+
+Stage 10 formal acceptance remains **NOT APPROVED** until the predecessor
+Stage 9 acceptance gate has been reviewed and closed. The outstanding
+target-machine browser, OS-level offline, and resource-measurement evidence
+must be recorded rather than inferred from CI.
