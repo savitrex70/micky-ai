@@ -15,6 +15,7 @@ from rop.api.confirmations import router as confirmations_router
 from rop.api.conversations import router as conversations_router
 from rop.api.health import router as health_router
 from rop.api.memories import router as memories_router
+from rop.api.origin import TrustedLocalHostMiddleware
 from rop.api.personal_data_export import router as personal_data_export_router
 from rop.api.retrieval import router as retrieval_router
 from rop.api.sessions import router as sessions_router
@@ -54,6 +55,11 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
+)
+app.add_middleware(
+    TrustedLocalHostMiddleware,
+    trusted_origin=settings.assistant_local_origin,
+    allow_testserver=settings.environment == "testing",
 )
 
 app.include_router(health_router)
