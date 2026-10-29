@@ -72,6 +72,11 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         "workflow-search-and-create-no-match",
         "workflow-search-and-create-source-change",
         "conversation-clarification-recovery",
+        "private-read-host-boundary",
+        "private-read-host-boundary-trusted-origin",
+        "relative-reminder-clarification",
+        "relative-reminder-timezone-dst",
+        "relative-reminder-metadata",
     }
     assert required_domains.issubset({entry["domain"] for entry in matrix})
     assert len(matrix) >= len(required_domains)
