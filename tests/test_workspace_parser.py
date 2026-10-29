@@ -427,7 +427,8 @@ def test_next_week_requires_an_exact_date_inside_the_next_calendar_week(
     )
     parser = WorkspaceCommandParser()
     pending = _relative_reminder_pending(parser, "next_week")
-    completed = _continue_relative_reminder(parser, pending, "2026-11-04T09:30 | Europe/Amsterdam")
+    next_week_answer = "2026-11-04T09:30 | Europe/Amsterdam"
+    completed = _continue_relative_reminder(parser, pending, next_week_answer)
     assert completed.parameters["due_at"] == "2026-11-04T08:30:00+00:00"
 
     with pytest.raises(CapabilityParseError) as caught:
