@@ -468,10 +468,10 @@ section E.1 applies to every entry below.
            reminder is silently dropped or duplicated.
 
 5. **Local retrieval from explicitly selected user data**
-   - Status: PARTIALLY IMPLEMENTED; Linux strict backend only; Windows target gap remains.
-   - Outcome: the UI can manage explicitly authorized roots, and a secure Linux backend can search within those roots. On Windows 10/11, the strict backend is unavailable and authorization/search deliberately fail closed; retrieval is therefore not functionally available on the target platform.
-   - Dependencies: Linux retrieval uses opened directory descriptors, no-follow traversal, identity binding, and the tested `.txt`, `.md`, `.json`, and `.csv` allowlist. It rejects symlink escapes, remote/network roots, unsupported formats, and bounded-work violations. It does not use an unsafe path-based fallback on Windows.
-   - Acceptance: implement and test a Windows handle/file-identity/reparse-point-aware traversal backend or obtain a separately approved target-platform change; validate local search and adversarial junction/mapped-drive cases on a real Windows host; complete the offline-boundary walkthrough.
+   - Status: IMPLEMENTED; full Stage 9 acceptance pending.
+   - Outcome: the UI manages explicitly authorized roots. Linux uses descriptor-relative traversal with no-follow opens and mount identity; Windows uses a native handle-based backend with file identity, handle-relative child opens/enumeration, and fail-closed reparse-point and cross-volume policy. Both paths fail closed when required secure primitives or root identity checks are unavailable. No ordinary path-based fallback is used to bypass missing security primitives.
+   - Dependencies: the tested `.txt`, `.md`, `.json`, and `.csv` allowlist; explicit root authorization and identity binding; remote/network-root policy; per-file, aggregate-byte, file, directory, entry, root, and match ceilings; native platform primitives. Windows regression coverage runs in the dedicated Windows CI job.
+   - Acceptance: the native Windows backend and adversarial handle/reparse-point tests are present and passed in CI run [40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595) for code revision `f07d7086ad6306db676e30d85125c604af01e995`. Remaining Stage 9 acceptance requires owner-target Windows use, a real browser walkthrough, OS-level outbound-network-denied verification, measured startup/resource use, and disposition of target-specific filesystem/network scenarios. CI is not a substitute for that target-machine evidence.
 
 6. **Integration with existing ROP functionality**
    - Status: PARTIALLY IMPLEMENTED; ACCEPTANCE PENDING.
@@ -991,11 +991,14 @@ responsibility of the corresponding Stage 9.x design task.
   traversal outside a selected root, symlink escapes, unsupported extensions,
   and files crossing the root device boundary.
 - Full offline/security acceptance remains open and must be established in
-  Stage 9.8. Linux CI verifies the Linux secure path, but it cannot substitute
-  for Windows traversal tests. As of 2026-10-26, the strict secure backend
-  requires Linux `openat2` and mount identity; Windows retrieval reports
-  `secure_backend_available=false` and fails closed. That is a known target
-  platform feature gap, not an accepted implementation of Windows retrieval.
+  Stage 9.8. Linux CI covers the Linux descriptor-relative path, and the
+  dedicated Windows CI job runs native handle-based retrieval and adversarial
+  reparse-point/file-replacement tests. The earlier statement that Windows
+  retrieval reports `secure_backend_available=false` is superseded by the
+  native Windows backend added on 2026-10-26 and verified in CI run
+  [40871167595](https://github.com/savitrex70/micky-ai/actions/runs/40871167595).
+  These automated tests do not establish OS-wide offline compliance or
+  completion of the owner-target browser/resource walkthrough.
 
 **Offline boundary:**
 
