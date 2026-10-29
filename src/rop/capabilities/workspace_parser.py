@@ -55,7 +55,6 @@ _WORKFLOW_SEARCH_CREATE_RE = re.compile(
 )
 
 
-
 def _parts(value: str) -> list[str]:
     return [part.strip() for part in value.split("|")]
 
@@ -211,7 +210,8 @@ class WorkspaceCommandParser:
             if len(parts) != 3 or any(not part for part in parts):
                 raise CapabilityParseError(
                     "workflow",
-                    "Provide item type, search terms, and an item title separated by |.",
+                    "Provide item type, search terms, and an item title "
+                    "separated by |.",
                 )
             kind, query, title = parts
             if (

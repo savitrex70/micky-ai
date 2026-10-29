@@ -285,6 +285,30 @@
       "expected_status": "matched",
       "expected_intent": "workspace",
       "expected_command": "workspace list notes"
+    },
+    {
+      "id": "workflow-search-task-01",
+      "domain": "intent",
+      "phrase": "Find files containing pharmacology notes and create a task to revise chapter 3.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace workflow search-and-create-item: task | pharmacology notes | revise chapter 3"
+    },
+    {
+      "id": "workflow-search-note-01",
+      "domain": "intent",
+      "phrase": "Search my authorized files for renal physiology and prepare a note titled Revision key points.",
+      "expected_status": "matched",
+      "expected_intent": "workspace",
+      "expected_command": "workspace workflow search-and-create-item: note | renal physiology | Revision key points"
+    },
+    {
+      "id": "workflow-search-missing-title-01",
+      "domain": "intent",
+      "phrase": "Find files containing renal marker and prepare a note",
+      "expected_status": "ambiguous",
+      "expected_intent": null,
+      "expected_message_contains": "item title"
     }
   ],
   "regression_tests": [
@@ -367,6 +391,18 @@
     {
       "domain": "memory-restart-persistence",
       "test_node": "tests/test_assistant_memory.py::test_memory_persists_after_client_and_database_recreation"
+    },
+    {
+      "domain": "workflow-search-and-create-grounded",
+      "test_node": "tests/test_workspace_api.py::test_search_and_create_note_is_confirmed_and_source_grounded"
+    },
+    {
+      "domain": "workflow-search-and-create-cancelled",
+      "test_node": "tests/test_workspace_api.py::test_cancelled_search_and_create_task_does_not_write"
+    },
+    {
+      "domain": "workflow-search-and-create-no-match",
+      "test_node": "tests/test_workspace_api.py::test_search_and_create_task_fails_closed_without_matches"
     }
   ]
 }

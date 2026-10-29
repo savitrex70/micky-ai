@@ -344,9 +344,7 @@ def _apply_task_reminder_workflow(session, operation: ProposedOperation) -> None
     )
 
 
-def _apply_search_create_item(
-    session, operation: ProposedOperation
-) -> None:
+def _apply_search_create_item(session, operation: ProposedOperation) -> None:
     """Prepare a user-requested note/task from one verified authorized match."""
     raw_payload = operation.parameters.get("workflow_payload")
     if not isinstance(raw_payload, str) or not raw_payload or len(raw_payload) > 512:
@@ -396,9 +394,7 @@ def _apply_search_create_item(
         source_path = "..." + source_path[-277:]
     snippet = " ".join(str(match.snippet).split())[:120]
     item_content = (
-        f"Query: {query[:60]}\n"
-        f"Source: {source_path}\n"
-        f"Excerpt: {snippet}"
+        f"Query: {query[:60]}\n" f"Source: {source_path}\n" f"Excerpt: {snippet}"
     )
     if len(item_content) > 512:
         item_content = item_content[:512]

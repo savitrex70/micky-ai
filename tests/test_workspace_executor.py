@@ -12,7 +12,9 @@ from rop.services.workspace_executor import (
 
 def test_workspace_registry_has_only_named_workspace_operations() -> None:
     registry = build_workspace_executor_registry()
-    assert len(registry) == 12
+    assert len(registry) == 14
+    assert "workspace_workflow_create_task_and_reminder" in registry
+    assert "workspace_workflow_search_and_create_item" in registry
     assert "workspace_note_create" in registry
     assert "workspace_task_complete" in registry
     assert "workspace_root_add" in registry

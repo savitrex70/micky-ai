@@ -225,12 +225,7 @@ def interpret_request(message: str) -> IntentInterpretation:
                 continue
             query = _safe_field(search_create.group(1))
             title = _safe_field(search_create.group(2))
-            if (
-                not query
-                or not title
-                or len(query) > 200
-                or len(title) > 100
-            ):
+            if not query or not title or len(query) > 200 or len(title) > 100:
                 return _ambiguous(_UNSAFE_VALUE_MESSAGE)
             return _matched_workspace(
                 "workspace workflow search-and-create-item: "
@@ -312,14 +307,18 @@ def interpret_request(message: str) -> IntentInterpretation:
             title = _safe_field(match.group(1))
             if match.group(1) is not None and title is None:
                 return _ambiguous(_UNSAFE_VALUE_MESSAGE)
-            return _matched_workspace("workspace add note: " + (title or ""))
+            return _matched_workspace(
+                "workspace add note:" + (f" {title}" if title else "")
+            )
 
     match = _TASK_TITLE_RE.fullmatch(normalized)
     if match:
         title = _safe_field(match.group(1))
         if match.group(1) is not None and title is None:
             return _ambiguous(_UNSAFE_VALUE_MESSAGE)
-        return _matched_workspace("workspace add task: " + (title or ""))
+        return _matched_workspace(
+            "workspace add task:" + (f" {title}" if title else "")
+        )
 
     match = _REMINDER_EXPLICIT_RE.fullmatch(normalized)
     if match:
@@ -354,7 +353,9 @@ def interpret_request(message: str) -> IntentInterpretation:
                     "executed or changed."
                 )
             title = _RELATIVE_TIME_END_RE.sub("", title).strip()
-        return _matched_workspace("workspace add reminder: " + (title or ""))
+        return _matched_workspace(
+            "workspace add reminder:" + (f" {title}" if title else "")
+        )
 
     return IntentInterpretation(status="unsupported")
 

@@ -20,8 +20,8 @@ def test_fixed_intent_corpus_has_exact_outcomes_and_reported_metrics() -> None:
 
     assert corpus["schema_version"] == 1
     assert report["case_count"] >= 30
+    assert report["failed_cases"] == [], report["failed_cases"]
     assert report["passed_cases"] == report["case_count"]
-    assert report["failed_cases"] == []
     assert report["outcome_accuracy"] == 1.0
     assert report["false_match_count"] == 0
     assert report["missed_supported_count"] == 0
@@ -67,6 +67,9 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         "startup-offline-boundary",
         "workflow-confirmation-idempotency",
         "workflow-cancellation",
+        "workflow-search-and-create-grounded",
+        "workflow-search-and-create-cancelled",
+        "workflow-search-and-create-no-match",
         "conversation-clarification-recovery",
     }
     assert required_domains.issubset({entry["domain"] for entry in matrix})

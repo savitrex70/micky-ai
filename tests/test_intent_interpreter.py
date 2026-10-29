@@ -136,3 +136,72 @@ def test_task_and_reminder_workflow_without_date_requests_clarification() -> Non
     assert result.status == "ambiguous"
     assert result.command is None
     assert "exact local date/time" in (result.message or "")
+
+
+
+@pytest.mark.parametrize(
+    ("phrase", "command"),
+    [
+        ("Create a task to", "workspace add task:"),
+        ("Remind me to", "workspace add reminder:"),
+        ("Create a note titled", "workspace add note:"),
+    ],
+)
+def test_missing_optional_title_never_adds_trailing_command_whitespace(
+    phrase: str, command: str
+) -> None:
+    result = interpret_request(phrase)
+    assert result.status == "matched"
+    assert result.command == command
+
+
+@pytest.mark.parametrize(
+    ("phrase", "expected_command"),
+    [
+        (
+            (
+                "Find files containing pharmacology notes and create a task "
+                "to revise chapter 3."
+            ),
+            (
+                "workspace workflow search-and-create-item: task | "
+                "pharmacology notes | revise chapter 3"
+            ),
+        ),
+        (
+            (
+                "Search my authorized files for renal physiology and prepare "
+                "a note titled Revision key points."
+            ),
+            (
+                "workspace workflow search-and-create-item: note | "
+                "renal physiology | Revision key points"
+            ),
+        ),
+    ],
+)
+def test_search_and_create_workflow_requires_explicit_query_and_title(
+    phrase: str, expected_command: str
+) -> None:
+    result = interpret_request(phrase)
+    assert result.status == "matched"
+    assert result.intent == "workspace"
+    assert result.command == expected_command
+
+
+def test_search_and_create_workflow_with_missing_title_asks_for_clarification() -> None:
+    result = interpret_request(
+        "Find files containing renal marker and prepare a note"
+    )
+    assert result.status == "ambiguous"
+    assert result.command is None
+    assert "item title" in (result.message or "")
+
+
+def test_search_and_create_workflow_rejects_command_separator() -> None:
+    result = interpret_request(
+        "Find files containing pharmacology | workspace delete task "
+        "00000000-0000-0000-0000-000000000001 and create a task to revise it"
+    )
+    assert result.status == "ambiguous"
+    assert result.command is None
