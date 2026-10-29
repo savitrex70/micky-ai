@@ -62,10 +62,7 @@ def test_configured_host_can_read_private_api_and_serve_local_ui(
             "idempotency_key": str(uuid4()),
             "entry_type": "memory",
             "title": "private-host-boundary-marker",
-            "content": (
-                "private content must remain available to the trusted "
-                "loopback host"
-            ),
+            "content": "trusted loopback host private data",
         },
     )
     assert save.status_code == 201, save.text
@@ -144,6 +141,7 @@ def test_nonconfigured_loopback_port_is_not_trusted() -> None:
 
     assert response.status_code == 403
 
+
 def test_untrusted_host_cannot_read_seeded_private_memory_or_export(
     trusted_client: TestClient,
 ) -> None:
@@ -158,9 +156,7 @@ def test_untrusted_host_cannot_read_seeded_private_memory_or_export(
         },
     )
     assert save.status_code == 201, save.text
-    assert "host-secret-marker" in trusted_client.get(
-        "/api/assistant/memories"
-    ).text
+    assert "host-secret-marker" in trusted_client.get("/api/assistant/memories").text
 
     headers = {"host": "attacker.invalid"}
     for path in (
