@@ -83,4 +83,36 @@ GitHub Actions [run 40926106993](https://github.com/savitrex70/micky-ai/actions/
 
 The nine full-suite skips are reported by pytest and include backend/host-specific scenarios; the dedicated Windows job passed its 14 selected retrieval tests. The PostgreSQL log contains expected constraint-violation messages from negative tests; the overall test job concluded successfully. CI job results are independently visible in the linked run.
 
-The correction commits above are on `main`; the current code SHA verified by CI was `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`. This record update is a separate documentation commit and will receive its own CI run. Stage 10 remains **NOT APPROVED for product closeout** until the owner completes the outstanding Stage 9 target-machine/browser/network-denial and resource-observation acceptance evidence. Stage 8 model acceptance is also separate and is not claimed.
+The correction commits above are on `main`. CI was first green on the code revision `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`; the later record commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05` was then verified separately, so the evidence now covers the actual `main` HEAD rather than an earlier revision. Stage 10 remains **NOT APPROVED for product closeout** until the owner completes the outstanding Stage 9 target-machine/browser/network-denial and resource-observation acceptance evidence. Stage 8 model acceptance is also separate and is not claimed.
+
+### Verification of the current `main` HEAD
+
+GitHub Actions [run 40930143724](https://github.com/savitrex70/micky-ai/actions/runs/40930143724) completed successfully for exact commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05`, which is the current `main` HEAD and includes this closeout record:
+
+| Job | Result |
+| --- | --- |
+| Tests (Python 3.12, PostgreSQL) | Passed (14/14 steps) |
+| Ruff | Passed (9/9 steps) |
+| Black (24.10.0) | Passed (9/9 steps) |
+| Windows retrieval (Python 3.12) | Passed (10/10 steps) |
+
+### Independent re-verification on the owner's Windows host — 2026-10-30
+
+A separate check was run on the owner's machine against this same revision, using the project's own PostgreSQL 16 database with all migrations applied (`0021 → 0022 → 0023`, head `20261028_0023`):
+
+| Check | Result |
+| --- | --- |
+| Focused suites (`test_trusted_host`, `test_intent_interpreter`, `test_workspace_parser`, `test_stage10_evaluation`) | **87 passed** in 9.69s |
+| Full test suite (Windows, PostgreSQL) | **8,085 passed, 238 skipped, 2 failed** in 3,248.72s |
+| Ruff | All checks passed |
+| Black | 712 files unchanged |
+| Stage 10 evaluator corpus | 43 intent cases, 30 regression mappings; relative-date and host-boundary domains present |
+
+The two local failures (`tests/test_cli.py::test_missing_configuration_is_a_concise_error` and `tests/test_config.py::test_get_settings_raises_settings_error_for_invalid_config`) are environment-caused, not corrective-code defects: both assume no `.env` file exists in the working directory, as on CI. They were reproduced identically at the pre-Stage-10 baseline `0091815be0733c299468ded38db147d53c4eac38` with the same `.env` present, and the config test passes when run from a directory without one. They are recorded here as a local-environment caveat rather than resolved by weakening the tests.
+
+Live end-to-end checks were also run against the served application (loopback origin, real database):
+
+- **Host boundary:** `/api/assistant/memories`, `/api/assistant/personal-data/export`, `/api/assistant/workspace/items`, `/`, `/docs`, and `/openapi.json` each returned `403` with `{"detail": "This request was refused."}` for `Host: rebinding.attacker.invalid`, and no response echoed the hostile host.
+- **Relative reminder:** `Remind me to review my notes tomorrow.` returned `clarification-required` with missing fields `due_at` and `timezone`; the pending clarification was restored by conversation id; `09:00 | Europe/Amsterdam` produced `confirmation-required`; no reminder existed before confirmation; confirming created one reminder due `2026-10-31T08:00:00Z` with timezone `Europe/Amsterdam`; replaying the clarification returned `refused` and left exactly one reminder. The test reminder was then removed, leaving the owner's workspace unchanged.
+
+These checks confirm the two corrective findings behave as described at the request boundary. They do not close the owner-side Stage 9 acceptance evidence, and Stage 10 closeout therefore remains NOT APPROVED.
