@@ -83,11 +83,11 @@ GitHub Actions [run 40926106993](https://github.com/savitrex70/micky-ai/actions/
 
 The nine full-suite skips are reported by pytest and include backend/host-specific scenarios; the dedicated Windows job passed its 14 selected retrieval tests. The PostgreSQL log contains expected constraint-violation messages from negative tests; the overall test job concluded successfully. CI job results are independently visible in the linked run.
 
-The correction commits above are on `main`. CI was first green on the code revision `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`; the later record commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05` was then verified separately, so the evidence now covers the actual `main` HEAD rather than an earlier revision. Stage 10 remains **NOT APPROVED for product closeout** until the owner completes the outstanding Stage 9 target-machine/browser/network-denial and resource-observation acceptance evidence. Stage 8 model acceptance is also separate and is not claimed.
+The correction commits above are on `main`. CI was first green on the code revision `03b0c6f2b8a0e6964959b8c682c8c103a294d72c`; the later record commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05` was then verified separately, and the documentation-only commit `8dbab2aa74f40ddeaed59192b0ee2f0b88c94a1c` (current `main` HEAD at first push of this paragraph) was verified in [run 41113172186](https://github.com/savitrex70/micky-ai/actions/runs/41113172186), so the evidence now covers the actual `main` HEAD rather than an earlier revision. Stage 10 remains **NOT APPROVED for product closeout** until the owner completes the outstanding Stage 9 target-machine/browser/network-denial and resource-observation acceptance evidence. Stage 8 model acceptance is also separate and is not claimed.
 
 ### Verification of the current `main` HEAD
 
-GitHub Actions [run 40930143724](https://github.com/savitrex70/micky-ai/actions/runs/40930143724) completed successfully for exact commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05`, which is the current `main` HEAD and includes this closeout record:
+GitHub Actions [run 40930143724](https://github.com/savitrex70/micky-ai/actions/runs/40930143724) completed successfully for exact commit `ac6c6f744a21bad0fbb10983e4e611bf744a9a05`. A follow-up documentation commit `8dbab2aa74f40ddeaed59192b0ee2f0b88c94a1c` was then verified in [run 41113172186](https://github.com/savitrex70/micky-ai/actions/runs/41113172186): all four jobs (Tests (Python 3.12, PostgreSQL), Ruff, Black (24.10.0), Windows retrieval (Python 3.12)) succeeded, with the full suite reporting **8,316 passed, 9 skipped, 42 warnings** in 949.58s, Ruff "All checks passed!", and the Windows retrieval job **14 passed** in 10.59s:
 
 | Job | Result |
 | --- | --- |
