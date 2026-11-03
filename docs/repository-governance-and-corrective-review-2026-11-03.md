@@ -55,7 +55,14 @@ The branch endpoint's legacy `protected` summary and embedded classic-protection
   - `Black (24.10.0)` — success.
   - `Ruff` — success.
 
-The supported GitHub run/job metadata confirms all four jobs succeeded, but does not expose the full pytest output or numeric passed/skipped/failed test totals. Consequently this record does **not** invent a test count. The workflow's test job passed; exact pytest totals are not independently available from the run/job metadata retrieved for this report. The Stage 10 evaluator step is recorded as successful in the PostgreSQL test job; its detailed case-level output/metrics were not exposed by the retrieved metadata.
+The retrieved job log provides the following exact results for this SHA:
+- Full pytest suite: **8,316 passed, 9 skipped, 42 warnings**, in 940.99 seconds; no failures were reported.
+- Stage 10 fixed-intent evaluator: **43 passed cases**, no failed cases, intent precision **1.0**, intent recall **1.0**. These metrics are for the current 43-case synthetic fixture at this SHA only.
+- Windows retrieval tests: **14 passed, 2 warnings**, in 10.58 seconds on the GitHub-hosted Windows runner.
+- Ruff: `All checks passed!`
+- Black (24.10.0): job completed successfully.
+
+These are remote GitHub Actions results for this exact SHA, not owner-machine results.
 
 ### Run 41709984847 — earlier, separate commit
 
@@ -126,7 +133,7 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 ## Final verdict
 
 Reviewed, CI-validated main SHA: `9118490cf10e4e0b49892ae04217e9205709b874`.
-Run 41710017623: **success**, all four jobs successful.
+Run 41710017623: **success**, all four jobs successful; test totals are 8,316 passed, 9 skipped, 42 warnings; Stage 10 evaluator 43/43 passed; Windows retrieval 14 passed, 2 warnings.
 Run 41709984847: **success**, all four jobs successful, but for its separate head SHA `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0`.
 
 **Verdict: NOT APPROVED.** Passing remote CI does not close Stage 8's real-data/threshold requirements, Stage 9's owner-machine acceptance requirements, or Stage 10's dependent product-acceptance gate. No Stage 8, Stage 9, or Stage 10 acceptance is claimed.
