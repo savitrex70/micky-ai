@@ -2,17 +2,26 @@
 
 Repository: `savitrex70/micky-ai`
 Authorized write target: `main` only
-Reviewed main SHA (the exact revision validated by workflow run 41710017623): `9118490cf10e4e0b49892ae04217e9205709b874`
-Report correction is committed directly to `main`; its resulting commit SHA is reported in the handoff accompanying this record.
+**Revision map — three distinct `main` revisions, each with its own CI evidence:**
+
+| Role | `main` SHA | Validating workflow run | Verified result |
+|---|---|---|---|
+| Original reviewed code revision | `9118490cf10e4e0b49892ae04217e9205709b874` | 41710017623 | completed / success, four jobs |
+| Documentation-correction revision | `cd0074e14a60c5a55522e3205a83471f991861be` ("docs: correct branch cleanup inventory and deletion attribution") | 41722906770 | completed / success, four jobs |
+| This report revision (further documentation-only correction) | reported in the handoff accompanying this record | reported in the handoff | not asserted here |
+
+No test result is transferred between revisions: each run's totals belong only to the SHA named beside it. Both documentation revisions change only files under `docs/`; neither alters source code, tests, dependencies, migrations, runtime configuration or application behavior.
 Review status: **NOT APPROVED — repository CI passed, but Stage 8/9/10 acceptance evidence remains outstanding.**
 
 ## Scope and execution boundary
 
-This review used GitHub's remote repository interface only. No owner-machine checkout, worktree, local files, local commands, local pytest invocation, browser walkthrough, or network-denial test was accessed. The branch-cleanup reconciliation correction was performed from the owner workstation through the authenticated GitHub CLI, reading only repository refs, pull-request metadata and pull-request issue events; it changed no repository content other than this document. The audit container could not resolve github.com, so a bare clone and Git bundle could not be created; this failure and the absence of a bundle are documented in the branch-cleanup section. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
+This review used GitHub's remote repository interface, plus — for the branch-cleanup reconciliation — the authenticated GitHub CLI (`gh`) and Git plumbing run on the owner workstation. It performed **no application-source inspection, no test or program execution, no local pytest run, no local PostgreSQL run, no browser walkthrough, and no owner-machine network-denial test**. Two kinds of workstation access did occur and are disclosed here rather than excluded from scope: (a) `gh` commands against `savitrex70/micky-ai` that read repository refs, pull-request metadata, pull-request issue events and Actions job logs, and (b) read-only inspection of one pre-existing Git bundle artifact held outside the repository on the same workstation, verified in "Owner-workspace bundle artifact" below. The only GitHub writes were documentation commits to `main`.
+
+Separately, the original audit container could not resolve github.com, so its attempt to create a bare clone and bundle failed before cloning. That container-side failure and the owner-workspace artifact are different events and are not merged anywhere in this report: the container created no bundle, and the artifact is a pre-existing object independent of that attempt. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
 
 ## Remote governance inventory and active rulesets
 
-The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded. Those 24 refs reconcile as 23 pull-request head refs deleted in the 2026-11-02 batch (PRs #6–#28) plus the non-PR ref `task-202-native-reasoning-contracts`. PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is therefore outside that inventory.
+The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded. Those 24 refs reconcile as 23 pull-request head refs deleted in the 2026-11-02 batch (PRs #6–#28) plus the non-PR ref `task-202-native-reasoning-contracts`. PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is therefore outside that inventory. Re-checked for this report revision, the live remote inventory is still exactly one branch, `main`, now at `cd0074e14a60c5a55522e3205a83471f991861be`, with zero open pull requests.
 
 Two repository rulesets are active and target only `refs/heads/main`:
 
@@ -44,7 +53,7 @@ The branch endpoint's legacy `protected` summary and embedded classic-protection
 
 ## Branch-cleanup audit correction — 2026-11-03
 
-This section supersedes the earlier statement that no branches were deleted. The historical repository review recorded **25 remote branches: main plus 24 non-main branches**. The current GitHub GET /branches inventory returns only **main**, at the then-current main SHA 122f26afe08927318cee4b095effef1f0ec199d1. The difference is a real branch cleanup, not an inventory inconsistency.
+This section supersedes the earlier statement that no branches were deleted. The historical repository review recorded **25 remote branches: main plus 24 non-main branches**, with `main` at `122f26afe08927318cee4b095effef1f0ec199d1`. That SHA belongs to a **historical inventory snapshot** and is not the current branch tip. Re-checked for this report revision, the live inventory returns exactly one branch, `main`, at `cd0074e14a60c5a55522e3205a83471f991861be`. The difference is a real branch cleanup, not an inventory inconsistency.
 
 ### Reconciled deleted branch refs
 
@@ -89,7 +98,28 @@ For the 23 PR refs, each corresponding `refs/heads/<name>` ref is no longer pres
 |---|---|---|
 | task-202-native-reasoning-contracts | 4c3c9f506624c60374e58561b256900d94714661 | Ref absent from the current branch inventory and from `git/matching-refs/heads/task`. No pull-request number exists for this ref, and no deletion timestamp, actor or batch membership is asserted for it, because no GitHub interface available to this audit records non-PR branch deletions. |
 
-The commit `4c3c9f506624c60374e58561b256900d94714661` ("Task 202: enforce canonical error retryability") is still served by the GitHub commits API for this repository at the time of this reconciliation, although no ref points to it and it is not an ancestor of `main`. The name-to-commit association was read from a Git bundle artifact held in the owner workspace outside the repository (`../governance-branch-backup-2026-11-03/micky-ai-branches-1ab4864.bundle`), whose ref list contains exactly 24 non-main `refs/remotes/origin/*` refs and no `arena/` ref. That artifact is not claimed here as an accepted backup or restore point, and no branch was recreated from it.
+The commit `4c3c9f506624c60374e58561b256900d94714661` ("Task 202: enforce canonical error retryability") is still served by the GitHub commits API for this repository at the time of this reconciliation, although no ref points to it and it is not an ancestor of `main`. No GitHub interface available to this audit records a non-PR branch deletion, so neither the ref name nor its head commit is inferred from repository state: both come from the pre-existing owner-workspace bundle verified in "Owner-workspace bundle artifact" below, whose 24 non-main `refs/remotes/origin/*` refs match the reconciliation table ref for ref.
+
+### Owner-workspace bundle artifact
+
+A pre-existing bundle was inspected in place on the owner workstation. It was **not** created, copied, moved, rewritten or re-generated by this review, and no replacement bundle was produced.
+
+| Property | Observed value |
+|---|---|
+| Prescribed path, relative to the repository root | `../governance-branch-backup-2026-11-03/micky-ai-branches-1ab4864.bundle` |
+| Resolved absolute path | `C:\Users\micha\Desktop\rop\governance-branch-backup-2026-11-03\micky-ai-branches-1ab4864.bundle` |
+| Existence | present, readable, regular file |
+| Size | 29,626,499 bytes |
+| Last-write timestamp | 2026-11-03 02:28:35 +0300 — file metadata only; not treated as proof of creation date or of the file's contents at any earlier time |
+| SHA-256 | `349e40cb60584bb16834f77281fa0bf81c385e61fdd6fc98be690b4c3e3e16b5` |
+| `git bundle verify` | `is okay`; `The bundle records a complete history.`; hash algorithm `sha1` |
+| `git bundle list-heads` total | 35 refs = 9 `refs/heads/*` + 25 `refs/remotes/origin/*` (main plus 24 non-main) + 1 `HEAD` pseudo-ref |
+| `task-202-native-reasoning-contracts` present | yes — `4c3c9f506624c60374e58561b256900d94714661` |
+| Any `arena/` ref present | no — no listed ref contains `arena` |
+
+The 24 non-main `refs/remotes/origin/*` refs in this listing carry exactly the head commits recorded in the reconciliation table and the non-PR table above. The bundle therefore corroborates the `task-202-native-reasoning-contracts` name-to-commit binding and the historical head commits of PRs #6–#28, while adding no ref to the deleted set. The bundle's `HEAD` and `refs/remotes/origin/main` both point to `1ab4864da9c0bc48268eb3d3ab18eaabcf6eb332`, the pre-correction `main`, not the current `main`.
+
+**What this artifact is not.** It is not a verified backup, restore point, retained audit copy or compliance evidence. No restore from it was attempted or is proposed, no branch was recreated from it, and nothing was pushed from it. Its digest and metadata are recorded because they identify the exact object that was read, not because they certify it.
 
 ### Deletions outside the 24-ref inventory
 
@@ -122,8 +152,8 @@ These records establish the GitHub account recorded as the actor for each event.
 - Direct GitHub API reads of refs/pull/4/head and refs/pull/6/head through refs/pull/28/head returned the historical head commits. The closed PR head refs therefore remain fetchable from GitHub despite the deleted task branch refs. PR #5's head ref was also returned by the matching-refs listing.
 - The historical commits are therefore recoverable from GitHub at the time of this audit. This is not the same as a locally held backup.
 - `task-202-native-reasoning-contracts` has no pull-request ref. Its historical head commit `4c3c9f506624c60374e58561b256900d94714661` is still returned by the GitHub commits API for this repository and is not reachable from `main`, so no ref guarantees its long-term retention.
-- No pre-existing Git bundle or equivalent backup was evidenced by the repository/PR records inspected.
-- An attempt to create a bare clone and bundle in the audit container failed before cloning because the environment could not resolve github.com (Could not resolve host: github.com). No bundle was created. Consequently there is **no bundle path, SHA-256 digest, or bundle manifest** to report.
+- The repository and pull-request records inspected contain no reference to any backup. One pre-existing bundle exists on the owner workstation and was inspected read-only (see "Owner-workspace bundle artifact"); it is not an accepted backup, restore point or retention guarantee.
+- The audit container's separate attempt to create a bare clone and bundle failed before cloning because the environment could not resolve github.com (`Could not resolve host: github.com`). That container attempt created no bundle, no bundle manifest and no digest. The owner-workspace artifact above is a different, pre-existing object and is not the product of that attempt.
 - No remote task branch was recreated or pushed. No Git history was rewritten, reset, amended, or force-pushed.
 
 ### PR disposition summary
@@ -149,12 +179,29 @@ PRs #19–#28: **10 closed, 0 merged, 10 unmerged**. Their historical head commi
 
 The retrieved job log provides the following exact results for this SHA:
 - Full pytest suite: **8,316 passed, 9 skipped, 42 warnings**, in 940.99 seconds; no failures were reported.
-- Stage 10 fixed-intent evaluator: **43 passed cases**, no failed cases, intent precision **1.0**, intent recall **1.0**. These metrics are for the current 43-case synthetic fixture at this SHA only.
+- Stage 10 fixed-intent evaluator (`Run Stage 10 fixed intent evaluation` step): `case_count` 43, `passed_cases` 43, `failed_cases` empty, intent precision **1.0**, intent recall **1.0**, outcome accuracy **1.0**. These metrics are for the current 43-case synthetic fixture at this SHA only.
 - Windows retrieval tests: **14 passed, 2 warnings**, in 10.58 seconds on the GitHub-hosted Windows runner.
 - Ruff: `All checks passed!`
-- Black (24.10.0): job completed successfully.
+- Black (24.10.0): `712 files would be left unchanged.`
 
 These are remote GitHub Actions results for this exact SHA, not owner-machine results.
+
+### Run 41722906770 — documentation-correction SHA
+
+- Workflow: [CI run 41722906770](https://github.com/savitrex70/micky-ai/actions/runs/41722906770)
+- Event/branch: push to `main`.
+- Exact head SHA: `cd0074e14a60c5a55522e3205a83471f991861be`.
+- Final run status: **completed / success**.
+- All four jobs completed successfully: `Tests (Python 3.12, PostgreSQL)`, `Windows retrieval (Python 3.12)`, `Black (24.10.0)`, `Ruff`.
+
+The retrieved job log provides the following exact results for this SHA:
+- Full pytest suite: **8,316 passed, 9 skipped, 42 warnings**, in 952.04 seconds; no failures were reported.
+- Stage 10 fixed-intent evaluator: `case_count` **43**, `passed_cases` **43**, `failed_cases` empty, intent precision **1.0**, intent recall **1.0**, outcome accuracy **1.0**.
+- Windows retrieval tests: **14 passed, 2 warnings**, in 11.10 seconds on the GitHub-hosted Windows runner.
+- Ruff: `All checks passed!`
+- Black (24.10.0): `712 files would be left unchanged.`
+
+This run validates the documentation-correction commit only. Its totals belong to `cd0074e14a60c5a55522e3205a83471f991861be` and are not substituted for the reviewed code revision above; that the two runs coincide in counts is an observation consistent with a documentation-only intervening change, not a transfer of evidence.
 
 ### Run 41709984847 — earlier, separate commit
 
@@ -202,7 +249,8 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 - The current versioned fixture is documented as **43 intent cases** and a separate set of **30 regression mappings**.
 - The earlier **39-case** result is historical evidence from an earlier corpus/revision. It must not be described as an execution result for the current 43-case fixture.
 - The Stage 10 documentation was corrected to distinguish the historical 39-case metrics from the current 43-case fixture.
-- For reviewed SHA `9118490cf10e4e0b49892ae04217e9205709b874`, the Stage 10 fixed-intent evaluation step in CI completed successfully. The retrieved GitHub run/job metadata does not expose its per-case output or metrics, so this report does not assert a numeric 43/43 result.
+- The retrieved Actions job logs **do** expose numeric Stage 10 output, contrary to the earlier version of this section, which asserted that run/job metadata did not. For reviewed SHA `9118490cf10e4e0b49892ae04217e9205709b874` (run 41710017623) and for documentation-correction SHA `cd0074e14a60c5a55522e3205a83471f991861be` (run 41722906770), the `Run Stage 10 fixed intent evaluation` step logged `case_count` 43, `passed_cases` 43, `failed_cases` empty, intent precision 1.0, intent recall 1.0 and outcome accuracy 1.0. The 43/43 result is therefore asserted for both revisions, each taken from its own run log.
+- Those figures describe execution of one fixed, project-owned synthetic phrase corpus at those revisions. 43/43 is a statement about that corpus and is not independent or statistically representative evidence of general language understanding.
 - The fixed corpus measures only enumerated synthetic phrase behavior. It does not establish general language understanding, independent validation, clinical validity, or product acceptance.
 - Stage 10 closeout remains **NOT APPROVED** until Stage 9 product acceptance is completed.
 
@@ -212,10 +260,13 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 - Stage 9: **NOT APPROVED**. Owner-target browser/end-to-end walkthrough, OS-level outbound-network-denial evidence, and measured startup/resource observations remain outstanding.
 - Stage 10: **NOT APPROVED**. Implementation/CI evidence is distinct from product acceptance; closeout remains blocked while Stage 9 is open.
 - Existing privacy, clinical/personal-data separation, authorization, confirmation, idempotency, offline-boundary, provenance, and audit guarantees are not intentionally weakened by this documentation-only correction.
-- No local pytest, local Windows retrieval, local browser walkthrough, owner-machine network-denial test, local PostgreSQL validation, or local-worktree inspection was performed.
+- No local pytest, local Windows retrieval, local browser walkthrough, owner-machine network-denial test, or local PostgreSQL validation was performed. The owner-workstation checkout was used only to edit and commit this documentation file and to read Git ref data plus the pre-existing bundle artifact; application source, tests and runtime configuration were not inspected, executed or modified there.
 
 ## Changes made by this review
 
+- Reconcile the bundle statements: disclose the owner-workstation `gh` and bundle access in the scope boundary, record the verified artifact (resolved path, size, last-write time, SHA-256, `git bundle verify`, 35-ref listing, Task 202 presence, absence of any `arena/` ref), and keep it separate from the audit container's failed bundle attempt and from any claim of backup or restore capability.
+- Correct the Stage 10 section: the retained Actions job logs do expose numeric evaluator output, so record 43/43 with precision, recall and outcome accuracy 1.0 for both `9118490...` and `cd0074e...`, each from its own run log, while keeping the fixed-synthetic-corpus limitation.
+- Record CI run 41722906770 for `cd0074e...` beside run 41710017623 for `9118490...` without transferring results between revisions, and label the `122f26...` branch inventory as a historical snapshot against the current `main`.
 - Correct the branch-cleanup inventory: PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is excluded from the November 2 batch, which contains 23 PR refs (PRs #6–#28).
 - Restore `task-202-native-reasoning-contracts` as the 24th non-main ref, recording only its evidence-backed head commit and asserting no PR number, deletion timestamp or actor.
 - Separate the 2026-09-24 and 2026-10-04 deletions from the 2026-11-02 batch, and record GitHub's account attribution without inferring whether the owner or an agent using the account performed the action.
@@ -228,8 +279,9 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 
 ## Final verdict
 
-Reviewed, CI-validated main SHA: `9118490cf10e4e0b49892ae04217e9205709b874`.
-Run 41710017623: **success**, all four jobs successful; test totals are 8,316 passed, 9 skipped, 42 warnings; Stage 10 evaluator 43/43 passed; Windows retrieval 14 passed, 2 warnings.
-Run 41709984847: **success**, all four jobs successful, but for its separate head SHA `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0`.
+- **Original reviewed code revision:** `9118490cf10e4e0b49892ae04217e9205709b874` — run 41710017623, **success**, all four jobs; 8,316 passed, 9 skipped, 42 warnings; Stage 10 evaluator 43/43 with precision, recall and outcome accuracy 1.0; Windows retrieval 14 passed, 2 warnings.
+- **Documentation-correction revision:** `cd0074e14a60c5a55522e3205a83471f991861be` — run 41722906770, **success**, all four jobs; the same counts, recorded separately from that run's own log.
+- **This report revision:** documentation-only commit on `main`; its SHA and CI run are reported in the handoff and are not asserted in this record.
+- **Unrelated earlier revision:** `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0` — run 41709984847, **success**, all four jobs, for that SHA only.
 
 **Verdict: NOT APPROVED.** Passing remote CI does not close Stage 8's real-data/threshold requirements, Stage 9's owner-machine acceptance requirements, or Stage 10's dependent product-acceptance gate. No Stage 8, Stage 9, or Stage 10 acceptance is claimed.
