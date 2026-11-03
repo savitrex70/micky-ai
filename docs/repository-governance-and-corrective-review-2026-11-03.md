@@ -8,9 +8,9 @@ Authorized write target: `main` only
 |---|---|---|---|
 | Original reviewed code revision | `9118490cf10e4e0b49892ae04217e9205709b874` | 41710017623 | completed / success, four jobs |
 | Documentation-correction revision | `cd0074e14a60c5a55522e3205a83471f991861be` ("docs: correct branch cleanup inventory and deletion attribution") | 41722906770 | completed / success, four jobs |
-| This report revision (further documentation-only correction) | reported in the handoff accompanying this record | reported in the handoff | not asserted here |
+| Latest governance-report revision | `2e6195182f50796f104e28abab9dba8ca63707f2` | 41729237720 | completed / success, all four jobs |
 
-No test result is transferred between revisions: each run's totals belong only to the SHA named beside it. Both documentation revisions change only files under `docs/`; neither alters source code, tests, dependencies, migrations, runtime configuration or application behavior.
+No test result is transferred between revisions: each run's totals belong only to the SHA named beside it. All documentation revisions listed here change only files under `docs/`; none alters source code, tests, dependencies, migrations, runtime configuration or application behavior.
 Review status: **NOT APPROVED — repository CI passed, but Stage 8/9/10 acceptance evidence remains outstanding.**
 
 ## Scope and execution boundary
@@ -21,7 +21,7 @@ Separately, the original audit container could not resolve github.com, so its at
 
 ## Remote governance inventory and active rulesets
 
-The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded. Those 24 refs reconcile as 23 pull-request head refs deleted in the 2026-11-02 batch (PRs #6–#28) plus the non-PR ref `task-202-native-reasoning-contracts`. PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is therefore outside that inventory. Re-checked for this report revision, the live remote inventory is still exactly one branch, `main`, now at `cd0074e14a60c5a55522e3205a83471f991861be`, with zero open pull requests.
+The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded. Those 24 refs reconcile as 23 pull-request head refs deleted in the 2026-11-02 batch (PRs #6–#28) plus the non-PR ref `task-202-native-reasoning-contracts`. PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is therefore outside that inventory. Re-checked for this report revision, the live remote inventory is still exactly one branch, `main`, now at `2e6195182f50796f104e28abab9dba8ca63707f2`, with zero open pull requests.
 
 Two repository rulesets are active and target only `refs/heads/main`:
 
@@ -53,7 +53,7 @@ The branch endpoint's legacy `protected` summary and embedded classic-protection
 
 ## Branch-cleanup audit correction — 2026-11-03
 
-This section supersedes the earlier statement that no branches were deleted. The historical repository review recorded **25 remote branches: main plus 24 non-main branches**, with `main` at `122f26afe08927318cee4b095effef1f0ec199d1`. That SHA belongs to a **historical inventory snapshot** and is not the current branch tip. Re-checked for this report revision, the live inventory returns exactly one branch, `main`, at `cd0074e14a60c5a55522e3205a83471f991861be`. The difference is a real branch cleanup, not an inventory inconsistency.
+This section supersedes the earlier statement that no branches were deleted. The historical repository review recorded **25 remote branches: main plus 24 non-main branches**, with `main` at `122f26afe08927318cee4b095effef1f0ec199d1`. That SHA belongs to a **historical inventory snapshot** and is not the current branch tip. Re-checked for this report revision, the live inventory returns exactly one branch, `main`, at `2e6195182f50796f104e28abab9dba8ca63707f2`. The difference is a real branch cleanup, not an inventory inconsistency.
 
 ### Reconciled deleted branch refs
 
@@ -264,6 +264,7 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 
 ## Changes made by this review
 
+- Complete the revision map and final verdict with the latest governance-report revision `2e6195182f50796f104e28abab9dba8ca63707f2` and its own run 41729237720, including that run's pytest, Stage 10, Windows, Ruff and Black totals, and refresh the two current-inventory statements to that revision without re-pointing any historical record.
 - Reconcile the bundle statements: disclose the owner-workstation `gh` and bundle access in the scope boundary, record the verified artifact (resolved path, size, last-write time, SHA-256, `git bundle verify`, 35-ref listing, Task 202 presence, absence of any `arena/` ref), and keep it separate from the audit container's failed bundle attempt and from any claim of backup or restore capability.
 - Correct the Stage 10 section: the retained Actions job logs do expose numeric evaluator output, so record 43/43 with precision, recall and outcome accuracy 1.0 for both `9118490...` and `cd0074e...`, each from its own run log, while keeping the fixed-synthetic-corpus limitation.
 - Record CI run 41722906770 for `cd0074e...` beside run 41710017623 for `9118490...` without transferring results between revisions, and label the `122f26...` branch inventory as a historical snapshot against the current `main`.
@@ -281,7 +282,7 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 
 - **Original reviewed code revision:** `9118490cf10e4e0b49892ae04217e9205709b874` — run 41710017623, **success**, all four jobs; 8,316 passed, 9 skipped, 42 warnings; Stage 10 evaluator 43/43 with precision, recall and outcome accuracy 1.0; Windows retrieval 14 passed, 2 warnings.
 - **Documentation-correction revision:** `cd0074e14a60c5a55522e3205a83471f991861be` — run 41722906770, **success**, all four jobs; the same counts, recorded separately from that run's own log.
-- **This report revision:** documentation-only commit on `main`; its SHA and CI run are reported in the handoff and are not asserted in this record.
+- **Latest governance-report revision:** `2e6195182f50796f104e28abab9dba8ca63707f2` — run 41729237720, **success**, all four jobs; 8,316 passed, 9 skipped, 42 warnings in 874.01 seconds; Stage 10 evaluator 43/43 with precision, recall and outcome accuracy 1.0; Windows retrieval 14 passed, 2 warnings in 10.75 seconds; Ruff `All checks passed!`; Black `712 files would be left unchanged.` These totals come from that run's own log and are not transferred from any other commit.
 - **Unrelated earlier revision:** `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0` — run 41709984847, **success**, all four jobs, for that SHA only.
 
 **Verdict: NOT APPROVED.** Passing remote CI does not close Stage 8's real-data/threshold requirements, Stage 9's owner-machine acceptance requirements, or Stage 10's dependent product-acceptance gate. No Stage 8, Stage 9, or Stage 10 acceptance is claimed.
