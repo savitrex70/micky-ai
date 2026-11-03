@@ -8,11 +8,11 @@ Review status: **NOT APPROVED — repository CI passed, but Stage 8/9/10 accepta
 
 ## Scope and execution boundary
 
-This review used GitHub's remote repository interface only. No owner-machine checkout, worktree, local files, local commands, local pytest invocation, browser walkthrough, or network-denial test was accessed. The audit container could not resolve github.com, so a bare clone and Git bundle could not be created; this failure and the absence of a bundle are documented in the branch-cleanup section. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
+This review used GitHub's remote repository interface only. No owner-machine checkout, worktree, local files, local commands, local pytest invocation, browser walkthrough, or network-denial test was accessed. The branch-cleanup reconciliation correction was performed from the owner workstation through the authenticated GitHub CLI, reading only repository refs, pull-request metadata and pull-request issue events; it changed no repository content other than this document. The audit container could not resolve github.com, so a bare clone and Git bundle could not be created; this failure and the absence of a bundle are documented in the branch-cleanup section. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
 
 ## Remote governance inventory and active rulesets
 
-The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded.
+The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded. Those 24 refs reconcile as 23 pull-request head refs deleted in the 2026-11-02 batch (PRs #6–#28) plus the non-PR ref `task-202-native-reasoning-contracts`. PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is therefore outside that inventory.
 
 Two repository rulesets are active and target only `refs/heads/main`:
 
@@ -48,11 +48,17 @@ This section supersedes the earlier statement that no branches were deleted. The
 
 ### Reconciled deleted branch refs
 
-GitHub PR issue-event records expose head_ref_deleted events for the following 24 refs. They map to PR #4 and PRs #6–#28, matching the historical count of 24 non-main refs. Each corresponding refs/heads/<name> ref is no longer present in the current branch inventory. The head commit remains reachable through the corresponding GitHub pull-request head ref refs/pull/<number>/head.
+The historical inventory recorded 25 remote refs: `main` plus 24 non-main refs. Those 24 non-main refs reconcile exactly as follows:
+
+- **23 pull-request head refs deleted in the 2026-11-02 batch** — PRs #6–#28. GitHub PR issue-event records expose a `head_ref_deleted` event for each of those PRs, and each corresponding `refs/heads/<name>` ref is absent from the current branch inventory.
+- **1 non-PR ref** — `task-202-native-reasoning-contracts`, which has no pull request and therefore no PR issue-event record. It is absent from the current branch inventory and from the `git/matching-refs/heads/task` listing.
+
+**Correction to the previous version of this table.** That version placed PR #4's `arena/01a0d2b1-micky-ai` ref inside the November 2 batch and omitted `task-202-native-reasoning-contracts`. PR #4's head ref was actually deleted on **2026-09-24 at 11:15:58 UTC**, five weeks before that batch, so it was never part of this 24-ref inventory. With PR #4 removed and the task-202 ref restored, the table below contains exactly 24 non-main refs.
+
+For the 23 PR refs, each corresponding `refs/heads/<name>` ref is no longer present in the current branch inventory, and the historical head commit remains reachable through the corresponding GitHub pull-request head ref `refs/pull/<number>/head`.
 
 | PR | Deleted branch ref | Historical head commit |
 |---:|---|---|
-| #4 | arena/01a0d2b1-micky-ai | 9c0d463d446d24f284477b3a56536d9bc528c504 |
 | #6 | automation/add-github-actions-ci | b45c831a440557c20776d1962dadf63f745551be |
 | #7 | task-193-contradiction-precedence | 7e330846b849ff9e00a7e9e19ea7a28c14d3af6b |
 | #8 | task-194-session-fingerprint-binding | c3853a0c2a9b02650fac359a6369008de68f69b4 |
@@ -77,23 +83,52 @@ GitHub PR issue-event records expose head_ref_deleted events for the following 2
 | #27 | task-214-offline-resource-benchmarks | ceee6a501f18f0247da5e5ecdf6af651eedd4860 |
 | #28 | task-215-stage8-acceptance-gate | 4e476d954d731b86f6272bcdb8a725eac40b52d4 |
 
-PRs #19–#28 are all **closed and unmerged**. Their recorded head branches and SHAs are preserved in PR metadata. The wider 24-ref cleanup also included PR #4 (merged) and PRs #6–#13 and #15 (merged); PRs #14 and #16–#28 were closed unmerged. PR #5's branch unified-deterministic-reasoning-inspection-76f80 (head d9db78b10627c847abcfae0f8f42f8a6e43b8d4c) was deleted separately on 2026-10-04. PRs #1–#3 had their head refs deleted on 2026-09-24. Those earlier deletions are outside the 24-ref inventory reconciliation above.
+### Non-PR ref in the 24-ref inventory
+
+| Branch ref | Historical head commit | Deletion evidence |
+|---|---|---|
+| task-202-native-reasoning-contracts | 4c3c9f506624c60374e58561b256900d94714661 | Ref absent from the current branch inventory and from `git/matching-refs/heads/task`. No pull-request number exists for this ref, and no deletion timestamp, actor or batch membership is asserted for it, because no GitHub interface available to this audit records non-PR branch deletions. |
+
+The commit `4c3c9f506624c60374e58561b256900d94714661` ("Task 202: enforce canonical error retryability") is still served by the GitHub commits API for this repository at the time of this reconciliation, although no ref points to it and it is not an ancestor of `main`. The name-to-commit association was read from a Git bundle artifact held in the owner workspace outside the repository (`../governance-branch-backup-2026-11-03/micky-ai-branches-1ab4864.bundle`), whose ref list contains exactly 24 non-main `refs/remotes/origin/*` refs and no `arena/` ref. That artifact is not claimed here as an accepted backup or restore point, and no branch was recreated from it.
+
+### Deletions outside the 24-ref inventory
+
+| PR | Deleted branch ref | Historical head commit | `head_ref_deleted` time (UTC) |
+|---:|---|---|---|
+| #4 | arena/01a0d2b1-micky-ai (merged) | 9c0d463d446d24f284477b3a56536d9bc528c504 | 2026-09-24 11:15:58 |
+| #1 | task-069 | eb83c45957c60775a17127eb5d3a0bb3d60f1e21 | 2026-09-24 11:17:55 |
+| #2 | task-070 | 89c5a0a3478a5abc81948e85221c2d4ab6e64dba | 2026-09-24 11:17:59 |
+| #3 | task-071-fully-audited-api-audit-attestation | f3ed0fc21af39ea44e99230690aca6b8b102b1c5 | 2026-09-24 11:18:01 |
+| #5 | unified-deterministic-reasoning-inspection-76f80 | d9db78b10627c847abcfae0f8f42f8a6e43b8d4c | 2026-10-04 16:52:16 |
+
+These five refs were deleted before the November 2 batch and are not part of the 24-ref inventory reconciliation above.
 
 ### Deletion attribution
 
-GitHub issue-event records attribute the head_ref_deleted events for PR #4 and PRs #6–#28 to account **savitrex70**, in a batch between **2026-11-02 23:33:01 UTC and 23:33:06 UTC**. PR #5's earlier deletion event is also attributed to savitrex70; PRs #1–#3 likewise show that account as actor for their September 24 deletions.
+GitHub PR issue-event records expose the `head_ref_deleted` events in three separated groups, each attributed by GitHub to account **savitrex70**:
 
-This establishes the GitHub account recorded as the actor. It does **not** establish whether the account action was performed interactively by the owner or by an agent/automation using credentials for that same account. The available PR issue events do not identify the human-or-agent operator, and no repository audit-log evidence identifying that operator was available. Therefore this audit does not attribute the deletions specifically to the assistant or to the owner personally.
+| Group | Refs | `head_ref_deleted` window (UTC) |
+|---|---|---|
+| 2026-09-24 deletions | PRs #1–#4 (4 refs) | 2026-09-24 11:15:58 – 11:18:01 |
+| 2026-10-04 deletion | PR #5 (1 ref) | 2026-10-04 16:52:16 |
+| 2026-11-02 batch | PRs #6–#28 (23 refs) | 2026-11-02 23:33:01 – 23:33:06 |
+
+Only the 23 refs in the third group belong to the November 2 batch. The four September 24 deletions, including PR #4's `arena/01a0d2b1-micky-ai` ref, are a distinct earlier cleanup and must not be counted in that batch. The non-PR ref `task-202-native-reasoning-contracts` has no issue-event record and is therefore not attributed to any deletion window.
+
+These records establish the GitHub account recorded as the actor for each event. They do **not** establish whether the account action was performed interactively by the owner or by an agent/automation using credentials for that same account. The available PR issue events do not identify the human-or-agent operator, and no repository audit-log evidence identifying that operator was available. Account metadata therefore must not be presented as evidence that a particular operator — the owner personally or an agent using the account — performed any specific deletion, and this audit attributes none of the deletions to either.
 
 ### Recoverability and backup status
 
 - Direct GitHub API reads of refs/pull/4/head and refs/pull/6/head through refs/pull/28/head returned the historical head commits. The closed PR head refs therefore remain fetchable from GitHub despite the deleted task branch refs. PR #5's head ref was also returned by the matching-refs listing.
 - The historical commits are therefore recoverable from GitHub at the time of this audit. This is not the same as a locally held backup.
+- `task-202-native-reasoning-contracts` has no pull-request ref. Its historical head commit `4c3c9f506624c60374e58561b256900d94714661` is still returned by the GitHub commits API for this repository and is not reachable from `main`, so no ref guarantees its long-term retention.
 - No pre-existing Git bundle or equivalent backup was evidenced by the repository/PR records inspected.
 - An attempt to create a bare clone and bundle in the audit container failed before cloning because the environment could not resolve github.com (Could not resolve host: github.com). No bundle was created. Consequently there is **no bundle path, SHA-256 digest, or bundle manifest** to report.
 - No remote task branch was recreated or pushed. No Git history was rewritten, reset, amended, or force-pushed.
 
 ### PR disposition summary
+
+Reconciled across all 28 pull requests: **8 merged** (PR #4 and PRs #7–#13, #15) and **20 closed unmerged** (PRs #1–#3, #5, #6, #14 and #16–#28). The previous record described PRs #6–#13 and #15 as merged; PR #6 (`automation/add-github-actions-ci`) is closed **unmerged**, so its head commit is preserved only through its pull-request ref, not through a merge onto `main`.
 
 PRs #19–#28: **10 closed, 0 merged, 10 unmerged**. Their historical head commits remain accessible through GitHub's pull-request refs. The branch cleanup removed the named task refs; it did not itself merge these PRs or move their commits onto main.
 
@@ -181,6 +216,10 @@ Stage 8 remains **NOT ACCEPTED**. Authorized real data, approved model-specific 
 
 ## Changes made by this review
 
+- Correct the branch-cleanup inventory: PR #4's `arena/01a0d2b1-micky-ai` ref was deleted on 2026-09-24 and is excluded from the November 2 batch, which contains 23 PR refs (PRs #6–#28).
+- Restore `task-202-native-reasoning-contracts` as the 24th non-main ref, recording only its evidence-backed head commit and asserting no PR number, deletion timestamp or actor.
+- Separate the 2026-09-24 and 2026-10-04 deletions from the 2026-11-02 batch, and record GitHub's account attribution without inferring whether the owner or an agent using the account performed the action.
+- Correct PR #6's disposition to closed unmerged.
 - Correct the governance record to document active rulesets 26409138 and 26409161, including the exact owner bypass semantics.
 - Record the exact SHA and final CI outcome for run 41710017623.
 - Keep run 41709984847 attached only to its actual SHA `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0`.
