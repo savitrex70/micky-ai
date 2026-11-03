@@ -69,9 +69,14 @@ Input token IDs (batch, seq_len) → Embeddings → Encoder × L → Classifier 
 token_emb      = vocab_size × hidden_dim
 pos_emb        = max_seq_len × hidden_dim
 per_layer      = attn_params + ln_params + ff_params
-  attn_params  = 3×hidden² + 3×hidden + hidden² + hidden  (in_proj + out_proj)
-  ln_params    = 4×hidden  (two LayerNorms)
-  ff_params    = 8×hidden² + 8×hidden  (two Linear + biases)
+  attn_params  = 3×hidden² + 3×hidden + hidden² + hidden
+               = 4×hidden² + 4×hidden (in_proj + out_proj)
+  ln_params    = 4×hidden (two LayerNorms, each with weight + bias)
+  ff_params    = 8×hidden² + 5×hidden
+               = (4×hidden² + 4×hidden) + (4×hidden² + hidden)
+                 (two Linear weights + their 4×hidden and hidden biases)
+               = 8×hidden² + 5×hidden
+per_layer      = 12×hidden² + 13×hidden
 classifier     = hidden_dim × num_classes + num_classes
 total          = token_emb + pos_emb + num_layers × per_layer + classifier
 ```

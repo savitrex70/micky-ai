@@ -27,7 +27,7 @@ GitHub Actions run [40871167595](https://github.com/savitrex70/micky-ai/actions/
 | Black (24.10.0) | Passed |
 | Windows retrieval job | Passed |
 
-The Stage 10 fixed-corpus evaluator executed in the CI test workflow: 39 cases, 39 passed, zero failed; exact-outcome accuracy, intent precision, and intent recall were each 1.0 on this corpus. The corpus is project-owned and finite; these results are not evidence of general language understanding or real-world/clinical quality.
+The 39-case result recorded for the earlier tested revision is historical evidence only; it must not be presented as the current fixture size. The current versioned fixture, `tests/fixtures/stage10_evaluation_v1.json`, contains **43 intent cases** and a separate matrix of **30 regression-test mappings**. The later Task 247 record documents that expanded corpus. The 39-case metrics (all 39 passed; exact-outcome accuracy, precision, and recall 1.0) apply only to the earlier corpus/revision and are not a 43-case execution result. A current 43-case metric claim requires an evaluator run against the current fixture and exact code SHA. In all cases, this project-owned finite corpus is not evidence of general language understanding or real-world/clinical quality.
 
 The nine skips include host/backend-specific tests; the separate Windows CI job does not prove the feature works on the owner's target Windows machine or replace live OS-level and browser acceptance. Results above apply only to the cited exact code revision.
 
