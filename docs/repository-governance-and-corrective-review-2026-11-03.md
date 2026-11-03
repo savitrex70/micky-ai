@@ -70,7 +70,7 @@ The implementation formula is internally consistent. The Stage 8 model document 
 ## Verification and final verdict
 
 Starting SHA: `1ab4864da9c0bc48268eb3d3ab18eaabcf6eb332`
-Final SHA: to be recorded after the remote `main` update succeeds.
-Remote CI: to be checked against the exact pushed SHA; CI is not a substitute for owner-side acceptance evidence.
+Correction commit containing the three review artifacts: `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0`.
+Remote CI for correction commit `99c83fcd5bcfb51b7a943262a55e65f3eefd09a0`: run `41709984847` was created by the push and was queued when this report was prepared. Its final result must be checked separately; CI is not a substitute for owner-side acceptance evidence.
 
 **Verdict: NOT APPROVED.** The documentation corrections do not resolve incomplete branch protection, Stage 8 data/threshold blockers, Stage 9 owner-side evidence, or Stage 10 product closeout. No claim of local validation or full assignment completion is made.
