@@ -8,11 +8,11 @@ Review status: **NOT APPROVED — repository CI passed, but Stage 8/9/10 accepta
 
 ## Scope and execution boundary
 
-This review used GitHub's remote repository interface only. No local checkout, worktree, local files, local commands, local pytest invocation, owner-machine browser walkthrough, owner-machine network-denial test, or local Git bundle was accessed. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
+This review used GitHub's remote repository interface only. No owner-machine checkout, worktree, local files, local commands, local pytest invocation, browser walkthrough, or network-denial test was accessed. The audit container could not resolve github.com, so a bare clone and Git bundle could not be created; this failure and the absence of a bundle are documented in the branch-cleanup section. The owner retains all local work and local pytest execution. Remote GitHub Actions evidence is identified separately below and must not be interpreted as owner-machine acceptance evidence.
 
 ## Remote governance inventory and active rulesets
 
-The remote branch inventory returned exactly one branch: `main`, at reviewed SHA `9118490cf10e4e0b49892ae04217e9205709b874`. No non-main remote branch was returned. The open pull-request search returned zero open pull requests. No branch or release ref was deleted.
+The remote branch inventory at the time of the original review returned exactly one branch, `main`, at SHA `9118490cf10e4e0b49892ae04217e9205709b874`, and zero open pull requests. That current inventory did not mean that no branches had been deleted. A subsequent branch-cleanup audit (documented below) reconciles the earlier historical inventory of 25 branches (main plus 24 non-main refs) with the current main-only inventory. It confirms deletion of those 24 non-main refs; the earlier statement that no branch had been deleted is superseded.
 
 Two repository rulesets are active and target only `refs/heads/main`:
 
@@ -40,6 +40,63 @@ Two repository rulesets are active and target only `refs/heads/main`:
 **Important enforcement qualification:** the required-check ruleset preserves the owner's ability to push directly to `main`, but it also means the owner can bypass the required checks. Therefore these checks are not an unconditional hard gate for owner pushes. The deletion and non-fast-forward protections in ruleset 26409138 remain separately active and non-bypassable by the owner.
 
 The branch endpoint's legacy `protected` summary and embedded classic-protection fields are not an accurate substitute for inspecting these repository rulesets. The two ruleset detail records above are the governing evidence used for this review.
+
+
+## Branch-cleanup audit correction — 2026-11-03
+
+This section supersedes the earlier statement that no branches were deleted. The historical repository review recorded **25 remote branches: main plus 24 non-main branches**. The current GitHub GET /branches inventory returns only **main**, at the then-current main SHA 122f26afe08927318cee4b095effef1f0ec199d1. The difference is a real branch cleanup, not an inventory inconsistency.
+
+### Reconciled deleted branch refs
+
+GitHub PR issue-event records expose head_ref_deleted events for the following 24 refs. They map to PR #4 and PRs #6–#28, matching the historical count of 24 non-main refs. Each corresponding refs/heads/<name> ref is no longer present in the current branch inventory. The head commit remains reachable through the corresponding GitHub pull-request head ref refs/pull/<number>/head.
+
+| PR | Deleted branch ref | Historical head commit |
+|---:|---|---|
+| #4 | arena/01a0d2b1-micky-ai | 9c0d463d446d24f284477b3a56536d9bc528c504 |
+| #6 | automation/add-github-actions-ci | b45c831a440557c20776d1962dadf63f745551be |
+| #7 | task-193-contradiction-precedence | 7e330846b849ff9e00a7e9e19ea7a28c14d3af6b |
+| #8 | task-194-session-fingerprint-binding | c3853a0c2a9b02650fac359a6369008de68f69b4 |
+| #9 | task-195-provenance-attribution-binding | fa851f25e4ae9349791a92b0a4508f01f821617a |
+| #10 | task-196-handoff-child-source-integrity | 4eb43f7ce653591b9a7f67b6ab1b43f847cf9272 |
+| #11 | task-197-blocked-source-forgery-precedence | 0c7c1f9a15eee8be4cb43ae107c775923710f9f1 |
+| #12 | task-198-provider-isolation-evidence-privacy | 1c8898343bb88944ed40aaaf7b4f8563005864e0 |
+| #13 | task-200-complete-stage7-integration | 62b493435965bd0abc62a879d4facde7c64298a4 |
+| #14 | task-201-native-intelligence-architecture | 3b3c75d762ef147d8919108b7caa6f2bb3478220 |
+| #15 | task-201-fix-stage7-gate-failures | 17eba68fb16cbb772d7a0a26674f00ceb9ec9717 |
+| #16 | task-203-structured-evidence-provenance | bea304dbe481f55d54527f74fe561ef7bb509521 |
+| #17 | task-204-deterministic-reasoning-composition | ccdd315be7d071842aa58d84840b2c3df1270bb0 |
+| #18 | task-205-abstention-contradictions | 99726500f0aed754faea53ac4f68862288bbdc50 |
+| #19 | task-206-baseline-evaluation-harness | 5c999bf088d29ecb398794653ddf747081401fae |
+| #20 | task-207-authorized-dataset-pipeline | 203cddddd6308fa61e1131c6c53a10c5c46632e6 |
+| #21 | task-208-project-tokenizer | 3a2880c5a4c53c0bb0dbfdb8ae947fb3f1c4cb43 |
+| #22 | task-209-native-model-from-scratch | f95d8e1ab5209a3085cfbeb7ddd129bb8c179f2c |
+| #23 | task-210-reproducible-native-training | 5305197bab577f0d45d8ef4983b4dbe68dbe6952 |
+| #24 | task-211-native-artifact-integrity | 7836db8d874ea7c410708d08825a41acdd99485e |
+| #25 | task-212-offline-local-inference | 78b94f94081c96163deff912ad7d816b543deeae |
+| #26 | task-213-strict-suggestion-validation | 9152ec058f1d914d9c440fc140418a532ba96e79 |
+| #27 | task-214-offline-resource-benchmarks | ceee6a501f18f0247da5e5ecdf6af651eedd4860 |
+| #28 | task-215-stage8-acceptance-gate | 4e476d954d731b86f6272bcdb8a725eac40b52d4 |
+
+PRs #19–#28 are all **closed and unmerged**. Their recorded head branches and SHAs are preserved in PR metadata. The wider 24-ref cleanup also included PR #4 (merged) and PRs #6–#13 and #15 (merged); PRs #14 and #16–#28 were closed unmerged. PR #5's branch unified-deterministic-reasoning-inspection-76f80 (head d9db78b10627c847abcfae0f8f42f8a6e43b8d4c) was deleted separately on 2026-10-04. PRs #1–#3 had their head refs deleted on 2026-09-24. Those earlier deletions are outside the 24-ref inventory reconciliation above.
+
+### Deletion attribution
+
+GitHub issue-event records attribute the head_ref_deleted events for PR #4 and PRs #6–#28 to account **savitrex70**, in a batch between **2026-11-02 23:33:01 UTC and 23:33:06 UTC**. PR #5's earlier deletion event is also attributed to savitrex70; PRs #1–#3 likewise show that account as actor for their September 24 deletions.
+
+This establishes the GitHub account recorded as the actor. It does **not** establish whether the account action was performed interactively by the owner or by an agent/automation using credentials for that same account. The available PR issue events do not identify the human-or-agent operator, and no repository audit-log evidence identifying that operator was available. Therefore this audit does not attribute the deletions specifically to the assistant or to the owner personally.
+
+### Recoverability and backup status
+
+- Direct GitHub API reads of refs/pull/4/head and refs/pull/6/head through refs/pull/28/head returned the historical head commits. The closed PR head refs therefore remain fetchable from GitHub despite the deleted task branch refs. PR #5's head ref was also returned by the matching-refs listing.
+- The historical commits are therefore recoverable from GitHub at the time of this audit. This is not the same as a locally held backup.
+- No pre-existing Git bundle or equivalent backup was evidenced by the repository/PR records inspected.
+- An attempt to create a bare clone and bundle in the audit container failed before cloning because the environment could not resolve github.com (Could not resolve host: github.com). No bundle was created. Consequently there is **no bundle path, SHA-256 digest, or bundle manifest** to report.
+- No remote task branch was recreated or pushed. No Git history was rewritten, reset, amended, or force-pushed.
+
+### PR disposition summary
+
+PRs #19–#28: **10 closed, 0 merged, 10 unmerged**. Their historical head commits remain accessible through GitHub's pull-request refs. The branch cleanup removed the named task refs; it did not itself merge these PRs or move their commits onto main.
+
 
 ## CI evidence for exact commits
 
