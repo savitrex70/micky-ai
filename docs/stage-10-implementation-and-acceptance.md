@@ -130,7 +130,7 @@ Scope item **10.6**: natural-language management of existing notes, tasks, and r
 
 `tests/fixtures/stage10_evaluation_v2.json` (`corpus_id: micky-ai-stage10-intent-evaluation-v2`) is a superset of the historical v1 corpus (all 43 cases retained verbatim): 76 intent cases and 45 regression-matrix entries, including 15 Task 249 domains. `scripts/evaluate_stage10.py` now evaluates v2; the v1 file is unchanged on disk.
 
-Executed result (`uv run python scripts/evaluate_stage10.py`): `case_count` 76, `failed_cases` [], `intent_precision` 1.0, `intent_recall` 1.0, `outcome_accuracy` 1.0, `false_match_count` 0, `missed_supported_count` 0.
+Executed result (`uv run python scripts/evaluate_stage10.py`): `case_count` 76, `failed_cases` [], `intent_precision` 1.0, `intent_recall` 1.0, `outcome_accuracy` 1.0, `false_match_count` 0, `missed_supported_count` 0. The same corpus passed inside CI run [42481639850](https://github.com/savitrex70/micky-ai/actions/runs/42481639850).
 
 ### Local verification of the candidate revision
 
@@ -149,6 +149,20 @@ The 6 full-suite failures decompose honestly as follows:
 - `tests/test_cli.py::test_missing_configuration_is_a_concise_error` and `tests/test_config.py::test_get_settings_raises_settings_error_for_invalid_config` — the already-documented `.env`-present local-environment caveat (identical behaviour reproduced at the pre-Stage-10 baseline; not a Task 249 defect).
 - `tests/test_task057_provider_boundary_audit.py` (3 tests) — this untracked, owner-owned audit file must not be edited; its construction heuristic also matches committed `class LLMReasoningProvider(Protocol):` definitions introduced at Task 123 (`930bc0c`), long before Task 249, so it fails identically on a pristine `origin/main` checkout with that file present. Pre-existing local-only condition.
 - `tests/test_rop_model_agnostic.py::test_no_network_clients_in_production_services` — a genuine Task 249 candidate defect against the offline-boundary audit: the new `workspace_selector.py` module docstring contained the substring "requests", tripping the audit's client-name scan. Fixed by rewording the docstring; the test now passes in a focused re-run. No network-client import was ever present.
+
+### CI verification of the pushed revision
+
+GitHub Actions run [42481639850](https://github.com/savitrex70/micky-ai/actions/runs/42481639850) (run #415, workflow `CI`, push event) completed successfully for the exact Task 249 implementation commit `362e8df59646a7aae78098d43fdd054034f34f87` on `main`:
+
+| Check | Exact result |
+| --- | --- |
+| Tests (Python 3.12, PostgreSQL) | **8,430 passed, 9 skipped, 42 warnings** in 833.74s |
+| Stage 10 fixed intent evaluation (corpus v2) | `passed_cases: 76`, `failed_cases: []`, `outcome_accuracy: 1.0` |
+| Ruff | Passed |
+| Black (24.10.0) | Passed |
+| Native Windows retrieval (Python 3.12) | Passed |
+
+The PostgreSQL job's container-stop log contains the expected constraint-violation messages from negative tests (`ck_assistant_confirmations_failed_code_attempts`); the job concluded successfully. This CI result includes the Task 249 conversational, interpreter, parser, and corpus-v2 suites and the offline/network-free audits against the new `workspace_selector` service. Stage 9 and Stage 10 acceptance remain **NOT APPROVED** and Stage 8 remains gated: passing CI does not provide the outstanding owner-target Stage 9 acceptance evidence.
 
 ### Acceptance status
 
