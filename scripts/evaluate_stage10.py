@@ -10,7 +10,9 @@ from pathlib import Path
 from rop.capabilities.stage10_evaluation import evaluate_intent_cases
 
 ROOT = Path(__file__).resolve().parents[1]
-CORPUS = ROOT / "tests" / "fixtures" / "stage10_evaluation_v1.json"
+# Corpus v2 is a superset of the historical v1 corpus with the Task 249
+# conversational workspace-management cases. v1 remains unchanged on disk.
+CORPUS = ROOT / "tests" / "fixtures" / "stage10_evaluation_v2.json"
 
 
 def main() -> int:

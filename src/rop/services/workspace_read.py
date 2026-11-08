@@ -125,13 +125,22 @@ def run_workspace_read(operation: ProposedOperation) -> str:
         kind = operation.parameters.get("kind")
         if kind not in {None, "note", "task", "reminder"}:
             raise ValueError("unsupported workspace item filter")
+        status = operation.parameters.get("status")
+        if status not in {None, "pending"}:
+            raise ValueError("unsupported workspace listing status")
+        only_pending = status == "pending"
         session = database_module.SessionLocal()
         try:
             items = _REPOSITORY.list_items(
-                session, kind=kind, include_completed=True, limit=25
+                session,
+                kind=kind,
+                include_completed=not only_pending,
+                limit=25,
             )
             label = f"{kind}s" if kind in {"note", "task"} else kind
             label = label or "workspace items"
+            if only_pending:
+                label = f"pending {label}"
             if not items:
                 return f"No {label} were found."
             lines = [f"Found {len(items)} {label} (maximum 25 shown):"]

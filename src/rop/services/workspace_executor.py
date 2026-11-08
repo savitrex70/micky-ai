@@ -43,10 +43,20 @@ from rop.services.local_paths import (
     local_directory_identity,
     refresh_mount_table,
 )
+from rop.services.workspace_selector import item_version_token
 
 logger = logging.getLogger(__name__)
 _REPOSITORY = AssistantWorkspaceRepository()
 _KEY_NAME = "idempotency_key"
+_VERSION_NAME = "target_updated_at"
+"""Freshness witness recorded when a natural-language target was resolved.
+
+It is deliberately excluded from the operation fingerprint: repeating the
+exact same natural-language request must re-resolve to the same record and
+replay the established result, not conflict on the resolution timing. The
+stored value is still enforced at execution time, so a deleted or changed
+record always fails the run.
+"""
 _WORKFLOW_OPERATION = "workspace_workflow_create_task_and_reminder"
 _SEARCH_CREATE_OPERATION = "workspace_workflow_search_and_create_item"
 _MISSING = object()
@@ -184,7 +194,9 @@ def build_workspace_executor_registry() -> ExecutorRegistry:
 
 def operation_fingerprint(operation: ProposedOperation) -> str:
     parameters = {
-        key: value for key, value in operation.parameters.items() if key != _KEY_NAME
+        key: value
+        for key, value in operation.parameters.items()
+        if key not in {_KEY_NAME, _VERSION_NAME}
     }
     if operation.operation_id == _SEARCH_CREATE_OPERATION:
         raw_payload = parameters.get("workflow_payload")
@@ -263,6 +275,17 @@ def _apply_item(session, operation: ProposedOperation) -> None:
     item = _REPOSITORY.get_item(session, item_id)
     if item is None or item.kind != kind:
         raise ExecutorError("workspace item not found")
+    expected_version = params.get(_VERSION_NAME)
+    if expected_version is not None:
+        # The user approved this exact record as it was at resolution
+        # time. If the record moved, changed, or was replaced since, the
+        # proposal is stale and nothing may be applied.
+        try:
+            current_version = item_version_token(item)
+        except Exception:
+            raise ExecutorError("workspace item state could not be verified") from None
+        if current_version != expected_version:
+            raise ExecutorError("workspace item changed after it was proposed")
     if action == "delete":
         session.delete(item)
     elif action == "complete":

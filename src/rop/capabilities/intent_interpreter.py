@@ -157,6 +157,179 @@ _REMINDER_DATETIME_NO_ZONE_RE = re.compile(
 )
 _REMINDER_RE = re.compile(r"^remind me to(?:\s+(.+))?$", re.IGNORECASE)
 
+# Task 249: conversational management of records that already exist. Every
+# phrase below only selects an existing local item by its exact normalized
+# title; matching and resolution happen later at the service boundary.
+_PENDING_LIST_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"^(?:show|list)(?: me)? (?:my )?(?:pending|incomplete|open|unfinished)"
+            r" (tasks)$",
+            re.IGNORECASE,
+        ),
+        "task",
+    ),
+    (
+        re.compile(
+            r"^(?:show|list)(?: me)? (?:my )?(?:pending|incomplete|open|unfinished)"
+            r" (notes)$",
+            re.IGNORECASE,
+        ),
+        "note",
+    ),
+    (
+        re.compile(
+            r"^(?:show|list)(?: me)? (?:my )?(?:pending|incomplete|open|unfinished)"
+            r" (reminders)$",
+            re.IGNORECASE,
+        ),
+        "reminder",
+    ),
+    (
+        re.compile(
+            r"^what tasks do i still have to (?:do|finish|complete)$",
+            re.IGNORECASE,
+        ),
+        "task",
+    ),
+)
+_TASK_STATE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"^mark (?:my |the )?(.+?) task as (?:complete|completed|done)$",
+            re.IGNORECASE,
+        ),
+        "complete",
+    ),
+    (
+        re.compile(
+            r"^mark (?:my |the )?task (?:titled|called|named) (.+?)"
+            r" as (?:complete|completed|done)$",
+            re.IGNORECASE,
+        ),
+        "complete",
+    ),
+    (
+        re.compile(
+            r"^(?:complete|finish) (?:my |the )?(.+?) task$",
+            re.IGNORECASE,
+        ),
+        "complete",
+    ),
+    (
+        re.compile(
+            r"^(?:complete|finish) (?:my |the )?task (?:titled|called|named) (.+)$",
+            re.IGNORECASE,
+        ),
+        "complete",
+    ),
+    (
+        re.compile(r"^mark (?:my )?(.+?) task (?:as )?done$", re.IGNORECASE),
+        "complete",
+    ),
+    (
+        re.compile(
+            r"^reopen (?:my |the )?(.+?) task(?: (?:again|now))?$",
+            re.IGNORECASE,
+        ),
+        "reopen",
+    ),
+    (
+        re.compile(
+            r"^reopen (?:my |the )?task (?:titled|called|named) (.+)$",
+            re.IGNORECASE,
+        ),
+        "reopen",
+    ),
+)
+_DELETE_NAMED_KIND_RE = re.compile(
+    r"^delete (?:my |the )?(note|task|reminder) (?:titled|called|named) (.+)$",
+    re.IGNORECASE,
+)
+_DELETE_SUFFIX_KIND_RE = re.compile(
+    r"^delete (?:my )?(.+?) (note|task|reminder)$",
+    re.IGNORECASE,
+)
+_DELETE_SKELETON_RE = re.compile(
+    r"^delete (?:my |the )?(?:note|task|reminder)(?: (?:titled|called|named))?$",
+    re.IGNORECASE,
+)
+_UPDATE_RENAME_RE = re.compile(
+    r"^(?:rename|retitle) (?:my |the |a |an )?(note|task)"
+    r" (?:titled|called|named) (.+?) to (.+)$",
+    re.IGNORECASE,
+)
+_UPDATE_RENAME_SKELETON_RE = re.compile(
+    r"^(?:rename|retitle) (?:my |the |a |an )?(?:note|task)"
+    r" (?:titled|called|named) .+$",
+    re.IGNORECASE,
+)
+_UPDATE_CONTENT_RE = re.compile(
+    r"^(?:update|set|change|replace) the content of (?:my |the |a |an )?(note|task)"
+    r" (?:titled|called|named) (.+?) (?:to|as|with) (.+)$",
+    re.IGNORECASE,
+)
+_UPDATE_CONTENT_SKELETON_RE = re.compile(
+    r"^(?:update|set|change|replace) the content of (?:my |the |a |an )?(?:note|task)"
+    r" (?:titled|called|named) .+$",
+    re.IGNORECASE,
+)
+_UPDATE_NO_FIELD_RE = re.compile(
+    r"^(?:update|edit|change) (?:my |the |a |an )?(?:note|task)"
+    r" (?:titled|called|named) (.+)$",
+    re.IGNORECASE,
+)
+_RESCHEDULE_LOCAL_TIME = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?:[+-]\d{2}:?\d{2})?"
+_RESCHEDULE_ZONE = r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)*|UTC"
+_RESCHEDULE_RELATIVE_DAY = r"today|tomorrow|tonight|this evening|next week"
+_RESCHEDULE_SUFFIX = r"(?:(?:\s*\|\s*|\s+in\s+)({zone}))?$"
+_RESCHEDULE_EXPLICIT_TITLED_RE = re.compile(
+    rf"^(?:move|reschedule) (?:my |the )?reminder (?:titled|called|named) (.+?) to "
+    rf"({_RESCHEDULE_LOCAL_TIME}){_RESCHEDULE_SUFFIX.format(zone=_RESCHEDULE_ZONE)}",
+    re.IGNORECASE,
+)
+_RESCHEDULE_EXPLICIT_SUFFIX_RE = re.compile(
+    rf"^(?:move|reschedule) (?:my |the )?(.+?) reminder to "
+    rf"({_RESCHEDULE_LOCAL_TIME}){_RESCHEDULE_SUFFIX.format(zone=_RESCHEDULE_ZONE)}",
+    re.IGNORECASE,
+)
+_RESCHEDULE_RELATIVE_TITLED_RE = re.compile(
+    rf"^(?:move|reschedule) (?:my |the )?reminder (?:titled|called|named) (.+?) to "
+    rf"({_RESCHEDULE_RELATIVE_DAY})(?: at ((?:[01]?\d|2[0-3]):[0-5]\d))?"
+    rf"(?:(?:\s*\|\s*|\s+in\s+)({_RESCHEDULE_ZONE}))?$",
+    re.IGNORECASE,
+)
+_RESCHEDULE_RELATIVE_SUFFIX_RE = re.compile(
+    rf"^(?:move|reschedule) (?:my |the )?(.+?) reminder to "
+    rf"({_RESCHEDULE_RELATIVE_DAY})(?: at ((?:[01]?\d|2[0-3]):[0-5]\d))?"
+    rf"(?:(?:\s*\|\s*|\s+in\s+)({_RESCHEDULE_ZONE}))?$",
+    re.IGNORECASE,
+)
+_RESCHEDULE_SKELETON_RE = re.compile(
+    r"^(?:move|reschedule) (?:my |the )?(?:reminder(?: (?:titled|called|named))?)$",
+    re.IGNORECASE,
+)
+_RESCHEDULE_NAMED_SKELETON_RE = re.compile(
+    r"^(?:move|reschedule) (?:my |the )?reminder (?:titled|called|named) (.+)$",
+    re.IGNORECASE,
+)
+_GENERIC_TITLE_WORDS = frozenset(
+    {
+        "my",
+        "the",
+        "this",
+        "that",
+        "it",
+        "them",
+        "these",
+        "those",
+        "all",
+        "everything",
+        "anything",
+        "something",
+    }
+)
+
 
 def _strip_punctuation(value: str) -> str:
     return _PUNCTUATION_RE.sub("", value.strip()).strip()
@@ -194,6 +367,62 @@ def _ambiguous(message: str = _AMBIGUOUS_MESSAGE) -> IntentInterpretation:
     return IntentInterpretation(status="ambiguous", message=message)
 
 
+def _matched_reschedule(
+    raw_title: str, raw_due_at: str, raw_timezone: str | None
+) -> IntentInterpretation:
+    """Map an explicit reschedule phrase to a reminder update command."""
+    title = _safe_field(raw_title)
+    due_at = _safe_field(raw_due_at)
+    timezone = _safe_field(raw_timezone)
+    if (
+        not title
+        or not due_at
+        or len(title) > 100
+        or len(due_at) > 32
+        or (timezone is not None and len(timezone) > 96)
+    ):
+        return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+    if title.casefold() in _GENERIC_TITLE_WORDS:
+        return _ambiguous(
+            "Please provide the exact title of the reminder to reschedule. "
+            "Nothing was executed or changed."
+        )
+    parts = [title, f"due: {due_at}"]
+    if timezone:
+        parts.append(f"tz: {timezone}")
+    return _matched_workspace("workspace update reminder titled: " + " | ".join(parts))
+
+
+def _matched_relative_reschedule(
+    raw_title: str,
+    raw_day_phrase: str,
+    clock_time: str | None,
+    raw_timezone: str | None,
+) -> IntentInterpretation:
+    """Map a relative reschedule phrase with its anchor and clock separately."""
+    title = _safe_field(raw_title)
+    timezone = _safe_field(raw_timezone)
+    if not title or len(title) > 100 or (timezone is not None and len(timezone) > 96):
+        return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+    if title.casefold() in _GENERIC_TITLE_WORDS:
+        return _ambiguous(
+            "Please provide the exact title of the reminder to reschedule. "
+            "Nothing was executed or changed."
+        )
+    hint = {
+        "this evening": "tonight",
+        "next week": "next_week",
+    }.get(raw_day_phrase, raw_day_phrase)
+    command = f"workspace update reminder titled: {title}"
+    if timezone:
+        command += f" | tz: {timezone}"
+    return _matched_workspace(
+        command,
+        relative_date_hint=hint,
+        relative_clock_time=clock_time,
+    )
+
+
 def _multiple_action_conflict(message: str) -> bool:
     lowered = message.casefold()
     if _MULTIPLE_LISTS_RE.fullmatch(lowered):
@@ -206,6 +435,11 @@ def _multiple_action_conflict(message: str) -> bool:
         r"\b(?:make|create|write|save)\b.*\bnote\b",
         r"\b(?:make|create|add)\b.*\btask\b",
         r"\bremind me to\b",
+        r"\b(?:delete|remove)\b.*\b(?:note|task|reminder)\b",
+        r"\b(?:complete|reopen|finish|mark)\b.*\btask\b",
+        r"\b(?:rename|retitle|update|edit|set|change|replace|clear)\b"
+        r".*\b(?:note|task|reminder)\b",
+        r"\b(?:move|reschedule|postpone)\b.*\breminder\b",
     )
     matches = sum(bool(re.search(pattern, lowered)) for pattern in action_markers)
     return matches > 1 and bool(re.search(r"\b(?:and|then|also|or)\b", lowered))
@@ -304,6 +538,11 @@ def interpret_request(message: str) -> IntentInterpretation:
                 "workspace list " + ("all" if kind == "all" else label)
             )
 
+    for pattern, kind in _PENDING_LIST_PATTERNS:
+        if pattern.fullmatch(normalized):
+            label = {"note": "notes", "task": "tasks", "reminder": "reminders"}[kind]
+            return _matched_workspace("workspace list pending " + label)
+
     for pattern in _SEARCH_PATTERNS:
         match = pattern.fullmatch(normalized)
         if match:
@@ -311,6 +550,125 @@ def interpret_request(message: str) -> IntentInterpretation:
             if query is None:
                 return _matched_workspace("workspace search files:")
             return _matched_workspace("workspace search files: " + query)
+
+    for pattern, action in _TASK_STATE_PATTERNS:
+        match = pattern.fullmatch(normalized)
+        if match:
+            title = _safe_field(match.group(1))
+            if title is None or len(title) > 100:
+                return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+            if title.casefold() in _GENERIC_TITLE_WORDS:
+                return _ambiguous(
+                    "Please provide the exact title of the task. Nothing was "
+                    "executed or changed."
+                )
+            verb = "complete" if action == "complete" else "reopen"
+            return _matched_workspace(f"workspace {verb} task titled: {title}")
+
+    if _DELETE_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me the exact title of the note, task, or reminder to delete. "
+            "For example: delete the note titled Ward revision. Nothing was "
+            "executed or changed."
+        )
+    match = _DELETE_NAMED_KIND_RE.fullmatch(normalized)
+    if match:
+        kind = match.group(1).casefold()
+        title = _safe_field(match.group(2))
+        if title is None or len(title) > 200:
+            return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+        if title.casefold() in _GENERIC_TITLE_WORDS:
+            return _ambiguous(
+                f"Please provide the exact title of the {kind}. Nothing was "
+                "executed or changed."
+            )
+        return _matched_workspace(f"workspace delete {kind} titled: {title}")
+    match = _DELETE_SUFFIX_KIND_RE.fullmatch(normalized)
+    if match:
+        kind = match.group(2).casefold()
+        title = _safe_field(match.group(1))
+        if title is None or len(title) > 200:
+            return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+        if title.casefold() in _GENERIC_TITLE_WORDS:
+            return _ambiguous(
+                f"Please provide the exact title of the {kind}. Nothing was "
+                "executed or changed."
+            )
+        return _matched_workspace(f"workspace delete {kind} titled: {title}")
+
+    match = _UPDATE_RENAME_RE.fullmatch(normalized)
+    if match:
+        kind = match.group(1).casefold()
+        selector = _safe_field(match.group(2))
+        new_title = _safe_field(match.group(3))
+        if not selector or not new_title or len(selector) > 200 or len(new_title) > 200:
+            return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+        if selector.casefold() in _GENERIC_TITLE_WORDS:
+            return _ambiguous(
+                "Please provide the exact current title of the item to rename. "
+                "Nothing was executed or changed."
+            )
+        return _matched_workspace(
+            f"workspace update {kind} titled: {selector} | title: {new_title}"
+        )
+    if _UPDATE_RENAME_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me the exact new title. For example: rename the note titled "
+            "A to B. Nothing was executed or changed."
+        )
+    match = _UPDATE_CONTENT_RE.fullmatch(normalized)
+    if match:
+        kind = match.group(1).casefold()
+        selector = _safe_field(match.group(2))
+        content = _safe_field(match.group(3))
+        if not selector or not content or len(selector) > 200 or len(content) > 512:
+            return _ambiguous(_UNSAFE_VALUE_MESSAGE)
+        if selector.casefold() in _GENERIC_TITLE_WORDS:
+            return _ambiguous(
+                "Please provide the exact current title of the item to update. "
+                "Nothing was executed or changed."
+            )
+        return _matched_workspace(
+            f"workspace update {kind} titled: {selector} | content: {content}"
+        )
+    if _UPDATE_CONTENT_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me the exact new content. For example: update the content of "
+            "my note titled A to B. Nothing was invented, executed, or changed."
+        )
+    if _UPDATE_NO_FIELD_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me exactly what to change: the title with 'title: ...' or the "
+            "content with 'content: ...'. Nothing was executed or changed."
+        )
+
+    match = _RESCHEDULE_EXPLICIT_TITLED_RE.fullmatch(normalized)
+    if match:
+        return _matched_reschedule(match.group(1), match.group(2), match.group(3))
+    match = _RESCHEDULE_EXPLICIT_SUFFIX_RE.fullmatch(normalized)
+    if match:
+        return _matched_reschedule(match.group(1), match.group(2), match.group(3))
+    match = _RESCHEDULE_RELATIVE_TITLED_RE.fullmatch(normalized)
+    if match:
+        return _matched_relative_reschedule(
+            match.group(1), match.group(2), match.group(3), match.group(4)
+        )
+    match = _RESCHEDULE_RELATIVE_SUFFIX_RE.fullmatch(normalized)
+    if match:
+        return _matched_relative_reschedule(
+            match.group(1), match.group(2), match.group(3), match.group(4)
+        )
+    if _RESCHEDULE_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me which reminder and exactly when it should be due. Nothing "
+            "was executed or changed."
+        )
+    if _RESCHEDULE_NAMED_SKELETON_RE.fullmatch(normalized):
+        return _ambiguous(
+            "Tell me exactly when the reminder should be due: an exact local "
+            "date/time such as 2026-11-12T14:00 plus an IANA timezone, or a "
+            "relative date such as tomorrow. Nothing was executed or changed."
+        )
 
     if lowered in {
         "save this as a note",

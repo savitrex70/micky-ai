@@ -69,6 +69,12 @@ from rop.services.workspace_read import (
     prepare_search_create_operation,
     run_workspace_read,
 )
+from rop.services.workspace_selector import (
+    bind_resolved_target,
+    describe_item,
+    normalize_selector_title,
+    resolve_selector_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +113,17 @@ confirmation service after exact-scope challenge consumption.
 """
 
 _REPOSITORY = AssistantConfirmationRepository()
+
+_SELECTOR_ITEM_KIND = {
+    "workspace_note_delete": "note",
+    "workspace_task_delete": "task",
+    "workspace_reminder_delete": "reminder",
+    "workspace_task_complete": "task",
+    "workspace_note_update": "note",
+    "workspace_task_update": "task",
+    "workspace_reminder_update": "reminder",
+}
+"""Item kind implied by an existing-record operation that may use a selector."""
 
 _UNSUPPORTED_MESSAGE = (
     "No matching capability is currently available. "
@@ -229,12 +246,119 @@ def _make_clarification_response(
     )
 
 
+class _SelectorNeedsDisambiguation(Exception):
+    """Raised when one exact title matched more than one local record."""
+
+    def __init__(self, question: str) -> None:
+        super().__init__("ambiguous workspace item title")
+        self.question = question
+
+
+class _SelectorRefused(Exception):
+    """Raised when a title selector could not be resolved safely."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("workspace selector could not be resolved")
+        self.message = message
+
+
+def _selector_action_word(operation: ProposedOperation) -> str:
+    """Name the intended action for one selector operation."""
+    if operation.operation_id.endswith("_delete"):
+        return "delete"
+    if operation.operation_id == "workspace_task_complete":
+        if operation.parameters.get("completed") == "false":
+            return "reopen"
+        return "complete"
+    return "update"
+
+
+def _resolve_workspace_selector(
+    session,
+    operation: ProposedOperation,
+    *,
+    kind: str,
+) -> tuple[ProposedOperation, str | None]:
+    """Bind an exact-title selector to one canonical local record.
+
+    The lookup is read-only. When exactly one record matches, the existing
+    canonical UUID wins and the operation carries the record's current
+    version so execution can reject a stale target. When several records
+    match, nothing is chosen here: the caller asks the user to
+    disambiguate by item ID. When nothing matches, nothing changes.
+    """
+    selector_title = (operation.parameters.get("selector_title") or "").strip()
+    if not selector_title:
+        raise _SelectorRefused(
+            "No item title was given for the workspace command. Nothing was "
+            "executed or changed."
+        )
+
+    if operation.target is not None:
+        # Continuation after a disambiguation answer: the user reconfirmed
+        # an exact record, so it must still match what was offered.
+        try:
+            item_id = UUID(operation.target)
+        except (TypeError, ValueError):
+            raise _SelectorRefused(
+                "The selected item could not be identified safely. Nothing "
+                "was executed or changed."
+            ) from None
+        item = _WORKSPACE_REPOSITORY.get_item(session, item_id)
+        if item is None or item.kind != kind:
+            raise _SelectorRefused(
+                "The selected item no longer exists. Start the request again; "
+                "nothing was changed."
+            )
+        if normalize_selector_title(item.title) != normalize_selector_title(
+            selector_title
+        ):
+            raise _SelectorRefused(
+                "The selected item changed after it was offered. Start the "
+                "request again; nothing was changed."
+            )
+        return bind_resolved_target(operation, item), None
+
+    resolution = resolve_selector_title(session, kind=kind, title=selector_title)
+    if resolution.status == "not_found":
+        raise _SelectorRefused(
+            f"No {kind} titled '{resolution.title}' was found in your local "
+            "workspace. Nothing was executed or changed."
+        )
+    if resolution.status == "ambiguous":
+        action = _selector_action_word(operation)
+        lines = [
+            (
+                f"More than one {kind} is titled '{resolution.title}'. Reply "
+                f"with the item ID of the one you want to {action}:"
+            )
+        ]
+        for match in resolution.matches:
+            lines.append(f"- {describe_item(match)}")
+        lines.append("Nothing will be changed until you confirm the exact item.")
+        raise _SelectorNeedsDisambiguation("\n".join(lines))
+
+    match = resolution.matches[0]
+    item = _WORKSPACE_REPOSITORY.get_item(session, match.id)
+    if item is None or item.kind != kind:
+        raise _SelectorRefused(
+            "The matching item no longer exists. Nothing was executed or " "changed."
+        )
+    resolved = bind_resolved_target(operation, item)
+    preview = (
+        f"I found exactly one {kind} titled '{match.title}' "
+        f"({describe_item(match)})."
+    )
+    return resolved, preview
+
+
 def _prepare_workspace_confirmation(
     session,
     operation: ProposedOperation,
     *,
     conversation_id: UUID,
     pending_row,
+    preview_message: str | None = None,
 ) -> AssistantResponse:
     """Bind one canonical operation key and exact challenge in one transaction."""
     raw_key = operation.parameters.get("idempotency_key")
@@ -325,12 +449,19 @@ def _prepare_workspace_confirmation(
     challenge = result.challenge
     if pending_row is not None:
         _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(session, pending_row)
-    return AssistantResponse(
-        status="confirmation-required",
-        message=(
+    if preview_message:
+        message = (
+            f"{preview_message} This change has not run. Review the exact "
+            "confirmation card and confirm it to apply the change."
+        )
+    else:
+        message = (
             "This change has not run. Review the exact confirmation card and "
             "confirm it to apply the change."
-        ),
+        )
+    return AssistantResponse(
+        status="confirmation-required",
+        message=message,
         challenge=AssistantConfirmationChallenge(
             challenge_id=challenge.challenge_id,
             summary=challenge.summary,
@@ -495,6 +626,51 @@ def _dispatch_workspace_command(
                 False,
             )
 
+        selector_kind = _SELECTOR_ITEM_KIND.get(operation.operation_id)
+        if selector_kind is not None and "selector_title" in operation.parameters:
+            try:
+                operation, preview_message = _resolve_workspace_selector(
+                    session,
+                    operation,
+                    kind=selector_kind,
+                )
+            except _SelectorNeedsDisambiguation as ambiguity:
+                response = _make_clarification_response(
+                    session,
+                    conversation_id=conversation_id,
+                    original_message=original_message,
+                    error=CapabilityParseError(
+                        "target",
+                        ambiguity.question,
+                        partial_operation=operation,
+                        missing_fields=["target"],
+                    ),
+                )
+                session.commit()
+                return response, turn_message, False
+            except _SelectorRefused as refused:
+                if pending_row is not None:
+                    _PENDING_CLARIFICATION_REPOSITORY.consume_and_clear(
+                        session, pending_row
+                    )
+                    session.commit()
+                else:
+                    session.rollback()
+                return _workspace_refusal(refused.message), turn_message, False
+            except Exception:
+                session.rollback()
+                logger.warning("workspace selector resolution failed")
+                return (
+                    _workspace_refusal(
+                        "The workspace request could not be completed "
+                        "safely. Nothing was executed or changed."
+                    ),
+                    turn_message,
+                    False,
+                )
+        else:
+            preview_message = None
+
         try:
             decision = evaluate_authorization(operation, policy=_POLICY)
         except Exception:
@@ -587,6 +763,7 @@ def _dispatch_workspace_command(
                 operation,
                 conversation_id=conversation_id,
                 pending_row=pending_row,
+                preview_message=preview_message,
             )
             if (
                 response.status == "confirmation-required"

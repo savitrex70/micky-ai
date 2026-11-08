@@ -89,3 +89,71 @@ def test_regression_matrix_references_existing_automated_tests() -> None:
         assert path.is_file(), entry["test_node"]
         source = path.read_text(encoding="utf-8")
         assert f"def {test_name}(" in source, entry["test_node"]
+
+
+V2_CORPUS_PATH = ROOT / "tests" / "fixtures" / "stage10_evaluation_v2.json"
+
+
+def _load_v2_corpus() -> dict:
+    with V2_CORPUS_PATH.open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def test_v2_intent_corpus_extends_v1_and_has_exact_outcomes() -> None:
+    """Corpus v2 is a superset of v1 with the Task 249 conversational cases."""
+    with CORPUS_PATH.open(encoding="utf-8") as stream:
+        v1 = json.load(stream)
+    corpus = _load_v2_corpus()
+
+    assert corpus["schema_version"] == 1
+    assert corpus["corpus_id"] != v1["corpus_id"]
+    assert corpus["corpus_id"].endswith("v2")
+    v1_ids = [case["id"] for case in v1["intent_cases"]]
+    v2_ids = [case["id"] for case in corpus["intent_cases"]]
+    assert len(v2_ids) > len(v1_ids)
+    for case_id in v1_ids:
+        assert case_id in v2_ids, case_id
+
+    report = evaluate_intent_cases(corpus["intent_cases"])
+    assert report["case_count"] == len(corpus["intent_cases"])
+    assert report["failed_cases"] == [], report["failed_cases"]
+    assert report["passed_cases"] == report["case_count"]
+    assert report["outcome_accuracy"] == 1.0
+    assert report["false_match_count"] == 0
+    assert report["missed_supported_count"] == 0
+    assert report["intent_precision"] >= 0.98
+    assert report["intent_recall"] >= 0.98
+    assert set(report["per_intent"]) == {"help", "workspace"}
+    assert "not independent" in report["limitations"]
+
+    statuses = {case["expected_status"] for case in corpus["intent_cases"]}
+    assert statuses == {"matched", "ambiguous", "unsupported"}
+    task249 = [
+        case for case in corpus["intent_cases"] if case["id"].startswith("task249-")
+    ]
+    assert task249, "corpus v2 must carry the Task 249 conversational cases"
+
+
+def test_v2_regression_matrix_references_existing_automated_tests() -> None:
+    corpus = _load_v2_corpus()
+    matrix = corpus["regression_tests"]
+    required_domains = {
+        "task249-pending-listing",
+        "task249-complete-reopen",
+        "task249-disambiguation",
+        "task249-update",
+        "task249-reschedule",
+        "task249-dst-fail-closed",
+        "task249-stale-target",
+        "task249-idempotency",
+        "task249-uncertain-commit",
+    }
+    assert required_domains.issubset({entry["domain"] for entry in matrix})
+
+    for entry in matrix:
+        path_text, separator, test_name = entry["test_node"].partition("::")
+        assert separator and test_name.startswith("test_")
+        path = ROOT / path_text
+        assert path.is_file(), entry["test_node"]
+        source = path.read_text(encoding="utf-8")
+        assert f"def {test_name}(" in source, entry["test_node"]

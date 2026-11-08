@@ -21,6 +21,11 @@ _LIST_RE = re.compile(
     r"^\s*workspace\s+list\s+(notes|tasks|reminders|all)\s*$",
     re.IGNORECASE,
 )
+_LIST_PENDING_RE = re.compile(
+    r"^\s*workspace\s+list\s+(?:incomplete|pending|open|unfinished)\s+"
+    r"(notes|tasks|reminders)\s*$",
+    re.IGNORECASE,
+)
 _SEARCH_RE = re.compile(
     r"^\s*workspace\s+search\s+files\s*:\s*(.*?)\s*$",
     re.IGNORECASE | re.DOTALL,
@@ -43,6 +48,22 @@ _TASK_STATE_RE = re.compile(
 )
 _UPDATE_RE = re.compile(
     r"^\s*workspace\s+update\s+(note|task|reminder)\s+([^:\s]+)\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_DELETE_SELECTOR_RE = re.compile(
+    r"^\s*workspace\s+delete\s+(note|task|reminder)\s+titled\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_TASK_STATE_SELECTOR_RE = re.compile(
+    r"^\s*workspace\s+(complete|reopen)\s+task\s+titled\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_UPDATE_SELECTOR_RE = re.compile(
+    r"^\s*workspace\s+update\s+(note|task|reminder)\s+titled\s*:\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_UPDATE_SELECTOR_FIELD_RE = re.compile(
+    r"^(title|content|due|tz)\s*:\s*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 _WORKFLOW_CREATE_RE = re.compile(
@@ -82,6 +103,42 @@ def _uuid_target(value: str, missing_message: str) -> str:
             missing_message,
             partial_operation=None,
         ) from None
+
+
+def _selector_title(
+    value: str,
+    *,
+    kind: str,
+    operation_id: str,
+    idempotency_key: str,
+) -> str:
+    """Validate an exact title selector or raise the matching clarification."""
+    parts = _parts(value)
+    if len(parts) > 1:
+        raise CapabilityParseError(
+            "selector_title",
+            f"Provide the exact {kind} title as plain text without separators.",
+            partial_operation=None,
+        )
+    title = parts[0] if parts else ""
+    if not title:
+        partial = _operation(
+            operation_id,
+            parameters={"idempotency_key": idempotency_key},
+        )
+        raise CapabilityParseError(
+            "selector_title",
+            f"What is the exact title of the {kind}?",
+            partial_operation=partial,
+            missing_fields=["selector_title"],
+        )
+    if len(title) > 200 or not title.isprintable():
+        raise CapabilityParseError(
+            "selector_title",
+            f"That {kind} title is outside the supported limits.",
+            partial_operation=None,
+        )
+    return title
 
 
 class _ReminderTimeError(ValueError):
@@ -353,6 +410,7 @@ class WorkspaceCommandParser:
 
     Supported examples:
       workspace list notes
+      workspace list pending tasks
       workspace search files: hypertension
       workspace add note: Ward revision | read chapter 3
       workspace add task: Submit the assignment
@@ -361,6 +419,11 @@ class WorkspaceCommandParser:
       workspace complete task <uuid>
       workspace reopen task <uuid>
       workspace update note <uuid>: New title | New details
+      workspace delete task titled: Submit the assignment
+      workspace complete task titled: Submit the assignment
+      workspace update note titled: Ward revision | title: Ward notes
+      workspace update reminder titled: Call the clinic | due: 2026-11-12T09:00
+        | tz: Europe/Amsterdam
     """
 
     def matches(self, message: str) -> bool:
@@ -474,6 +537,21 @@ class WorkspaceCommandParser:
             parameters = {} if kind is None else {"kind": kind}
             return _operation("workspace_list_items", parameters=parameters)
 
+        list_pending = _LIST_PENDING_RE.fullmatch(message)
+        if list_pending:
+            match = list_pending
+            assert match is not None
+            kind_by_name = {
+                "notes": "note",
+                "tasks": "task",
+                "reminders": "reminder",
+            }
+            kind = kind_by_name[match.group(1).casefold()]
+            return _operation(
+                "workspace_list_items",
+                parameters={"kind": kind, "status": "pending"},
+            )
+
         search = _SEARCH_RE.fullmatch(message)
         if search:
             query = search.group(1).strip()
@@ -580,6 +658,42 @@ class WorkspaceCommandParser:
                 _operation("workspace_reminder_create", parameters=params)
             )
 
+        delete_selector = _DELETE_SELECTOR_RE.fullmatch(message)
+        if delete_selector:
+            kind = delete_selector.group(1).casefold()
+            title = _selector_title(
+                delete_selector.group(2),
+                kind=kind,
+                operation_id=f"workspace_{kind}_delete",
+                idempotency_key=idempotency_key or "",
+            )
+            return _operation(
+                f"workspace_{kind}_delete",
+                parameters={
+                    "idempotency_key": idempotency_key or "",
+                    "selector_title": title,
+                },
+            )
+
+        state_selector = _TASK_STATE_SELECTOR_RE.fullmatch(message)
+        if state_selector:
+            action, raw_title = state_selector.groups()
+            verb = action.casefold()
+            title = _selector_title(
+                raw_title,
+                kind="task",
+                operation_id="workspace_task_complete",
+                idempotency_key=idempotency_key or "",
+            )
+            return _operation(
+                "workspace_task_complete",
+                parameters={
+                    "idempotency_key": idempotency_key or "",
+                    "selector_title": title,
+                    "completed": "true" if verb == "complete" else "false",
+                },
+            )
+
         delete_match = _DELETE_RE.fullmatch(message)
         if delete_match:
             kind = delete_match.group(1).casefold()
@@ -632,6 +746,164 @@ class WorkspaceCommandParser:
                     "completed": "true" if verb == "complete" else "false",
                 },
             )
+
+        update_selector = _UPDATE_SELECTOR_RE.fullmatch(message)
+        if update_selector:
+            kind = update_selector.group(1).casefold()
+            parts = _parts(update_selector.group(2))
+            selector = parts[0] if parts else ""
+            if selector and (len(selector) > 200 or not selector.isprintable()):
+                raise CapabilityParseError(
+                    "selector_title",
+                    f"That {kind} title is outside the supported limits.",
+                    partial_operation=None,
+                )
+            params = {"idempotency_key": idempotency_key or ""}
+            if selector:
+                # The selector identifies the record to change; dispatch
+                # resolves it to one canonical UUID before authorization.
+                params["selector_title"] = selector[:200]
+            for raw_part in parts[1:]:
+                assignment = _UPDATE_SELECTOR_FIELD_RE.fullmatch(raw_part)
+                if assignment is None:
+                    raise CapabilityParseError(
+                        "update",
+                        "Provide the exact change as field segments separated "
+                        "by |: 'title: New title', 'content: New content', or "
+                        "for a reminder 'due: 2026-11-12T14:00 | "
+                        "tz: Europe/Amsterdam'.",
+                        partial_operation=None,
+                    )
+                name = assignment.group(1).casefold()
+                raw_value = assignment.group(2).strip()
+                if not raw_value:
+                    continue
+                if name == "title":
+                    params["title"] = raw_value[:200]
+                elif name == "content":
+                    params["content"] = raw_value[:512]
+                elif name == "due":
+                    params["due_at"] = raw_value[:64]
+                elif name == "tz":
+                    params["timezone"] = raw_value[:128]
+
+            relative_hint = relative_date_hint
+            if relative_hint is not None and kind != "reminder":
+                raise CapabilityParseError(
+                    "update",
+                    "Only reminder updates support a relative date.",
+                    partial_operation=None,
+                )
+            if relative_hint is not None and "due_at" in params:
+                raise CapabilityParseError(
+                    "due_at",
+                    "Provide either an exact local date/time or a relative "
+                    "date, not both.",
+                    partial_operation=None,
+                )
+
+            missing: list[str] = []
+            question = ""
+            if relative_hint is not None:
+                if relative_hint not in _RELATIVE_DATE_HINTS:
+                    raise CapabilityParseError(
+                        "due_at",
+                        "That relative date is not supported. Provide an exact "
+                        "local date/time and IANA timezone.",
+                        partial_operation=None,
+                    )
+                params["relative_date_hint"] = relative_hint
+                # The request-time anchor survives clarification so "tomorrow"
+                # cannot silently shift its meaning across midnight.
+                params["relative_anchor_utc"] = _current_utc().isoformat()
+                if relative_clock_time:
+                    params["relative_clock_time"] = relative_clock_time
+                if relative_hint == "next_week":
+                    for name in ("due_at", "timezone"):
+                        if not params.get(name):
+                            missing.append(name)
+                    if missing:
+                        question = (
+                            "Next week does not identify a particular day. "
+                            "Provide the exact local date/time and timezone as "
+                            "YYYY-MM-DDTHH:MM | Europe/Amsterdam."
+                        )
+                elif not params.get("relative_clock_time"):
+                    if params.get("timezone"):
+                        missing.append("due_at")
+                        question = (
+                            "What local clock time should I use? Reply HH:MM. "
+                            "Nothing will be changed until you confirm the "
+                            "proposed reminder."
+                        )
+                    else:
+                        missing.extend(("due_at", "timezone"))
+                        question = (
+                            "What local clock time and IANA timezone should I "
+                            "use? Reply HH:MM | Europe/Amsterdam. Nothing will "
+                            "be changed until you confirm the proposed "
+                            "reminder."
+                        )
+                if selector:
+                    # The update policy requires an explicit title value; a
+                    # reschedule keeps the existing title unchanged.
+                    params.setdefault("title", selector[:200])
+                else:
+                    missing.insert(0, "selector_title")
+            elif not selector:
+                if kind == "reminder":
+                    missing.extend(
+                        name for name in ("due_at", "timezone") if not params.get(name)
+                    )
+                    question = (
+                        "When should this reminder be due? Reply with local "
+                        "time and timezone as YYYY-MM-DDTHH:MM | "
+                        "Europe/Bucharest."
+                    )
+                else:
+                    missing = ["title", "content"]
+                    question = (
+                        "Provide the exact new title as 'title: New title' or "
+                        "the new content as 'content: New content'. Nothing "
+                        "will change until you confirm the update."
+                    )
+                missing.insert(0, "selector_title")
+            elif kind == "reminder":
+                params.setdefault("title", selector[:200])
+                time_missing = [
+                    name for name in ("due_at", "timezone") if not params.get(name)
+                ]
+                if time_missing:
+                    missing = time_missing
+                    question = (
+                        "When should the updated reminder be due? Reply with "
+                        "local time and timezone as YYYY-MM-DDTHH:MM | "
+                        "Europe/Bucharest."
+                    )
+            elif "title" not in params and "content" not in params:
+                missing = ["title", "content"]
+                question = (
+                    "Provide the exact new title as 'title: New title' or the "
+                    "new content as 'content: New content'. Nothing will "
+                    "change until you confirm the update."
+                )
+            else:
+                params.setdefault("title", selector[:200])
+
+            if missing:
+                partial = _operation(f"workspace_{kind}_update", parameters=params)
+                raise CapabilityParseError(
+                    missing[0],
+                    question
+                    or (
+                        "Please provide the missing information: " + ", ".join(missing)
+                    ),
+                    partial_operation=partial,
+                    missing_fields=missing,
+                )
+
+            operation = _operation(f"workspace_{kind}_update", parameters=params)
+            return _validate_reminder_operation(operation)
 
         update_match = _UPDATE_RE.fullmatch(message)
         if update_match:
@@ -734,6 +1006,7 @@ class WorkspaceCommandParser:
         parts = _parts(answer)
         parameters = dict(operation.parameters)
         target = operation.target
+        filled_names: set[str] = set()
         first = fields[0]
         relative_hint = parameters.get("relative_date_hint")
         if relative_hint in _RELATIVE_DAY_HINTS and first in {"due_at", "timezone"}:
@@ -781,16 +1054,51 @@ class WorkspaceCommandParser:
             elif first == "timezone":
                 if answer.strip():
                     parameters["timezone"] = answer.strip()[:128]
-        elif first in {"title", "query"}:
+        elif first in {"title", "query", "selector_title", "content"}:
             value = answer.strip()
             if not value:
                 raise CapabilityParseError(
                     first,
-                    "Please enter a non-empty title.",
+                    "Please enter a non-empty value.",
                     operation,
                     fields,
                 )
-            parameters[first] = value[:200]
+            limit = 512 if first == "content" else 200
+            if first in {"title", "content"}:
+                # Update flow: the question asked for segment assignments,
+                # so accept 'title: X' and/or 'content: Y' in one reply.
+                segments: dict[str, str] = {}
+                for raw_part in _parts(answer):
+                    assignment = _UPDATE_SELECTOR_FIELD_RE.fullmatch(raw_part.strip())
+                    if assignment is None:
+                        continue
+                    name = assignment.group(1).casefold()
+                    if name not in fields:
+                        continue
+                    if not assignment.group(2).strip():
+                        raise CapabilityParseError(
+                            name,
+                            "Please enter a non-empty value.",
+                            _operation(
+                                operation.operation_id,
+                                target=target,
+                                parameters=parameters,
+                            ),
+                            fields,
+                        )
+                    segments[name] = assignment.group(2).strip()
+                if segments:
+                    for name, segment_value in segments.items():
+                        parameters[name] = segment_value[
+                            : (512 if name == "content" else 200)
+                        ]
+                    filled_names.update(segments)
+                else:
+                    parameters[first] = value[:limit]
+                    filled_names.add(first)
+            else:
+                parameters[first] = value[:limit]
+                filled_names.add(first)
         elif first == "target":
             try:
                 target = _uuid_target(answer, "Enter the item ID shown for the item.")
@@ -831,7 +1139,7 @@ class WorkspaceCommandParser:
                 "clarification",
                 "That clarification is no longer supported. Start again.",
             )
-        fields = [name for name in fields if name != first]
+        fields = [name for name in fields if name != first and name not in filled_names]
         if fields:
             raise CapabilityParseError(
                 fields[0],
@@ -843,6 +1151,14 @@ class WorkspaceCommandParser:
                 ),
                 fields,
             )
+        if (
+            operation.operation_id.endswith("_update")
+            and "content" in parameters
+            and "title" not in parameters
+            and parameters.get("selector_title")
+        ):
+            # Content-only update continuation keeps the existing title.
+            parameters["title"] = parameters["selector_title"]
         completed = _operation(
             operation.operation_id, target=target, parameters=parameters
         )
